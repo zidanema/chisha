@@ -44,7 +44,10 @@ def hard_filter(
     profile: dict,
     avoid_restaurant_ids: set[str],
 ) -> list[dict]:
-    """硬过滤 (DESIGN §5.6 召回-2)."""
+    """硬过滤 (DESIGN §5.6 召回-2).
+
+    销量缺失 (=0) 视为"无信息", 不参与过滤; 只有显式 > 0 但 < min 时才过滤.
+    """
     avoid_dish_names = set(profile["preferences"].get("avoid_dishes", []))
     spicy_max = profile["preferences"].get("spicy_tolerance", 3)
     hard_max_oil = profile["plate_rule"].get("hard_max_oil_level", 5)
@@ -60,7 +63,9 @@ def hard_filter(
             continue
         if np.get("oil_level", 0) > hard_max_oil:
             continue
-        if d.get("monthly_sales", 0) < min_sales:
+        sales = d.get("monthly_sales", 0)
+        # 销量 > 0 才用 min_sales 卡; ==0 视为缺失数据, 不卡
+        if sales > 0 and sales < min_sales:
             continue
         if not d.get("metadata", {}).get("is_available", True):
             continue
@@ -251,11 +256,13 @@ if __name__ == "__main__":
     import sys
     root = Path(__file__).resolve().parent.parent
     profile = load_profile(root / "profile.yaml")
-    zone = profile["basics"]["office_zone"]
+    meal = sys.argv[1] if len(sys.argv) > 1 else "lunch"
+    zones = profile.get("basics", {}).get("zones") or {}
+    zone = zones.get(meal) or profile["basics"]["office_zone"]
     rests, tagged = load_zone_data(zone, root)
     log = load_meal_log(root)
     cs = recall(profile, rests, tagged, log)
-    print(f"候选 combo 数: {len(cs)}")
+    print(f"[{meal} @ {zone}] 候选 combo 数: {len(cs)}")
     for c in cs[:5]:
         print(f"  {c['restaurant']['name']} | "
               f"{[d['canonical_name'] for d in c['dishes']]}")

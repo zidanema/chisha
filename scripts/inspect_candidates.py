@@ -15,11 +15,13 @@ from chisha.recall import (
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=100)
+    ap.add_argument("--meal", default="lunch", choices=["lunch", "dinner"])
     args = ap.parse_args()
 
     root = Path(__file__).resolve().parent.parent
     profile = load_profile(root / "profile.yaml")
-    zone = profile["basics"]["office_zone"]
+    zones = profile.get("basics", {}).get("zones") or {}
+    zone = zones.get(args.meal) or profile["basics"]["office_zone"]
     rests, tagged = load_zone_data(zone, root)
     log = load_meal_log(root)
 

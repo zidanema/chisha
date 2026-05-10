@@ -71,6 +71,14 @@ def _format_candidate(rank: int, c: dict) -> dict:
     }
 
 
+def _resolve_zone(profile: dict, meal_type: str) -> str:
+    """优先用 basics.zones.{meal_type}, 退化到 basics.office_zone."""
+    zones = profile.get("basics", {}).get("zones") or {}
+    if meal_type in zones:
+        return zones[meal_type]
+    return profile["basics"]["office_zone"]
+
+
 def recommend_meal(
     meal_type: str = "lunch",
     profile_path: str | Path = "profile.yaml",
@@ -81,7 +89,7 @@ def recommend_meal(
     root = Path(__file__).resolve().parent.parent
     profile = load_profile(Path(profile_path) if Path(profile_path).is_absolute()
                            else root / profile_path)
-    zone = profile["basics"]["office_zone"]
+    zone = _resolve_zone(profile, meal_type)
     rests, tagged = load_zone_data(zone, root)
     meal_log = load_meal_log(root)
 
@@ -100,6 +108,7 @@ def recommend_meal(
     out = {
         "session_id": session_id,
         "meal_type": meal_type,
+        "zone": zone,
         "round": 1,
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "stats": {

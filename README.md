@@ -51,19 +51,70 @@
 
 ---
 
-## 当前你应该做什么
+## 当前进度（V1 spike 已完成代码侧，等真实 LLM 打标 + OpenClaw 接入）
 
-如果你是 Claude Code / OpenClaw / 实现者，按以下顺序：
+### ✅ 已完成（代码侧）
 
-1. 读 [docs/PRD.md](docs/PRD.md) —— 理解为什么做这个、服务谁、北极星是什么（注意 §2.2 弱约束餐盘策略 + §9 数据来源边界）
-2. 读 [docs/ROADMAP.md](docs/ROADMAP.md) —— 知道当前在 V1 阶段，V1 必做和不做的清单
-3. 读 [DESIGN.md](DESIGN.md) §3 V1 最小闭环 —— 明确开发主线（V1 接 OpenClaw + 飞书卡片，**不接 Claude Code**）
-4. 读 [DESIGN.md](DESIGN.md) §4 实操避坑指南 —— 提前规避常见坑
-5. 按 [DESIGN.md](DESIGN.md) §8 12 步执行清单动手
+- 数据层 loader: `chisha/loader.py` (raw → §5.2 schema, brand 后缀剥离)
+- 召回: `chisha/recall.py` (硬过滤 + 多样性 + 弱约束三件套校验 + 组合策略)
+- 打分: `chisha/score.py` (V1 公式 + 品牌/菜系多样性 top 3)
+- 精排: `chisha/api.py` + `chisha/reason.py` (D-024 不让 LLM 选 3 个)
+- 接入: `integrations/openclaw/` (skill + 飞书卡片渲染)
+- 工具: `scripts/tag_dishes.py` (LLM 打标), `mock_tagged.py` (规则 mock), `dry_run.py`, `inspect_candidates.py`
+- 数据: `data/shenzhen-keji/` (office, 20 家 1302 菜) + `data/home/` (home, 38 家 2117 菜)
+- 用 mock 数据 dry_run 5 次：lunch/dinner 各推 3 个组合，100% 蔬菜+蛋白达标，跨品牌
 
-**实现某个功能前，先确认它在 ROADMAP 的当前版本里**。如果发现不在，但想做，先去 DECISIONS 加一条新决策说明为什么要把它提前。
+### ⏳ 你接下来要做
 
-**关于 V1 接入**：原 D-018 选 Claude Code 已被 [D-022](docs/DECISIONS.md#d-022) 翻案——CLI 不能主动推送，与"11:25 主动推卡片"承诺不匹配。V1 直接接 OpenClaw + 飞书。
+#### 1. 真实 LLM 打标（替换 mock）
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-xxx
+# 先 spike 50 条抽查
+uv run python -m scripts.tag_dishes shenzhen-keji --limit 50
+# 抽查 50 条准确率 ≥ 80% 后再跑全量
+uv run python -m scripts.tag_dishes shenzhen-keji
+uv run python -m scripts.tag_dishes home
+```
+
+#### 2. 抽查召回 100 条（看是否合理）
+
+```bash
+uv run python -m scripts.inspect_candidates --meal lunch --limit 100
+uv run python -m scripts.inspect_candidates --meal dinner --limit 100
+```
+
+#### 3. 5 次空跑 dry_run（看推荐质量）
+
+```bash
+uv run python -m scripts.dry_run --n 5 --meal both
+```
+
+#### 4. 接 OpenClaw + 飞书
+
+```bash
+# 配 chat_id
+export OPENCLAW_PUSH_MODE=lark-cli
+export LARK_CHAT_ID=oc_xxx
+
+# 单次推送测试
+uv run python -m integrations.openclaw.skill lunch
+uv run python -m integrations.openclaw.skill dinner
+
+# 在 OpenClaw 配 cron (见 integrations/openclaw/SKILL.md)
+#   工作日 11:25 推 lunch
+#   工作日 18:00 推 dinner
+```
+
+#### 5. 自用一周 + 纸笔记录
+
+按 [ROADMAP.md V1 抽查标准](docs/ROADMAP.md)，工作日 7 日采纳率 ≥ 50% 才算 V1 通过。
+
+### 💡 想改某个设计前先看
+
+实现某个功能前，先确认它在 ROADMAP 的当前版本里。如果发现不在，但想做，先去 DECISIONS 加一条新决策说明为什么要把它提前。
+
+读文档顺序：[PRD](docs/PRD.md) → [ROADMAP](docs/ROADMAP.md) → [DESIGN](DESIGN.md) §3-§4 → [DECISIONS](docs/DECISIONS.md)
 
 ---
 

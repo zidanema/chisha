@@ -171,13 +171,16 @@ def diversify_top(
 
 
 if __name__ == "__main__":
+    import sys
     from pathlib import Path
     from chisha.recall import (
         load_profile, load_zone_data, load_meal_log, recall
     )
     root = Path(__file__).resolve().parent.parent
     profile = load_profile(root / "profile.yaml")
-    zone = profile["basics"]["office_zone"]
+    meal = sys.argv[1] if len(sys.argv) > 1 else "lunch"
+    zones = profile.get("basics", {}).get("zones") or {}
+    zone = zones.get(meal) or profile["basics"]["office_zone"]
     rests, tagged = load_zone_data(zone, root)
     log = load_meal_log(root)
     cs = recall(profile, rests, tagged, log)
