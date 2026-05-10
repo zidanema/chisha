@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+.pytest_cache/
+
+# Claude Code
+.claude/
+
+# Logs (本地, 私人数据)
+logs/
+
+# 临时输出
+*.tmp
+*.failed.json
+
+# 系统
+.DS_Store

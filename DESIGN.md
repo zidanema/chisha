@@ -375,24 +375,36 @@ V1 只做 `recommend_meal`，V2+ 扩展到 6 个：
   "name": "湘里湘亲",
   "category": "湘菜",
   "city": "深圳",
-  "district": "南山区",
-  "office_zone": "科技园",
-  "location": {"lat": 22.5410, "lng": 113.9530},
+  "office_zone": "shenzhen-keji",
   "rating": 4.5,
-  "monthly_orders": 3200
+  "monthly_orders": 3200,
+  "distance_m": 504,
+  "delivery_eta_min": 15,
+  "delivery_fee": 0.2,
+  "min_order": 20.0
 }
 ```
+
+字段说明：
+- `id`: 由 loader 生成 `r_NNN`，按 raw 数据 restaurant 顺序
+- `category`: 由 dishes_tagged.cuisine majority vote 回填，raw 数据通常采不到
+- `office_zone`: 形如 `shenzhen-keji` / `home`，对应 `data/{office_zone}/` 目录
+- `monthly_orders`: 解析自 raw `monthly_sales`（"月售1000+" → 1000，取下界）
+- `distance_m`: 解析自 raw `distance`（"504m" → 504, "1.2km" → 1200）
+- `delivery_eta_min`: 解析自 raw `delivery_time`（"约15分钟" → 15, "约1小时" → 60）
+- `lat/lng/district`: V1 不需要，删除
 
 `dishes_tagged.json`：
 
 ```json
 {
-  "dish_id": "d_00123",
+  "dish_id": "d_001_007",
   "restaurant_id": "r_001",
   "raw_name": "水煮牛肉(中辣) 大份",
   "canonical_name": "水煮牛肉",
   "price": 48,
   "monthly_sales": 245,
+  "cuisine": "川菜",
   "nutrition_profile": {
     "main_ingredient_type": "红肉",
     "cooking_method": "煮",
@@ -413,12 +425,15 @@ V1 只做 `recommend_meal`，V2+ 扩展到 6 个：
 
 字段定义：
 
+- `cuisine`: 菜系大分类（湘菜/川菜/粤菜/潮汕/东北/西北/江浙/鲁菜/日式/韩式/西式/东南亚/快餐/小吃/汤粥/其他）—— D-025 个性化粒度需要
 - `main_ingredient_type`: 红肉/白肉/海鲜/蛋/豆制品/纯素/主食/汤/其他
-- `cooking_method`: 蒸/煮/烤/炒/炖/油炸/凉拌/生
+- `cooking_method`: 蒸/煮/烤/炒/炖/油炸/凉拌/生/煎
 - `oil_level`: 1-5（1 = 白灼清蒸，5 = 油炸爆炒）
 - `vegetable_ratio_estimate`: 0.0-1.0（看体积比）
 - `spicy_level`: 0-3
 - `is_complete_meal`: 一份单点能否接近达标（翘脚牛肉=true，蒜蓉空心菜=false）
+
+`restaurants.json` 的 `category` 字段由 `dishes_tagged.cuisine` 做 majority vote 后回填（采集器经常拿不到 restaurant 级 category）。
 
 ### 5.3 profile.yaml
 
