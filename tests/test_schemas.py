@@ -4,7 +4,7 @@ NOTE (Session 1 → Session 2 协调):
 v3 加了 5 字段 (dish_role/processed_meat_flag/sweet_sauce_level/wetness/grain_type),
 全部 required. 本文件不依赖 tests/conftest.make_dish, 直接构造 v3 dict, 因为
 conftest.make_dish 的字段命名是 Session 2 在 schema 定稿前预设的, 与 v3 不一致
-(soup_or_broth_flag → wetness; sweet_sauce_level str→int; grain_type "糙米"→"糙米杂粮").
+(wetness → wetness; sweet_sauce_level str→int; grain_type "糙米"→"糙米杂粮").
 Session 2 git pull 到 v3 schema 后会同步调 conftest.
 """
 import json
