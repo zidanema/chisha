@@ -1,0 +1,291 @@
+# chisha V2 推荐链路验收 — 黄金 case
+#
+# 用途: scripts/eval_recommend.py 跑 V1 vs V2 对比, 输出每个 case 上的指标变化。
+# 每个 case 模拟一个具体场景, 给定 input (profile/context/meal_log_seed),
+# 期望 (expected) 是这个 case 上推荐结果应满足/不应出现/偏好的条件。
+#
+# expected 字段说明:
+#   must_satisfy:    top_count 个候选每一个都必须满足 (硬验收)
+#   must_not_appear: top_count 个候选都不应出现这些菜 / 标签 (硬验收)
+#   prefer:          top_count 整体应偏向的统计性质 (软验收, 计入分数但不卡)
+#   top_count:       期望返回候选数 (V1=3 / V2=5)
+#   explore_count:   V2 中 explore 标记的候选数 (refine 后=0)
+
+version: 1
+created: 2026-05-11
+description: chisha V2 推荐链路验收用 — 12 个具体场景
+
+cases:
+  - name: weekday_lunch_baseline
+    description: 典型工作日中午, 无特殊 context, 验证基线
+    input:
+      meal_type: lunch
+      today: 2026-05-13   # 周三
+      profile_overrides: {}
+      context_overrides: {}
+      meal_log_seed: []
+    expected:
+      must_satisfy:
+        - "每个 combo 含至少 1 道菜 vegetable_ratio_estimate >= 0.6"
+        - "每个 combo 总 protein_grams_estimate >= 25"
+        - "每个 combo 无菜 oil_level > 5 (hard_max)"
+        - "每个 combo zone == shenzhen-bay"
+      must_not_appear:
+        - "avoid_dishes: 红烧肉 / 梅菜扣肉 / 锅包肉 / 糖醋里脊 / 拔丝"
+        - "spicy_level > 2 (spicy_tolerance)"
+      prefer:
+        - "平均 oil_level <= 3"
+        - "至少 1 道菜含 main_ingredient_type 来自 liked_cuisines"
+      top_count: 5
+      explore_count: 2
+      notes: V1 baseline 也应该过
+
+  - name: lunch_want_spicy
+    description: 中午想吃辣的解馋, daily_mood=想爽 + 上次反馈"今天想吃辣"
+    input:
+      meal_type: lunch
+      today: 2026-05-13
+      profile_overrides:
+        spicy_tolerance: 3   # 临时放开到重辣
+      context_overrides:
+        daily_mood: want_indulgent
+        recent_user_input: "今天想吃辣的解馋点"
+      meal_log_seed: []
+    expected:
+      must_satisfy:
+        - "每个 combo 含至少 1 道菜 vegetable_ratio_estimate >= 0.6"
+        - "每个 combo 总 protein_grams_estimate >= 25"
+      must_not_appear: []
+      prefer:
+        - "至少 3/5 候选含至少 1 道 spicy_level >= 2"
+        - "油度可放宽: 平均 oil_level 可以达到 4 但仍守 hard_max"
+      top_count: 5
+      explore_count: 1   # 想爽时 explore 减少
+      notes: 验证 daily_mood 和自然语言反馈进入决策
+
+  - name: lunch_strict_diet_week
+    description: 减脂严格周, taste_description 加"本周严格控油"
+    input:
+      meal_type: lunch
+      today: 2026-05-13
+      profile_overrides:
+        plate_rule:
+          prefer_oil_level_at_most: 2   # 软上限拉到 2
+          hard_max_oil_level: 4         # 硬上限拉到 4
+        taste_description_append: "本周严格控油, 不要任何油焖油炸"
+      context_overrides:
+        daily_mood: want_light
+      meal_log_seed: []
+    expected:
+      must_satisfy:
+        - "每个 combo 所有菜 oil_level <= 4"
+        - "每个 combo 至少 1 道菜 vegetable_ratio_estimate >= 0.6"
+      must_not_appear:
+        - "cooking_method: 油炸"
+      prefer:
+        - "平均 oil_level <= 2.5"
+        - "至少 2/5 候选含 soup_or_broth_flag=true"
+      top_count: 5
+      explore_count: 2
+      notes: hard_max_oil_level 调整必须立刻生效
+
+  - name: lunch_recent_sichuan
+    description: 昨天和前天都吃了川菜, 今天不想再川
+    input:
+      meal_type: lunch
+      today: 2026-05-13
+      profile_overrides: {}
+      context_overrides: {}
+      meal_log_seed:
+        - {date: 2026-05-12, meal_type: lunch, cuisine: 川菜, main_ingredient_type: 红肉}
+        - {date: 2026-05-12, meal_type: dinner, cuisine: 川菜, main_ingredient_type: 红肉}
+        - {date: 2026-05-11, meal_type: lunch, cuisine: 川菜, main_ingredient_type: 白肉}
+    expected:
+      must_satisfy:
+        - "每个 combo 至少 1 道菜 vegetable_ratio_estimate >= 0.6"
+      must_not_appear: []
+      prefer:
+        - "top5 中 cuisine == 川菜 数量 <= 1"
+        - "top5 中 main_ingredient_type == 红肉 数量 <= 2"
+        - "至少 1 个 explore 候选 cuisine 不在最近 7 天 meal_log"
+      top_count: 5
+      explore_count: 2
+      notes: 验证 diversity + Context 注入对历史的感知
+
+  - name: lunch_no_heavy_carb
+    description: 今天不想要主食多的
+    input:
+      meal_type: lunch
+      today: 2026-05-13
+      profile_overrides: {}
+      context_overrides:
+        daily_mood: low_carb
+        recent_user_input: "今天不想吃太多主食"
+      meal_log_seed: []
+    expected:
+      must_satisfy:
+        - "每个 combo 总 protein_grams_estimate >= 25"
+        - "每个 combo 至少 1 道菜 vegetable_ratio_estimate >= 0.6"
+      must_not_appear: []
+      prefer:
+        - "top5 中 dish_role == 主食 的菜数 平均 <= 1 (V1 平均常 >= 1.5)"
+        - "若有主食, grain_type 偏好 全麦/糙米/燕麦, 避免 白米/精制面"
+        - "至少 2/5 候选总碳水菜 <= 1"
+      top_count: 5
+      explore_count: 2
+      notes: 验证 dish_role + grain_type 5 字段进打分
+
+  - name: lunch_want_soup
+    description: 中午想喝汤, 命中 taste_description "带汤水" 偏好
+    input:
+      meal_type: lunch
+      today: 2026-05-13
+      profile_overrides: {}
+      context_overrides:
+        daily_mood: want_soup
+        recent_user_input: "今天想喝汤"
+      meal_log_seed: []
+    expected:
+      must_satisfy:
+        - "每个 combo 至少 1 道菜 vegetable_ratio_estimate >= 0.6"
+        - "每个 combo 总 protein_grams_estimate >= 25"
+      must_not_appear: []
+      prefer:
+        - "至少 3/5 候选含 soup_or_broth_flag == true"
+        - "推荐潮汕牛肉/酸菜鱼/翘脚牛肉等汤水菜的概率显著高于 baseline"
+      top_count: 5
+      explore_count: 1
+      notes: 核心验证 soup_or_broth_flag 字段 + Context 注入
+
+  - name: lunch_price_constraint
+    description: 中午价格控制在 40 以内
+    input:
+      meal_type: lunch
+      today: 2026-05-13
+      profile_overrides:
+        price_range:
+          lunch_max: 40
+      context_overrides: {}
+      meal_log_seed: []
+    expected:
+      must_satisfy:
+        - "每个 combo total_price <= 40"
+        - "每个 combo 至少 1 道菜 vegetable_ratio_estimate >= 0.6"
+      must_not_appear: []
+      prefer:
+        - "top5 平均价格 <= 35"
+        - "蛋白下限 25g 应仍达标 (验证低价位的 combo 拼餐能力)"
+      top_count: 5
+      explore_count: 2
+      notes: 验证价格进打分 + 低价位场景的 combo 拼餐健壮性
+
+  - name: lunch_demote_processed_meat
+    description: 蟹柳/火腿等加工肉应被降权, 即使销量高也不进 top3
+    input:
+      meal_type: lunch
+      today: 2026-05-13
+      profile_overrides: {}
+      context_overrides:
+        daily_mood: want_clean
+      meal_log_seed: []
+    expected:
+      must_satisfy:
+        - "top3 中 任何菜 processed_meat_flag == false (主菜不可为加工肉)"
+      must_not_appear:
+        - "top3 任何菜 canonical_name 含 蟹柳 / 火腿肠 / 培根 / 午餐肉"
+      prefer:
+        - "蟹柳饭团 / 火腿肠饭等高销量但加工肉的 combo 可降到 top4-5 或不入选"
+        - "top5 整体 processed_meat_flag=true 的菜数 == 0"
+      top_count: 5
+      explore_count: 2
+      notes: 核心验证 processed_meat_flag 字段进硬过滤(主菜)+打分
+
+  - name: lunch_want_light
+    description: 中午想清淡, daily_mood=清淡
+    input:
+      meal_type: lunch
+      today: 2026-05-13
+      profile_overrides: {}
+      context_overrides:
+        daily_mood: want_light
+        recent_user_input: "今天想清淡点"
+      meal_log_seed: []
+    expected:
+      must_satisfy:
+        - "每个 combo 至少 1 道菜 vegetable_ratio_estimate >= 0.6"
+      must_not_appear:
+        - "cooking_method: 油炸 / 油焖"
+        - "sweet_sauce_level == high (糖醋/红烧/拔丝)"
+      prefer:
+        - "平均 oil_level <= 2.5"
+        - "至少 2/5 候选含 soup_or_broth_flag == true 或 cooking_method ∈ {蒸, 煮, 凉拌}"
+      top_count: 5
+      explore_count: 1
+      notes: 验证多字段联动 (daily_mood + sweet_sauce + soup_broth + oil)
+
+  - name: dinner_home_zone
+    description: 晚餐 zone 切到 home
+    input:
+      meal_type: dinner
+      today: 2026-05-13
+      profile_overrides: {}
+      context_overrides: {}
+      meal_log_seed: []
+    expected:
+      must_satisfy:
+        - "每个 combo 餐厅 office_zone == home"
+        - "每个 combo 至少 1 道菜 vegetable_ratio_estimate >= 0.6"
+        - "每个 combo 总 protein_grams_estimate >= 25"
+      must_not_appear:
+        - "餐厅 office_zone == shenzhen-bay"
+      prefer: []
+      top_count: 5
+      explore_count: 2
+      notes: 验证 zone 切换正确, 不漏不窜
+
+  - name: lunch_explore_new_cuisine
+    description: 最近 7 天吃来吃去就湘菜川菜, 探索应推未尝试的菜系
+    input:
+      meal_type: lunch
+      today: 2026-05-13
+      profile_overrides: {}
+      context_overrides: {}
+      meal_log_seed:
+        - {date: 2026-05-12, meal_type: lunch, cuisine: 湘菜}
+        - {date: 2026-05-11, meal_type: lunch, cuisine: 川菜}
+        - {date: 2026-05-10, meal_type: lunch, cuisine: 湘菜}
+        - {date: 2026-05-09, meal_type: lunch, cuisine: 川菜}
+        - {date: 2026-05-08, meal_type: lunch, cuisine: 湘菜}
+    expected:
+      must_satisfy:
+        - "每个 combo 至少 1 道菜 vegetable_ratio_estimate >= 0.6"
+      must_not_appear: []
+      prefer:
+        - "至少 1 个 explore 候选 cuisine 不属于 {湘菜, 川菜}"
+        - "至少 1 个 explore 候选 cuisine ∈ {潮汕, 日式, 东北, 轻食健康} (liked_cuisines 中未近期吃过的)"
+      top_count: 5
+      explore_count: 2
+      notes: 验证 explore 机制 (D-015) — 探索打分中段 + 最近未吃过
+
+  - name: lunch_refine_round2
+    description: 第一轮推完, 用户 reject 全部 + 自然语言"今天想喝汤别给我面", refine 重推
+    input:
+      meal_type: lunch
+      today: 2026-05-13
+      profile_overrides: {}
+      context_overrides:
+        round: 2
+        round1_result_summary: "[湘菜炒饭, 蛋包饭, 拌面]"
+        user_refine_input: "今天想喝汤, 别给我面"
+      meal_log_seed: []
+    expected:
+      must_satisfy:
+        - "每个 combo 不含 main_ingredient_type == 主食 且 grain_type ∈ {精制面}"
+        - "每个 combo 至少 1 道菜 vegetable_ratio_estimate >= 0.6"
+      must_not_appear:
+        - "canonical_name 含 面 / 拌面 / 炒面 / 凉面 / 担担面 (粉/米线/河粉等不算)"
+      prefer:
+        - "至少 3/5 候选含 soup_or_broth_flag == true"
+      top_count: 5
+      explore_count: 0   # refine 时不做探索 (D-015)
+      notes: 核心验证 refine_recommendation 接 user_refine_input + 反馈解析员
