@@ -1,0 +1,35 @@
+# 菜品打标 v3 横评配置
+# OpenRouter model ids 已在 2026-05-11 通过 GET /api/v1/models 校验,全部命中
+
+models:
+  sonnet-4.6:
+    id: anthropic/claude-sonnet-4.6
+    role: baseline
+  haiku-4.5:
+    id: anthropic/claude-haiku-4.5
+    role: claude-cheap
+  deepseek-pro:
+    id: deepseek/deepseek-v4-pro
+    role: deepseek-flagship
+  deepseek-flash:
+    id: deepseek/deepseek-v4-flash
+    role: deepseek-cheap
+  kimi-k2.6:
+    id: moonshotai/kimi-k2.6
+    role: chinese
+  glm-4.6:
+    id: z-ai/glm-4.6
+    role: zhipu
+
+batch_size: 20
+concurrency: 5
+max_retries: 2
+budget_usd: 15.0
+reasoning_enabled: false
+request_timeout_s: 120
+
+# golden set 构造时用 sonnet-4.6, 单独控制
+golden_builder:
+  model: anthropic/claude-sonnet-4.6
+  batch_size: 10
+  max_retries: 2
