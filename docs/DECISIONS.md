@@ -910,3 +910,138 @@ V1.5（重构阶段）任务清单见 ROADMAP.md。
 - 2026-05-11 晚: home v2 重打完成 — 43 批 × 50/批（最后批 17 条），16 并发 × 3 轮，0 failed（subagent prompt 自带枚举黑名单，无 merge 阻塞）。final: `data/home/dishes_tagged.json` 2,117 条，全部 `metadata.tag_version=v2-promptfix`。
 - 2026-05-11 晚: 两个 zone 各 50 条 review 样本生成（seed=42，`data/<zone>/review_sample.xlsx`），等待人工 review 准确率 ≥ 80% 验证。
 - 后续: 人工 review 通过即闭合本条，否则触发"重审条件 1"考虑 v3 prompt。
+
+---
+
+## D-033: V2.0 + V2.1 合并触发, 不等 V1 北极星达标
+日期: 2026-05-11
+状态: active
+
+背景:
+原 ROADMAP（DESIGN §6）规划 V2.0（反馈采集）→ V2.1（refine + LLM 精排）→ V2.2（learned_profile 统计聚合）三阶段串行, 每阶段需 V1 自用一周后才启动. 但 Claude × Codex 二轮诊断揭示 V1 推荐质量上限被 3 件事卡住, **不是"V1 用得不够久"**:
+- 数据 schema 缺关键营养特征（grain quality / processed meat / 甜酱 / dish role / 汤水程度）→ 任何打分调权都救不回来
+- `taste_description` 是最有信息量的偏好却只进 reason 不进 score → 同一菜系内做法差异完全忽略
+- 缺反馈回环 → 无法学习个性化, V1 一直用也不会变好
+
+继续等 V1 北极星 ≥ 50% 再上 V2 = 浪费时间. 北极星本身就被这 3 件事卡住.
+
+考虑过的方案:
+- A. 维持原 ROADMAP, 严格 V1 → V2.0 → V2.1 → V2.2 串行
+- B. V2.0 + V2.1 合并一轮做; V2.2 仍按"反馈攒到 30+ 条"触发
+- C. V2.0 + V2.1 + V2.2 一锅端
+
+决定: B.
+
+理由:
+- V2.0 反馈数据采集 + V2.1 LLM 精排 + refine 是**强依赖链但工作量适中**, 一轮做完即可形成完整闭环
+- V2.2 learned_profile 聚合需要至少 30+ 条 feedback, 离了数据是空架子, 推迟到自用 1-2 周后再启动
+- 用户明确诉求是"5 个候选 + 探索 + 当下 chip + 自由文本 + 餐后追问 + refine 重推", 这些 PRD/DESIGN 已设计完整（D-007 / D-010 / D-011 / D-014 / D-015 / D-024 / D-025 / D-026）, 本质是**激活已有设计 + 补 schema 字段 + Context 注入层**
+- 合并做的代价（一轮工程量稍大）小于分两轮做的代价（重复跑冷启动 + 验收两次 + 反馈系统单独上线时无 LLM 精排支撑）
+
+反对意见 / 风险:
+- 一轮验收面变大: 用 8-12 个黄金 case + scripts/eval_recommend.py 离线对比 V1 vs V2, 缓解
+- V2.0 反馈骨架在 V2.2 起来前没"消费方", 数据可能只采不用: 接受这个临时状态, 反馈数据本身就是 V2.2 的输入
+
+触发重审的条件:
+- V2.0+V2.1 合并实现后, 自用 1 周采纳率反而下降（说明合并引入了不可预期问题）
+- LLM 精排 token 成本失控（远超 V1 reason 的 ¥0.05/次, 月度超 ¥50）
+
+依赖: D-032 (v3 prompt 补字段)、D-034 (Context 注入)、D-035 (LLM 精排结构化输出)
+
+---
+
+## D-034: 引入 Context 注入层 (DESIGN 缺失的第 5 层)
+日期: 2026-05-11
+状态: active
+
+背景:
+DESIGN §5.6 描述的推荐三阶段（召回 → 打分 → 精排）只考虑"长期画像 + 静态偏好 + 历史 meal_log", 不考虑"今天的情境". 但用户真实诉求里"今天想喝汤 / 今天想清淡 / 今天加班想解馋"这种**当日变量**直接决定推荐成败. Codex 二轮 review 明确指出: 没有 context layer, 系统只能推"长期平均最优", 不能推"今天最合适".
+
+考虑过的方案:
+- A. 不做单独 layer, 把 context 信息塞进 LLM 精排 prompt 里
+- B. 单独 ContextSnapshot dataclass, 进 L3 score 软调权 + L4 LLM rerank context
+- C. 把 context 作为硬过滤维度（如 daily_mood=want_light 时排除所有 oil > 2 的菜）
+
+决定: B.
+
+理由:
+- A 太弱: 只在 LLM 精排起作用, 召回阶段拿不到, 候选池就被静态偏好限死
+- C 太强: daily_mood 是软偏好不是硬约束, 硬过滤会把候选池砍到不可用（违反 D-006 软约束原则）
+- B 平衡: ContextSnapshot 显式结构化, L3 软加分 + L4 LLM 看到, 既影响排序也影响理由生成, 但不卡死硬过滤
+
+ContextSnapshot 字段（chisha/context.py）:
+- meal_type / zone / now / weekday: 基础情境
+- last_meal: 上一顿吃了啥（cuisine / main_ingredient_type / dish names）
+- recent_3d_cuisines / recent_3d_ingredients: 最近 3 天分布
+- last_feedback: 最近一次反馈摘要（chip + rating + want_again + note）
+- daily_mood: 当日开场 1 问的回答（want_light / want_indulgent / want_soup / low_carb / want_clean / neutral / None）
+- refine_input: refine 二轮的用户自然语言, None=首轮
+
+`daily_mood` 默认值与触发: 由 OpenClaw 在每日首次饭点 trigger 推荐前问 1 句"今天想清淡 vs 想爽？" 写入 session 状态, 跨当日餐期复用. 用户跳过则保持 None, 不强求.
+
+反对意见 / 风险:
+- 多一个 context 层增加调试复杂度: 缓解 — Context 是纯数据结构, 单测覆盖 build_context 即可
+- daily_mood 每日 1 问会增加摩擦: 缓解 — 跳过不强求, 跨餐期复用, 一周 5 次共问 5 次
+
+触发重审的条件:
+- 自用 1-2 周后发现 daily_mood 命中率极低（用户基本都跳过）, 考虑改为 reactive (从 last_feedback note 里推断)
+- Context 字段触发 L3 调权后排序变化过大（黄金 case 评分剧烈震荡）
+
+---
+
+## D-035: LLM 精排强制结构化 JSON 输出 + 重排-解释合并
+日期: 2026-05-11
+状态: active（V2.x 启用，与 D-024 V1 阶段 LLM 仅写 reason 形成对比）
+
+背景:
+D-024 决定 V1 不做 LLM 精排, LLM 只写 reason. V2.x 触发条件成熟（schema 升级 + Context 层 + taste_description 进决策）, 现在该开 LLM 精排了. 但 Codex 二轮 review 提醒: LLM 精排不能只让模型写散文 reason, 否则解释和决策脱节, 调试困难. 必须强制结构化中间字段, 让"为什么这条排第 1"是机器可读的.
+
+考虑过的方案:
+- A. LLM 精排只输出排序 + 一句 reason, 散文形式
+- B. LLM 精排输出排序 + 每个候选的结构化字段 (fit_score / health_flags / taste_match / risk_flags / one_line_reason), 然后 reason 是结构化字段的投影
+- C. LLM 重排 + 单独一个 LLM 解释员, 两次调用
+
+决定: B.
+
+理由:
+- A 让 LLM 写散文容易漂移, 也无法被 eval 脚本核对（"为什么 LLM 选了这个？"成了黑盒）
+- C 两次调用浪费 token 且容易出现"重排判断 vs 解释"不一致
+- B 强制 LLM 在排序时把判断暴露出来, reason 是这些判断的人话总结. eval 脚本可以核对结构化字段, 用户/审计员看 reason 能复盘
+
+LLM 精排输出 schema (V2):
+```json
+{
+  "candidates": [
+    {
+      "rank": 1,
+      "is_explore": false,
+      "combo_index": 5,
+      "fit_score": 0.87,
+      "health_flags": {
+        "veg_ok": true,
+        "protein_ok": true,
+        "oil_ok": true,
+        "carb_quality": "ok",
+        "processed_meat": false,
+        "sweet_sauce": false,
+        "soup_or_broth": true
+      },
+      "taste_match": 0.9,
+      "risk_flags": [],
+      "one_line_reason": "潮汕汤水清爽, 命中你今天想喝汤"
+    }
+  ]
+}
+```
+
+5 个候选 = 3 exploit (按 score 排) + 2 explore (打分中段 + 最近未吃过 + 未尝试菜系/做法), 命中 D-015. refine 时 explore_count=0 (用户已有方向, 探索是干扰).
+
+反对意见 / 风险:
+- LLM 输出 JSON 偶尔会坏: 缓解 — 沿用 reason.py 的 try/except + fallback 策略, 失败时退化到打分 top 3 + 规则 reason
+- 强制字段会减少 LLM 灵活度: 接受这个 trade-off, 灵活度让位于可解释性
+
+触发重审的条件:
+- LLM 精排错例（黄金 case 失败）连续多个发生在 fit_score 字段（说明字段定义不准）
+- token 成本 > V1 reason 5 倍且无明显质量提升
+
+依赖: D-032 (v3 prompt 补字段)、D-033 (V2 合并)、D-034 (Context 注入)

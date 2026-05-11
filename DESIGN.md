@@ -486,6 +486,26 @@ meal_trigger_time:
 - `plate_rule` 改弱约束（[D-023](docs/DECISIONS.md#d-023)）：不再有 `vegetable_ratio: 0.5` 这种"组合级硬比例"，改成"至少 1 道蔬菜 + 蛋白下限 + 软控油"
 - `spicy_tolerance` 改成整数（[D-018-2 不一致问题修正](docs/DECISIONS.md#d-029)）：原来文字 "中辣" 没法和 dish 整数 spicy_level 直接比较
 
+#### V2 新增字段（[D-033](docs/DECISIONS.md#d-033)、[D-034](docs/DECISIONS.md#d-034)）
+
+```yaml
+# 履约约束 (V2 进 score 打分，超过则扣分但不硬过滤)
+delivery_constraints:
+  max_delivery_eta_min: 60      # 餐厅 delivery_eta_min > 这个值会被扣分
+  prefer_distance_m: 1500       # 距离软偏好，超过线性扣分
+
+# 价格偏好 (V2 进 score 打分)
+price_range:
+  lunch_max: 60                 # 中午 combo total_price 软上限
+  dinner_max: 80                # 晚上 combo total_price 软上限
+
+# 当日情境 (V2 Context 注入层 D-034，由 OpenClaw trigger 每日首次饭点前问 1 句写入 session)
+# 不进 profile.yaml 长期字段，是 per-day session 状态。这里只是 schema 参考：
+# session.daily_mood ∈ {want_light, want_indulgent, want_soup, low_carb, want_clean, neutral, null}
+```
+
+`taste_description` 在 V2 起进 L3 打分和 L4 LLM rerank 决策（不再只进 reason），由 LLM 反馈解析员 + rerank 员把自然语言推断成结构化 boost/penalty。
+
 ### 5.4 V2+ 用户数据 schema
 
 `meal_log.jsonl`（每行一条）：
@@ -507,18 +527,29 @@ meal_trigger_time:
       "main_ingredient_type": "红肉"
     }
   ],
+  "context_at_recommend": {
+    "daily_mood": "want_light",
+    "weekday": 0,
+    "last_meal": {"date": "2026-05-09", "meal_type": "dinner", "cuisine": "粤菜"},
+    "recent_3d_cuisines": {"湘菜": 2, "川菜": 1},
+    "refine_round": 1
+  },
+  "rank": 2,
+  "score_breakdown": {"vegetable_floor_pass": 1.0, "low_oil": 0.6, "...": "..."},
   "feedback": {
     "rating_taste": 4,
     "rating_satisfaction": 3,
-    "oil_tag": "偏油",
-    "portion_tag": null,
-    "delivery_tag": null,
+    "chips": ["太油", "想喝汤"],
     "want_again": false,
     "note": "牛肉有点柴",
     "submitted_at": "2026-05-10T14:30:00"
   }
 }
 ```
+
+V2 起 `feedback.chips` 由 [chisha/feedback.py](../chisha/feedback.py) 的 `parse_feedback()` 规范化, 必须 ∈ `CHIP_VOCAB`（见 chisha/feedback.py）. 旧 `oil_tag` / `portion_tag` / `delivery_tag` 字段被 `chips` 列表统一取代（[D-033](docs/DECISIONS.md#d-033)）, 旧字段 V1 兼容保留, V2 新写入只用 chips.
+
+`context_at_recommend` 是 V2 [D-034](docs/DECISIONS.md#d-034) 注入层在推荐时刻的快照, 用于事后审计"为什么这条被推/被选/被拒". 写 meal_log 时一并落盘, 不修改原始 ContextSnapshot dataclass.
 
 `personal_offsets.json`（**粒度变更**：从 `店::菜` 改成 `菜系×烹饪方式×主料` —— [D-025](docs/DECISIONS.md#d-025)）：
 
@@ -678,26 +709,61 @@ combo_score =
   + variety_bonus            × 0.3    # 主料/烹饪方式与最近 3 天不同
 ```
 
-V2+ 打分（叠加个性化）：
+V2 打分（[D-033](docs/DECISIONS.md#d-033) 启用，~12 维）：
 
 ```
-combo_score (V2+) =
+combo_score (V2) =
     上面所有 V1 项
+  # 5 个新字段（D-032 v3 prompt 重打后才有）
+  + carb_quality_score       × 0.6    # grain_type ∈ {全麦,糙米,燕麦} +/，{白米,精制面} -
+  - processed_meat_penalty   × 1.0    # 任何 dish.processed_meat_flag=true 直接扣
+  - sweet_sauce_penalty      × 0.7    # sweet_sauce_level=high 扣分
+  + soup_or_broth_bonus      × 0.5    # 至少 1 道 soup_or_broth_flag=true
+  + dish_role_match_bonus    × 0.4    # combo dish_role 结构合理（主菜+配菜+主食）
+  # 履约维度（已有数据未用）
+  - distance_penalty         × 0.3    # 超 prefer_distance_m 线性
+  - eta_penalty              × 0.4    # 超 max_delivery_eta_min 线性
+  - price_penalty            × 0.5    # 超 price_range.{lunch,dinner}_max 线性
+  # taste_description 进决策（不再只进 reason）
+  + taste_match_bonus        × 0.6    # LLM 反馈解析员推断的 boost
+  - taste_violation_penalty  × 0.6    # 命中 taste_description 的负向（如"不要甜口"）
+  # Context 注入 (D-034)
+  + context_boost            × 0.4    # daily_mood / last_meal / last_feedback 软调权
+```
+
+V2.2+ 打分（learned_profile 起来后, 暂未实现）：
+
+```
+combo_score (V2.2+) =
+    上面所有 V2 项
   + personal_offset_sum      × 1.0    # 来自 (cuisine,cooking,ingredient) 维度聚合
   + learned_top_pref_bonus   × 0.6    # 命中 learned_profile.top_preferences 维度
   - learned_bottom_pref_pen  × 0.6    # 命中 bottom_preferences 维度
-  + diversity_bonus          × 0.3
 ```
 
-权重在 `config.yaml`，用户可改。
+权重在 `profile.yaml.scoring_weights`，用户可改。
 
-#### V1 精排：取 top 3，不让 LLM 选
+#### V1 精排：取打分 top 3 + LLM 单条写 reason
 
 **V1**：直接取打分 top 3，**LLM 仅为每条单独写 reason_one_line**（输入 profile + 单条 combo，输出一句话）。
 - 决策见 [D-024](docs/DECISIONS.md#d-024)
 - 成本：3 次 LLM 调用 × ≤ 200 token = 单次推荐 < ¥0.05
 
-**V2.x**：开 LLM 精排。输入 profile + learned_profile.summary_for_llm + 100 候选 + accumulated_constraints → 5 个推荐 + 1-2 个 explore + refine 收敛。
+#### V2.x 精排：LLM rerank top 30 → 5 (3 exploit + 2 explore)
+
+V2 启用 LLM 精排（[D-035](docs/DECISIONS.md#d-035)）。输入：
+- ContextSnapshot (D-034: 餐期 / zone / last_meal / recent_3d / last_feedback / daily_mood / refine_input)
+- profile.taste_description 自然语言
+- 打分后 top 30 candidates (含 dish_role / processed_meat / sweet_sauce / soup_or_broth / grain_type)
+- 最近 3 天 meal_log 摘要
+
+输出：强制结构化 JSON, 每条 candidate 含 `fit_score / health_flags / taste_match / risk_flags / one_line_reason`。
+5 个候选 = 3 exploit (fit_score 排) + 2 explore (打分中段、最近未吃过、未尝试菜系/做法)，命中 [D-015](docs/DECISIONS.md#d-015)。
+refine 时 explore_count=0 (D-015)。
+
+LLM 调用模型：claude-sonnet-4-6（与 reason.py 同 client）。temperature=0.0。失败兜底：退化到打分 top 3 + 规则 reason。
+
+成本估算：单次推荐 1 次 LLM 调用，约 ¥0.05-0.10/次（top30 candidates × 200 token + context + prompt overhead）。
 
 ### 5.7 输出 JSON schema
 
@@ -743,21 +809,49 @@ combo_score (V2+) =
 
 按优先级：
 
-### V2.0：反馈闭环（V1 自用一周后启动）
+### V2.0 + V2.1 合并（[D-033](docs/DECISIONS.md#d-033)）：数据层升级 + 反馈骨架 + LLM 精排 + refine
 
-- `submit_feedback` API + personal_offsets 写入（粒度 = `cuisine::cooking::ingredient`，[D-025](docs/DECISIONS.md#d-025)）
-- meal_log 完整记录（dish 字段补 cuisine + cooking_method）
-- accept_recommendation / log_meal API
-- 飞书反馈卡片字段：rating_taste + rating_satisfaction + tags + note
-- 反馈写入规则（rating 5★ → score_offset += 1.0 等）
+合并理由：V1 推荐质量上限被 schema 缺字段 + taste_description 不进决策 + 缺反馈回环 卡死；继续等 V1 北极星不会自动好转。本轮一锅做（[D-033](docs/DECISIONS.md#d-033)）。
 
-### V2.1：对话收敛 + 探索 + LLM 精排起步
+**A. 数据层升级（前置）**：
+- v3 prompt 补 5 字段：`dish_role` / `processed_meat_flag` / `sweet_sauce_level` / `soup_or_broth_flag` / `grain_type`（[D-032](docs/DECISIONS.md#d-032)）
+- 全量重打两个 zone（shenzhen-bay 11k + home 2.1k），按既有 batch=50 + 并发 16 spawn 规则
+- 50 条人工抽查准确率 ≥ 80% 才算通过
 
+**B. score 升级（V1 6 维 → V2 ~12 维）**：
+- `taste_description` 进决策（不只 reason），LLM 反馈解析员推断 boost/penalty
+- 5 新字段进打分：carb_quality / processed_meat / sweet_sauce / soup_or_broth / dish_role 匹配
+- 距离 / eta / 价格 / 起送 / 配送费 进打分（已有数据未用）
+- 见 §5.6 V2 公式
+
+**C. LLM 精排（[D-035](docs/DECISIONS.md#d-035)）**：
+- 取打分 top 30 + Context（D-034）+ taste_description + 最近 3 天 + last_feedback → 输出强制结构化 JSON
+- 5 个候选 = 3 exploit + 2 explore（[D-015](docs/DECISIONS.md#d-015)）
+- refine 时 explore_count=0
+- 失败兜底：退化到打分 top 3 + 规则 reason
+
+**D. 反馈采集骨架**：
+- 即时 chip + 自由文本：accept chip / reject chip 列表（太油 / 太辣 / 太贵 / 想喝汤 / 主食太多 / 送慢 / 漏汤 等，受控词表见 [chisha/feedback.py](../chisha/feedback.py) `CHIP_VOCAB`）
+- 餐后被动追问：下次饭点 trigger 卡片首行问"上顿感觉？1 句话即可"，跳过不强求
+- 反馈解析员：自然语言 → 结构化 chip 映射（[chisha/feedback.py](../chisha/feedback.py)，[prompts/parse_feedback.md](../prompts/parse_feedback.md)）
+- 数据落 meal_log.jsonl，含 `context_at_recommend` + `chips` + rating + want_again
+
+**E. Context 注入层（[D-034](docs/DECISIONS.md#d-034)）**：
+- 见 [chisha/context.py](../chisha/context.py) ContextSnapshot
+- daily_mood 由 OpenClaw 每日首次饭点 trigger 时问 1 句写入 session 状态
+- 进 L3 软调权 + L4 LLM rerank context
+
+**F. Refine 多轮**：
 - `refine_recommendation` API
-- LLM 精排（取代 V1 的"打分 top 3"），让 LLM 在 100 候选里挑 5 个
-- 5 个候选 + 1-2 个 explore 标记
 - session 状态管理（24h TTL）
+- 用户对推荐表态后（reject + 自然语言），结构化 constraint → 重跑 L3 + L4，不做 explore
 - LLM 自行判断重精排 vs 重召回
+
+**G. 验收**：
+- 8-12 个黄金 case（[tests/golden_cases.yaml](../tests/golden_cases.yaml)） + `scripts/eval_recommend.py` 离线对比 V1 vs V2
+- 自用 1-2 周采集反馈到 30+ 条触发 V2.2
+
+**本轮明确不做**：personal_offsets 实时写入 / learned_profile 聚合（V2.2）/ combo planner 重写 / profile.yaml 大改 schema / 跨店 combo / 健康疲劳"cheat 配额"机制 / Post-meal 主动推送（改成下次饭点被动）.
 
 ### V2.2：learned_profile 统计聚合（不是 LLM 蒸馏）
 
