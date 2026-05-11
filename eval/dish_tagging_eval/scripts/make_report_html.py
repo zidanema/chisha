@@ -280,6 +280,16 @@ HTML_TPL = r"""<!DOCTYPE html>
 </main>
 
 <script>
+// 早绑 onerror, 这样 stat cards / reco 渲染失败也能可视化
+window.addEventListener("error", e => {
+  const el = document.getElementById("js-error");
+  if (el) {
+    el.style.display = "block";
+    el.textContent = `[JS error] ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`;
+  }
+  console.error(e);
+});
+
 const PAYLOAD = __PAYLOAD__;
 const pct = v => (v == null ? "—" : (v * 100).toFixed(1) + "%");
 const pctClass = v => v == null ? "" : (v >= 0.95 ? "gt95" : v >= 0.90 ? "gt90" : v >= 0.80 ? "gt80" : "lt80");
@@ -291,12 +301,13 @@ document.getElementById("header-sub").innerHTML =
   `golden=${PAYLOAD.n_golden} · 模型=${PAYLOAD.aliases.length} · 实际开销=$${PAYLOAD.total_cost.toFixed(4)}`;
 
 // === stat cards ===
-const top = PAYLOAD.recommend.top_accuracy;
-const topM = PAYLOAD.models[top];
+// 注: 不能用 `top` 变量名(和 window.top 全局冲突, 浏览器会 SyntaxError)
+const topAlias = PAYLOAD.recommend.top_accuracy;
+const topM = PAYLOAD.models[topAlias];
 document.getElementById("stat-golden").textContent = PAYLOAD.n_golden;
 document.getElementById("stat-models").textContent = PAYLOAD.aliases.length;
 document.getElementById("stat-cost").textContent = "$" + PAYLOAD.total_cost.toFixed(4);
-document.getElementById("stat-top").textContent = top || "—";
+document.getElementById("stat-top").textContent = topAlias || "—";
 document.getElementById("stat-top-sub").textContent = topM ? `字段准确率 ${pct(topM.field_accuracy_micro)}` : "";
 
 // === 一句话推荐 ===
@@ -630,7 +641,7 @@ function renderErrors() {
 // === 生产建议表 ===
 function buildProdTable() {
   const m = PAYLOAD.models;
-  const top = m[PAYLOAD.recommend.top_accuracy];
+  const topR = m[PAYLOAD.recommend.top_accuracy];
   const haiku = Object.values(m).find(x => x.model_id_actual.includes("haiku")) ||
                 m[PAYLOAD.aliases[1]];
   const cheap = m[PAYLOAD.recommend.cheapest];
@@ -640,10 +651,10 @@ function buildProdTable() {
       <tbody>
         <tr><td>≤ 1万 / 时间敏感</td>
             <td><code>${PAYLOAD.recommend.top_accuracy}</code></td>
-            <td class="num">${fmtDur(top.est_10k_seconds_at_concurrency10)}</td>
-            <td class="num">${fmtMoney(top.estimated_10k_cost_usd)}</td>
-            <td class="num">${fmtDur(top.est_100k_seconds_at_concurrency10)}</td>
-            <td class="num pct ${pctClass(top.field_accuracy_micro)}">${pct(top.field_accuracy_micro)}</td></tr>
+            <td class="num">${fmtDur(topR.est_10k_seconds_at_concurrency10)}</td>
+            <td class="num">${fmtMoney(topR.estimated_10k_cost_usd)}</td>
+            <td class="num">${fmtDur(topR.est_100k_seconds_at_concurrency10)}</td>
+            <td class="num pct ${pctClass(topR.field_accuracy_micro)}">${pct(topR.field_accuracy_micro)}</td></tr>
         <tr><td>1万-10万 / 吞吐优先</td>
             <td><code>${PAYLOAD.recommend.fastest}</code></td>
             <td class="num">${fmtDur(m[PAYLOAD.recommend.fastest].est_10k_seconds_at_concurrency10)}</td>
@@ -662,14 +673,6 @@ function buildProdTable() {
   `;
   document.getElementById("prod-table").innerHTML = tbl;
 }
-
-// === error handler 全局兜底 ===
-window.addEventListener("error", e => {
-  const el = document.getElementById("js-error");
-  el.style.display = "block";
-  el.textContent = `[JS error] ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`;
-  console.error(e);
-});
 
 function safe(name, fn) {
   try { fn(); } catch (e) {
