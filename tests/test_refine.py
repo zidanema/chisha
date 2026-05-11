@@ -16,7 +16,7 @@ from tests.conftest import make_dish, make_restaurant
 # ─────────────────────── chips_to_taste_hints
 def test_chips_to_hints_soup():
     hints = chips_to_taste_hints(["想喝汤"])
-    assert "soup_or_broth" in hints["boost"]
+    assert "wetness" in hints["boost"]
 
 
 def test_chips_to_hints_too_oily_means_low_oil_boost():
@@ -45,7 +45,7 @@ def test_chips_to_hints_unknown_chip_ignored():
 
 def test_chips_to_hints_multiple():
     hints = chips_to_taste_hints(["想喝汤", "太油", "加工肉太多"])
-    assert "soup_or_broth" in hints["boost"]
+    assert "wetness" in hints["boost"]
     assert "low_oil" in hints["boost"]
     assert "processed_meat" in hints["penalty"]
 
@@ -89,7 +89,7 @@ def tiny_zone():
                   raw_name="潮汕牛肉汤", canonical_name="潮汕牛肉汤",
                   cuisine="潮汕", main_ingredient_type="红肉",
                   oil_level=2, protein_grams_estimate=35,
-                  vegetable_ratio_estimate=0.1, soup_or_broth_flag=True,
+                  vegetable_ratio_estimate=0.1, wetness=3,
                   dish_role="主菜", monthly_sales=200),
         make_dish(dish_id="d1_2", restaurant_id="r1",
                   raw_name="蒜蓉空心菜", canonical_name="蒜蓉空心菜",
@@ -167,7 +167,7 @@ def test_refine_increments_round(tmp_path, small_profile, tiny_zone):
     assert out["refine_input"] == "想喝汤别给我面"
     assert "candidates" in out
     # taste_hints 应反映 chips
-    assert "soup_or_broth" in out["taste_hints"]["boost"]
+    assert "wetness" in out["taste_hints"]["boost"]
 
 
 def test_refine_no_explore(tmp_path, small_profile, tiny_zone):

@@ -20,14 +20,14 @@ def make_dish(
     spicy_level: int = 1,
     tags: list[str] | None = None,
     is_available: bool = True,
-    # V2 新字段 (D-032 v3 prompt 重打后才有). 默认 include_v2=True 让 V2 测试能直接用,
-    # 但 test_schemas 应传 include_v2=False (schema 升级是 Session 1 D-032 职责).
+    # V2 新字段 (D-032 v3 schema, 与 chisha/schemas.py 对齐).
+    # 默认 include_v2=True 让 V2 测试能直接用; test_schemas 老的 V1 校验需 include_v2=False.
     include_v2: bool = True,
-    dish_role: str = "主菜",        # 主菜/配菜/汤/主食/小食/饮品
+    dish_role: str = "主菜",        # 主菜/主食/配菜/汤/小食/饮品/套餐
     processed_meat_flag: bool = False,
-    sweet_sauce_level: str = "low",  # low/mid/high
-    soup_or_broth_flag: bool = False,
-    grain_type: str = "无",         # 白米/糙米/全麦/精制面/燕麦/无
+    sweet_sauce_level: int = 0,      # 0-3 (0=无甜味, 2=红烧/糖醋, 3=蜜汁/拔丝)
+    wetness: int = 1,                # 1-3 (1=干煸/凉拌, 2=卤水浸泡, 3=可喝汤底)
+    grain_type: str = "无",          # 白米/糙米杂粮/精制面/全麦面/粗粮/粥/无
 ) -> dict:
     np = {
         "main_ingredient_type": main_ingredient_type,
@@ -44,7 +44,7 @@ def make_dish(
             "dish_role": dish_role,
             "processed_meat_flag": processed_meat_flag,
             "sweet_sauce_level": sweet_sauce_level,
-            "soup_or_broth_flag": soup_or_broth_flag,
+            "wetness": wetness,
             "grain_type": grain_type,
         })
     return {

@@ -28,7 +28,7 @@
    - `is_explore`: bool
    - `combo_index`: 来自输入 candidates 的原始 index
    - `fit_score`: 0.0-1.0, 你对此候选与用户当下需求匹配度的评分
-   - `health_flags`: 对象, 含 `veg_ok`, `protein_ok`, `oil_ok`, `processed_meat`, `sweet_sauce`, `soup_or_broth`, `carb_quality` (字符串 ok/refined/whole_grain/none)
+   - `health_flags`: 对象, 含 `veg_ok`, `protein_ok`, `oil_ok`, `processed_meat`, `sweet_sauce`, `wetness` (bool, 是否含 wetness>=3 的可喝汤水), `carb_quality` (字符串 ok/refined/whole_grain/none)
    - `taste_match`: 0.0-1.0, 与 taste_description 命中度
    - `risk_flags`: 字符串数组, 此 combo 的明显风险 (如 "主食偏多", "油偏高", "送达 > 60min")
    - `one_line_reason`: ≤ 30 字, 直接说"为什么是这条". 命中 daily_mood / taste 时点出来.
@@ -64,7 +64,7 @@
         "oil_ok": true,
         "processed_meat": false,
         "sweet_sauce": false,
-        "soup_or_broth": true,
+        "wetness": true,
         "carb_quality": "ok"
       },
       "taste_match": 0.95,

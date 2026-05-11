@@ -84,7 +84,7 @@ cases:
         - "cooking_method: 油炸"
       prefer:
         - "平均 oil_level <= 2.5"
-        - "至少 2/5 候选含 soup_or_broth_flag=true"
+        - "至少 2/5 候选含 wetness=true"
       top_count: 5
       explore_count: 2
       notes: hard_max_oil_level 调整必须立刻生效
@@ -151,11 +151,11 @@ cases:
         - "每个 combo 总 protein_grams_estimate >= 25"
       must_not_appear: []
       prefer:
-        - "至少 3/5 候选含 soup_or_broth_flag == true"
+        - "至少 3/5 候选含 wetness == true"
         - "推荐潮汕牛肉/酸菜鱼/翘脚牛肉等汤水菜的概率显著高于 baseline"
       top_count: 5
       explore_count: 1
-      notes: 核心验证 soup_or_broth_flag 字段 + Context 注入
+      notes: 核心验证 wetness 字段 + Context 注入
 
   - name: lunch_price_constraint
     description: 中午价格控制在 40 以内
@@ -218,7 +218,7 @@ cases:
         - "sweet_sauce_level == high (糖醋/红烧/拔丝)"
       prefer:
         - "平均 oil_level <= 2.5"
-        - "至少 2/5 候选含 soup_or_broth_flag == true 或 cooking_method ∈ {蒸, 煮, 凉拌}"
+        - "至少 2/5 候选含 wetness == true 或 cooking_method ∈ {蒸, 煮, 凉拌}"
       top_count: 5
       explore_count: 1
       notes: 验证多字段联动 (daily_mood + sweet_sauce + soup_broth + oil)
@@ -285,7 +285,7 @@ cases:
       must_not_appear:
         - "canonical_name 含 面 / 拌面 / 炒面 / 凉面 / 担担面 (粉/米线/河粉等不算)"
       prefer:
-        - "至少 3/5 候选含 soup_or_broth_flag == true"
+        - "至少 3/5 候选含 wetness == true"
       top_count: 5
       explore_count: 0   # refine 时不做探索 (D-015)
       notes: 核心验证 refine_recommendation 接 user_refine_input + 反馈解析员

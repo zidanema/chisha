@@ -92,13 +92,13 @@ def test_fallback_health_flags_correct():
                      "vegetable_ratio_estimate": 0.1,
                      "protein_grams_estimate": 30,
                      "oil_level": 2,
-                     "soup_or_broth_flag": True,
+                     "wetness": 3,
                      "processed_meat_flag": False}])
     out = fallback_rerank([combo], n=1, n_explore=0)
     flags = out[0]["health_flags"]
     assert flags["protein_ok"] is True
     assert flags["oil_ok"] is True
-    assert flags["soup_or_broth"] is True
+    assert flags["wetness"] is True
     assert flags["processed_meat"] is False
 
 
@@ -128,7 +128,7 @@ def test_build_payload_includes_v2_fields(top_30_combos, basic_profile_v2):
     dish = cand["dishes"][0]
     # V2 5 字段都在
     for k in ["dish_role", "processed_meat_flag", "sweet_sauce_level",
-              "soup_or_broth_flag", "grain_type"]:
+              "wetness", "grain_type"]:
         assert k in dish, f"V2 字段 {k} 缺失"
 
 
@@ -179,3 +179,65 @@ def test_rerank_preserves_combo_data(top_30_combos, basic_profile_v2):
     for c in out:
         assert "dishes" in c
         assert "restaurant" in c
+
+
+# ─────────────────────── _validate_llm_candidates 校验加深 (P1)
+from chisha.rerank import _validate_llm_candidates
+
+
+def _good_cand(idx=0, rank=1, explore=False):
+    return {
+        "rank": rank, "is_explore": explore, "combo_index": idx,
+        "fit_score": 0.85, "taste_match": 0.8, "risk_flags": [],
+        "one_line_reason": "ok",
+        "health_flags": {"veg_ok": True, "protein_ok": True, "oil_ok": True,
+                          "processed_meat": False, "sweet_sauce": False,
+                          "wetness": True},
+    }
+
+
+def test_llm_validate_pass():
+    cands = [_good_cand(0, 1), _good_cand(1, 2)]
+    assert _validate_llm_candidates(cands, n_max=5) == cands
+
+
+def test_llm_validate_missing_field_rejects():
+    bad = _good_cand(0, 1)
+    del bad["fit_score"]
+    assert _validate_llm_candidates([bad], n_max=5) is None
+
+
+def test_llm_validate_fit_score_out_of_range():
+    bad = _good_cand(0, 1)
+    bad["fit_score"] = 1.5
+    assert _validate_llm_candidates([bad], n_max=5) is None
+
+
+def test_llm_validate_duplicate_combo_index():
+    a, b = _good_cand(0, 1), _good_cand(0, 2)   # 重复 idx
+    assert _validate_llm_candidates([a, b], n_max=5) is None
+
+
+def test_llm_validate_rank_not_continuous():
+    a, b = _good_cand(0, 1), _good_cand(1, 3)   # 跳过 2
+    assert _validate_llm_candidates([a, b], n_max=5) is None
+
+
+def test_llm_validate_health_flags_missing_subkey():
+    bad = _good_cand(0, 1)
+    del bad["health_flags"]["wetness"]
+    assert _validate_llm_candidates([bad], n_max=5) is None
+
+
+def test_llm_validate_n_max_truncates():
+    cands = [_good_cand(i, i + 1) for i in range(8)]
+    out = _validate_llm_candidates(cands, n_max=5)
+    # 截断到 5 后, rank 仍应连续 1..5; 我们只取前 5, 它们的 rank 已经是 1..5
+    assert out is not None
+    assert len(out) == 5
+
+
+def test_llm_validate_is_explore_must_be_bool():
+    bad = _good_cand(0, 1)
+    bad["is_explore"] = "yes"
+    assert _validate_llm_candidates([bad], n_max=5) is None

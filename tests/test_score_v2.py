@@ -20,7 +20,7 @@ from chisha.score import (
     processed_meat_penalty,
     score_combo,
     sweet_sauce_penalty,
-    soup_or_broth_bonus,
+    wetness_bonus,
     taste_match_bonus,
 )
 from tests.conftest import make_dish, make_restaurant
@@ -33,7 +33,7 @@ def _combo(dishes, restaurant=None):
 
 # ─────────────────────── carb_quality
 def test_carb_quality_whole_grain_positive():
-    c = _combo([make_dish(dish_role="主食", grain_type="糙米")])
+    c = _combo([make_dish(dish_role="主食", grain_type="糙米杂粮")])
     assert carb_quality_score(c) == 1.0
 
 
@@ -49,7 +49,7 @@ def test_carb_quality_no_carb_zero():
 
 def test_carb_quality_mixed():
     c = _combo([
-        make_dish(dish_id="d1", dish_role="主食", grain_type="全麦"),
+        make_dish(dish_id="d1", dish_role="主食", grain_type="全麦面"),
         make_dish(dish_id="d2", dish_role="主食", grain_type="白米"),
     ])
     assert carb_quality_score(c) == 0.0  # +1 - 1
@@ -74,30 +74,30 @@ def test_processed_meat_clean_zero():
 
 # ─────────────────────── sweet_sauce
 def test_sweet_sauce_high():
-    c = _combo([make_dish(sweet_sauce_level="high")])
+    c = _combo([make_dish(sweet_sauce_level=3)])
     assert sweet_sauce_penalty(c) == 1.0
 
 
 def test_sweet_sauce_mid():
-    c = _combo([make_dish(sweet_sauce_level="mid")])
+    c = _combo([make_dish(sweet_sauce_level=2)])
     assert sweet_sauce_penalty(c) == 0.5
 
 
 def test_sweet_sauce_low_zero():
-    c = _combo([make_dish(sweet_sauce_level="low")])
+    c = _combo([make_dish(sweet_sauce_level=0)])
     assert sweet_sauce_penalty(c) == 0.0
 
 
 # ─────────────────────── soup_or_broth
 def test_soup_or_broth_present():
-    c = _combo([make_dish(soup_or_broth_flag=True,
+    c = _combo([make_dish(wetness=3,
                            canonical_name="潮汕牛肉汤")])
-    assert soup_or_broth_bonus(c) == 1.0
+    assert wetness_bonus(c) == 1.0
 
 
 def test_soup_or_broth_absent():
-    c = _combo([make_dish(soup_or_broth_flag=False)])
-    assert soup_or_broth_bonus(c) == 0.0
+    c = _combo([make_dish(wetness=1)])
+    assert wetness_bonus(c) == 0.0
 
 
 # ─────────────────────── dish_role_match
@@ -166,18 +166,18 @@ def test_price_penalty_within_lunch_cap():
 
 # ─────────────────────── taste_match
 def test_taste_match_no_hints_zero():
-    c = _combo([make_dish(soup_or_broth_flag=True)])
+    c = _combo([make_dish(wetness=3)])
     assert taste_match_bonus(c, None) == 0.0
 
 
 def test_taste_match_soup_boost():
-    c = _combo([make_dish(soup_or_broth_flag=True)])
-    hints = {"boost": ["soup_or_broth"], "penalty": []}
+    c = _combo([make_dish(wetness=3)])
+    hints = {"boost": ["wetness"], "penalty": []}
     assert taste_match_bonus(c, hints) == 0.5
 
 
 def test_taste_match_sweet_penalty():
-    c = _combo([make_dish(sweet_sauce_level="high")])
+    c = _combo([make_dish(sweet_sauce_level=3)])
     hints = {"boost": [], "penalty": ["sweet_sauce"]}
     assert taste_match_bonus(c, hints) == -0.5
 
@@ -193,23 +193,23 @@ def _ctx(daily_mood):
 
 
 def test_context_boost_no_context():
-    c = _combo([make_dish(soup_or_broth_flag=True)])
+    c = _combo([make_dish(wetness=3)])
     assert context_boost(c, None) == 0.0
 
 
 def test_context_boost_neutral():
-    c = _combo([make_dish(soup_or_broth_flag=True)])
+    c = _combo([make_dish(wetness=3)])
     ctx = _ctx("neutral")
     assert context_boost(c, ctx) == 0.0
 
 
 def test_context_boost_want_soup_with_soup():
-    c = _combo([make_dish(soup_or_broth_flag=True)])
+    c = _combo([make_dish(wetness=3)])
     assert context_boost(c, _ctx("want_soup")) == 0.5
 
 
 def test_context_boost_want_soup_without_soup():
-    c = _combo([make_dish(soup_or_broth_flag=False)])
+    c = _combo([make_dish(wetness=1)])
     assert context_boost(c, _ctx("want_soup")) == 0.0
 
 
@@ -250,7 +250,7 @@ def test_score_combo_v2_breakdown_includes_new_keys(basic_profile):
     s, br = score_combo(c, basic_profile)
     # V2 新增维度都在 breakdown 里
     for key in ["carb_quality", "processed_meat", "sweet_sauce",
-                "soup_or_broth", "dish_role_match", "distance",
+                "wetness", "dish_role_match", "distance",
                 "eta", "price", "taste_match", "context_boost"]:
         assert key in br, f"V2 维度 {key!r} 应在 breakdown"
 
@@ -275,7 +275,7 @@ def test_score_combo_processed_meat_lowers_total(basic_profile):
 
 def test_score_combo_soup_boost_with_context(basic_profile):
     """同 combo, daily_mood=want_soup 且含汤水 → 更高分."""
-    soup = make_dish(soup_or_broth_flag=True, dish_role="主菜",
+    soup = make_dish(wetness=3, dish_role="主菜",
                      protein_grams_estimate=30)
     veg = make_dish(dish_id="dv", main_ingredient_type="纯素",
                     vegetable_ratio_estimate=0.9, dish_role="配菜")
@@ -291,7 +291,7 @@ def test_v2_default_weights_complete():
         "vegetable_floor_pass", "protein_floor_pass", "low_oil",
         "popularity", "cuisine_preference", "variety_bonus",
         "carb_quality", "processed_meat", "sweet_sauce",
-        "soup_or_broth", "dish_role_match",
+        "wetness", "dish_role_match",
         "distance", "eta", "price",
         "taste_match", "context_boost",
     }

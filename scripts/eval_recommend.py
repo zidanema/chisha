@@ -17,6 +17,7 @@ import argparse
 import copy
 import datetime as dt
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -131,13 +132,13 @@ def compute_metrics(top: list[dict], expected: dict) -> dict[str, Any]:
         return {"n": 0, "veg_pass_ratio": 0, "protein_pass_ratio": 0,
                 "avg_oil": None, "processed_meat_count": 0,
                 "avg_distance_m": None, "avg_total_price": None,
-                "cuisine_diversity": 0, "soup_count": 0}
+                "cuisine_diversity": 0, "wetness_count": 0}
 
     veg_pass, protein_pass = 0, 0
     oils, distances, prices = [], [], []
     cuisines = []
     processed_count = 0
-    soup_count = 0
+    wetness_count = 0
 
     for combo in top:
         dishes = combo.get("dishes", [])
@@ -166,8 +167,8 @@ def compute_metrics(top: list[dict], expected: dict) -> dict[str, Any]:
             np_ = d.get("nutrition_profile", {})
             if np_.get("processed_meat_flag"):
                 processed_count += 1
-            if np_.get("soup_or_broth_flag"):
-                soup_count += 1
+            if np_.get("wetness"):
+                wetness_count += 1
                 break  # 一个 combo 含 soup 算 1 即可
 
     n = len(top)
@@ -180,7 +181,7 @@ def compute_metrics(top: list[dict], expected: dict) -> dict[str, Any]:
         "avg_total_price": round(sum(prices) / len(prices), 1),
         "cuisine_diversity": len(set(cuisines)),
         "processed_meat_count": processed_count,   # V2 字段, V1 数据下=0
-        "soup_count": soup_count,                  # V2 字段, V1 数据下=0
+        "wetness_count": wetness_count,                  # V2 字段, V1 数据下=0
     }
 
 
@@ -192,11 +193,217 @@ def fmt_metric(v: Any) -> str:
     return str(v)
 
 
+# ---------------------------------------------------------------- expected 断言
+def _all_dish_names(top: list[dict]) -> list[str]:
+    names: list[str] = []
+    for c in top:
+        for d in c.get("dishes", []):
+            n = d.get("canonical_name") or d.get("raw_name") or ""
+            if n:
+                names.append(n)
+    return names
+
+
+def _all_cuisines(top: list[dict]) -> list[str]:
+    out: list[str] = []
+    for c in top:
+        for d in c.get("dishes", []):
+            cu = d.get("cuisine")
+            if cu:
+                out.append(cu)
+    return out
+
+
+def _max_oil(top: list[dict]) -> int:
+    m = 0
+    for c in top:
+        for d in c.get("dishes", []):
+            o = (d.get("nutrition_profile") or {}).get("oil_level", 0)
+            if isinstance(o, int) and o > m:
+                m = o
+    return m
+
+
+def _max_spicy(top: list[dict]) -> int:
+    m = 0
+    for c in top:
+        for d in c.get("dishes", []):
+            s = (d.get("nutrition_profile") or {}).get("spicy_level", 0)
+            if isinstance(s, int) and s > m:
+                m = s
+    return m
+
+
+def _check_assertion(line: str, top: list[dict],
+                     metrics: dict, expected: dict) -> tuple[str, str]:
+    """对 expected 里的一行 (must_satisfy / must_not_appear / prefer 通用) 做粗粒度判定.
+
+    返回 (status, detail). status ∈ {PASS, FAIL, SKIP}.
+    SKIP = 模式不在已知 DSL 内, 留给人工判断.
+    """
+    text = line.strip()
+    n = metrics.get("n", 0)
+
+    # 模式 1: "每个 combo ... vegetable_ratio_estimate >= 0.6"
+    if "vegetable_ratio_estimate" in text and ">= 0.6" in text and "每个" in text:
+        ok = metrics.get("veg_pass_ratio", 0) >= 0.99
+        return ("PASS" if ok else "FAIL",
+                f"veg_pass_ratio={metrics.get('veg_pass_ratio')}")
+    if "protein_grams_estimate" in text and ">= 25" in text and "每个" in text:
+        ok = metrics.get("protein_pass_ratio", 0) >= 0.99
+        return ("PASS" if ok else "FAIL",
+                f"protein_pass_ratio={metrics.get('protein_pass_ratio')}")
+    # 模式 2: "无菜 oil_level > X" / "每个 combo 无菜 oil_level > X"
+    m = re.search(r"oil_level\s*>\s*(\d+)", text)
+    if m and ("无" in text or "不可" in text):
+        thresh = int(m.group(1))
+        actual = _max_oil(top)
+        return ("PASS" if actual <= thresh else "FAIL",
+                f"max_oil={actual} <= {thresh}?")
+    # 模式 3: "每个 combo zone == X" / "餐厅 office_zone == X"
+    m = re.search(r"zone\s*==\s*([a-z\-]+)", text)
+    if m and ("每个" in text or "每条" in text):
+        target = m.group(1)
+        bad = []
+        for c in top:
+            oz = (c.get("restaurant") or {}).get("office_zone")
+            if oz and oz != target:
+                bad.append(oz)
+        return ("PASS" if not bad else "FAIL",
+                f"非 {target}: {bad[:3]}")
+    if m and ("不应出现" in text or "不会出现" in text or "不应" in text):
+        target = m.group(1)
+        bad = [oz for c in top
+                if (oz := (c.get("restaurant") or {}).get("office_zone")) == target]
+        return ("PASS" if not bad else "FAIL",
+                f"误出现 {target}: {len(bad)}")
+    # 模式 4: "spicy_level > X"
+    m = re.search(r"spicy_level\s*>\s*(\d+)", text)
+    if m and ("无" in text or "不可" in text or "不应" in text):
+        thresh = int(m.group(1))
+        actual = _max_spicy(top)
+        return ("PASS" if actual <= thresh else "FAIL",
+                f"max_spicy={actual} <= {thresh}?")
+    # 模式 5: "avoid_dishes: A / B / C" - 不应出现这些菜名
+    if "avoid_dishes" in text or "不应出现" in text:
+        # 抽出冒号后的菜名列表 (按 / 或 空格分隔)
+        m = re.search(r"[:：](.+)$", text)
+        if m:
+            blocked = re.findall(r"[一-鿿]+", m.group(1))
+            names = _all_dish_names(top)
+            hit = [b for b in blocked if any(b in nm for nm in names)]
+            return ("PASS" if not hit else "FAIL",
+                    f"命中 avoid: {hit}")
+    # 模式 6: "至少 N/M 候选含 X 字段=true" 或 "至少 N/M 候选含 X >= Y"
+    m = re.search(r"至少\s*(\d+)\s*/\s*\d+\s*候选含\s*(\S+)", text)
+    if m:
+        need = int(m.group(1))
+        flag = m.group(2)
+        # wetness >= 3 / soup_or_broth_flag == true / processed_meat_flag=true
+        cnt = 0
+        for c in top:
+            for d in c.get("dishes", []):
+                np_ = d.get("nutrition_profile") or {}
+                if "wetness" in flag:
+                    w = np_.get("wetness", 0)
+                    if isinstance(w, int) and w >= 3:
+                        cnt += 1
+                        break
+                elif "soup" in flag:
+                    if np_.get("soup_or_broth_flag") or np_.get("wetness", 0) >= 3:
+                        cnt += 1
+                        break
+                elif "processed_meat" in flag and "false" in text.lower():
+                    pass
+                elif "processed_meat" in flag:
+                    if np_.get("processed_meat_flag"):
+                        cnt += 1
+                        break
+        return ("PASS" if cnt >= need else "FAIL",
+                f"含 {flag} 的 combo: {cnt}/{need}")
+    # 模式 7: "top5 中 cuisine == X 数量 <= N"
+    m = re.search(r"cuisine\s*==\s*(\S+).*?(<=|≤)\s*(\d+)", text)
+    if m:
+        cu = m.group(1)
+        thresh = int(m.group(3))
+        cnt = sum(1 for c in top
+                   if any(d.get("cuisine") == cu for d in c.get("dishes", [])))
+        return ("PASS" if cnt <= thresh else "FAIL",
+                f"cuisine={cu} 数={cnt} <= {thresh}?")
+    # 模式 8: "top combo total_price <= N"
+    m = re.search(r"total_price\s*<=\s*(\d+)", text)
+    if m and "每个" in text:
+        thresh = int(m.group(1))
+        bad = []
+        for c in top:
+            tp = sum(d.get("price", 0) for d in c.get("dishes", []))
+            if tp > thresh:
+                bad.append(tp)
+        return ("PASS" if not bad else "FAIL",
+                f"超价: {bad[:3]} > {thresh}")
+    # 模式 9: "top3 中 任何菜 processed_meat_flag == false"
+    if "processed_meat_flag" in text and "top3" in text:
+        top3 = top[:3]
+        bad = [d.get("canonical_name") for c in top3
+                for d in c.get("dishes", [])
+                if (d.get("nutrition_profile") or {}).get("processed_meat_flag")]
+        return ("PASS" if not bad else "FAIL",
+                f"top3 含加工肉: {bad[:3]}")
+    return ("SKIP", "未识别模式 (人工)")
+
+
+def check_case(top: list[dict], expected: dict,
+                metrics: dict) -> dict[str, list[tuple[str, str, str]]]:
+    """跑 expected 下三个段的所有断言, 返回 {段: [(line, status, detail)]}."""
+    result: dict[str, list[tuple[str, str, str]]] = {}
+    for section in ["must_satisfy", "must_not_appear", "prefer"]:
+        items = expected.get(section) or []
+        result[section] = []
+        for line in items:
+            status, detail = _check_assertion(line, top, metrics, expected)
+            result[section].append((line, status, detail))
+    return result
+
+
+def render_assertions(case_results: list[dict]) -> str:
+    """渲染断言矩阵 (markdown)."""
+    out = ["\n## 断言验收 (must_satisfy / must_not_appear / prefer)\n"]
+    out.append("| Case | section | line | status | detail |")
+    out.append("|---|---|---|---|---|")
+    for cr in case_results:
+        name = cr["name"]
+        for section, lines in cr["assertions"].items():
+            for line, status, detail in lines:
+                short_line = line if len(line) <= 50 else line[:47] + "..."
+                out.append(
+                    f"| {name} | {section} | {short_line} | "
+                    f"**{status}** | {detail} |"
+                )
+    # 汇总
+    pass_n = fail_n = skip_n = 0
+    for cr in case_results:
+        for section, lines in cr["assertions"].items():
+            for _, status, _ in lines:
+                if status == "PASS":
+                    pass_n += 1
+                elif status == "FAIL":
+                    fail_n += 1
+                else:
+                    skip_n += 1
+    out.append(
+        f"\n**总计**: PASS={pass_n} / FAIL={fail_n} / SKIP={skip_n}"
+        f" (SKIP=DSL 未覆盖, 留人工)"
+    )
+    return "\n".join(out)
+
+
+
+
 def render_diff(b: dict, c: dict) -> str:
     """单 case baseline vs candidate metric 对比, 输出 markdown 行."""
     keys = ["n", "veg_pass_ratio", "protein_pass_ratio", "avg_oil",
             "avg_distance_m", "avg_total_price", "cuisine_diversity",
-            "processed_meat_count", "soup_count"]
+            "processed_meat_count", "wetness_count"]
     return " | ".join(
         f"{fmt_metric(b.get(k))} → {fmt_metric(c.get(k))}" for k in keys
     )
@@ -248,7 +455,7 @@ def render_table(rows: list[dict]) -> str:
                          ["n", "veg_pass_ratio", "protein_pass_ratio",
                           "avg_oil", "avg_distance_m", "avg_total_price",
                           "cuisine_diversity", "processed_meat_count",
-                          "soup_count"])
+                          "wetness_count"])
             + " |"
         )
         out.append(
@@ -257,7 +464,7 @@ def render_table(rows: list[dict]) -> str:
                          ["n", "veg_pass_ratio", "protein_pass_ratio",
                           "avg_oil", "avg_distance_m", "avg_total_price",
                           "cuisine_diversity", "processed_meat_count",
-                          "soup_count"])
+                          "wetness_count"])
             + " |"
         )
     return "\n".join(out)
@@ -293,11 +500,14 @@ def main() -> int:
         except Exception as e:
             print(f"  ERROR: {type(e).__name__}: {e}", file=sys.stderr)
             continue
+        # 跑 candidate 的 expected 断言
+        assertions = check_case(c_top, case.get("expected") or {}, c_met)
         rows.append({
             "name": name,
             "description": case.get("description", ""),
             "baseline_metrics": b_met,
             "candidate_metrics": c_met,
+            "assertions": assertions,
         })
         if args.verbose:
             print(f"  baseline: {b_met}", file=sys.stderr)
@@ -312,6 +522,7 @@ def main() -> int:
         f"Cases: {len(rows)}\n"
         f"\n## 指标对比 (每个 case 上下两行: baseline / candidate)\n\n"
         + render_table(rows)
+        + render_assertions(rows)
         + "\n\n## 字段说明\n\n"
         "- `n`: top 候选数 (V1=3, V2=5)\n"
         "- `veg%` / `prot%`: top 中满足蔬菜/蛋白下限的比例\n"
@@ -320,7 +531,7 @@ def main() -> int:
         "- `price`: top combo 平均总价 (元)\n"
         "- `cuisine`: top 中不同 cuisine 数 (越大越多样)\n"
         "- `processed`: top 中 processed_meat_flag=true 的菜数 (V2 字段, V1 数据下恒为 0)\n"
-        "- `soup`: top 中含 soup_or_broth_flag=true 的 combo 数 (V2 字段, V1 数据下恒为 0)\n"
+        "- `soup`: top 中含 wetness=true 的 combo 数 (V2 字段, V1 数据下恒为 0)\n"
     )
 
     if args.out:

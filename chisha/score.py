@@ -33,7 +33,7 @@ V2_DEFAULT_WEIGHTS: dict[str, float] = {
     "carb_quality": 0.6,
     "processed_meat": 1.0,    # 取负后扣分
     "sweet_sauce": 0.7,        # 取负后扣分
-    "soup_or_broth": 0.5,
+    "wetness": 0.5,            # 命中"想喝汤"等汤水偏好
     "dish_role_match": 0.4,
     "distance": 0.3,           # 取负后扣分
     "eta": 0.4,                # 取负后扣分
@@ -43,15 +43,14 @@ V2_DEFAULT_WEIGHTS: dict[str, float] = {
 }
 
 
-# 5 个新字段的字面量 (与 v3 prompt 输出对齐)
-GRAIN_GOOD = {"全麦", "糙米", "燕麦", "杂粮"}
-GRAIN_BAD = {"白米", "精制面", "白面"}
-SWEET_HIGH_TOKENS = {"high", "重", 3, "3"}     # 兼容枚举或数值
-SWEET_MID_TOKENS = {"mid", "中", 2, "2"}
+# 5 个新字段的字面量 (与 chisha/schemas.py / D-032 v3 prompt 输出对齐)
+GRAIN_GOOD = {"糙米杂粮", "全麦面", "粗粮", "粥"}
+GRAIN_BAD = {"白米", "精制面"}
 DISH_ROLE_MAIN = "主菜"
 DISH_ROLE_VEG = "配菜"
 DISH_ROLE_SOUP = "汤"
 DISH_ROLE_CARB = "主食"
+DISH_ROLE_COMBO = "套餐"   # 套餐通常自带主菜+主食 (按完整餐处理)
 
 
 def vegetable_floor_score(combo: dict, profile: dict) -> float:
@@ -175,38 +174,68 @@ def processed_meat_penalty(combo: dict) -> float:
 
 
 def sweet_sauce_penalty(combo: dict) -> float:
-    """sweet_sauce_level 高 → 1.0, 中 → 0.5, 低/无 → 0."""
+    """sweet_sauce_level (int 0-3): >=3 全扣 1.0, ==2 扣 0.5, <=1 不扣.
+
+    v3 schema 用 int (D-032). 旧字符串 token 兼容仅给 fallback 不报错.
+    """
     p = 0.0
     for d in combo["dishes"]:
         np_ = d.get("nutrition_profile", {})
         lvl = np_.get("sweet_sauce_level")
         if lvl is None:
             continue
-        if lvl in SWEET_HIGH_TOKENS:
+        # v3 主路径: int 0-3
+        try:
+            lvl_int = int(lvl)
+        except (TypeError, ValueError):
+            continue
+        if lvl_int >= 3:
             p += 1.0
-        elif lvl in SWEET_MID_TOKENS:
+        elif lvl_int == 2:
             p += 0.5
     return min(1.5, p)
 
 
-def soup_or_broth_bonus(combo: dict) -> float:
-    """combo 含至少 1 道汤水菜 → 1.0, 否则 0."""
+def wetness_bonus(combo: dict) -> float:
+    """wetness (int 1-3): combo 含 wetness>=3 → 1.0; 仅含 wetness=2 → 0.5; 否则 0.
+
+    wetness=3 = 可喝汤底 (粿条汤/酸菜鱼); =2 = 卤水浸泡 (关东煮); =1 = 干 (干煸/凉拌).
+    """
+    best = 0.0
     for d in combo["dishes"]:
         np_ = d.get("nutrition_profile", {})
-        if np_.get("soup_or_broth_flag"):
+        w = np_.get("wetness")
+        if w is None:
+            continue
+        try:
+            w_int = int(w)
+        except (TypeError, ValueError):
+            continue
+        if w_int >= 3:
             return 1.0
-    return 0.0
+        if w_int == 2 and best < 0.5:
+            best = 0.5
+    return best
+
+
+# 兼容老命名的别名 (旧测试或外部调用方可能用)
+soup_or_broth_bonus = wetness_bonus
 
 
 def dish_role_match_bonus(combo: dict) -> float:
-    """combo 结构合理度: 主菜+配菜+主食 = 1.0; 主菜+配菜 / 主菜+主食 = 0.5; 单菜 = 0.
+    """combo 结构合理度.
 
-    缺 dish_role 字段时全部按 主菜 处理, 单菜返回 0.
+    一道菜 dish_role=套餐 → 视为主菜+主食组合 (返回 0.5 起步; 含配菜 → 1.0).
+    其他: 主菜+配菜+主食 = 1.0; 主菜+配菜 / 主菜+主食 = 0.5; 单菜 = 0.
+    缺 dish_role 字段时全部按 主菜 处理.
     """
     roles: set[str] = set()
     for d in combo["dishes"]:
         np_ = d.get("nutrition_profile", {})
         roles.add(np_.get("dish_role") or DISH_ROLE_MAIN)
+    # 套餐展开为 主菜+主食 等价覆盖
+    if DISH_ROLE_COMBO in roles:
+        roles.update({DISH_ROLE_MAIN, DISH_ROLE_CARB})
     coverage = len({DISH_ROLE_MAIN, DISH_ROLE_VEG, DISH_ROLE_CARB} & roles)
     if coverage >= 3:
         return 1.0
@@ -274,7 +303,8 @@ def taste_match_bonus(combo: dict, taste_hints: dict | None) -> float:
     boost = set(taste_hints.get("boost") or [])
     penalty = set(taste_hints.get("penalty") or [])
     s = 0.0
-    if "soup_or_broth" in boost and soup_or_broth_bonus(combo) > 0:
+    # 接受 wetness / soup_or_broth 两个别名 (旧调用方兼容)
+    if ({"wetness", "soup_or_broth"} & boost) and wetness_bonus(combo) > 0:
         s += 0.5
     if "low_oil" in boost:
         oils = [d.get("nutrition_profile", {}).get("oil_level", 3)
@@ -286,6 +316,20 @@ def taste_match_bonus(combo: dict, taste_hints: dict | None) -> float:
         s -= 0.5
     if "processed_meat" in penalty and processed_meat_penalty(combo) > 0:
         s -= 0.5
+    # V2 P1 扩展: refine 反馈映射出的更多维度
+    if "carb_heavy" in penalty:
+        # combo 含 dish_role=主食 的菜数 >= 1 时扣
+        carb_n = sum(
+            1 for d in combo["dishes"]
+            if (d.get("nutrition_profile") or {}).get("dish_role") == DISH_ROLE_CARB
+        )
+        if carb_n >= 1:
+            s -= 0.5
+    if "spicy" in penalty:
+        spicies = [d.get("nutrition_profile", {}).get("spicy_level", 0)
+                    for d in combo["dishes"]]
+        if max(spicies, default=0) >= 2:
+            s -= 0.5
     return max(-1.0, min(1.0, s))
 
 
@@ -303,7 +347,7 @@ def context_boost(combo: dict, context: "ContextSnapshot | None") -> float:
         return 0.0
     mood = context.daily_mood
     s = 0.0
-    has_soup = soup_or_broth_bonus(combo) > 0
+    has_wet = wetness_bonus(combo) > 0
     oils = [d.get("nutrition_profile", {}).get("oil_level", 3)
             for d in combo["dishes"]]
     avg_oil = sum(oils) / max(1, len(oils))
@@ -312,7 +356,7 @@ def context_boost(combo: dict, context: "ContextSnapshot | None") -> float:
         for d in combo["dishes"]
     )
     has_processed = processed_meat_penalty(combo) > 0
-    if mood == "want_soup" and has_soup:
+    if mood == "want_soup" and has_wet:
         s += 0.5
     elif mood == "want_light":
         s += 0.3 if avg_oil <= 2 else (-0.3 if avg_oil >= 4 else 0.0)
@@ -361,7 +405,7 @@ def score_combo(
         "carb_quality": carb_quality_score(combo) * _w("carb_quality"),
         "processed_meat": -processed_meat_penalty(combo) * _w("processed_meat"),
         "sweet_sauce": -sweet_sauce_penalty(combo) * _w("sweet_sauce"),
-        "soup_or_broth": soup_or_broth_bonus(combo) * _w("soup_or_broth"),
+        "wetness": wetness_bonus(combo) * _w("wetness"),
         "dish_role_match": dish_role_match_bonus(combo) * _w("dish_role_match"),
         # V2 履约
         "distance": -distance_penalty(combo, profile) * _w("distance"),

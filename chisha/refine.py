@@ -24,16 +24,20 @@ from chisha.session import SessionState, load_session, save_session
 
 # CHIP → taste_hints 映射 (D-035 LLM 反馈解析员产物的精简结构化版)
 # boost = 用户想要的; penalty = 用户不想要的
+# 维度名与 score.taste_match_bonus 对齐: wetness/low_oil/sweet_sauce/processed_meat/
+#                                       carb_heavy/spicy
 _CHIP_TO_HINT: dict[str, tuple[str, str]] = {
     # boost
-    "想喝汤": ("boost", "soup_or_broth"),
+    "想喝汤": ("boost", "wetness"),
     "想清淡": ("boost", "low_oil"),
-    # penalty
-    "太油": ("penalty", "low_oil"),       # boost 反向 = 用户想 low_oil
-    "太甜": ("penalty", "sweet_sauce"),
-    "加工肉太多": ("penalty", "processed_meat"),
     "想吃辣": ("boost", "spicy"),
     "想吃肉": ("boost", "protein"),
+    # penalty
+    "太油": ("penalty", "low_oil"),       # 翻转后变 boost low_oil
+    "太甜": ("penalty", "sweet_sauce"),
+    "太辣": ("penalty", "spicy"),
+    "加工肉太多": ("penalty", "processed_meat"),
+    "主食太多": ("penalty", "carb_heavy"),
 }
 
 
