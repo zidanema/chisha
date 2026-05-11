@@ -23,7 +23,7 @@
 
 - **项目名（对人）**：今天吃点啥
 - **代码名（对机器）**：`chisha`
-- **未来 pip 包**：`chisha`（推荐引擎） + `chisha-data-{office_zone}`（数据按工区拆子包，如 `chisha-data-shenzhen-keji`）
+- **未来 pip 包**：`chisha`（推荐引擎） + `chisha-data-{office_zone}`（数据按工区拆子包，如 `chisha-data-shenzhen-bay`）
 - **sister project**：`chisha-collector`（数据采集 / 清洗 / 打标 / 保鲜，独立维护，[D-027](docs/DECISIONS.md#d-027)）
 
 文档里"今天吃点啥"和 `chisha` 会交替出现，意思一样。
@@ -61,7 +61,7 @@
 - 精排: `chisha/api.py` + `chisha/reason.py` (D-024 不让 LLM 选 3 个)
 - 接入: `integrations/openclaw/` (skill + 飞书卡片渲染)
 - 工具: `scripts/tag_dishes.py` (LLM 打标), `mock_tagged.py` (规则 mock), `dry_run.py`, `inspect_candidates.py`
-- 数据: `data/shenzhen-keji/` (office, 20 家 1302 菜) + `data/home/` (home, 38 家 2117 菜)
+- 数据: `data/shenzhen-bay/` (office, 139 家 7256 菜) + `data/home/` (home, 38 家 2117 菜)
 - 用 mock 数据 dry_run 5 次：lunch/dinner 各推 3 个组合，100% 蔬菜+蛋白达标，跨品牌
 
 ### ⏳ 你接下来要做
@@ -71,9 +71,9 @@
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-xxx
 # 先 spike 50 条抽查
-uv run python -m scripts.tag_dishes shenzhen-keji --limit 50
+uv run python -m scripts.tag_dishes shenzhen-bay --limit 50
 # 抽查 50 条准确率 ≥ 80% 后再跑全量
-uv run python -m scripts.tag_dishes shenzhen-keji
+uv run python -m scripts.tag_dishes shenzhen-bay
 uv run python -m scripts.tag_dishes home
 ```
 
@@ -142,7 +142,7 @@ chisha/
 │   ├── ROADMAP.md             # 路线图
 │   └── archive/               # 旧版设计文档归档
 ├── data/
-│   └── shenzhen-keji/         # 按工区分目录（V2.4 拆 chisha-data-{zone} 子包）
+│   └── shenzhen-bay/          # 按工区分目录（V2.4 拆 chisha-data-{zone} 子包）
 │       ├── restaurants.json
 │       ├── dishes_raw.json
 │       └── dishes_tagged.json

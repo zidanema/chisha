@@ -14,6 +14,8 @@
 
 预计 V1 完成时间：本对话讨论后 4-6 周。
 
+**当前焦点（2026-05-11 晚）**：prompt v1→v2 升级完成（D-031），spike 50 条 violation 8% 通过。下一步：用 v2 prompt 全量重打两个 zone + 重打后再抽 50 条 review。架构重构推迟到 V1.5，见 [D-030](DECISIONS.md#d-030)。collector 漏抓的 21 家店待 V1.5 修。
+
 ---
 
 ## V1 · 自用 MVP（4-6 周）
@@ -22,9 +24,12 @@
 
 ### 必做
 
-- [ ] 从 `chisha-collector` 拉数据 → `data/shenzhen-keji/restaurants.json` + `dishes_raw.json`（D-027）
-- [ ] 商品打标脚本（temperature=0，每批 30-50 条）
-- [ ] 抽查 50 条打标准确率 ≥ 80%
+- [x] 从 `chisha-collector` 拉数据 → `data/shenzhen-keji/restaurants.json` + `dishes_raw.json`（D-027，实际 zone 为 home + shenzhen-bay）
+- [x] 商品打标脚本（temperature=0，每批 30-50 条）
+- [x] **数据校验脚本 `scripts/validate_data.py`**（schema + 引用完整性 + 唯一性 + 打标进度，已用于 2026-05-11 发现 21 家店漏抓菜单）
+- [x] **prompt v1 → v2 升级（D-031）**：5 项结构性修订 + spike 50 条 violation 8% 通过
+- [ ] **v2 全量重打**：`tag_via_subagent prepare all --force-version --version-label v2-promptfix`
+- [ ] 重打后再抽查 50 条人工 review 准确率 ≥ 80%
 - [ ] profile.yaml 手填（弱约束三件套 + spicy_tolerance 整数 + taste_description + meal_trigger_time）
 - [ ] 召回模块（规则 + 弱约束三件套校验 + 多样性过滤）
 - [ ] 抽查 100 个候选合理性
@@ -59,6 +64,25 @@
 | 推荐质量 | 5 次空跑 top 3 都满足"控油+有菜+有蛋白"，商家不集中，reason 具体不空话 |
 | 飞书卡片接入 | OpenClaw cron 11:25/18:00 能稳定推送，deeplink 跳转测试 iOS/Android/PC 三端 |
 | 自用稳定性 | 一周连续可用，**工作日 7 日采纳率 ≥ 50%**（D-028 北极星 V1 目标） |
+
+---
+
+## V1.5 · 数据链路重构（V1 跑完后做，先于 V2.0）
+
+> 目标：把"采集 / 清洗打标 / 对外数据服务"三件事拆成单仓内的独立子模块（[D-030](DECISIONS.md#d-030)）。
+> **触发条件**：V1 工作日 7 日采纳率 ≥ 50% 已达成，主线推荐链路稳定。
+
+- [ ] 把 `~/waimai_data` 接管进 `chisha/collector/`（真机采集 / uiautomator2 / 美团）
+- [ ] 把现有 `chisha/loader.py` + `scripts/tag_dishes.py` + `scripts/tag_via_subagent.py` 收拢到 `chisha/cleaning/`（raw → §5.2 + 打标）
+- [ ] 新建 `chisha/data_service/`：清洗后数据对外的统一入口（list_restaurants / list_dishes / get_restaurant / search_by_tags），后续 V2.3 的 CLI / MCP 都从这里包
+- [ ] 三个子模块之间靠 §5.2 schema 契约解耦，不互相 import 内部细节
+- [ ] 推荐层（现有 `chisha/recall.py` / `score.py` / `api.py`）只消费 `chisha.data_service`，不再读 `data/{zone}/*.json` 文件路径
+- [ ] schema 修正 D-027：sister project 方向作废，本仓单仓三子模块
+
+成功标准：
+- 三子模块各自能单独跑 `uv run pytest tests/{collector,cleaning,data_service}/`
+- 推荐层代码里不再出现 `data/{zone}/restaurants.json` 这种硬路径
+- collector 漏抓菜单或 schema 改字段时，只影响一个子模块
 
 ---
 
@@ -213,8 +237,10 @@
 | V1 自用一周后 top 3 重复严重 / 与 taste_description 错位明显 | D-024 V1 不做 LLM 精排 |
 | 同维度（cuisine,cooking,ingredient）反馈中"A 店好 B 店差"集中 | D-025 offset 粒度 |
 | 6 个月后偏好维度的 N 仍 ≤ 5 | D-025 offset 粒度 |
-| chisha-collector 项目停止维护 / schema 大改 | D-027 数据来源 |
+| chisha-collector 项目停止维护 / schema 大改 | D-027 数据来源（已被 D-030 推翻方向，留作历史） |
 | 反馈数据起来后"采纳但餐后差评"频繁 | D-028 北极星指标 |
+| V1 7 日采纳率 ≥ 50% 已达成 | D-030 启动 V1.5 数据链路重构 |
+| collector schema 变更打挂 shenzhen-bay ≥ 2 次 | D-030 提前启动 V1.5 |
 
 ---
 

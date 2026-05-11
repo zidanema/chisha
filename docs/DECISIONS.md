@@ -813,3 +813,94 @@ V2 目标: ≥ 60% + 餐后好吃度 ≥ 4 星比例 ≥ 70%
 反对意见 / 风险: 无
 
 触发重审的条件: 无
+
+---
+
+## D-030: 数据链路重构推迟到 V1 跑完后做（推翻 D-027 sister project 方向）
+日期: 2026-05-11
+状态: deferred（方向已定，动手时机延后）
+
+背景:
+- D-027 把数据采集划到 sister project chisha-collector 维护，但事实是当前 `~/waimai_data` 只做"raw 采集"，归一化（loader）+ 打标（tag_dishes / tag_via_subagent）都还住在 chisha 仓里。L1/L2 边界是文档承诺，不是事实。
+- 现在 shenzhen-bay 打标只覆盖 46.3%，21 家店被 collector 漏抓菜单；先把这部分跑顺比讨论架构重要。
+
+考虑过的方案:
+- A. 现在就重构：把 waimai_data 接管成 chisha-collector，搬出 loader/tag_*
+- B. 现在不动，先聚焦把 shenzhen-bay 打标补齐 + 推荐链路自用跑通；V1 完成后再做架构重构
+- C. 推翻 D-027，把 collector 拉回 chisha 仓作为独立子模块（三段：采集 / 清洗打标 / 对外数据服务）
+
+决定: 当前聚焦 B（专注主线），重构方向采纳 C（V1 跑完后启动）。
+
+重构方向（V1 后执行，预留 V1.5 阶段）:
+- chisha 单仓三个独立子模块：
+  - `chisha/collector/` ← 接管 waimai_data，负责真机采集（uiautomator2 / 美团）输出 raw
+  - `chisha/cleaning/` ← 当前 `chisha/loader.py` + `scripts/tag_*` 的逻辑，负责 raw → §5.2 schema + 打标
+  - `chisha/data_service/` ← 清洗后数据如何对外（CLI / pip 包 / MCP）
+- 三个子模块之间靠 schema 契约（§5.2）解耦；推荐层（chisha 现有 recall/score/api）只消费 data_service
+- 这反向修正 D-027 的"sister project"方向：合并比分仓更适合一人维护的项目
+
+理由:
+- V1 主线是验证推荐质量，不是验证架构；现在动架构会拖慢主线 1-2 周
+- 一人维护两个仓的成本（schema 同步、双 CI、双发版）比单仓三子模块高
+- 当前 waimai_data 实际上是 collector 的一半，"分仓"只是地理位置区别，不是真正的解耦
+- 单仓三子模块仍然保留可拆分性：未来若要开源采集逻辑，按 module 抽出即可
+
+反对意见 / 风险:
+- 合并后 chisha 仓带上反爬 / ToS 风险代码，开源时需要谨慎
+- 缓解：data_service 子模块单独发包，采集子模块只在内部分支保留
+
+触发立刻执行的条件:
+- V1 工作日 7 日采纳率 ≥ 50%（D-028 北极星 V1 目标）已通过
+- 或：shenzhen-bay 数据被 collector schema 不兼容更新打挂 ≥ 2 次
+
+V1.5（重构阶段）任务清单见 ROADMAP.md。
+
+---
+
+## D-031: tag_dishes prompt v2 升级（5 项改动 + 全量重打）
+日期: 2026-05-11
+状态: active
+
+背景:
+两轮独立 review 揭示旧 prompt（v1）有结构性问题：
+- 我（全量统计 9373 条）发现：canonical_name 残留 5.3% / 套餐误归"主食"219 条 / 同名菜跨店 cuisine 不一致 242 个名字。
+- Codex（独立 30 条 spot check）发现：12/30 = 40% violation，主要在凉拌锚点（L49 默认偏 oil=2）/ tags 集与 example 自相矛盾 / canonical 残留促销词 / 套餐 cooking_method 取了非最油工艺。
+- 旧打标还隐藏 LLM 幻觉问题：含糊套餐名 (d_013_043 "恰巴塔 4 件套"、d_010_031 "商务自选套餐") 被打成完全不相关的"烤鲜活鲍鱼"、"王老吉"。
+
+考虑过的方案:
+- A. 不改 prompt，召回阶段加兜底规则（complete_meal+主食类强制叠蔬菜等）
+- B. 改 prompt 全量重打两个 zone（home + shenzhen-bay）
+- C. 只改高优 3 项，低优 2 项留 V1.5
+- D. 改 schema 扩 cuisine 16 类（加京菜/本帮）配合重打
+
+决定: B —— 5 项一起改 + spike 50 条验证通过 + 全量重打。
+
+理由:
+- A 治标不治本：幻觉菜名（d_013_043 → "烤鲜活鲍鱼"）这种问题不可能在召回层修
+- C 边际成本反而高：5 项一起改 + 一次重打 vs 分两次改 + 两次重打
+- D 改 schema 影响范围大（同步动 DishTagged cuisine enum、所有现有 tagged 数据迁移、D-025），推 V1.5；现 V1 用"快餐/其他"兜底够用
+
+5 项改动（对应 prompts/tag_dishes.md）:
+1. **L94 vs L113 tags 集自相矛盾修复**：example 里 "主食" → "高碳水"，集合保持原样（Codex 主张）
+2. **L40 加套餐处理规则**：多份组合套餐 / 件数套餐 / 双拼按主菜定 main_ingredient + cooking_method，多种工艺取最油的；鸡排堡套餐归白肉不归主食（共识）
+3. **L86-91 canonical_name 加促销词清单**：明确删除"招牌/新品/爆款/尝鲜/福利/加码/专享/神biu手/夜宵拍档/活动/特惠/限时/秒杀/抢手/经典/玩具/赠品/买一送一"；保留"半只/一只/大份/20 个/30 串"等影响分量的规格（共识）
+4. **L49 凉拌锚点重写**：明确无油凉拌=1 / 凉拌带油（捞汁/麻酱）=2 / 红油凉拌/油泼凉拌=3；L53 加"水煮鱼水煮肉(汤面浮油)=5"（Codex 主张）
+5. **L55-61 protein 改 5g bucket**：输出限制 0/5/10/.../60+，禁止 28/38 这种细数；套餐勿按价格线性外推，不确定偏低估（Codex 主张）
+
+不改的（共识）:
+- cuisine 16 类不扩容（D-002 / D-025 相关，留 V1.5 数据层重构时同步）
+- is_complete_meal 水饺争议保留原 prompt 意图（"水饺=true"），改动放在 recall 兜底（complete_meal+protein<20g 强制叠 1 蔬菜或蛋白）—— 用户明示"不强求单菜正餐，组合即可"
+
+验证: 2026-05-11 spike 50 条（覆盖 combo 10 + cold 10 + promo 10 + high 5 + normal 15）:
+- 总 violation 4/50 = **8%**（旧 40% → 新 8%，5 倍降低）
+- 4 个 flagged 全是"主食型套餐归主食"的合理判断（馄饨/恰巴塔/饭团/包子），实际 violation ≈ 0
+- 修复旧打标的幻觉菜名问题（d_013_043 / d_010_031 / 等）
+
+风险:
+- v2 全量重打会覆盖 v1 9373 条标签；回滚需要 git
+- 缓解：tag_via_subagent.py `--version-label v2-promptfix` 标记版本，dishes_tagged.json 仍单文件但每条 metadata.tag_version 区分
+
+触发重审的条件:
+- v2 全量重打后再抽 50 条人工 review 准确率 < 80%
+- 推荐 dry_run 出现明显错例可追溯到打标
+- 下游 D-030 V1.5 重构时 schema 需要再升级

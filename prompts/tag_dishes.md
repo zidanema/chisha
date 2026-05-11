@@ -1,3 +1,15 @@
+<!--
+prompt_version: v2-promptfix
+updated: 2026-05-11
+changelog (vs v1):
+  - L40  加 多份组合套餐 / 件数套餐 / 双拼 处理规则 (按主菜定 + 取最油 cooking_method)
+  - L48-53 oil_level 锚点改写: 凉拌 1/2/3 分级 + 水煮鱼水煮肉=5
+  - L55-61 protein_grams 改 5g bucket (只允许 0/5/10/.../60+) + 套餐勿线性外推
+  - L86-91 canonical_name 加 必删词汇清单 + 必保留规格 + 6 个例子
+  - L113 example tags 修正 (主食 → 高碳水, 与 L94 allowed set 一致)
+see: docs/DECISIONS.md D-031
+-->
+
 你是营养标签助手。给以下外卖菜品打营养画像。
 
 ## 输入字段
@@ -28,16 +40,19 @@
 ## 字段判断准则
 
 ### cuisine（菜系大分类，必选其一）
-湘菜 / 川菜 / 粤菜 / 潮汕 / 东北 / 西北 / 江浙 / 鲁菜 / 京味 / 云贵 / 日式 / 韩式 / 西式 / 东南亚 / 快餐 / 小吃 / 汤粥 / 烧烤 / 火锅 / 轻食健康 / 饮品甜品 / 其他
+湘菜 / 川菜 / 粤菜 / 潮汕 / 东北 / 西北 / 江浙 / 鲁菜 / 日式 / 韩式 / 西式 / 东南亚 / 快餐 / 小吃 / 汤粥 / 其他
 
 判断顺序: restaurant_category_raw → category_raw → 菜名特征 → restaurant_name 推断。
-"水煮牛肉"→川菜; "蒜蓉空心菜"→看店; "潮汕牛肉粿条"→潮汕; "白菜水饺"→东北; "肠粉"→粤菜; "宫保鸡丁"→川菜。
+"水煮牛肉"→川菜; "蒜蓉空心菜"→看店; "潮汕牛肉粿条"→潮汕; "白菜水饺"→东北; "肠粉"→粤菜; "宫保鸡丁"→川菜; 烧烤/火锅/沙拉等无对应分类的归"其他"。
 
 ### main_ingredient_type（主料类型，必选其一）
 红肉 / 白肉 / 海鲜 / 蛋 / 豆制品 / 纯素 / 主食 / 汤 / 其他
 
 - 红肉=牛羊猪; 白肉=鸡鸭; 主食=饭面饺粉粥饼包子等; 汤=以汤为主体
 - 复合菜按主体判断: "白菜水饺"→主食; "番茄牛腩饭"→红肉(以牛腩为蛋白源); "皮蛋瘦肉粥"→主食(粥为载体)
+- **多份组合套餐 / 件数套餐 / 双拼套餐**: 按主菜定 main_ingredient + cooking_method，**多种工艺取最油的**。
+  - "鸡排堡 1+1 套餐"→白肉/油炸 (不归主食); "比萨意面 3 人套餐"→白肉/烤; "30 串烤物套餐"→按主烤物归类
+  - "砂锅粥+爆炒番薯叶套餐"→红肉/海鲜(按粥的主料), cooking_method 取"爆炒"而非"煮" (取最油)
 
 ### cooking_method（烹饪方式，必选其一）
 蒸 / 煮 / 烤 / 炒 / 炖 / 油炸 / 凉拌 / 生 / 煎
@@ -46,19 +61,21 @@
 - 拌面/凉皮 → 凉拌; 寿司刺身 → 生
 
 ### oil_level（1-5 整数，最重要）
-- **1** = 白灼 / 清蒸 / 白煮 / 生食 / 凉拌(无油)
-- **2** = 清炒 / 汆烫 / 潮汕涮煮 / 蒸鱼 / 水饺 / 包子
-- **3** = 家常炒菜 / 番茄炒蛋 / 简单炖煮 / 寿司 / 大部分快餐定食
+- **1** = 白灼 / 清蒸 / 白煮 / 生食 / **明确无油凉拌**(盐拌/白醋拌)
+- **2** = 清炒 / 汆烫 / 潮汕涮煮 / 蒸鱼 / 水饺 / 包子 / **凉拌带油**(捞汁/麻酱/常规凉菜)
+- **3** = 家常炒菜 / 番茄炒蛋 / 简单炖煮 / 寿司 / 大部分快餐定食 / **红油凉拌 / 麻辣凉拌 / 油泼凉拌**
 - **4** = 红烧 / 干煸 / 铁板 / 孜然 / 干炒 / 烤肉 / 麻辣香锅
-- **5** = 油炸 / 油焖 / 爆炒 / 酥炸 / 地三鲜 / 回锅肉 / 锅包肉 / 油泼面
+- **5** = 油炸 / 油焖 / 爆炒 / 酥炸 / 地三鲜 / 回锅肉 / 锅包肉 / 油泼面 / 水煮鱼水煮肉(汤面浮油)
 
-### protein_grams_estimate（整数，克；必须看 price 估）
+### protein_grams_estimate（5g 粒度整数，克）
+**输出限制：只允许 0 / 5 / 10 / 15 / 20 / 25 / 30 / 35 / 40 / 45 / 50 / 55 / 60+。不要输出 28、38 这种细数。**
 - 200g 红肉/白肉菜 ≈ 30-40g 蛋白
-- 价格越高分量越大，按比例估算
 - 主食类（米饭/面/水饺）通常 5-15g
 - 纯蔬菜 0-5g
 - 整鱼/整鸡按价格估，¥40 烤鱼≈25g, ¥80 烤鱼≈50g
 - 单点配菜（凉菜小份）通常 ≤ 10g
+- **套餐勿按价格线性外推**：38 元套餐 ≠ 30g 蛋白；按主菜定，不确定时偏低估
+- 不确定边界时往低估 (宁可漏不可虚高)
 
 ### vegetable_ratio_estimate（0.0-1.0，按体积比）
 - 纯叶菜 0.9-0.95
@@ -84,11 +101,29 @@
 菜名带"麻辣""重辣""特辣""变态辣"取 3。
 
 ### canonical_name
-剥离促销词、份量、辣度、emoji，输出标准菜名:
-- "【新品】水煮牛肉(中辣) 大份" → "水煮牛肉"
+剥离促销词、份量、辣度、emoji，输出标准菜名。
+
+**必删词汇清单**（见到即删，包括其前后修饰）:
+`招牌 / 新品 / 爆款 / 尝鲜 / 福利 / 加码 / 专享 / 神biu手 / 夜宵拍档 / 活动 / 特惠 / 限时 / 秒杀 / 优惠 / 抢手 / 经典 / 玩具 / 赠品 / 买一送一`
+
+**必删的整段结构**:
+- 【】内仅含上述营销词或纯活动文字: 整段删 (例: "【加码福利】捞汁毛豆（尝鲜装）" → "捞汁毛豆")
+- "X 元起" / "X 元尝鲜" / "X 元 N 件" 等价格促销前缀: 删
+- emoji / # 标签 / "活虾现烧" 等营销修饰: 删
+
+**必保留的规格**（影响分量估算）:
+- "半只" / "一只" / "大份" / "小份" 保留
+- "20 个" / "30 串" / "1 斤" 等具体数量保留 (套餐和重量类信息)
+- 风味区分: "潮汕牛肉粿条" 不能简化成 "粿条"; "麻辣小龙虾" 保留 "麻辣"
+
+**例子**:
+- "【新品】水煮牛肉(中辣) 大份" → "水煮牛肉大份"
 - "🔥爆款宫保鸡丁" → "宫保鸡丁"
-- "白菜水饺(20 个)" → "白菜水饺"
-- 但保留品类区分: "潮汕牛肉粿条" 不能简化成 "粿条"
+- "白菜水饺(20 个)" → "白菜水饺 20 个"
+- "招牌烤小羊肉" → "烤小羊肉"
+- "神biu手纯肉套餐 40 串" → "纯肉套餐 40 串"
+- "【加码福利】捞汁毛豆（尝鲜装）" → "捞汁毛豆"
+- "49 元尝鲜 1 斤小龙虾（口味自选）+拌面+饮料" → "小龙虾套餐 1 斤"
 
 ### tags（自由 1-3 个）
 从以下集合按需挑: 高蛋白 / 低脂 / 高纤维 / 重口味 / 下饭 / 清淡 / 适合减脂 / 高碳水 / 油重 / 汤水 / 干吃 / 大份 / 小份
@@ -108,10 +143,10 @@
 输出:
 ```json
 [
-  {"dish_id":"d001","canonical_name":"蒜蓉空心菜","cuisine":"湘菜","main_ingredient_type":"纯素","cooking_method":"炒","oil_level":3,"protein_grams_estimate":3,"vegetable_ratio_estimate":0.95,"is_complete_meal":false,"spicy_level":0,"tags":["高纤维","清淡","适合减脂"]},
-  {"dish_id":"d002","canonical_name":"水煮牛肉","cuisine":"川菜","main_ingredient_type":"红肉","cooking_method":"煮","oil_level":4,"protein_grams_estimate":42,"vegetable_ratio_estimate":0.2,"is_complete_meal":false,"spicy_level":2,"tags":["高蛋白","重口味","下饭"]},
-  {"dish_id":"d003","canonical_name":"白菜水饺","cuisine":"东北","main_ingredient_type":"主食","cooking_method":"煮","oil_level":2,"protein_grams_estimate":12,"vegetable_ratio_estimate":0.3,"is_complete_meal":true,"spicy_level":0,"tags":["清淡","主食"]},
-  {"dish_id":"d004","canonical_name":"潮汕牛肉粿条","cuisine":"潮汕","main_ingredient_type":"红肉","cooking_method":"煮","oil_level":2,"protein_grams_estimate":28,"vegetable_ratio_estimate":0.15,"is_complete_meal":true,"spicy_level":0,"tags":["高蛋白","清淡","汤水"]}
+  {"dish_id":"d001","canonical_name":"蒜蓉空心菜","cuisine":"湘菜","main_ingredient_type":"纯素","cooking_method":"炒","oil_level":3,"protein_grams_estimate":5,"vegetable_ratio_estimate":0.95,"is_complete_meal":false,"spicy_level":0,"tags":["高纤维","清淡","适合减脂"]},
+  {"dish_id":"d002","canonical_name":"水煮牛肉","cuisine":"川菜","main_ingredient_type":"红肉","cooking_method":"煮","oil_level":5,"protein_grams_estimate":40,"vegetable_ratio_estimate":0.2,"is_complete_meal":false,"spicy_level":2,"tags":["高蛋白","重口味","下饭"]},
+  {"dish_id":"d003","canonical_name":"白菜水饺","cuisine":"东北","main_ingredient_type":"主食","cooking_method":"煮","oil_level":2,"protein_grams_estimate":10,"vegetable_ratio_estimate":0.3,"is_complete_meal":true,"spicy_level":0,"tags":["清淡","高碳水"]},
+  {"dish_id":"d004","canonical_name":"潮汕牛肉粿条","cuisine":"潮汕","main_ingredient_type":"红肉","cooking_method":"煮","oil_level":2,"protein_grams_estimate":30,"vegetable_ratio_estimate":0.15,"is_complete_meal":true,"spicy_level":0,"tags":["高蛋白","清淡","汤水"]}
 ]
 ```
 
