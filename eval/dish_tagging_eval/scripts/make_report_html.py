@@ -123,7 +123,7 @@ HTML_TPL = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <title>菜品打标 v3 - 多模型横评报告</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>__CHARTJS__</script>
 <style>
   :root {
     --bg: #0f172a; --panel: #1e293b; --panel2: #334155; --text: #e2e8f0;
@@ -207,6 +207,7 @@ HTML_TPL = r"""<!DOCTYPE html>
   <h1>菜品打标 v3 多模型横评</h1>
   <div class="sub" id="header-sub">loading…</div>
 </header>
+<div id="js-error" style="display:none; padding: 12px 48px; background: #7f1d1d; color: #fef2f2; font-family: ui-monospace,monospace; font-size: 13px;"></div>
 <main>
 
   <section class="card reco">
@@ -662,15 +663,32 @@ function buildProdTable() {
   document.getElementById("prod-table").innerHTML = tbl;
 }
 
+// === error handler 全局兜底 ===
+window.addEventListener("error", e => {
+  const el = document.getElementById("js-error");
+  el.style.display = "block";
+  el.textContent = `[JS error] ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`;
+  console.error(e);
+});
+
+function safe(name, fn) {
+  try { fn(); } catch (e) {
+    const el = document.getElementById("js-error");
+    el.style.display = "block";
+    el.textContent += ` | [${name}] ${e.message}`;
+    console.error(name, e);
+  }
+}
+
 // === init ===
-buildOverallTable();
-drawScatter();
-drawRadar();
-drawFields();
-drawHeatmap();
-drawThroughput();
-buildErrorList();
-buildProdTable();
+safe("overall-table", buildOverallTable);
+safe("scatter", drawScatter);
+safe("radar", drawRadar);
+safe("fields", drawFields);
+safe("heatmap", drawHeatmap);
+safe("throughput", drawThroughput);
+safe("err-list", buildErrorList);
+safe("prod-table", buildProdTable);
 </script>
 </body>
 </html>
@@ -685,8 +703,20 @@ def main() -> int:
     golden = load_golden()
     payload = build_payload(summary, golden)
     payload_json = json.dumps(payload, ensure_ascii=False, default=float)
-    # 不用 .replace 一次性 — payload 巨大且含 $1 等, 用 placeholder split
-    html_out = HTML_TPL.replace("__PAYLOAD__", payload_json)
+
+    # Chart.js: 优先用本地缓存, 否则 fallback CDN
+    chartjs_path = ROOT / ".cache" / "chart.umd.min.js"
+    if chartjs_path.exists():
+        chartjs_inline = chartjs_path.read_text(encoding="utf-8")
+        chartjs_block = chartjs_inline
+        print(f"[report-html] inline Chart.js ({chartjs_path.stat().st_size // 1024} KB)", flush=True)
+    else:
+        # fallback: 用 CDN script tag
+        chartjs_block = "</script>\n<script src=\"https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js\">"
+        print("[report-html] WARN: .cache/chart.umd.min.js missing, falling back to CDN", flush=True)
+
+    # 用 .replace 而非 % / format, 避免 payload 中 % 触发 KeyError
+    html_out = HTML_TPL.replace("__CHARTJS__", chartjs_block).replace("__PAYLOAD__", payload_json)
     OUT.write_text(html_out, encoding="utf-8")
     print(f"[report-html] wrote {OUT}  ({OUT.stat().st_size // 1024} KB)", flush=True)
     return 0
