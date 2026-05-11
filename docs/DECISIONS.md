@@ -906,5 +906,7 @@ V1.5（重构阶段）任务清单见 ROADMAP.md。
 - 下游 D-030 V1.5 重构时 schema 需要再升级
 
 执行进度:
-- 2026-05-11: shenzhen-bay 数据由 collector 重采（239 店 / 11,123 菜，覆盖之前漏抓 21 店），v2 prompt 全量重打完成 — 223 批 × 50/批，16 个 general-purpose subagent 并发 × 14 轮（约 85 分钟）。期间出现 2 类 schema 违规并即时修复：① 1 条 `cuisine="主食"`（米饭被 LLM 误归）；② 12 条 `cooking_method="爆炒"`（应映射到 `炒`）。后续 subagent prompt 加显式黑名单（"cuisine 不要写主食 / 爆炒→炒 / 油焖/红烧→炖 / 酥炸→油炸"）后未再复现。final: `data/shenzhen-bay/dishes_tagged.json` 11,123 条，全部 `metadata.tag_version=v2-promptfix`。
-- 待跑: home v2 重打（2,117 条仍是 `v1-claude-code`）；两个 zone 各抽 50 条人工 review。
+- 2026-05-11 下午: shenzhen-bay 数据由 collector 重采（239 店 / 11,123 菜，覆盖之前漏抓 21 店），v2 prompt 全量重打完成 — 223 批 × 50/批，16 个 general-purpose subagent 并发 × 14 轮（约 85 分钟）。期间出现 2 类 schema 违规并即时修复：① 1 条 `cuisine="主食"`（米饭被 LLM 误归）；② 12 条 `cooking_method="爆炒"`（应映射到 `炒`）。后续 subagent prompt 加显式黑名单（"cuisine 不要写主食 / 爆炒→炒 / 油焖/红烧→炖 / 酥炸→油炸"）后未再复现。final: `data/shenzhen-bay/dishes_tagged.json` 11,123 条，全部 `metadata.tag_version=v2-promptfix`。
+- 2026-05-11 晚: home v2 重打完成 — 43 批 × 50/批（最后批 17 条），16 并发 × 3 轮，0 failed（subagent prompt 自带枚举黑名单，无 merge 阻塞）。final: `data/home/dishes_tagged.json` 2,117 条，全部 `metadata.tag_version=v2-promptfix`。
+- 2026-05-11 晚: 两个 zone 各 50 条 review 样本生成（seed=42，`data/<zone>/review_sample.xlsx`），等待人工 review 准确率 ≥ 80% 验证。
+- 后续: 人工 review 通过即闭合本条，否则触发"重审条件 1"考虑 v3 prompt。
