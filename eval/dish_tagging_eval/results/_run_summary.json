@@ -1,5 +1,12 @@
 {
-  "spent_total_usd": 0.19067744520000002,
-  "failures": {},
-  "n_samples": 150
+  "elapsed_s": 23.661685943603516,
+  "spent_total_usd": 0.0793683,
+  "abort_reason": "",
+  "n_samples": 10,
+  "concurrency": 20,
+  "batch_size": 20,
+  "models": [
+    "sonnet-4.6",
+    "haiku-4.5"
+  ]
 }
