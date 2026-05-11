@@ -394,30 +394,35 @@ V1 只做 `recommend_meal`，V2+ 扩展到 6 个：
 - `delivery_eta_min`: 解析自 raw `delivery_time`（"约15分钟" → 15, "约1小时" → 60）
 - `lat/lng/district`: V1 不需要，删除
 
-`dishes_tagged.json`：
+`dishes_tagged.json`（v3, D-032 加 5 字段）：
 
 ```json
 {
   "dish_id": "d_001_007",
   "restaurant_id": "r_001",
   "raw_name": "水煮牛肉(中辣) 大份",
-  "canonical_name": "水煮牛肉",
+  "canonical_name": "水煮牛肉 大份",
   "price": 48,
   "monthly_sales": 245,
   "cuisine": "川菜",
   "nutrition_profile": {
     "main_ingredient_type": "红肉",
     "cooking_method": "煮",
-    "oil_level": 4,
-    "protein_grams_estimate": 38,
+    "oil_level": 5,
+    "protein_grams_estimate": 40,
     "vegetable_ratio_estimate": 0.2,
     "is_complete_meal": false,
     "spicy_level": 2,
+    "dish_role": "主菜",
+    "processed_meat_flag": false,
+    "sweet_sauce_level": 0,
+    "wetness": 3,
+    "grain_type": "无",
     "tags": ["高蛋白", "重口味", "下饭"]
   },
   "metadata": {
-    "tagged_at": "2026-04-15T03:00:00",
-    "tag_version": "v1",
+    "tagged_at": "2026-05-11T18:00:00",
+    "tag_version": "v3",
     "is_available": true
   }
 }
@@ -425,13 +430,22 @@ V1 只做 `recommend_meal`，V2+ 扩展到 6 个：
 
 字段定义：
 
-- `cuisine`: 菜系大分类（湘菜/川菜/粤菜/潮汕/东北/西北/江浙/鲁菜/日式/韩式/西式/东南亚/快餐/小吃/汤粥/其他）—— D-025 个性化粒度需要
+旧 8 字段（v1/v2 已有）：
+- `cuisine`: 菜系大分类（湘菜/川菜/粤菜/潮汕/东北/西北/江浙/鲁菜/日式/韩式/西式/东南亚/快餐/小吃/汤粥/其他）—— D-025 个性化粒度需要。赣菜/客家/云贵/桂菜归"其他"。
 - `main_ingredient_type`: 红肉/白肉/海鲜/蛋/豆制品/纯素/主食/汤/其他
 - `cooking_method`: 蒸/煮/烤/炒/炖/油炸/凉拌/生/煎
 - `oil_level`: 1-5（1 = 白灼清蒸，5 = 油炸爆炒）
+- `protein_grams_estimate`: 5g 粒度整数（0/5/10/.../60）
 - `vegetable_ratio_estimate`: 0.0-1.0（看体积比）
 - `spicy_level`: 0-3
 - `is_complete_meal`: 一份单点能否接近达标（翘脚牛肉=true，蒜蓉空心菜=false）
+
+v3 新增 5 字段（D-032，2026-05-11）：
+- `dish_role`: **主菜/主食/配菜/汤/小食/饮品/套餐** —— 拼餐槽位，决定能不能拼餐（避免 主食+主食 / 0 蔬菜的失败 combo）。含 "+饭/+饮料/+小菜/+汤/拼盘" 等触发词无须"套餐"二字也归套餐。汉堡/三明治=主食，西式蛋白碗=主菜。
+- `processed_meat_flag`: bool —— 是否含工业重组肉/腌制肉/加工肉肠类（蟹柳/午餐肉/培根/烤肠/腊肠/腊肉=true; 叉烧/烧鸭/卤水/酱牛肉=false 整块鲜肉熟制; 汉堡/披萨主夹层是火腿/培根/香肠则 true）。命中减脂偏好降权。
+- `sweet_sauce_level`: 0-3 —— 酱汁甜度。红烧/糖醋/照烧/烧汁/普通叉烧/烧鸭/韩辣/泰甜辣=2; 蜜汁/蜂蜜/拔丝/麦芽糖=3。命中"受不了甜口"。
+- `wetness`: 1-3 —— 干湿程度。=3 仅指真正"可喝汤底"（汤/粥/汤面/砂锅汤底/火锅）；关东煮/卤水浸泡/红烧浓汁/寿司=2; 干煸/凉拌/沙拉/干拌面=1。套餐含汤升级：套餐名列出"+汤/+鸡汤/+白粥"等可喝汤品 → 整套 wetness=3。命中"喜欢清爽带汤水/受不了油焖"。
+- `grain_type`: 白米/糙米杂粮/精制面/全麦面/粗粮/粥/无 —— 主食类型。米粉/河粉/粿条 = 白米; 商业燕麦棒/能量棒 = 精制面（不归粗粮）; 西式蛋白碗 = 无; 套餐含多主食按更精制/高 GI 的标。
 
 `restaurants.json` 的 `category` 字段由 `dishes_tagged.cuisine` 做 majority vote 后回填（采集器经常拿不到 restaurant 级 category）。
 

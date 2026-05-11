@@ -913,6 +913,75 @@ V1.5（重构阶段）任务清单见 ROADMAP.md。
 
 ---
 
+## D-032: tag_dishes prompt v3 升级（补 5 字段 + 全量重打两个 zone）
+日期: 2026-05-11
+状态: active
+
+背景:
+V2 推荐链路诊断（plan tender-sauteeing-rivest.md）找到 V1 ceiling 被 schema 卡死: 看不懂 dish_role / processed_meat / sweet_sauce / wetness / grain_quality, 纯调权重无法突破 top3 错配（典型反例: 饭团套餐 + 玉米粒 + 饭团 低油高销量但减脂语义差; 卤肉饭和米饭被推到一组造成"主食+主食"）。同时 `taste_description`（"喜欢清爽不油带汤水""受不了甜口"）缺对应字段命中, 偏好进不了打分。
+
+考虑过的方案:
+- A. 不改 schema, 让 score.py 用 raw_name 关键词正则匹配（如"红烧"→甜口）
+- B. 改 prompt 加 5 字段, 全量重打两个 zone（home 2,117 + shenzhen-bay 11,123 = 13,240 菜）
+- C. 只加 dish_role 1 个字段（最高优先级）, 其余拖到 V2.5
+- D. 改 schema + 召回阶段写关键词规则补字段（半结构化）
+
+决定: B —— 5 字段一起加 + spike 50 条迭代到准确率 ≥ 80% + 全量重打。
+
+理由:
+- A 关键词匹配会漏：糖醋鱼名字不含"糖"但是甜口；红烧豆腐≠红烧肉甜度；米粉=高 GI 但 raw_name 看不出来
+- C 边际成本反而高: 一次 prompt 改 + 一次重打 vs 分次 prompt 改 + 多次重打
+- D 半结构化耦合度高（score 改 + 规则改 + LLM 改）, 比纯 prompt 加字段更脆
+
+5 个新字段（与 plan A 部分一致）:
+1. **dish_role** (主菜/主食/配菜/汤/小食/饮品/套餐) — 决定能不能拼餐, 最高优先级
+2. **processed_meat_flag** (bool) — 蟹柳/午餐肉/培根/烤肠/腊肠等工业 or 腌制肉; 叉烧/烧鸭/卤水/酱牛肉=false
+3. **sweet_sauce_level** (0-3) — 红烧/糖醋/照烧/烧汁/普通叉烧=2; 蜜汁/蜂蜜/拔丝=3
+4. **wetness** (1-3) — =3 仅"可喝汤底"; 关东煮/卤水浸泡=2; 干煸/凉拌=1
+5. **grain_type** (白米/糙米杂粮/精制面/全麦面/粗粮/粥/无) — 米粉/河粉=白米; 商业燕麦棒=精制面; 西式蛋白碗=无
+
+迭代过程（spike 50 条）:
+- **r1 草案**: 8 字段示例 + 5 字段定义。Codex adversarial review 找到 1 P0 (schema NutritionProfile extra=forbid 与 5 新字段冲突) + 8 P1 (套餐"+饭"无识别/腊味vs烧腊/叉烧 sweet 锚点/关东煮浸泡/复合套餐 grain 仲裁/汉堡 processed/沙拉 wetness/非中式甜酱)
+- **r1 应用**: 全部修, 字段名固定 wetness（不混用 soup_or_broth_flag）
+- **第 1 轮 spike** (subagent 跑 50 条): 12/50=24% 违规, 5 类系统性错（套餐含汤 wetness 漏判 / 复合粉面 dish_role 误归主食 / 西式蛋白碗 grain_type 幻觉 / 赣菜归江浙 / 调料 spicy 没归 0）
+- **r2 应用**: 8 处补丁
+- **第 2 轮 spike**: 0/50 致命, 1 P1 (西式蛋白碗 is_complete_meal 矛盾) + 3 P2 边界, 准确率 98%
+- **r3 (final v3)**: 补 3 处 (蛋白碗 is_complete_meal=true / 燕麦棒 cooking=烤 / 复合粉面 cooking 取本体)
+
+5 项不改:
+- cuisine 16 项不扩容（D-002 / D-025 相关，留 V1.5 数据层重构）
+- protein 5g 粒度沿用 v2-promptfix
+- canonical_name 必删词清单沿用 v2-promptfix
+
+执行（全量重打）:
+- **打标路径切换**: subagent spawn → API key (OpenRouter via OpenAI 兼容协议). 新脚本 `scripts/tag_via_api.py`, 旧 `tag_via_subagent.py` 保留作 spike fallback.
+- 模型: 全量用 sonnet (anthropic/claude-sonnet-*), Opus 抽 50 条做 ground truth 对照
+- 并发: 16 workers + batch 30, 13k 菜约 5-10 分钟跑完, backoff/retry 兜底
+- 增量: 默认跳过同 tag_version 已有的; --force-version 全量重打
+- 落盘: data/{zone}/dishes_tagged.json, metadata.tag_version=v3
+- schema 升级（chisha/schemas.py）: NutritionProfile 加 5 字段 + dish_role/grain_type 枚举校验 + Field 范围
+
+风险:
+- v3 全量重打覆盖 v2-promptfix 13k 标签; 回滚需 git
+- 缓解: schema.tag_version 区分 + git tag pre-v3
+- LLM 模型选择影响一致性: 同一 prompt 在 sonnet vs opus 上 5 字段判断可能差异; 用 Opus 50 条对照监控
+- OpenRouter 上模型 ID 命名变动: --model 可覆盖
+
+触发重审的条件:
+- v3 全量重打后再抽 50 条人工 review 准确率 < 90%
+- 推荐 dry_run 出现明显错例可追溯到打标
+- cuisine="其他" 占比 > 25% 说明 16 项分类不够用 → V1.5 扩
+- 下游 V1.5 重构时 schema 需要再升级
+
+执行进度:
+- 2026-05-11 19:00 prompts/tag_dishes.md 升级为 v3 (3 轮迭代定稿, 头部 changelog 完整)
+- 2026-05-11 19:00 chisha/schemas.py 加 5 字段 + 枚举校验, NutritionProfile 仍 extra=forbid
+- 2026-05-11 19:00 scripts/tag_via_api.py 新增, OpenRouter via OpenAI 协议; chisha/llm_client_openrouter.py 配套
+- 2026-05-11 19:00 schemas + prompt + 脚本 commit + push（让 Session 2 能 pull 真实 schema）
+- 全量重打: 等 OpenRouter API key 就位
+
+---
+
 ## D-033: V2.0 + V2.1 合并触发, 不等 V1 北极星达标
 日期: 2026-05-11
 状态: active

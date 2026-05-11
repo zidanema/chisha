@@ -1,6 +1,10 @@
 """dish_tagged / restaurant pydantic schemas (DESIGN §5.2).
 
 打标产出 (data/{zone}/dishes_tagged.json) 必须每条通过 ``DishTagged`` 校验。
+
+v3 (D-032) 新增 5 字段: dish_role / processed_meat_flag / sweet_sauce_level
+/ wetness / grain_type. 旧 v1 / v2-promptfix 数据无这 5 字段, 在校验前
+需要全量重打成 v3 (见 scripts/tag_via_api.py).
 """
 from __future__ import annotations
 
@@ -23,6 +27,15 @@ COOKING_METHODS = {
     "蒸", "煮", "烤", "炒", "炖", "油炸", "凉拌", "生", "煎",
 }
 
+# v3 新增 (D-032)
+DISH_ROLES = {
+    "主菜", "主食", "配菜", "汤", "小食", "饮品", "套餐",
+}
+
+GRAIN_TYPES = {
+    "白米", "糙米杂粮", "精制面", "全麦面", "粗粮", "粥", "无",
+}
+
 
 class NutritionProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -34,6 +47,12 @@ class NutritionProfile(BaseModel):
     vegetable_ratio_estimate: float = Field(ge=0.0, le=1.0)
     is_complete_meal: bool
     spicy_level: int = Field(ge=0, le=3)
+    # v3 新增 5 字段 (D-032). 旧 v1 / v2 数据需 v3 prompt 全量重打.
+    dish_role: str
+    processed_meat_flag: bool
+    sweet_sauce_level: int = Field(ge=0, le=3)
+    wetness: int = Field(ge=1, le=3)
+    grain_type: str
     tags: list[str] = Field(default_factory=list)
 
     @field_validator("main_ingredient_type")
@@ -52,6 +71,20 @@ class NutritionProfile(BaseModel):
             raise ValueError(
                 f"cooking_method {v!r} not in {sorted(COOKING_METHODS)}"
             )
+        return v
+
+    @field_validator("dish_role")
+    @classmethod
+    def _check_dish_role(cls, v: str) -> str:
+        if v not in DISH_ROLES:
+            raise ValueError(f"dish_role {v!r} not in {sorted(DISH_ROLES)}")
+        return v
+
+    @field_validator("grain_type")
+    @classmethod
+    def _check_grain_type(cls, v: str) -> str:
+        if v not in GRAIN_TYPES:
+            raise ValueError(f"grain_type {v!r} not in {sorted(GRAIN_TYPES)}")
         return v
 
 

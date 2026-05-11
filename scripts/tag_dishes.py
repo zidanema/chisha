@@ -20,12 +20,19 @@ from chisha.llm_client import call_text
 ROOT = Path(__file__).resolve().parent.parent
 PROMPT_PATH = ROOT / "prompts" / "tag_dishes.md"
 
-# 必需字段（兜底校验）
+# 必需字段（v3, D-032 加 5 字段：dish_role / processed_meat_flag /
+# sweet_sauce_level / wetness / grain_type）
 REQUIRED = {
     "dish_id", "canonical_name", "cuisine", "main_ingredient_type",
     "cooking_method", "oil_level", "protein_grams_estimate",
-    "vegetable_ratio_estimate", "is_complete_meal", "spicy_level", "tags",
+    "vegetable_ratio_estimate", "is_complete_meal", "spicy_level",
+    "dish_role", "processed_meat_flag", "sweet_sauce_level", "wetness",
+    "grain_type", "tags",
 }
+
+_DISH_ROLE_VALUES = {"主菜", "主食", "配菜", "汤", "小食", "饮品", "套餐"}
+_GRAIN_TYPE_VALUES = {"白米", "糙米杂粮", "精制面", "全麦面",
+                      "粗粮", "粥", "无"}
 
 
 def load_data(zone: str) -> tuple[dict, list]:
@@ -66,7 +73,7 @@ def extract_json_array(text: str) -> list:
 
 
 def validate_record(rec: dict) -> list[str]:
-    """返回缺失/不合法字段列表 (空 = OK)."""
+    """返回缺失/不合法字段列表 (空 = OK). v3, D-032 含 5 新字段。"""
     issues = []
     missing = REQUIRED - set(rec.keys())
     if missing:
@@ -75,10 +82,24 @@ def validate_record(rec: dict) -> list[str]:
         issues.append(f"oil_level invalid: {rec['oil_level']}")
     if "spicy_level" in rec and rec["spicy_level"] not in (0, 1, 2, 3):
         issues.append(f"spicy_level invalid: {rec['spicy_level']}")
+    if "sweet_sauce_level" in rec and rec["sweet_sauce_level"] \
+            not in (0, 1, 2, 3):
+        issues.append(f"sweet_sauce_level invalid: {rec['sweet_sauce_level']}")
+    if "wetness" in rec and rec["wetness"] not in (1, 2, 3):
+        issues.append(f"wetness invalid: {rec['wetness']}")
     if "vegetable_ratio_estimate" in rec:
         v = rec["vegetable_ratio_estimate"]
         if not (isinstance(v, (int, float)) and 0.0 <= v <= 1.0):
             issues.append(f"vegetable_ratio_estimate invalid: {v}")
+    if "dish_role" in rec and rec["dish_role"] not in _DISH_ROLE_VALUES:
+        issues.append(f"dish_role invalid: {rec['dish_role']!r}")
+    if "grain_type" in rec and rec["grain_type"] not in _GRAIN_TYPE_VALUES:
+        issues.append(f"grain_type invalid: {rec['grain_type']!r}")
+    if "processed_meat_flag" in rec \
+            and not isinstance(rec["processed_meat_flag"], bool):
+        issues.append(
+            f"processed_meat_flag must be bool: {rec['processed_meat_flag']!r}"
+        )
     return issues
 
 
@@ -113,7 +134,11 @@ def tag_batch(rest_by_id: dict, batch: list[dict], prompt_template: str,
 def merge_into_output(
     raw_dishes_idx: dict, tagged_records: list[dict]
 ) -> list[dict]:
-    """tagged 记录 + raw 字段 → §5.2 dishes_tagged 完整对象."""
+    """tagged 记录 + raw 字段 → §5.2 dishes_tagged 完整对象 (v3, D-032).
+
+    v3 新增 5 字段 (dish_role / processed_meat_flag / sweet_sauce_level /
+    wetness / grain_type) 自动 copy 进 nutrition_profile。
+    """
     now = dt.datetime.now(dt.timezone.utc).isoformat()
     out = []
     for rec in tagged_records:
@@ -138,11 +163,16 @@ def merge_into_output(
                 "vegetable_ratio_estimate": rec["vegetable_ratio_estimate"],
                 "is_complete_meal": rec["is_complete_meal"],
                 "spicy_level": rec["spicy_level"],
+                "dish_role": rec["dish_role"],
+                "processed_meat_flag": rec["processed_meat_flag"],
+                "sweet_sauce_level": rec["sweet_sauce_level"],
+                "wetness": rec["wetness"],
+                "grain_type": rec["grain_type"],
                 "tags": rec.get("tags", []),
             },
             "metadata": {
                 "tagged_at": now,
-                "tag_version": "v1",
+                "tag_version": "v3",
                 "is_available": True,
             },
         })

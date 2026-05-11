@@ -20,3 +20,8 @@ logs/
 
 # 系统
 .DS_Store
+
+# 私密 (api keys 等)
+.env
+.env.*
+!.env.example

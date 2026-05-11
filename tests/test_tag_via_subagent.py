@@ -32,7 +32,7 @@ def _raw_dishes(n: int, rest_id: str = "r_001") -> list[dict]:
 
 
 def _tagged_payload(dish_id: str) -> dict:
-    """subagent 输出 (.out.json 一条) 应有的字段."""
+    """subagent 输出 (.out.json 一条) 应有的字段 (v3, D-032 含 5 新字段)."""
     return {
         "dish_id": dish_id,
         "canonical_name": "测试",
@@ -44,6 +44,11 @@ def _tagged_payload(dish_id: str) -> dict:
         "vegetable_ratio_estimate": 0.2,
         "is_complete_meal": False,
         "spicy_level": 1,
+        "dish_role": "主菜",
+        "processed_meat_flag": False,
+        "sweet_sauce_level": 0,
+        "wetness": 2,
+        "grain_type": "无",
         "tags": ["高蛋白"],
     }
 
@@ -354,7 +359,11 @@ def test_merge_skips_failed_batch(sandbox):
 
 
 def test_merge_keeps_existing_tagged_in_increment_mode(sandbox):
-    """增量模式: 已 tagged 的 100 条保留, 新 5 条 merge 进来 → 总 105."""
+    """增量模式: 已 tagged 的 100 条保留, 新 5 条 merge 进来 → 总 105。
+
+    注: 已 tagged 字典需是 v3 schema (含 5 新字段), 否则 merge_zone 末尾的
+    validate_dishes_tagged 校验会失败 (D-032)。
+    """
     raw = _raw_dishes(105)
     tagged = []
     for d in raw[:100]:
@@ -367,11 +376,14 @@ def test_merge_keeps_existing_tagged_in_increment_mode(sandbox):
                 "main_ingredient_type": "红肉", "cooking_method": "煮",
                 "oil_level": 2, "protein_grams_estimate": 10,
                 "vegetable_ratio_estimate": 0.1,
-                "is_complete_meal": False, "spicy_level": 0, "tags": [],
+                "is_complete_meal": False, "spicy_level": 0,
+                "dish_role": "主菜", "processed_meat_flag": False,
+                "sweet_sauce_level": 0, "wetness": 2, "grain_type": "无",
+                "tags": [],
             },
             "metadata": {
                 "tagged_at": "2026-05-11T00:00:00",
-                "tag_version": "v1-claude-code", "is_available": True,
+                "tag_version": "v3", "is_available": True,
             },
         })
     base = sandbox / "data" / "z1"
@@ -380,7 +392,8 @@ def test_merge_keeps_existing_tagged_in_increment_mode(sandbox):
     (base / "dishes_raw.json").write_text(json.dumps(raw))
     (base / "dishes_tagged.json").write_text(json.dumps(tagged))
 
-    m = tvs.prepare_zone("z1")
+    # tagged 数据是 tag_version="v3"; prepare 必须用同 version 才会跳过它们
+    m = tvs.prepare_zone("z1", version_label="v3")
     b = m["batches"][0]
     _write_out(sandbox, b, [_tagged_payload(did) for did in b["dish_ids"]])
     stats = tvs.merge_zone("z1")

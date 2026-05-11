@@ -42,6 +42,8 @@ def test_extract_json_array_malformed_raises():
 # ---------- validate_record ----------
 
 def _good_record(dish_id="d_001"):
+    """v3 (D-032) record: 8 旧字段 + 5 新字段 (dish_role / processed_meat_flag /
+    sweet_sauce_level / wetness / grain_type)."""
     return {
         "dish_id": dish_id,
         "canonical_name": "测试",
@@ -53,6 +55,11 @@ def _good_record(dish_id="d_001"):
         "vegetable_ratio_estimate": 0.2,
         "is_complete_meal": False,
         "spicy_level": 1,
+        "dish_role": "主菜",
+        "processed_meat_flag": False,
+        "sweet_sauce_level": 0,
+        "wetness": 2,
+        "grain_type": "无",
         "tags": ["高蛋白"],
     }
 
@@ -229,7 +236,7 @@ def test_merge_into_output_combines_raw_and_tagged():
     assert o["price"] == 28.5
     assert o["monthly_sales"] == 80
     assert o["nutrition_profile"]["oil_level"] == 3
-    assert o["metadata"]["tag_version"] == "v1"
+    assert o["metadata"]["tag_version"] == "v3"
     assert o["metadata"]["is_available"] is True
 
 
