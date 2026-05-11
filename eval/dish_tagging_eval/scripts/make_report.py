@@ -63,20 +63,41 @@ def render(summary: dict) -> str:
 
     # === 总体对比表 ===
     lines.append("## 总体对比表\n")
-    lines.append("| 模型 | 字段级准确率(micro) | 整条全对率 | JSON 合法率 | 平均延迟(ms) | p95延迟(ms) | 总成本 | 100万条预估 |")
-    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("| 模型 | 字段准确率 | 整条全对率 | JSON 合法率 | batch_p95(s) | 总成本 | 100万条预估 |")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|")
     rows = []
     for a, s in models.items():
         rows.append((a, s))
-    # 按字段准确率排序
     rows.sort(key=lambda x: -x[1]["field_accuracy_micro"])
     for a, s in rows:
         lines.append(f"| {a} | {fmt_pct(s['field_accuracy_micro'])} | "
                      f"{fmt_pct(s['all_fields_correct_rate'])} | "
                      f"{fmt_pct(s['json_valid_rate'])} | "
-                     f"{s['avg_latency_ms']} | {s['p95_latency_ms']} | "
+                     f"{s['p95_batch_latency_ms']/1000:.1f} | "
                      f"{fmt_money(s['cost_usd_total'])} | "
                      f"${s['estimated_1M_cost_usd']:.0f} |")
+    lines.append("")
+
+    # === 吞吐与生产部署成本 ===
+    lines.append("## 吞吐与生产部署预估\n")
+    lines.append("> batch=20, concurrency=10(经验上 OpenRouter 单账号 rate limit 内的安全值).\n"
+                 "> p95 batch latency 来自评测实测,用于做时间预估(保守口径).\n")
+    lines.append("| 模型 | 单请求吞吐(条/秒) | concurrency=10 吞吐(条/秒) | 跑 1万条耗时 | 跑 10万条耗时 | 1万条成本 |")
+    lines.append("|---|---:|---:|---:|---:|---:|")
+    # 时间格式化
+    def fmt_dur(s):
+        if s < 60: return f"{s:.0f}s"
+        if s < 3600: return f"{s/60:.1f}min"
+        return f"{s/3600:.1f}h"
+    rows_by_acc = sorted(rows, key=lambda x: -x[1]["field_accuracy_micro"])
+    for a, s in rows_by_acc:
+        cost_per = s["cost_usd_total"] / max(1, s["n_total"])
+        cost_10k = cost_per * 10000
+        lines.append(f"| {a} | {s['throughput_per_req_per_s']:.2f} | "
+                     f"{s['throughput_rows_per_s_at_concurrency10']:.1f} | "
+                     f"{fmt_dur(s['est_10k_seconds_at_concurrency10'])} | "
+                     f"{fmt_dur(s['est_100k_seconds_at_concurrency10'])} | "
+                     f"${cost_10k:.2f} |")
     lines.append("")
 
     # === 关键字段分水岭 ===
@@ -140,64 +161,113 @@ def render(summary: dict) -> str:
             lines.append("")
         lines.append("")
 
-    # === 结论与建议 (基于数据自动推) ===
+    # === 结论与建议 (三维度: 准确率 + 成本 + 吞吐) ===
     lines.append("## 结论与建议\n")
-    # 选 top 1 / 性价比
     by_acc = sorted(rows, key=lambda x: -x[1]["field_accuracy_micro"])
     top = by_acc[0]
-    cheapest_acceptable = None  # 准确率 >= top - 5pp 且成本最低
+    # 性价比候选: 准确率 ≥ top - 5pp 的里, 同时综合 (100万条成本) + (10万条耗时) 排序
     threshold = top[1]["field_accuracy_micro"] - 0.05
-    candidates = [r for r in rows if r[1]["field_accuracy_micro"] >= threshold]
-    candidates.sort(key=lambda x: x[1]["estimated_1M_cost_usd"])
-    cheapest_acceptable = candidates[0] if candidates else top
-
-    key4_for = lambda alias: models[alias]["key_4_fields"]
-
-    lines.append(f"### 1. 准确率冠军\n")
-    lines.append(f"- **{top[0]}** (`{top[1]['model_id_actual']}`):字段级准确率 "
-                 f"{fmt_pct(top[1]['field_accuracy_micro'])}, 整条全对率 "
-                 f"{fmt_pct(top[1]['all_fields_correct_rate'])}, 100万条预估成本 ${top[1]['estimated_1M_cost_usd']:.0f}\n")
-
-    lines.append(f"### 2. 性价比推荐\n")
-    if cheapest_acceptable[0] != top[0]:
-        lines.append(f"- **{cheapest_acceptable[0]}** (`{cheapest_acceptable[1]['model_id_actual']}`):"
-                     f"准确率 {fmt_pct(cheapest_acceptable[1]['field_accuracy_micro'])} "
-                     f"(距冠军 -{(top[1]['field_accuracy_micro']-cheapest_acceptable[1]['field_accuracy_micro'])*100:.1f}pp), "
-                     f"100万条预估 **${cheapest_acceptable[1]['estimated_1M_cost_usd']:.0f}** "
-                     f"(冠军的 {cheapest_acceptable[1]['estimated_1M_cost_usd']/max(1,top[1]['estimated_1M_cost_usd']):.1%})")
+    cands = [r for r in rows if r[1]["field_accuracy_micro"] >= threshold]
+    # 综合分: cost 归一化 + time 归一化 (越小越好)
+    if cands:
+        max_cost = max(c[1]["estimated_1M_cost_usd"] for c in cands)
+        max_time = max(c[1]["est_100k_seconds_at_concurrency10"] for c in cands)
+        for c in cands:
+            cn = c[1]["estimated_1M_cost_usd"] / max(1, max_cost)
+            tn = c[1]["est_100k_seconds_at_concurrency10"] / max(1, max_time)
+            c[1]["_combined"] = cn + tn  # 等权 (改 0.7/0.3 等可调)
+        cands.sort(key=lambda x: x[1]["_combined"])
+        cheapest_acceptable = cands[0]
     else:
-        lines.append(f"- 准确率冠军同时也是性价比最优:**{top[0]}**")
-    lines.append("")
+        cheapest_acceptable = top
+    # 速度冠军 (吞吐最大)
+    by_speed = sorted(rows, key=lambda x: -x[1]["throughput_rows_per_s_at_concurrency10"])
+    speed_top = by_speed[0]
 
-    lines.append("### 3. 关键字段分析\n")
+    lines.append("### 1. 三维度并列冠军\n")
+    lines.append(f"- **准确率冠军**:`{top[0]}` — 字段 {fmt_pct(top[1]['field_accuracy_micro'])}, "
+                 f"整条全对 {fmt_pct(top[1]['all_fields_correct_rate'])}")
+    cheapest_by_cost = min(rows, key=lambda x: x[1]['estimated_1M_cost_usd'])
+    lines.append(f"- **成本冠军**:`{cheapest_by_cost[0]}` — 100万条预估 ${cheapest_by_cost[1]['estimated_1M_cost_usd']:.0f}")
+    lines.append(f"- **吞吐冠军**:`{speed_top[0]}` — concurrency=10 下 "
+                 f"{speed_top[1]['throughput_rows_per_s_at_concurrency10']:.1f} 条/秒, "
+                 f"跑 10 万条仅需 ~{(speed_top[1]['est_100k_seconds_at_concurrency10']/60):.0f}min\n")
+
+    lines.append("### 2. 关键字段分水岭\n")
     for f in KEY4:
         rows_f = sorted(models.items(), key=lambda kv: -kv[1]["key_4_fields"].get(f, 0))
         best = rows_f[0]
         worst = rows_f[-1]
         gap = (best[1]["key_4_fields"][f] - worst[1]["key_4_fields"][f]) * 100
-        lines.append(f"- **{f}**: 最好 {best[0]} ({fmt_pct(best[1]['key_4_fields'][f])}), "
-                     f"最差 {worst[0]} ({fmt_pct(worst[1]['key_4_fields'][f])}), gap {gap:.1f}pp")
+        lines.append(f"- **{f}**: 最好 `{best[0]}` ({fmt_pct(best[1]['key_4_fields'][f])}), "
+                     f"最差 `{worst[0]}` ({fmt_pct(worst[1]['key_4_fields'][f])}), gap {gap:.1f}pp")
     lines.append("")
 
-    lines.append("### 4. 推荐生产模型\n")
+    lines.append("### 3. 推荐生产模型 (按数据量与时间窗口)\n")
+    lines.append("生产场景的选型不能只看准确率/成本,**吞吐(完成时间)同等关键**——便宜但跑得慢的模型,几万条数据可能跑一整天.\n")
+    lines.append("| 场景 | 推荐 | 理由 |")
+    lines.append("|---|---|---|")
+    # 场景分桶
+    def hours(sec): return sec / 3600
+    # 1万条 (小批冲刷)
+    for_10k = sorted(rows, key=lambda x: (-x[1]['field_accuracy_micro'],
+                                           x[1]['est_10k_seconds_at_concurrency10']))[0]
+    cost_10k_for = lambda s: (s['cost_usd_total']/s['n_total']) * 10000
+    lines.append(f"| 数据量 ≤ 1万 / 时间敏感 | **`{top[0]}`** | "
+                 f"准确率最高 ({fmt_pct(top[1]['field_accuracy_micro'])}), "
+                 f"1万条 ${cost_10k_for(top[1]):.1f} / "
+                 f"{fmt_dur(top[1]['est_10k_seconds_at_concurrency10'])}; "
+                 f"贵但快, 小批量首选 |")
+    # 速度+准确率均衡 (haiku)
+    haiku = models.get('haiku-4.5')
+    if haiku:
+        lines.append(f"| 数据量 1万-10万 / 准确率可放宽 | **`haiku-4.5`** | "
+                     f"字段准确率 {fmt_pct(haiku['field_accuracy_micro'])}(距冠军 "
+                     f"-{(top[1]['field_accuracy_micro']-haiku['field_accuracy_micro'])*100:.1f}pp), "
+                     f"但吞吐 {haiku['throughput_rows_per_s_at_concurrency10']:.1f} 条/秒, "
+                     f"10万条 {fmt_dur(haiku['est_100k_seconds_at_concurrency10'])}, "
+                     f"${cost_10k_for(haiku)*10:.0f} |")
+    # 极致省钱 (deepseek-flash) - 但要注明慢
+    flash = models.get('deepseek-flash')
+    if flash:
+        lines.append(f"| 数据量 ≥ 10万 / 时间不敏感 | **`deepseek-flash`** | "
+                     f"100万条仅 ${flash['estimated_1M_cost_usd']:.0f} (冠军的 "
+                     f"{flash['estimated_1M_cost_usd']/top[1]['estimated_1M_cost_usd']*100:.1f}%), "
+                     f"但 10万条要 {fmt_dur(flash['est_100k_seconds_at_concurrency10'])}, "
+                     f"准确率 {fmt_pct(flash['field_accuracy_micro'])} |")
+    lines.append("")
+
+    lines.append("### 4. 是否分层方案?\n")
+    # 准确率 gap > 3pp 且成本 gap > 5 倍, 推荐分层
     rec = cheapest_acceptable[0]
     rec_s = cheapest_acceptable[1]
     top_acc = top[1]["field_accuracy_micro"]
     rec_acc = rec_s["field_accuracy_micro"]
-    if rec == top[0]:
-        lines.append(f"**推荐:`{rec}`** — 准确率最高 ({fmt_pct(rec_acc)}), 不需要分层方案.\n")
+    gap_pp = (top_acc - rec_acc) * 100
+    if rec != top[0] and gap_pp >= 3:
+        cost_ratio = top[1]["estimated_1M_cost_usd"] / max(1, rec_s["estimated_1M_cost_usd"])
+        lines.append(f"**建议分层**:`{rec}` 主跑 + `{top[0]}` 回退低置信样本.")
+        lines.append(f"- 主路径:`{rec}` 跑生产数据冲刷, 准确率 {fmt_pct(rec_acc)}, 跑 10万条 ${cost_10k_for(rec_s)*10:.0f} / {fmt_dur(rec_s['est_100k_seconds_at_concurrency10'])}")
+        lines.append(f"- 回退路径:对 JSON 不合法 / 关键字段反直觉(`sweet_sauce_level<2` 但触发词命中, `processed_meat_flag=true` 但烧腊命名 等)的样本, 用 `{top[0]}` 重跑")
+        lines.append(f"- 准确率 gap {gap_pp:.1f}pp 通过分层可拉平到接近 `{top[0]}` 水平")
+        lines.append("")
     else:
-        gap_pp = (top_acc - rec_acc) * 100
-        cost_ratio = rec_s["estimated_1M_cost_usd"] / max(1, top[1]["estimated_1M_cost_usd"])
-        lines.append(f"**推荐:`{rec}` 主跑 + `{top[0]}` 回退难 case** —")
-        lines.append(f"- 主路径:`{rec}` 跑生产数据冲刷, 准确率 {fmt_pct(rec_acc)}, "
-                     f"100万条 ${rec_s['estimated_1M_cost_usd']:.0f}, "
-                     f"比冠军省 {(1-cost_ratio)*100:.0f}%")
-        lines.append(f"- 回退路径:对低置信样本(JSON 不合法 / 关键字段反直觉) 用 `{top[0]}` 重跑, 兜底准确率")
-        lines.append(f"- 准确率差距 {gap_pp:.1f}pp, 通过分层可基本拉平")
+        lines.append(f"**不分层**:`{rec}` 已经接近 top ({fmt_pct(rec_acc)} vs {fmt_pct(top_acc)}, gap {gap_pp:.1f}pp), "
+                     f"分层带来的边际收益不大.")
         lines.append("")
 
-    lines.append("### 5. 已知风险/局限\n")
+    lines.append("### 5. 最终决策 (基于本次实测)\n")
+    # 给出明确的"如果是我"的推荐
+    rec_lines = []
+    rec_lines.append(f"- 如果**只跑一次几千条 → `sonnet-4.6`**:准确率 {fmt_pct(top_acc)} + 速度最快档 + 一次性成本可接受")
+    if haiku and haiku['field_accuracy_micro'] >= 0.85:
+        rec_lines.append(f"- 如果**几万条且要在 1 天内出结果 → `haiku-4.5`**:吞吐最快, 1 万条 ${cost_10k_for(haiku):.0f} / 10 万条 ${cost_10k_for(haiku)*10:.0f}, 准确率 {fmt_pct(haiku['field_accuracy_micro'])} 可被分层补救")
+    if flash:
+        rec_lines.append(f"- 如果**几十万条 + 离线异步 + 极致省钱 → `deepseek-flash`**:成本几乎可忽略, 但要忍受 {fmt_dur(flash['est_100k_seconds_at_concurrency10'])}/10万条的耗时")
+    for x in rec_lines: lines.append(x)
+    lines.append("")
+
+    lines.append("### 6. 已知风险/局限\n")
     risks = []
     # JSON 合法率
     bad_json = [(a, s["json_valid_rate"]) for a, s in models.items() if s["json_valid_rate"] < 0.95]

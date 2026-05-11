@@ -90,7 +90,9 @@ def score_one_model(alias: str, model_id: str, golden: list[dict], results: list
     n_all_correct = 0
     n_json_valid = 0
     costs = []
-    latencies = []
+    latencies = []  # 按 dish 摊薄, 20 条共享一个 latency
+    batch_latencies_set = set()  # 用 (latency_ms, _batch_total_cost) 去重 batch
+    batch_size_seen = 20
     in_tokens_total = 0
     out_tokens_total = 0
     retries = 0
@@ -107,6 +109,11 @@ def score_one_model(alias: str, model_id: str, golden: list[dict], results: list
         # 计费 / 延迟 / token 不依赖 JSON valid (失败也算成本)
         costs.append(float(r.get("cost_usd", 0.0)))
         latencies.append(int(r.get("latency_ms", 0)))
+        # batch 级 latency 去重: 同 batch 的 20 条共享同一个 (latency, batch_cost)
+        batch_key = (int(r.get("latency_ms", 0)), float(r.get("_batch_total_cost", 0.0)),
+                     r.get("retry_count", 0))
+        batch_latencies_set.add(batch_key)
+        batch_size_seen = int(r.get("batch_size", 20)) or 20
         in_tokens_total += int(r.get("input_tokens", 0))
         out_tokens_total += int(r.get("output_tokens", 0))
         retries += int(r.get("retry_count", 0))
@@ -162,6 +169,21 @@ def score_one_model(alias: str, model_id: str, golden: list[dict], results: list
             "field_accuracy": {f: safe_div(agg["field_correct"][f], agg["field_evaluated"][f])
                                 for f in ALL_FIELDS if agg["field_evaluated"][f] > 0},
         }
+    # batch 级延迟统计 (生产侧关心的吞吐基础)
+    batch_lats_ms = sorted([k[0] for k in batch_latencies_set if k[0] > 0])
+    avg_batch_lat = int(statistics.mean(batch_lats_ms)) if batch_lats_ms else 0
+    p95_batch_lat = int(p95(batch_lats_ms)) if batch_lats_ms else 0
+    max_batch_lat = max(batch_lats_ms) if batch_lats_ms else 0
+    # 吞吐 (单请求, 不考虑并发); 生产侧 concurrency 倍数线性扩展, 上限 OpenRouter rate limit
+    throughput_per_req_per_s = (batch_size_seen / (avg_batch_lat / 1000)) if avg_batch_lat else 0.0
+    # 生产侧预估 (concurrency=10, batch=20 - 经验上 OpenRouter 单账号 RPM 限制下安全)
+    PROD_CONCURRENCY = 10
+    rows_per_sec_prod = throughput_per_req_per_s * PROD_CONCURRENCY
+    # 跑 10000 / 100000 条的预估秒数 (用 p95 batch lat, 更保守)
+    n_batches_10k = math.ceil(10000 / batch_size_seen)
+    n_batches_100k = math.ceil(100000 / batch_size_seen)
+    est_10k_sec = math.ceil(n_batches_10k / PROD_CONCURRENCY) * (p95_batch_lat / 1000)
+    est_100k_sec = math.ceil(n_batches_100k / PROD_CONCURRENCY) * (p95_batch_lat / 1000)
     return {
         "model_id_actual": model_id,
         "n_total": n_total,
@@ -175,6 +197,14 @@ def score_one_model(alias: str, model_id: str, golden: list[dict], results: list
         "cost_usd_total": sum(costs),
         "avg_latency_ms": int(statistics.mean(latencies)) if latencies else 0,
         "p95_latency_ms": int(p95(latencies)),
+        "avg_batch_latency_ms": avg_batch_lat,
+        "p95_batch_latency_ms": p95_batch_lat,
+        "max_batch_latency_ms": max_batch_lat,
+        "batch_size": batch_size_seen,
+        "throughput_per_req_per_s": throughput_per_req_per_s,
+        "throughput_rows_per_s_at_concurrency10": rows_per_sec_prod,
+        "est_10k_seconds_at_concurrency10": est_10k_sec,
+        "est_100k_seconds_at_concurrency10": est_100k_sec,
         "input_tokens_total": in_tokens_total,
         "output_tokens_total": out_tokens_total,
         "retries_total": retries,

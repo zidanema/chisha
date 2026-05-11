@@ -72,8 +72,11 @@ async def call_model(
         "messages": [{"role": "user", "content": prompt_text}],
         "temperature": 0,
     }
-    if "deepseek" in model_id.lower() and "v4" in model_id.lower():
-        body["reasoning"] = {"enabled": bool(reasoning_enabled)}
+    # 默认关闭 reasoning (打标任务不需要 long CoT, 且 reasoning 把答案放 reasoning_details
+    # 字段会导致 content=null 解析失败).
+    if not reasoning_enabled:
+        # OpenRouter 统一参数: reasoning.enabled=false 或 effort=none
+        body["reasoning"] = {"enabled": False}
     t0 = time.time()
     r = await client.post(
         f"{BASE_URL}/chat/completions",
@@ -96,7 +99,19 @@ async def call_model(
     if "error" in data:
         raise ORError(f"API error: {data['error']}")
     choice = data["choices"][0]
-    content = choice["message"]["content"] or ""
+    msg = choice.get("message", {}) or {}
+    content = msg.get("content") or ""
+    # Fallback: 部分模型 (kimi/glm 等) 把答案放 reasoning_details / reasoning
+    if not content:
+        details = msg.get("reasoning_details") or []
+        for d in details:
+            t = d.get("text") if isinstance(d, dict) else None
+            if t:
+                content += t
+        if not content:
+            r = msg.get("reasoning")
+            if isinstance(r, str):
+                content = r
     usage = data.get("usage", {}) or {}
     cost = float(usage.get("cost", 0.0))
     return {
