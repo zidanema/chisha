@@ -14,7 +14,11 @@
 
 预计 V1 完成时间：本对话讨论后 4-6 周。
 
-**当前焦点（2026-05-11 晚）**：prompt v1→v2 升级完成（D-031），spike 50 条 violation 8% 通过。下一步：用 v2 prompt 全量重打两个 zone + 重打后再抽 50 条 review。架构重构推迟到 V1.5，见 [D-030](DECISIONS.md#d-030)。collector 漏抓的 21 家店待 V1.5 修。
+**当前状态（2026-05-11 深夜）**：
+
+- shenzhen-bay：collector 重采得到 239 店 / 11,123 菜（覆盖之前漏抓的 21 店），v2 prompt 全量重打完成（223 批 × 50，16 并发 14 轮，~85 min），全部入库 `v2-promptfix`。
+- home：2,117 条仍是 `v1-claude-code`，待 v2 重打。
+- 下一步：① home v2 重打；② 两个 zone 各抽 50 条人工 review；③ 跑通推荐链路自用。架构重构推迟到 V1.5，见 [D-030](DECISIONS.md#d-030)。
 
 ---
 
@@ -28,8 +32,8 @@
 - [x] 商品打标脚本（temperature=0，每批 30-50 条）
 - [x] **数据校验脚本 `scripts/validate_data.py`**（schema + 引用完整性 + 唯一性 + 打标进度，已用于 2026-05-11 发现 21 家店漏抓菜单）
 - [x] **prompt v1 → v2 升级（D-031）**：5 项结构性修订 + spike 50 条 violation 8% 通过
-- [ ] **v2 全量重打**：`tag_via_subagent prepare all --force-version --version-label v2-promptfix`
-- [ ] 重打后再抽查 50 条人工 review 准确率 ≥ 80%
+- [ ] **v2 全量重打**：shenzhen-bay 完成（11,123 条，2026-05-11），home 待跑
+- [ ] 重打后再抽查 50 条人工 review 准确率 ≥ 80%（每个 zone）
 - [ ] profile.yaml 手填（弱约束三件套 + spicy_tolerance 整数 + taste_description + meal_trigger_time）
 - [ ] 召回模块（规则 + 弱约束三件套校验 + 多样性过滤）
 - [ ] 抽查 100 个候选合理性
