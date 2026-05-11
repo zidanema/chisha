@@ -28,7 +28,9 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from chisha.context import build_context                          # noqa: E402
 from chisha.recall import load_profile, load_zone_data, recall   # noqa: E402
+from chisha.rerank import rerank                                  # noqa: E402
 from chisha.score import diversify_top, rank_combos               # noqa: E402
 
 
@@ -99,18 +101,27 @@ def run_v1(profile: dict, meal_log: list[dict], meal_type: str,
 
 def run_v2(profile: dict, meal_log: list[dict], meal_type: str,
            today: dt.date, daily_mood: str | None = None,
-           refine_input: str | None = None, top_n: int = 5) -> list[dict]:
-    """V2 链路 stub. V2 实现完成前等同于 V1.
+           refine_input: str | None = None, top_n: int = 5,
+           use_llm: bool = False) -> list[dict]:
+    """V2 链路: build_context → recall → rank_combos(V2) → LLM rerank → top n.
 
-    完成后此处会调:
-      1. build_context(profile, meal_log, meal_type, today, daily_mood, refine_input)
-      2. recall (含 dish_role 拼餐)
-      3. rank_combos (V2 ~12 维)
-      4. LLM rerank top30 → 5 (3 exploit + 2 explore)
-      5. fallback to diversify_top on LLM failure
+    Args:
+        use_llm: True 时 rerank 调 LLM, False 时走 fallback (规则 rerank).
+                 默认 False 让 eval 跑得快; 真正比对推荐质量时改 True.
     """
-    print("  [WARN] V2 链路尚未实现, 当前回退到 V1", file=sys.stderr)
-    return run_v1(profile, meal_log, meal_type, today, top_n=top_n)
+    zone = _resolve_zone(profile, meal_type)
+    rests, tagged = load_zone_data(zone, ROOT)
+
+    ctx = build_context(profile, meal_log, meal_type, today,
+                        daily_mood=daily_mood, refine_input=refine_input)
+    combos = recall(profile, rests, tagged, meal_log, today)
+    ranked = rank_combos(combos, profile, meal_log, today,
+                         context=ctx, meal_type=meal_type)
+    top30 = ranked[:30]
+    out = rerank(top30, profile, context=ctx, meal_log=meal_log,
+                 n=top_n, n_explore=2, refine=bool(refine_input),
+                 use_llm=use_llm)
+    return out
 
 
 # ---------------------------------------------------------------- metrics
