@@ -19,99 +19,99 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_minimal_dish_passes():
-    d = make_dish()
+    d = make_dish(include_v2=False)
     DishTagged.model_validate(d)
 
 
 def test_oil_level_out_of_range():
-    d = make_dish(oil_level=6)
+    d = make_dish(oil_level=6, include_v2=False)
     with pytest.raises(ValidationError):
         DishTagged.model_validate(d)
 
 
 def test_oil_level_zero_rejected():
-    d = make_dish(oil_level=0)
+    d = make_dish(oil_level=0, include_v2=False)
     with pytest.raises(ValidationError):
         DishTagged.model_validate(d)
 
 
 def test_spicy_level_out_of_range():
-    d = make_dish(spicy_level=4)
+    d = make_dish(spicy_level=4, include_v2=False)
     with pytest.raises(ValidationError):
         DishTagged.model_validate(d)
 
 
 def test_spicy_level_negative_rejected():
-    d = make_dish(spicy_level=-1)
+    d = make_dish(spicy_level=-1, include_v2=False)
     with pytest.raises(ValidationError):
         DishTagged.model_validate(d)
 
 
 def test_vegetable_ratio_above_one():
-    d = make_dish(vegetable_ratio_estimate=1.5)
+    d = make_dish(vegetable_ratio_estimate=1.5, include_v2=False)
     with pytest.raises(ValidationError):
         DishTagged.model_validate(d)
 
 
 def test_vegetable_ratio_negative():
-    d = make_dish(vegetable_ratio_estimate=-0.1)
+    d = make_dish(vegetable_ratio_estimate=-0.1, include_v2=False)
     with pytest.raises(ValidationError):
         DishTagged.model_validate(d)
 
 
 def test_protein_negative_rejected():
-    d = make_dish(protein_grams_estimate=-1)
+    d = make_dish(protein_grams_estimate=-1, include_v2=False)
     with pytest.raises(ValidationError):
         DishTagged.model_validate(d)
 
 
 def test_unknown_cuisine_rejected():
-    d = make_dish(cuisine="俄罗斯菜")
+    d = make_dish(cuisine="俄罗斯菜", include_v2=False)
     with pytest.raises(ValidationError):
         DishTagged.model_validate(d)
 
 
 def test_unknown_ingredient_rejected():
-    d = make_dish(main_ingredient_type="昆虫")
+    d = make_dish(main_ingredient_type="昆虫", include_v2=False)
     with pytest.raises(ValidationError):
         DishTagged.model_validate(d)
 
 
 def test_unknown_cooking_method_rejected():
-    d = make_dish(cooking_method="冻干")
+    d = make_dish(cooking_method="冻干", include_v2=False)
     with pytest.raises(ValidationError):
         DishTagged.model_validate(d)
 
 
 def test_extra_field_rejected_on_dish():
-    d = make_dish()
+    d = make_dish(include_v2=False)
     d["unexpected"] = "x"
     with pytest.raises(ValidationError):
         DishTagged.model_validate(d)
 
 
 def test_extra_field_rejected_on_nutrition():
-    d = make_dish()
+    d = make_dish(include_v2=False)
     d["nutrition_profile"]["fat_grams"] = 10
     with pytest.raises(ValidationError):
         DishTagged.model_validate(d)
 
 
 def test_missing_field_rejected():
-    d = make_dish()
+    d = make_dish(include_v2=False)
     del d["nutrition_profile"]["oil_level"]
     with pytest.raises(ValidationError):
         DishTagged.model_validate(d)
 
 
 def test_negative_price_rejected():
-    d = make_dish(price=-1.0)
+    d = make_dish(price=-1.0, include_v2=False)
     with pytest.raises(ValidationError):
         DishTagged.model_validate(d)
 
 
 def test_validate_dishes_tagged_batch():
-    items = [make_dish(dish_id=f"d_{i:03d}") for i in range(3)]
+    items = [make_dish(dish_id=f"d_{i:03d}", include_v2=False) for i in range(3)]
     out = validate_dishes_tagged(items)
     assert len(out) == 3
     assert all(isinstance(o, DishTagged) for o in out)

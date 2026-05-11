@@ -20,7 +20,33 @@ def make_dish(
     spicy_level: int = 1,
     tags: list[str] | None = None,
     is_available: bool = True,
+    # V2 新字段 (D-032 v3 prompt 重打后才有). 默认 include_v2=True 让 V2 测试能直接用,
+    # 但 test_schemas 应传 include_v2=False (schema 升级是 Session 1 D-032 职责).
+    include_v2: bool = True,
+    dish_role: str = "主菜",        # 主菜/配菜/汤/主食/小食/饮品
+    processed_meat_flag: bool = False,
+    sweet_sauce_level: str = "low",  # low/mid/high
+    soup_or_broth_flag: bool = False,
+    grain_type: str = "无",         # 白米/糙米/全麦/精制面/燕麦/无
 ) -> dict:
+    np = {
+        "main_ingredient_type": main_ingredient_type,
+        "cooking_method": cooking_method,
+        "oil_level": oil_level,
+        "protein_grams_estimate": protein_grams_estimate,
+        "vegetable_ratio_estimate": vegetable_ratio_estimate,
+        "is_complete_meal": is_complete_meal,
+        "spicy_level": spicy_level,
+        "tags": tags or [],
+    }
+    if include_v2:
+        np.update({
+            "dish_role": dish_role,
+            "processed_meat_flag": processed_meat_flag,
+            "sweet_sauce_level": sweet_sauce_level,
+            "soup_or_broth_flag": soup_or_broth_flag,
+            "grain_type": grain_type,
+        })
     return {
         "dish_id": dish_id,
         "restaurant_id": restaurant_id,
@@ -29,16 +55,7 @@ def make_dish(
         "price": price,
         "monthly_sales": monthly_sales,
         "cuisine": cuisine,
-        "nutrition_profile": {
-            "main_ingredient_type": main_ingredient_type,
-            "cooking_method": cooking_method,
-            "oil_level": oil_level,
-            "protein_grams_estimate": protein_grams_estimate,
-            "vegetable_ratio_estimate": vegetable_ratio_estimate,
-            "is_complete_meal": is_complete_meal,
-            "spicy_level": spicy_level,
-            "tags": tags or [],
-        },
+        "nutrition_profile": np,
         "metadata": {
             "tagged_at": "2026-05-11T00:00:00",
             "tag_version": "test",
