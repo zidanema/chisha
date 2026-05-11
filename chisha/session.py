@@ -82,12 +82,27 @@ def save_session(state: SessionState, root: Path) -> Path:
     return path
 
 
-def load_session(session_id: str, root: Path) -> SessionState | None:
+def load_session(
+    session_id: str,
+    root: Path,
+    check_expiry: bool = True,
+    ttl_hours: int = DEFAULT_TTL_HOURS,
+    now: dt.datetime | None = None,
+) -> SessionState | None:
+    """读取 session. 默认 check_expiry=True 时, 过期返回 None.
+
+    Args:
+        check_expiry: True 时过期 session 视为 None (与 refine 文档语义一致).
+                      False 时返回原始 state (debug / cleanup_expired 内部用).
+    """
     path = _session_path(root, session_id)
     if not path.exists():
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
-    return SessionState.from_dict(data)
+    state = SessionState.from_dict(data)
+    if check_expiry and is_expired(state, ttl_hours=ttl_hours, now=now):
+        return None
+    return state
 
 
 def is_expired(state: SessionState, ttl_hours: int = DEFAULT_TTL_HOURS,
@@ -102,7 +117,7 @@ def is_expired(state: SessionState, ttl_hours: int = DEFAULT_TTL_HOURS,
 
 def cleanup_expired(root: Path, ttl_hours: int = DEFAULT_TTL_HOURS,
                     now: dt.datetime | None = None) -> int:
-    """清理过期 session 文件, 返回删除数."""
+    """清理过期 session 文件, 返回删除数. 走 raw read, 不走 load_session 的 expiry 短路."""
     n = 0
     for p in _sessions_dir(root).glob("*.json"):
         try:

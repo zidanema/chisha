@@ -98,3 +98,35 @@ def test_session_increment_round(tmp_path):
     loaded2 = load_session("sid_x", tmp_path)
     assert loaded2.round == 3
     assert loaded2.refine_history == ["想喝汤", "别给我面"]
+
+
+def test_load_session_expired_returns_none(tmp_path):
+    """过期 session load 时默认应返回 None (与 refine 文档语义一致)."""
+    s = create_session("sid_expired", "lunch", "z",
+                        now=dt.datetime(2026, 5, 10, 12))
+    save_session(s, tmp_path)
+    # 25h 后 load
+    later = dt.datetime(2026, 5, 11, 13)
+    assert load_session("sid_expired", tmp_path, now=later) is None
+
+
+def test_load_session_skip_expiry_returns_state(tmp_path):
+    """check_expiry=False 时即使过期也返回 state (debug 用)."""
+    s = create_session("sid_old", "lunch", "z",
+                        now=dt.datetime(2026, 5, 10, 12))
+    save_session(s, tmp_path)
+    later = dt.datetime(2026, 5, 11, 13)
+    state = load_session("sid_old", tmp_path,
+                          check_expiry=False, now=later)
+    assert state is not None
+    assert state.session_id == "sid_old"
+
+
+def test_load_session_fresh_passes_expiry_check(tmp_path):
+    """未过期 session 默认应正常返回."""
+    s = create_session("sid_fresh", "lunch", "z",
+                        now=dt.datetime(2026, 5, 13, 12))
+    save_session(s, tmp_path)
+    later = dt.datetime(2026, 5, 13, 14)   # 2h 后
+    state = load_session("sid_fresh", tmp_path, now=later)
+    assert state is not None
