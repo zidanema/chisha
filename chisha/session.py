@@ -1,6 +1,6 @@
 """推荐 session 状态管理 (D-033 V2.1).
 
-每次 recommend_meal 创建一个 session, 24h TTL, 落本地 sessions/{session_id}.json.
+每次 recommend_meal 创建一个 session, 24h TTL, 落本地 logs/sessions/{session_id}.json.
 refine_recommendation 通过 session_id 找回上次的 candidates + context + round 数.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Any
 
 
 DEFAULT_TTL_HOURS = 24
-SESSIONS_DIRNAME = "sessions"
+SESSIONS_DIRNAME = "logs/sessions"
 
 
 @dataclass
