@@ -365,7 +365,9 @@ def run_zone(
         "failed_dish_ids": [did for _, dids, _ in failed_batches for did in dids],
         "schema_validated": schema_validated,
         "elapsed_sec": round(elapsed, 1),
-        "out_path": str(out_target.relative_to(ROOT)),
+        "out_path": (str(out_target.relative_to(ROOT))
+                     if out_target.is_relative_to(ROOT)
+                     else str(out_target)),
     }
     return stats
 

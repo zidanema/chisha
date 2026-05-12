@@ -978,7 +978,19 @@ V2 推荐链路诊断（plan tender-sauteeing-rivest.md）找到 V1 ceiling 被 
 - 2026-05-11 19:00 chisha/schemas.py 加 5 字段 + 枚举校验, NutritionProfile 仍 extra=forbid
 - 2026-05-11 19:00 scripts/tag_via_api.py 新增, OpenRouter via OpenAI 协议; chisha/llm_client_openrouter.py 配套
 - 2026-05-11 19:00 schemas + prompt + 脚本 commit + push（让 Session 2 能 pull 真实 schema）
-- 全量重打: 等 OpenRouter API key 就位
+- 2026-05-12 02:00 全量重打完成 (deepseek/deepseek-v4-flash via OpenRouter, .env 用 eval 子系统配置好的 OPENROUTER_API_KEY):
+  - home: 2,117 条 (v3), 60 条因 2 个 batch JSON parse 失败漏打 → 用 max-attempts=5 backfill 补打成功
+  - shenzhen-bay: 11,123 条 (v3), 0 batch failed
+  - 总计 13,240 菜 100% 落地, 0 漏
+  - 元数据: metadata.tag_version=v3 全量
+  - 性能: home 30 workers ≈ 12 min; shenzhen-bay 60 workers ≈ 71 min (DeepSeek RPS 实测有限, 加并发收益减弱)
+- 2026-05-12 02:00 scripts/normalize_v3_enums.py (新增) deterministic 修补 LLM 枚举漂移:
+  - cooking_method: 卤/卤水/酱卤→炖, 熏/烟熏→烤, 炸→油炸, 爆炒→炒, 红烧/油焖/烧→炖, 酥炸/脆皮→油炸
+  - main_ingredient_type: 饮品→其他, 禽类→白肉, 肉类→红肉
+  - dish_role / grain_type 同步映射 (主厨推荐/甜品/凉菜; 燕麦/糙米/全麦 等)
+  - home 修 9 处 (0.4%); shenzhen-bay 修 31 处 (0.28%); 校验后两 zone 全过
+- 2026-05-12 02:00 prompt v3 黑名单补"卤/熏/炸"映射 + 饮品 main 兜底 (避免下次重打仍漂移)
+- ✅ DONE: schema 升级 + v3 prompt + 全量重打 + normalize 兜底全部落地
 
 ---
 
