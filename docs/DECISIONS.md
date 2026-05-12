@@ -1232,3 +1232,79 @@ DeepSeek v4 系列在新 golden set 上表现超预期, pro/flash 双雄打平 (
 - 业务侧要求更高准确率 (例如健康关怀类用户 / 推送内容审核)
 
 依赖: D-032 (v3 prompt), D-036 (dual-model golden set)
+
+---
+
+## D-038: 推荐链路 LLM 抽象与外部 Agent 接入策略
+日期: 2026-05-12
+状态: active (Phase 1 已实施, Phase 2 待 OpenClaw/Hermes 接入触发)
+
+背景:
+chisha 最终形态是 Skill / 库, **被** OpenClaw / Hermes / Claude Code skill 调用,
+不是独立 daemon. 调用方 Agent 通常自带 LLM (各家不同: Claude / GPT / 国产). 强行
+把 chisha 绑死到某一家 LLM provider, 既增加调用方负担 (要另配 key), 又浪费调用方
+已有的 LLM 上下文窗口.
+
+但 V2 推荐链路 (D-033/D-035) 本质需要 LLM 做精排 + reason. 这件事在 chisha 独立
+跑时 (CLI / 测试 / cron / 开发者自用) 必须有内置实现, 不能裸跑.
+
+需要的能力:
+- 独立运行: chisha 自带 LLM 实现, 不依赖外部 Agent
+- 多 provider 兼容: 用户可能已经有 ANTHROPIC_API_KEY 或 OPENROUTER_API_KEY,
+  不强制二选一
+- 外部 Agent 注入: OpenClaw / Hermes 调用时, 把自己的 LLM closure 传进来, chisha 用它代替默认实现
+
+考虑过的方案:
+- A. 硬绑 Anthropic 直连. 否决 — 阻塞已有 OpenRouter 用户.
+- B. Phase 1 (auto-detect provider) + Phase 2 (callable 注入点) 分阶段实施.
+- C. 一步到位上 MCP server, chisha 完全不做 LLM, 由 MCP client 调.
+  否决 — V2 验证期把 MCP 化耦合进来过早, chisha 还没自用稳定就先架构改造容易翻车.
+
+决定: B.
+
+Phase 1 (已实施, 2026-05-12):
+- `chisha/llm_client.py:call_text(prompt, **kw)` provider 自动检测:
+  - 有 `ANTHROPIC_API_KEY` → Anthropic 直连 (model=`claude-sonnet-4-6`)
+  - 否则有 `OPENROUTER_API_KEY` → OpenRouter (model=`anthropic/claude-sonnet-4.6`)
+  - 都没有 → raise RuntimeError, 调用方 (reason / rerank) try/except 退化到 rule fallback
+- 加 `has_llm_key()` 辅助方法, 替代散落各处的 `os.environ.get("ANTHROPIC_API_KEY")` 检查
+- `chisha/reason.py` + `chisha/rerank.py` 改用 `has_llm_key`, 不再硬编码 ANTHROPIC
+
+Phase 2 (待触发, OpenClaw 实际接入时做):
+- `recommend_meal(..., llm_call: Callable[[str], str] | None = None)` 注入点
+- `refine_recommendation(...)` 同上
+- 当 llm_call 注入时, rerank 内部用 llm_call 代替 `chisha.llm_client.call_text`
+- chisha 内部所有 LLM 调用都通过这一个抽象, 不直接 import provider SDK
+- 文档化外部 Agent 接入契约: prompt 模板由 chisha 导出, Agent 负责执行 + 把 JSON
+  字符串返回
+
+反对意见 / 风险:
+- Phase 1 模型选择默认 sonnet-4.6 而非 deepseek-flash (与 D-037 生产打标不一致):
+  接受 — 推荐链路 LLM 精排对语义理解 + 中文偏好理解的要求比打标更高,
+  reason 也只 ≤30 字, 调用量小, 成本不敏感; 待 V1 自用稳定后再评估 LLM 精排
+  是否也可降到 deepseek-flash.
+- Phase 2 callable 注入会让 chisha 接口签名变长: 接受 — 注入参数 default=None,
+  老用法不破坏
+
+触发重审的条件:
+- OpenClaw / Hermes 真正开始接入 chisha 时, 启动 Phase 2
+- 用户多次反映 sonnet-4.6 精排答案质量与 deepseek-flash 持平, 切换降本
+- 出现 LLM 接口必须支持流式输出 / 中间结果回调的需求 (Phase 1 简单 prompt-in
+  text-out 不够用)
+
+工程产物 (Phase 1):
+- `chisha/llm_client.py` 完全重写, provider auto-detect
+- `chisha/reason.py` + `chisha/rerank.py` 用 has_llm_key 取代直接 env 检查
+- `prompts/rerank_topn.md` 硬约束加"商家去重"(LLM 多 candidate 同店时只选 1 个)
+- `chisha/rerank.py:_enforce_brand_unique()` 兜底: LLM 漏掉去重时, 后处理强制
+  执行 (同 restaurant.id 只留 1 条 + 不足 n 时从 top_combos 按 score 补位)
+
+V2 e2e 5 次空跑验收 (2026-05-12, profile.yaml 真用, mood 三档对照):
+- lunch mood=want_light 主推油 1.3-1.7 的, 不再选油 2.5 的
+- lunch mood=want_soup 三家不同店全汤水系, oil_ok 全 true
+- dinner mood=want_indulgent 主推 35g 蛋白的酸菜鱼/牛肉
+- explore 全部跨菜系 (湘菜粉面 / 川菜蹄花 / 陕西面食)
+- 5 次跑无同商家重复 (Phase 1 兜底生效)
+- reason 直接点出 "命中 want_light"/"是你点名爱的菜", 不再模板化
+
+依赖: D-033 (V2 合并触发), D-035 (LLM 精排结构化输出)

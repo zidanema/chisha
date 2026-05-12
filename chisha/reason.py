@@ -97,10 +97,10 @@ def fallback_reason(combo: dict, profile: dict, meal_log: list[dict]) -> str:
 
 def llm_reason(combo: dict, profile: dict, meal_log: list[dict]) -> str:
     """调 LLM 写理由. 无 key 时返回 fallback."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    from chisha.llm_client import call_text, has_llm_key
+    if not has_llm_key():
         return fallback_reason(combo, profile, meal_log)
     try:
-        from chisha.llm_client import call_text
         payload = build_payload(combo, profile, meal_log)
         prompt = PROMPT_PATH.read_text(encoding="utf-8").replace(
             "{INPUT_PAYLOAD}", json.dumps(payload, ensure_ascii=False)

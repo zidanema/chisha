@@ -376,7 +376,8 @@ def rerank(
     if refine:
         n_explore = 0
     if use_llm is None:
-        use_llm = bool(os.environ.get("ANTHROPIC_API_KEY"))
+        from chisha.llm_client import has_llm_key
+        use_llm = has_llm_key()
 
     if use_llm:
         payload = build_payload(top_combos, profile, context, meal_log, n, n_explore)
@@ -389,8 +390,58 @@ def rerank(
                     continue
                 merged = {**top_combos[idx], **cand}
                 mapped.append(merged)
+            mapped = _enforce_brand_unique(mapped, top_combos, n=n)
             if mapped:
                 return mapped
 
     return fallback_rerank(top_combos, n=n, n_explore=n_explore,
                             meal_log=meal_log)
+
+
+def _enforce_brand_unique(
+    mapped: list[dict], top_combos: list[dict], n: int
+) -> list[dict]:
+    """LLM 可能漏掉商家去重指令 — 同 restaurant.id 在 top n 只能出现 1 次。
+
+    保留每家店首次出现的那条 (LLM 已按 rank 排好), 不够 n 个时从 top_combos
+    剩余 combos 里按 score 补齐 (跳过已用商家)。
+    """
+    if not mapped:
+        return mapped
+    seen_rest: set[str] = set()
+    out: list[dict] = []
+    for c in mapped:
+        rid = (c.get("restaurant") or {}).get("id", "")
+        if rid in seen_rest:
+            continue
+        seen_rest.add(rid)
+        out.append(c)
+    if len(out) >= n:
+        return out[:n]
+    # 不够 n 个: 从 top_combos 按 score 补 (避免和已选商家重复)
+    used_combo_ids = {id(c) for c in mapped}
+    for c in top_combos:
+        if len(out) >= n:
+            break
+        if id(c) in used_combo_ids:
+            continue
+        rid = (c.get("restaurant") or {}).get("id", "")
+        if rid in seen_rest:
+            continue
+        # 补齐用的 combo 没经 LLM 评分, 填占位字段
+        seen_rest.add(rid)
+        fill = {
+            **c,
+            "rank": len(out) + 1,
+            "is_explore": False,
+            "fit_score": c.get("score", 0),
+            "health_flags": {},
+            "taste_match": None,
+            "risk_flags": ["商家去重补位"],
+            "one_line_reason": "为多样性补位, 此条无 LLM 评分",
+        }
+        out.append(fill)
+    # rank 重排
+    for i, c in enumerate(out, start=1):
+        c["rank"] = i
+    return out

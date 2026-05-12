@@ -38,6 +38,7 @@
 - candidate 的 combo 不可包含 avoid_dishes 命中
 - spicy_level 不可超 spicy_tolerance
 - main 角色菜不可 processed_meat_flag=true (这种应该已被召回过滤, 兜底再防一次)
+- **商家去重**: 同一个 restaurant.id 最多出现 1 次. 即使同一家店有多个高分 combo (例: 三拼粥+鲍鱼粥), 也只能挑 1 个进 top n. 这是为了多样性, 用户不应在 5 个候选里看到 2 个同一家店
 
 ## reason 写作准则
 
