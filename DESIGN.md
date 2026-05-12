@@ -220,7 +220,7 @@ chisha/
 │   ├── recall.py                # 召回 + 多样性
 │   ├── score.py                 # 打分函数
 │   ├── reason.py                # LLM 写一句话理由（V1 LLM 只在这）
-│   └── llm_client.py            # LLM 抽象（V1 只支持 Anthropic）
+│   └── llm_client.py            # LLM 抽象（D-038 Phase 1: Anthropic / OpenRouter auto-detect）
 │
 ├── integrations/
 │   └── openclaw/                # V1 接入 OpenClaw + 飞书
@@ -228,7 +228,8 @@ chisha/
 │       └── feishu_card.py       # 飞书卡片渲染
 │
 ├── scripts/
-│   ├── tag_dishes.py            # 打标脚本
+│   ├── tag_via_api.py           # V3 生产打标（OpenRouter, 默认 deepseek-v4-flash, 见 D-037）
+│   ├── tag_dishes.py            # V1/V2 旧打标脚本（Anthropic 直连, 已停用）
 │   └── inspect_candidates.py    # 抽查工具
 │
 ├── prompts/
@@ -622,6 +623,10 @@ summary_for_llm: |
 
 ### 5.5 打标 prompt（完整版）
 
+> 注：本节为 v1 简化示例。当前生产 prompt 为 v3（r3 patch），见 [prompts/tag_dishes.md](../prompts/tag_dishes.md) 15 字段完整版（D-032 / D-036）。
+>
+> Golden set 与模型选型见 [eval/dish_tagging_eval/](../eval/dish_tagging_eval/)：[D-036](docs/DECISIONS.md#d-036) Opus + Codex 双模型共创 171 条 golden；[D-037](docs/DECISIONS.md#d-037) 6 模型横评后生产默认 `deepseek/deepseek-v4-flash`（field acc 88.9%, 100万条 $100）。
+
 ```
 你是营养标签助手。给以下菜品打营养画像。
 
@@ -775,7 +780,9 @@ V2 启用 LLM 精排（[D-035](docs/DECISIONS.md#d-035)）。输入：
 5 个候选 = 3 exploit (fit_score 排) + 2 explore (打分中段、最近未吃过、未尝试菜系/做法)，命中 [D-015](docs/DECISIONS.md#d-015)。
 refine 时 explore_count=0 (D-015)。
 
-LLM 调用模型：claude-sonnet-4-6（与 reason.py 同 client）。temperature=0.0。失败兜底：退化到打分 top 3 + 规则 reason。
+LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` ([D-038](docs/DECISIONS.md#d-038) Phase 1 provider auto-detect: ANTHROPIC_API_KEY → `claude-sonnet-4-6`; OPENROUTER_API_KEY → `anthropic/claude-sonnet-4.6`)。temperature=0.0。失败兜底：退化到打分 top n + 规则 reason。
+
+兜底机制：LLM rerank 输出后 [`chisha/rerank.py:_enforce_brand_unique`](../chisha/rerank.py) 强制商家去重（同 `restaurant.id` 至多 1 次，LLM 漏遵守时由后处理兜底，对应 prompts/rerank_topn.md 硬约束）。
 
 成本估算：单次推荐 1 次 LLM 调用，约 ¥0.05-0.10/次（top30 candidates × 200 token + context + prompt overhead）。
 

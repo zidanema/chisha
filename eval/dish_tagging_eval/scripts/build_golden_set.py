@@ -1,5 +1,15 @@
-"""构造 150 条 golden set.
+"""[DEPRECATED 2026-05-12, D-036] 旧版 150 条 golden set 构造脚本.
 
+已被 dual_pipeline.py (Opus 4.7 + Codex GPT-5.4 共创, 171 条) 取代,
+原因: 单 LLM (Sonnet) 自评自打存在循环论证偏置, 详见 docs/DECISIONS.md D-036。
+
+仍保留:
+- ANCHOR_EXPECTED / 旧 dish_inputs.py 供 dish_inputs_v2.py 继承
+- anchor_violations() 校验函数被 dual_pipeline.py 复用
+
+仅在需要重建 v1 baseline (data/golden_set.v1.jsonl) 时执行。生产用 dual_pipeline.py。
+
+原 docstring:
 - 前 10 条 anchor: 直接用已知 expected (从 prompt 文件抽出)
 - 后 140 条: 调 Sonnet 4.6 跑 expected, 自动锚点校验, 不过的重跑 1 次
 """

@@ -14,12 +14,13 @@
 
 预计 V1 完成时间：本对话讨论后 4-6 周。
 
-**当前状态（2026-05-11 深夜）**：
+**当前状态（2026-05-12）**：
 
-- shenzhen-bay：collector 重采得到 239 店 / 11,123 菜（覆盖之前漏抓的 21 店），v2 prompt 全量重打完成（223 批 × 50，16 并发 14 轮，~85 min），全部入库 `v2-promptfix`。
-- home：2,117 条 v2 重打完成（43 批 × 50，16 并发 3 轮，0 failed）。
-- review 样本：两个 zone 各 50 条 `review_sample.xlsx` 已生成，待人工 review 准确率 ≥ 80% 关。
-- 数据采集 + 打标暂告一段落。下一步：迭代推荐引擎（召回/打分/reason/飞书卡片）。架构重构推迟到 V1.5，见 [D-030](DECISIONS.md#d-030)。
+- 打标：v3 全量重打两 zone 13,240 菜（D-032）；dual-model golden set 171 条（D-036, Opus+Codex 共创, 4 大字段一致率 99.27%）；6 模型横评后生产默认 `deepseek-v4-flash`（D-037, field acc 88.9%, 100万条 $100）。
+- 推荐 V2 链路端到端跑通：Context 注入 / score V2 ~12 维 / LLM 精排 top30→5（D-035） / refine + session（D-033 V2.1）/ LLM 抽象 Phase 1 provider auto-detect（D-038, 商家去重兜底）。
+- 5 次空跑（mood × meal_type 对照）：mood/taste 信号生效，0 同商家重复，reason 直引"命中 want_light"等。
+- 100 候选合理性扫描：lunch 84% / dinner 64% pass，0 硬约束违规，flag 全部是软约束油超 3（湘川菜常态 + 末段炸物店）。
+- 架构重构推迟到 V1.5（[D-030](DECISIONS.md#d-030)），下一步：飞书 + OpenClaw 接入（用户当前在另一 session 做调试前端页面）。
 
 ---
 
@@ -34,27 +35,32 @@
 - [x] **数据校验脚本 `scripts/validate_data.py`**（schema + 引用完整性 + 唯一性 + 打标进度，已用于 2026-05-11 发现 21 家店漏抓菜单）
 - [x] **prompt v1 → v2 升级（D-031）**：5 项结构性修订 + spike 50 条 violation 8% 通过
 - [x] **v2 全量重打**：shenzhen-bay 11,123 条 + home 2,117 条（2026-05-11，全部 `v2-promptfix`）
-- [ ] 重打后再抽查 50 条人工 review 准确率 ≥ 80%（每个 zone，xlsx 样本已生成）
-- [ ] profile.yaml 手填（弱约束三件套 + spicy_tolerance 整数 + taste_description + meal_trigger_time）
-- [ ] 召回模块（规则 + 弱约束三件套校验 + 多样性过滤）
-- [ ] 抽查 100 个候选合理性
-- [ ] 打分函数（vegetable_floor / protein_floor / low_oil / popularity / cuisine_pref / variety_bonus）
-- [ ] **取打分 top 3，不做 LLM 精排**（D-024）
-- [ ] LLM 写 reason_one_line（每条单独调用，输入单个 combo）
-- [ ] 5 次空跑测试推荐质量
-- [ ] **接入 OpenClaw + 飞书卡片**（D-022）：skill.py + feishu_card.py + cron 调度
+- [x] **v3 全量重打 + dual-model golden 171 条**（[D-032](DECISIONS.md#d-032) / [D-036](DECISIONS.md#d-036)，2026-05-12）：13,240 菜 + 4 大字段一致率 99.27%
+- [x] **6 模型横评 + 生产默认模型确认**（[D-037](DECISIONS.md#d-037)）：deepseek-v4-flash 字段 acc 88.9%，100万条 $100
+- [x] profile.yaml 手填（弱约束三件套 + spicy_tolerance 整数 + taste_description + meal_trigger_time）
+- [x] 召回模块（规则 + 弱约束三件套校验 + 多样性过滤）
+- [x] **抽查 100 候选合理性**（2026-05-12, scripts/audit_recall.py）：lunch 84% / dinner 64% pass，0 硬约束违规
+- [x] 打分函数 V1 + **V2 ~12 维升级**（vegetable_floor / protein_floor / low_oil / popularity / cuisine_pref / variety_bonus + carb_quality / processed_meat / sweet_sauce / wetness / dish_role / 履约 / taste_match / context_boost）
+- [x] V1 路径：打分 top 3 + LLM 写 reason（D-024，作为 V2 baseline 保留可用）
+- [x] **V2 路径：LLM 精排 top30→5 + Context + session**（[D-033](DECISIONS.md#d-033) / [D-034](DECISIONS.md#d-034) / [D-035](DECISIONS.md#d-035)）
+- [x] **LLM 抽象 Phase 1**（[D-038](DECISIONS.md#d-038)）：provider auto-detect + 商家去重兜底
+- [x] 5 次空跑测试（mood × meal_type 对照, 真 LLM Sonnet-4.6, 0 同商家重复）
+- [ ] **接入 OpenClaw + 飞书卡片**（D-022）：integrations/openclaw/{skill,feishu_card}.py 骨架已搭，cron 调度待装
 - [ ] 工作日 11:25 / 18:00 自用一周，纸笔记录每次推荐质量
 
 ### 不做（明确推迟）
 
-- LLM 精排（让 LLM 在 100 候选里挑 5 个）→ V2.1（D-024）
-- 反馈系统（personal_offsets 写入 + UI）→ V2.0
-- learned_profile 统计聚合 → V2.2（不再做 LLM 蒸馏 insights，D-026）
-- 探索机制（is_explore 标记）→ V2.1
-- refine 多轮收敛 → V2.1
-- session 状态管理 → V2.1
+> 注：以下 ★ 项目原计划 V2.0/V2.1 做，因 [D-033](DECISIONS.md#d-033) "V2.0+V2.1 合并触发"已在 V1 主线内做完代码骨架，但 V1 验收门（采纳率 ≥ 50%）未达成前不算真正"上线"。
+
+- ~~LLM 精排~~ ★（D-024 V1 不做，[D-035](DECISIONS.md#d-035) 已实现）
+- ~~探索机制（is_explore 标记）~~ ★（已实现 5 候选 = 3 exploit + 2 explore）
+- ~~refine 多轮收敛~~ ★（refine_recommendation API 已实现）
+- ~~session 状态管理~~ ★（24h TTL + logs/sessions/，[fix f6e16d0](#) 已修路径）
+- 反馈系统 personal_offsets 写入 → V2.0 验收（chips/rating 字段骨架已在 chisha/feedback.py）
+- learned_profile 统计聚合 → V2.2（不再做 LLM 蒸馏 insights，[D-026](DECISIONS.md#d-026)）
+- LLM 抽象 Phase 2 callable 注入点 → 等 OpenClaw/Hermes 真接入触发（[D-038](DECISIONS.md#d-038)）
 - MCP Server 包装 → V2.3
-- SKILL.md（Claude Code 接入）→ V2.3（D-022 推迟）
+- SKILL.md 完整化 → V2.3（D-022 推迟，integrations/openclaw/SKILL.md 已占位）
 - pip 包发布（按工区拆子包）→ V2.4
 - CLI 包装 → V2.4 视情况
 
@@ -62,13 +68,13 @@
 
 完成下列验证才算 V1 通过：
 
-| 验证项 | 标准 |
-|---|---|
-| 打标准确率 | 50 条抽查 ≥ 80% 准确 |
-| 召回合理性 | 100 个候选无明显该排除项；每个候选满足弱约束三件套 |
-| 推荐质量 | 5 次空跑 top 3 都满足"控油+有菜+有蛋白"，商家不集中，reason 具体不空话 |
-| 飞书卡片接入 | OpenClaw cron 11:25/18:00 能稳定推送，deeplink 跳转测试 iOS/Android/PC 三端 |
-| 自用稳定性 | 一周连续可用，**工作日 7 日采纳率 ≥ 50%**（D-028 北极星 V1 目标） |
+| 验证项 | 标准 | 2026-05-12 状态 |
+|---|---|---|
+| 打标准确率 | 50 条抽查 ≥ 80% | ✅ 171 条 dual-audit golden 89% (D-036 / D-037) |
+| 召回合理性 | 100 个候选无明显该排除项；每个候选满足弱约束三件套 | ✅ scripts/audit_recall.py lunch 84% / dinner 64% pass, 0 硬约束违规 |
+| 推荐质量 | 5 次空跑 top 3 都满足"控油+有菜+有蛋白"，商家不集中，reason 具体不空话 | ✅ V1+V2 5 次空跑通过, 0 同商家重复 |
+| 飞书卡片接入 | OpenClaw cron 11:25/18:00 能稳定推送，deeplink 跳转测试 iOS/Android/PC 三端 | ❌ 待装 |
+| 自用稳定性 | 一周连续可用，**工作日 7 日采纳率 ≥ 50%**（D-028 北极星 V1 目标） | ❌ 待飞书接入后采集 |
 
 ---
 
@@ -246,6 +252,8 @@
 | 反馈数据起来后"采纳但餐后差评"频繁 | D-028 北极星指标 |
 | V1 7 日采纳率 ≥ 50% 已达成 | D-030 启动 V1.5 数据链路重构 |
 | collector schema 变更打挂 shenzhen-bay ≥ 2 次 | D-030 提前启动 V1.5 |
+| OpenClaw / Hermes / Claude Code skill 真要接入 chisha 推荐 | D-038 Phase 2 启动（callable LLM 注入点） |
+| LLM 精排 sonnet-4.6 与 deepseek-flash 质量持平 | D-038 评估精排降本 |
 
 ---
 
