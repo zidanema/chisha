@@ -1126,3 +1126,62 @@ LLM 精排输出 schema (V2):
 - token 成本 > V1 reason 5 倍且无明显质量提升
 
 依赖: D-032 (v3 prompt 补字段)、D-033 (V2 合并)、D-034 (Context 注入)
+
+
+## D-036: Golden set 重建 (Opus 4.7 + Codex GPT-5.4 双模型共创, 171 条)
+日期: 2026-05-12
+状态: active
+
+背景:
+旧 `golden_set.jsonl` 150 条是用 OpenRouter Sonnet 4.6 单次生成 + 11 条规则自检构造, 本质"Sonnet 自评自打"循环论证, 用它评测其他模型有偏。具体问题: d010 anchor `spicy_level=2` 与 prompt 规则"非食物兜底 spicy=0"冲突 / d050 烧麦主料归属歧义 / d100 套餐 canonical 规则未明 / 4 大易错字段(sweet_sauce/processed_meat/dish_role/grain_type)边界覆盖度 ~70%。
+
+考虑过的方案:
+- A. 完全重建 140 条 (无先验, Opus 独立打 + Codex 对抗)
+- B. 增量重审 + 增补 20 对抗 case
+- C. 只补已知 bug + 增补对抗 case
+
+决定: A + 增补 21 对抗 case → 最终 **171 条** (10 anchor 保留 + 140 完全重建 + 21 adversarial 含 d169/d169b price-aware 对照)。
+
+理由:
+- A 彻底, 避免被旧 Sonnet 标注错误锚定 (用户明确"完全重建"决策)
+- 20 对抗 case 覆盖 6 边界判定 + 防 LLM 幻觉 (d168 恰巴塔三明治曾被旧模型瞎编成"烤鲜活鲍鱼") + price-aware protein 验证
+- 不用 OpenRouter, 改用 Claude Code 内 Opus 4.7 直接担任 S1/S3, Agent(subagent_type=codex:codex-rescue) 派任 Codex GPT-5.4 担任 S2 对抗
+
+实施流程 (per batch, batch_size=5):
+- **S1 草拟**: 主 Claude (Opus 4.7) 按 v3 prompt 给 15 字段 expected + 每字段 ≤30 字 rationale
+- **S2 对抗**: Codex GPT-5.4 (via codex-rescue), prompt 内 inline `CRITICAL_RULES.md` (4 大字段 + 6 边界 + LLM 幻觉防护规则) 作 grounding_rules
+- **S3 裁决**: 主 Claude 看 Codex challenges, 接受 / 反驳 / 标 needs_review
+- 全 35 batches 通过 ralph-loop 闭环, 每 iteration 1 batch
+
+工程产物:
+- `scripts/dual_pipeline.py` — orchestration CLI (`status`/`next-batch`/`mark-done`/`merge`)
+- `scripts/dish_inputs_v2.py` — 21 条 adversarial case (d151-d170 + d169b)
+- `eval/dish_tagging_eval/CRITICAL_RULES.md` — 规则集中沉淀
+- `eval/dish_tagging_eval/RALPH_LOOP_PROMPT.md` — ralph-loop iteration prompt
+- `eval/dish_tagging_eval/KNOWN_ISSUES.md` — 16 条边界争议落账 (P0/P1/P2)
+- `data/golden_set.jsonl` — 171 条新主产物
+- `data/golden_set.v1.jsonl` — 旧 150 条备份
+
+跑完指标:
+- Schema 通过 171/171 = 100%
+- anchor_violations 0/171
+- 4 大字段双模型一致率 99.27% (679/684)
+- consensus 分布: 155 agree / 10 codex_wins / 5 opus_wins / 1 human_needed
+- needs_review 1/171 (d026 红薯粉 grain_type 枚举边界)
+
+V3 prompt r3 patch (已 sync 主 `prompts/tag_dishes.md`):
+1. d010 示例 spicy_level=2 改 0 (修复 prompt 内部矛盾)
+2. sweet_sauce_level 新增锚到 1: 回锅肉/鱼香肉丝/宫保鸡丁 (字面无锚但实际含糖)
+3. grain_type 新增锚点: 红薯粉/绿豆粉/魔芋粉 → 白米 (精制淀粉高 GI 类推)
+
+反对意见 / 风险:
+- 双模型共谋盲区: Opus + Codex 同时错判同一规则. 缓解 — S2 prompt inline 完整 CRITICAL_RULES + 保留旧 anchor_violations 11 条规则做第三道门
+- Codex 子代理 ~34 次调用可能 rate limit. 缓解 — 串行 + ralph-loop 每 batch 落盘断点续跑
+- "应用层先扩召回"决策下, 10 codex_wins + 5 opus_wins 的边界判定未细究, 进 KNOWN_ISSUES.md, 等 V1 user feedback 触发重审
+
+触发重审的条件 (见 KNOWN_ISSUES.md):
+- V1 推荐链路上线后, user feedback 反映某 dish 分类不准
+- 跑 score.py 发现某模型在边界 case 上准确率显著偏低 (尤其 d029/d038-d040 cuisine/main_ingredient)
+- v3 prompt 后续迭代到 v4
+
+依赖: D-031 (v2 prompt), D-032 (v3 prompt v5 字段)

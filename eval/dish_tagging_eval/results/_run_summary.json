@@ -1,12 +1,16 @@
 {
-  "elapsed_s": 23.661685943603516,
-  "spent_total_usd": 0.0793683,
+  "elapsed_s": 195.42500567436218,
+  "spent_total_usd": 1.4524552844999998,
   "abort_reason": "",
-  "n_samples": 10,
+  "n_samples": 171,
   "concurrency": 20,
   "batch_size": 20,
   "models": [
     "sonnet-4.6",
-    "haiku-4.5"
+    "haiku-4.5",
+    "deepseek-pro",
+    "deepseek-flash",
+    "kimi-k2.6",
+    "glm-4.6"
   ]
 }

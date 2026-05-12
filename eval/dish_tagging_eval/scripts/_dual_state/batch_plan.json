@@ -1,0 +1,1957 @@
+[
+  {
+    "batch_idx": 1,
+    "dish_ids": [
+      "d001",
+      "d002",
+      "d003",
+      "d004",
+      "d005"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d001",
+        "raw_name": "蒜蓉空心菜",
+        "restaurant_name": "湘里湘亲",
+        "restaurant_category_raw": "湘菜",
+        "category_raw": "时蔬",
+        "price": 18,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d002",
+        "raw_name": "【新品】水煮牛肉(中辣) 大份",
+        "restaurant_name": "蜀香源",
+        "restaurant_category_raw": "川菜",
+        "category_raw": null,
+        "price": 58,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d003",
+        "raw_name": "白菜水饺",
+        "restaurant_name": "安天民北方饺子",
+        "restaurant_category_raw": "",
+        "category_raw": null,
+        "price": 15.1,
+        "category_tag": "staple"
+      },
+      {
+        "dish_id": "d004",
+        "raw_name": "潮汕牛肉粿条",
+        "restaurant_name": "潮汕牛肉甘草水",
+        "restaurant_category_raw": "潮汕",
+        "category_raw": "招牌",
+        "price": 32,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d005",
+        "raw_name": "红烧排骨",
+        "restaurant_name": "家常菜馆",
+        "restaurant_category_raw": "江浙",
+        "category_raw": null,
+        "price": 38,
+        "category_tag": "jiangzhe_sweet"
+      }
+    ]
+  },
+  {
+    "batch_idx": 2,
+    "dish_ids": [
+      "d006",
+      "d007",
+      "d008",
+      "d009",
+      "d010"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d006",
+        "raw_name": "关东煮(蟹柳+鱼丸+午餐肉)",
+        "restaurant_name": "便利店",
+        "restaurant_category_raw": "日式",
+        "category_raw": null,
+        "price": 22,
+        "category_tag": "japan_korea"
+      },
+      {
+        "dish_id": "d007",
+        "raw_name": "燕麦坚果碗",
+        "restaurant_name": "Wagas",
+        "restaurant_category_raw": "西式",
+        "category_raw": "早餐",
+        "price": 35,
+        "category_tag": "western_fast"
+      },
+      {
+        "dish_id": "d008",
+        "raw_name": "紫菜蛋花汤",
+        "restaurant_name": "湘里湘亲",
+        "restaurant_category_raw": "湘菜",
+        "category_raw": "汤",
+        "price": 8,
+        "category_tag": "side_soup"
+      },
+      {
+        "dish_id": "d009",
+        "raw_name": "烧鸭腿拼叉烧饭+老火靓汤",
+        "restaurant_name": "粤式烧腊",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": null,
+        "price": 38,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d010",
+        "raw_name": "蒜蓉辣椒酱",
+        "restaurant_name": "湘里湘亲",
+        "restaurant_category_raw": "湘菜",
+        "category_raw": "调料",
+        "price": 2,
+        "category_tag": "boundary"
+      }
+    ]
+  },
+  {
+    "batch_idx": 3,
+    "dish_ids": [
+      "d011",
+      "d012",
+      "d013",
+      "d014",
+      "d015"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d011",
+        "raw_name": "麻婆豆腐",
+        "restaurant_name": "蜀香源",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "招牌",
+        "price": 22,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d012",
+        "raw_name": "回锅肉",
+        "restaurant_name": "蜀香源",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "热菜",
+        "price": 36,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d013",
+        "raw_name": "鱼香肉丝",
+        "restaurant_name": "巴蜀人家",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "热菜",
+        "price": 32,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d014",
+        "raw_name": "毛血旺",
+        "restaurant_name": "渝味晓宇",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "招牌",
+        "price": 48,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d015",
+        "raw_name": "夫妻肺片",
+        "restaurant_name": "蜀香源",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "凉菜",
+        "price": 38,
+        "category_tag": "sichuan_xiang"
+      }
+    ]
+  },
+  {
+    "batch_idx": 4,
+    "dish_ids": [
+      "d016",
+      "d017",
+      "d018",
+      "d019",
+      "d020"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d016",
+        "raw_name": "辣子鸡丁",
+        "restaurant_name": "巴蜀人家",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "热菜",
+        "price": 42,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d017",
+        "raw_name": "水煮鱼片 中辣",
+        "restaurant_name": "渝味晓宇",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "招牌",
+        "price": 68,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d018",
+        "raw_name": "酸辣土豆丝",
+        "restaurant_name": "蜀香源",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "时蔬",
+        "price": 18,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d019",
+        "raw_name": "宫保鸡丁",
+        "restaurant_name": "巴蜀人家",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "热菜",
+        "price": 32,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d020",
+        "raw_name": "辣椒炒肉",
+        "restaurant_name": "湘里湘亲",
+        "restaurant_category_raw": "湘菜",
+        "category_raw": "招牌",
+        "price": 35,
+        "category_tag": "sichuan_xiang"
+      }
+    ]
+  },
+  {
+    "batch_idx": 5,
+    "dish_ids": [
+      "d021",
+      "d022",
+      "d023",
+      "d024",
+      "d025"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d021",
+        "raw_name": "剁椒鱼头 小份",
+        "restaurant_name": "湘湘菜馆",
+        "restaurant_category_raw": "湘菜",
+        "category_raw": "招牌",
+        "price": 58,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d022",
+        "raw_name": "湘西外婆菜",
+        "restaurant_name": "湘里湘亲",
+        "restaurant_category_raw": "湘菜",
+        "category_raw": "热菜",
+        "price": 26,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d023",
+        "raw_name": "农家小炒肉",
+        "restaurant_name": "湘湘菜馆",
+        "restaurant_category_raw": "湘菜",
+        "category_raw": "热菜",
+        "price": 32,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d024",
+        "raw_name": "干锅花菜",
+        "restaurant_name": "湘里湘亲",
+        "restaurant_category_raw": "湘菜",
+        "category_raw": "时蔬",
+        "price": 28,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d025",
+        "raw_name": "醋溜白菜",
+        "restaurant_name": "湘湘菜馆",
+        "restaurant_category_raw": "湘菜",
+        "category_raw": "时蔬",
+        "price": 16,
+        "category_tag": "sichuan_xiang"
+      }
+    ]
+  },
+  {
+    "batch_idx": 6,
+    "dish_ids": [
+      "d026",
+      "d027",
+      "d028",
+      "d029",
+      "d030"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d026",
+        "raw_name": "酸辣粉",
+        "restaurant_name": "蜀香源",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "小吃",
+        "price": 12,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d027",
+        "raw_name": "钵钵鸡 麻辣",
+        "restaurant_name": "巴蜀人家",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "凉菜",
+        "price": 30,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d028",
+        "raw_name": "口水鸡",
+        "restaurant_name": "蜀香源",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "凉菜",
+        "price": 36,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d029",
+        "raw_name": "酸豆角肉末",
+        "restaurant_name": "湘里湘亲",
+        "restaurant_category_raw": "湘菜",
+        "category_raw": "热菜",
+        "price": 22,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d030",
+        "raw_name": "尖椒肥肠",
+        "restaurant_name": "湘湘菜馆",
+        "restaurant_category_raw": "湘菜",
+        "category_raw": "招牌",
+        "price": 42,
+        "category_tag": "sichuan_xiang"
+      }
+    ]
+  },
+  {
+    "batch_idx": 7,
+    "dish_ids": [
+      "d031",
+      "d032",
+      "d033",
+      "d034",
+      "d035"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d031",
+        "raw_name": "豆瓣鱼",
+        "restaurant_name": "巴蜀人家",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "招牌",
+        "price": 58,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d032",
+        "raw_name": "酸菜鱼 大份",
+        "restaurant_name": "渝味晓宇",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "招牌",
+        "price": 78,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d033",
+        "raw_name": "青椒土豆丝",
+        "restaurant_name": "湘里湘亲",
+        "restaurant_category_raw": "湘菜",
+        "category_raw": "时蔬",
+        "price": 14,
+        "category_tag": "sichuan_xiang"
+      },
+      {
+        "dish_id": "d034",
+        "raw_name": "叉烧饭",
+        "restaurant_name": "粤式烧腊",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "招牌",
+        "price": 28,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d035",
+        "raw_name": "烧鹅濑粉",
+        "restaurant_name": "粤式烧腊",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "招牌",
+        "price": 32,
+        "category_tag": "yue_chaoshan"
+      }
+    ]
+  },
+  {
+    "batch_idx": 8,
+    "dish_ids": [
+      "d036",
+      "d037",
+      "d038",
+      "d039",
+      "d040"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d036",
+        "raw_name": "白切鸡",
+        "restaurant_name": "顺德私房菜",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "招牌",
+        "price": 38,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d037",
+        "raw_name": "豉油鸡腿饭",
+        "restaurant_name": "粤式烧腊",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "饭类",
+        "price": 26,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d038",
+        "raw_name": "及第粥",
+        "restaurant_name": "潮汕粥铺",
+        "restaurant_category_raw": "潮汕",
+        "category_raw": "粥品",
+        "price": 18,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d039",
+        "raw_name": "艇仔粥",
+        "restaurant_name": "潮汕粥铺",
+        "restaurant_category_raw": "潮汕",
+        "category_raw": "粥品",
+        "price": 16,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d040",
+        "raw_name": "生滚鱼片粥",
+        "restaurant_name": "潮汕粥铺",
+        "restaurant_category_raw": "潮汕",
+        "category_raw": "粥品",
+        "price": 22,
+        "category_tag": "yue_chaoshan"
+      }
+    ]
+  },
+  {
+    "batch_idx": 9,
+    "dish_ids": [
+      "d041",
+      "d042",
+      "d043",
+      "d044",
+      "d045"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d041",
+        "raw_name": "鲜虾肠粉",
+        "restaurant_name": "广式肠粉",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "招牌",
+        "price": 18,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d042",
+        "raw_name": "叉烧肠粉",
+        "restaurant_name": "广式肠粉",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "招牌",
+        "price": 16,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d043",
+        "raw_name": "牛肉肠粉",
+        "restaurant_name": "广式肠粉",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "招牌",
+        "price": 18,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d044",
+        "raw_name": "潮汕牛肉丸粿条汤",
+        "restaurant_name": "潮汕牛肉甘草水",
+        "restaurant_category_raw": "潮汕",
+        "category_raw": "招牌",
+        "price": 28,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d045",
+        "raw_name": "沙茶牛肉炒河粉",
+        "restaurant_name": "潮汕牛肉甘草水",
+        "restaurant_category_raw": "潮汕",
+        "category_raw": "热菜",
+        "price": 32,
+        "category_tag": "yue_chaoshan"
+      }
+    ]
+  },
+  {
+    "batch_idx": 10,
+    "dish_ids": [
+      "d046",
+      "d047",
+      "d048",
+      "d049",
+      "d050"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d046",
+        "raw_name": "白灼菜心",
+        "restaurant_name": "顺德私房菜",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "时蔬",
+        "price": 22,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d047",
+        "raw_name": "蜜汁叉烧 例",
+        "restaurant_name": "粤式烧腊",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "招牌",
+        "price": 38,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d048",
+        "raw_name": "老火例汤",
+        "restaurant_name": "顺德私房菜",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "汤品",
+        "price": 18,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d049",
+        "raw_name": "虾饺",
+        "restaurant_name": "广式茶楼",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "点心",
+        "price": 16,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d050",
+        "raw_name": "烧麦",
+        "restaurant_name": "广式茶楼",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "点心",
+        "price": 14,
+        "category_tag": "yue_chaoshan"
+      }
+    ]
+  },
+  {
+    "batch_idx": 11,
+    "dish_ids": [
+      "d051",
+      "d052",
+      "d053",
+      "d054",
+      "d055"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d051",
+        "raw_name": "豉汁排骨蒸饭",
+        "restaurant_name": "粤式烧腊",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "招牌",
+        "price": 32,
+        "category_tag": "yue_chaoshan"
+      },
+      {
+        "dish_id": "d052",
+        "raw_name": "糖醋里脊",
+        "restaurant_name": "杭帮菜馆",
+        "restaurant_category_raw": "江浙",
+        "category_raw": "招牌",
+        "price": 38,
+        "category_tag": "jiangzhe_sweet"
+      },
+      {
+        "dish_id": "d053",
+        "raw_name": "糖醋排骨",
+        "restaurant_name": "杭帮菜馆",
+        "restaurant_category_raw": "江浙",
+        "category_raw": "招牌",
+        "price": 42,
+        "category_tag": "jiangzhe_sweet"
+      },
+      {
+        "dish_id": "d054",
+        "raw_name": "红烧肉",
+        "restaurant_name": "本帮菜馆",
+        "restaurant_category_raw": "江浙",
+        "category_raw": "招牌",
+        "price": 48,
+        "category_tag": "jiangzhe_sweet"
+      },
+      {
+        "dish_id": "d055",
+        "raw_name": "红烧狮子头",
+        "restaurant_name": "扬州人家",
+        "restaurant_category_raw": "江浙",
+        "category_raw": "招牌",
+        "price": 32,
+        "category_tag": "jiangzhe_sweet"
+      }
+    ]
+  },
+  {
+    "batch_idx": 12,
+    "dish_ids": [
+      "d056",
+      "d057",
+      "d058",
+      "d059",
+      "d060"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d056",
+        "raw_name": "无锡酱排骨",
+        "restaurant_name": "本帮菜馆",
+        "restaurant_category_raw": "江浙",
+        "category_raw": "招牌",
+        "price": 56,
+        "category_tag": "jiangzhe_sweet"
+      },
+      {
+        "dish_id": "d057",
+        "raw_name": "京酱肉丝",
+        "restaurant_name": "京味斋",
+        "restaurant_category_raw": "京菜",
+        "category_raw": "招牌",
+        "price": 36,
+        "category_tag": "jiangzhe_sweet"
+      },
+      {
+        "dish_id": "d058",
+        "raw_name": "红烧带鱼",
+        "restaurant_name": "杭帮菜馆",
+        "restaurant_category_raw": "江浙",
+        "category_raw": "热菜",
+        "price": 42,
+        "category_tag": "jiangzhe_sweet"
+      },
+      {
+        "dish_id": "d059",
+        "raw_name": "照烧鸡腿饭",
+        "restaurant_name": "日式定食屋",
+        "restaurant_category_raw": "日式",
+        "category_raw": "招牌",
+        "price": 36,
+        "category_tag": "jiangzhe_sweet"
+      },
+      {
+        "dish_id": "d060",
+        "raw_name": "拔丝山药",
+        "restaurant_name": "杭帮菜馆",
+        "restaurant_category_raw": "江浙",
+        "category_raw": "甜品",
+        "price": 28,
+        "category_tag": "jiangzhe_sweet"
+      }
+    ]
+  },
+  {
+    "batch_idx": 13,
+    "dish_ids": [
+      "d061",
+      "d062",
+      "d063",
+      "d064",
+      "d065"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d061",
+        "raw_name": "糖醋鲤鱼",
+        "restaurant_name": "鲁味斋",
+        "restaurant_category_raw": "鲁菜",
+        "category_raw": "招牌",
+        "price": 68,
+        "category_tag": "jiangzhe_sweet"
+      },
+      {
+        "dish_id": "d062",
+        "raw_name": "东坡肉",
+        "restaurant_name": "杭帮菜馆",
+        "restaurant_category_raw": "江浙",
+        "category_raw": "招牌",
+        "price": 38,
+        "category_tag": "jiangzhe_sweet"
+      },
+      {
+        "dish_id": "d063",
+        "raw_name": "蜜汁烤翅",
+        "restaurant_name": "西餐厅",
+        "restaurant_category_raw": "西式",
+        "category_raw": "招牌",
+        "price": 32,
+        "category_tag": "jiangzhe_sweet"
+      },
+      {
+        "dish_id": "d064",
+        "raw_name": "红烧牛腩煲",
+        "restaurant_name": "本帮菜馆",
+        "restaurant_category_raw": "江浙",
+        "category_raw": "招牌",
+        "price": 56,
+        "category_tag": "jiangzhe_sweet"
+      },
+      {
+        "dish_id": "d065",
+        "raw_name": "梅菜扣肉",
+        "restaurant_name": "客家小厨",
+        "restaurant_category_raw": "客家",
+        "category_raw": "招牌",
+        "price": 42,
+        "category_tag": "jiangzhe_sweet"
+      }
+    ]
+  },
+  {
+    "batch_idx": 14,
+    "dish_ids": [
+      "d066",
+      "d067",
+      "d068",
+      "d069",
+      "d070"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d066",
+        "raw_name": "三文鱼刺身 6片",
+        "restaurant_name": "寿司の神",
+        "restaurant_category_raw": "日式",
+        "category_raw": "刺身",
+        "price": 48,
+        "category_tag": "japan_korea"
+      },
+      {
+        "dish_id": "d067",
+        "raw_name": "鳗鱼饭",
+        "restaurant_name": "鳗料理",
+        "restaurant_category_raw": "日式",
+        "category_raw": "招牌",
+        "price": 68,
+        "category_tag": "japan_korea"
+      },
+      {
+        "dish_id": "d068",
+        "raw_name": "天妇罗虾",
+        "restaurant_name": "日式定食屋",
+        "restaurant_category_raw": "日式",
+        "category_raw": "炸物",
+        "price": 36,
+        "category_tag": "japan_korea"
+      },
+      {
+        "dish_id": "d069",
+        "raw_name": "味噌拉面",
+        "restaurant_name": "拉面之神",
+        "restaurant_category_raw": "日式",
+        "category_raw": "招牌",
+        "price": 38,
+        "category_tag": "japan_korea"
+      },
+      {
+        "dish_id": "d070",
+        "raw_name": "豚骨拉面",
+        "restaurant_name": "拉面之神",
+        "restaurant_category_raw": "日式",
+        "category_raw": "招牌",
+        "price": 42,
+        "category_tag": "japan_korea"
+      }
+    ]
+  },
+  {
+    "batch_idx": 15,
+    "dish_ids": [
+      "d071",
+      "d072",
+      "d073",
+      "d074",
+      "d075"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d071",
+        "raw_name": "石锅拌饭",
+        "restaurant_name": "韩式料理",
+        "restaurant_category_raw": "韩式",
+        "category_raw": "招牌",
+        "price": 32,
+        "category_tag": "japan_korea"
+      },
+      {
+        "dish_id": "d072",
+        "raw_name": "部队火锅 单人",
+        "restaurant_name": "韩式料理",
+        "restaurant_category_raw": "韩式",
+        "category_raw": "招牌",
+        "price": 58,
+        "category_tag": "japan_korea"
+      },
+      {
+        "dish_id": "d073",
+        "raw_name": "韩式炸鸡",
+        "restaurant_name": "韩式料理",
+        "restaurant_category_raw": "韩式",
+        "category_raw": "招牌",
+        "price": 42,
+        "category_tag": "japan_korea"
+      },
+      {
+        "dish_id": "d074",
+        "raw_name": "辣白菜炒饭",
+        "restaurant_name": "韩式料理",
+        "restaurant_category_raw": "韩式",
+        "category_raw": "饭类",
+        "price": 26,
+        "category_tag": "japan_korea"
+      },
+      {
+        "dish_id": "d075",
+        "raw_name": "寿喜烧定食",
+        "restaurant_name": "日式定食屋",
+        "restaurant_category_raw": "日式",
+        "category_raw": "招牌",
+        "price": 78,
+        "category_tag": "japan_korea"
+      }
+    ]
+  },
+  {
+    "batch_idx": 16,
+    "dish_ids": [
+      "d076",
+      "d077",
+      "d078",
+      "d079",
+      "d080"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d076",
+        "raw_name": "玉子烧",
+        "restaurant_name": "日式定食屋",
+        "restaurant_category_raw": "日式",
+        "category_raw": "前菜",
+        "price": 18,
+        "category_tag": "japan_korea"
+      },
+      {
+        "dish_id": "d077",
+        "raw_name": "鸡肉亲子丼",
+        "restaurant_name": "日式定食屋",
+        "restaurant_category_raw": "日式",
+        "category_raw": "饭类",
+        "price": 32,
+        "category_tag": "japan_korea"
+      },
+      {
+        "dish_id": "d078",
+        "raw_name": "韩式拌冷面",
+        "restaurant_name": "韩式料理",
+        "restaurant_category_raw": "韩式",
+        "category_raw": "招牌",
+        "price": 28,
+        "category_tag": "japan_korea"
+      },
+      {
+        "dish_id": "d079",
+        "raw_name": "加州寿司卷 8件",
+        "restaurant_name": "寿司の神",
+        "restaurant_category_raw": "日式",
+        "category_raw": "寿司",
+        "price": 36,
+        "category_tag": "japan_korea"
+      },
+      {
+        "dish_id": "d080",
+        "raw_name": "巨无霸汉堡",
+        "restaurant_name": "麦当劳",
+        "restaurant_category_raw": "西式",
+        "category_raw": "汉堡",
+        "price": 28,
+        "category_tag": "western_fast"
+      }
+    ]
+  },
+  {
+    "batch_idx": 17,
+    "dish_ids": [
+      "d081",
+      "d082",
+      "d083",
+      "d084",
+      "d085"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d081",
+        "raw_name": "芝士牛肉汉堡",
+        "restaurant_name": "汉堡王",
+        "restaurant_category_raw": "西式",
+        "category_raw": "汉堡",
+        "price": 32,
+        "category_tag": "western_fast"
+      },
+      {
+        "dish_id": "d082",
+        "raw_name": "鸡腿堡",
+        "restaurant_name": "肯德基",
+        "restaurant_category_raw": "西式",
+        "category_raw": "汉堡",
+        "price": 22,
+        "category_tag": "western_fast"
+      },
+      {
+        "dish_id": "d083",
+        "raw_name": "玛格丽特披萨 9寸",
+        "restaurant_name": "披萨工坊",
+        "restaurant_category_raw": "西式",
+        "category_raw": "披萨",
+        "price": 58,
+        "category_tag": "western_fast"
+      },
+      {
+        "dish_id": "d084",
+        "raw_name": "夏威夷披萨 12寸",
+        "restaurant_name": "披萨工坊",
+        "restaurant_category_raw": "西式",
+        "category_raw": "披萨",
+        "price": 88,
+        "category_tag": "western_fast"
+      },
+      {
+        "dish_id": "d085",
+        "raw_name": "意大利肉酱面",
+        "restaurant_name": "意面工坊",
+        "restaurant_category_raw": "西式",
+        "category_raw": "意面",
+        "price": 38,
+        "category_tag": "western_fast"
+      }
+    ]
+  },
+  {
+    "batch_idx": 18,
+    "dish_ids": [
+      "d086",
+      "d087",
+      "d088",
+      "d089",
+      "d090"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d086",
+        "raw_name": "奶油培根意面",
+        "restaurant_name": "意面工坊",
+        "restaurant_category_raw": "西式",
+        "category_raw": "意面",
+        "price": 42,
+        "category_tag": "western_fast"
+      },
+      {
+        "dish_id": "d087",
+        "raw_name": "凯撒沙拉",
+        "restaurant_name": "Wagas",
+        "restaurant_category_raw": "西式",
+        "category_raw": "沙拉",
+        "price": 32,
+        "category_tag": "western_fast"
+      },
+      {
+        "dish_id": "d088",
+        "raw_name": "烤鸡胸沙拉碗",
+        "restaurant_name": "Wagas",
+        "restaurant_category_raw": "西式",
+        "category_raw": "沙拉",
+        "price": 38,
+        "category_tag": "western_fast"
+      },
+      {
+        "dish_id": "d089",
+        "raw_name": "墨西哥牛肉卷",
+        "restaurant_name": "墨西哥餐厅",
+        "restaurant_category_raw": "西式",
+        "category_raw": "招牌",
+        "price": 36,
+        "category_tag": "western_fast"
+      },
+      {
+        "dish_id": "d090",
+        "raw_name": "热狗",
+        "restaurant_name": "便利店",
+        "restaurant_category_raw": "西式",
+        "category_raw": "小吃",
+        "price": 12,
+        "category_tag": "western_fast"
+      }
+    ]
+  },
+  {
+    "batch_idx": 19,
+    "dish_ids": [
+      "d091",
+      "d092",
+      "d093",
+      "d094",
+      "d095"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d091",
+        "raw_name": "火腿三明治",
+        "restaurant_name": "Wagas",
+        "restaurant_category_raw": "西式",
+        "category_raw": "早餐",
+        "price": 22,
+        "category_tag": "western_fast"
+      },
+      {
+        "dish_id": "d092",
+        "raw_name": "鸡肉三明治",
+        "restaurant_name": "Subway",
+        "restaurant_category_raw": "西式",
+        "category_raw": "招牌",
+        "price": 28,
+        "category_tag": "western_fast"
+      },
+      {
+        "dish_id": "d093",
+        "raw_name": "烤鸡蛋白碗",
+        "restaurant_name": "Wagas",
+        "restaurant_category_raw": "西式",
+        "category_raw": "早餐",
+        "price": 42,
+        "category_tag": "western_fast"
+      },
+      {
+        "dish_id": "d094",
+        "raw_name": "黄焖鸡米饭套餐+饮料",
+        "restaurant_name": "黄焖鸡专门店",
+        "restaurant_category_raw": "中式",
+        "category_raw": "套餐",
+        "price": 28,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d095",
+        "raw_name": "烤鱼套餐(鱼+饭+饮料+小菜)",
+        "restaurant_name": "烤鱼店",
+        "restaurant_category_raw": "中式",
+        "category_raw": "套餐",
+        "price": 78,
+        "category_tag": "combo"
+      }
+    ]
+  },
+  {
+    "batch_idx": 20,
+    "dish_ids": [
+      "d096",
+      "d097",
+      "d098",
+      "d099",
+      "d100"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d096",
+        "raw_name": "沙县小吃A套餐 拌面+扁肉+卤蛋",
+        "restaurant_name": "沙县小吃",
+        "restaurant_category_raw": "福建",
+        "category_raw": "套餐",
+        "price": 22,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d097",
+        "raw_name": "兰州拉面+牛肉+小菜+饮料",
+        "restaurant_name": "兰州拉面",
+        "restaurant_category_raw": "西北",
+        "category_raw": "套餐",
+        "price": 32,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d098",
+        "raw_name": "麻辣烫套餐(荤素+饭)",
+        "restaurant_name": "杨国福",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "套餐",
+        "price": 36,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d099",
+        "raw_name": "烤肉饭+饮料+汤",
+        "restaurant_name": "韩式烤肉",
+        "restaurant_category_raw": "韩式",
+        "category_raw": "套餐",
+        "price": 38,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d100",
+        "raw_name": "猪排咖喱饭套餐+饮料",
+        "restaurant_name": "日式定食屋",
+        "restaurant_category_raw": "日式",
+        "category_raw": "套餐",
+        "price": 42,
+        "category_tag": "combo"
+      }
+    ]
+  },
+  {
+    "batch_idx": 21,
+    "dish_ids": [
+      "d101",
+      "d102",
+      "d103",
+      "d104",
+      "d105"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d101",
+        "raw_name": "蒸饺+米线+饮料",
+        "restaurant_name": "中式快餐",
+        "restaurant_category_raw": "中式",
+        "category_raw": "套餐",
+        "price": 28,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d102",
+        "raw_name": "肉夹馍+稀饭+小菜",
+        "restaurant_name": "西安美食",
+        "restaurant_category_raw": "西北",
+        "category_raw": "套餐",
+        "price": 22,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d103",
+        "raw_name": "螺蛳粉+卤蛋+酸笋+饮料",
+        "restaurant_name": "广西螺蛳粉",
+        "restaurant_category_raw": "广西",
+        "category_raw": "套餐",
+        "price": 32,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d104",
+        "raw_name": "披萨+鸡翅+可乐",
+        "restaurant_name": "披萨工坊",
+        "restaurant_category_raw": "西式",
+        "category_raw": "套餐",
+        "price": 68,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d105",
+        "raw_name": "汉堡套餐(汉堡+薯条+可乐)",
+        "restaurant_name": "麦当劳",
+        "restaurant_category_raw": "西式",
+        "category_raw": "套餐",
+        "price": 38,
+        "category_tag": "combo"
+      }
+    ]
+  },
+  {
+    "batch_idx": 22,
+    "dish_ids": [
+      "d106",
+      "d107",
+      "d108",
+      "d109",
+      "d110"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d106",
+        "raw_name": "烧腊三拼饭+老火汤+饮料",
+        "restaurant_name": "粤式烧腊",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "套餐",
+        "price": 48,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d107",
+        "raw_name": "石锅拌饭+大酱汤+小菜",
+        "restaurant_name": "韩式料理",
+        "restaurant_category_raw": "韩式",
+        "category_raw": "套餐",
+        "price": 42,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d108",
+        "raw_name": "水煮鱼+米饭+蔬菜",
+        "restaurant_name": "渝味晓宇",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "套餐",
+        "price": 78,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d109",
+        "raw_name": "酸菜鱼套餐 含饭",
+        "restaurant_name": "酸菜鱼专门店",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "套餐",
+        "price": 42,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d110",
+        "raw_name": "牛肉粉+鸡蛋+卤味拼盘",
+        "restaurant_name": "粉面馆",
+        "restaurant_category_raw": "中式",
+        "category_raw": "套餐",
+        "price": 36,
+        "category_tag": "combo"
+      }
+    ]
+  },
+  {
+    "batch_idx": 23,
+    "dish_ids": [
+      "d111",
+      "d112",
+      "d113",
+      "d114",
+      "d115"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d111",
+        "raw_name": "生鱼片定食(刺身+饭+味噌汤+小菜)",
+        "restaurant_name": "寿司の神",
+        "restaurant_category_raw": "日式",
+        "category_raw": "套餐",
+        "price": 68,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d112",
+        "raw_name": "黑椒牛仔骨+饭+汤",
+        "restaurant_name": "西餐厅",
+        "restaurant_category_raw": "西式",
+        "category_raw": "套餐",
+        "price": 58,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d113",
+        "raw_name": "台湾卤肉饭+卤蛋+青菜+汤",
+        "restaurant_name": "台式料理",
+        "restaurant_category_raw": "台菜",
+        "category_raw": "套餐",
+        "price": 32,
+        "category_tag": "combo"
+      },
+      {
+        "dish_id": "d114",
+        "raw_name": "猪肉大葱包子 4个",
+        "restaurant_name": "包子铺",
+        "restaurant_category_raw": "中式",
+        "category_raw": "主食",
+        "price": 12,
+        "category_tag": "staple"
+      },
+      {
+        "dish_id": "d115",
+        "raw_name": "小笼包 6个",
+        "restaurant_name": "南翔小笼",
+        "restaurant_category_raw": "江浙",
+        "category_raw": "点心",
+        "price": 22,
+        "category_tag": "staple"
+      }
+    ]
+  },
+  {
+    "batch_idx": 24,
+    "dish_ids": [
+      "d116",
+      "d117",
+      "d118",
+      "d119",
+      "d120"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d116",
+        "raw_name": "葱油拌面",
+        "restaurant_name": "上海老面馆",
+        "restaurant_category_raw": "江浙",
+        "category_raw": "面食",
+        "price": 18,
+        "category_tag": "staple"
+      },
+      {
+        "dish_id": "d117",
+        "raw_name": "阳春面",
+        "restaurant_name": "上海老面馆",
+        "restaurant_category_raw": "江浙",
+        "category_raw": "面食",
+        "price": 14,
+        "category_tag": "staple"
+      },
+      {
+        "dish_id": "d118",
+        "raw_name": "牛肉拉面",
+        "restaurant_name": "兰州拉面",
+        "restaurant_category_raw": "西北",
+        "category_raw": "招牌",
+        "price": 26,
+        "category_tag": "staple"
+      },
+      {
+        "dish_id": "d119",
+        "raw_name": "炒河粉",
+        "restaurant_name": "潮汕牛肉甘草水",
+        "restaurant_category_raw": "潮汕",
+        "category_raw": "粉面",
+        "price": 22,
+        "category_tag": "staple"
+      },
+      {
+        "dish_id": "d120",
+        "raw_name": "桂林米粉",
+        "restaurant_name": "广西米粉",
+        "restaurant_category_raw": "广西",
+        "category_raw": "招牌",
+        "price": 18,
+        "category_tag": "staple"
+      }
+    ]
+  },
+  {
+    "batch_idx": 25,
+    "dish_ids": [
+      "d121",
+      "d122",
+      "d123",
+      "d124",
+      "d125"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d121",
+        "raw_name": "皮蛋瘦肉粥",
+        "restaurant_name": "潮汕粥铺",
+        "restaurant_category_raw": "潮汕",
+        "category_raw": "粥品",
+        "price": 14,
+        "category_tag": "staple"
+      },
+      {
+        "dish_id": "d122",
+        "raw_name": "白米饭 大碗",
+        "restaurant_name": "中式快餐",
+        "restaurant_category_raw": "中式",
+        "category_raw": "主食",
+        "price": 4,
+        "category_tag": "staple"
+      },
+      {
+        "dish_id": "d123",
+        "raw_name": "糙米饭",
+        "restaurant_name": "Wagas",
+        "restaurant_category_raw": "西式",
+        "category_raw": "主食",
+        "price": 8,
+        "category_tag": "staple"
+      },
+      {
+        "dish_id": "d124",
+        "raw_name": "全麦面包 2片",
+        "restaurant_name": "面包房",
+        "restaurant_category_raw": "西式",
+        "category_raw": "早餐",
+        "price": 6,
+        "category_tag": "staple"
+      },
+      {
+        "dish_id": "d125",
+        "raw_name": "烤红薯",
+        "restaurant_name": "街边小吃",
+        "restaurant_category_raw": "中式",
+        "category_raw": "小吃",
+        "price": 8,
+        "category_tag": "staple"
+      }
+    ]
+  },
+  {
+    "batch_idx": 26,
+    "dish_ids": [
+      "d126",
+      "d127",
+      "d128",
+      "d129",
+      "d130"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d126",
+        "raw_name": "玉米棒",
+        "restaurant_name": "蒸菜店",
+        "restaurant_category_raw": "中式",
+        "category_raw": "主食",
+        "price": 6,
+        "category_tag": "staple"
+      },
+      {
+        "dish_id": "d127",
+        "raw_name": "葱花鸡蛋饼",
+        "restaurant_name": "早餐店",
+        "restaurant_category_raw": "中式",
+        "category_raw": "早餐",
+        "price": 8,
+        "category_tag": "staple"
+      },
+      {
+        "dish_id": "d128",
+        "raw_name": "番茄蛋汤",
+        "restaurant_name": "家常菜馆",
+        "restaurant_category_raw": "中式",
+        "category_raw": "汤品",
+        "price": 8,
+        "category_tag": "side_soup"
+      },
+      {
+        "dish_id": "d129",
+        "raw_name": "冬瓜排骨汤",
+        "restaurant_name": "广式煲汤",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "汤品",
+        "price": 28,
+        "category_tag": "side_soup"
+      },
+      {
+        "dish_id": "d130",
+        "raw_name": "酸辣汤",
+        "restaurant_name": "蜀香源",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "汤品",
+        "price": 12,
+        "category_tag": "side_soup"
+      }
+    ]
+  },
+  {
+    "batch_idx": 27,
+    "dish_ids": [
+      "d131",
+      "d132",
+      "d133",
+      "d134",
+      "d135"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d131",
+        "raw_name": "味噌汤",
+        "restaurant_name": "日式定食屋",
+        "restaurant_category_raw": "日式",
+        "category_raw": "汤品",
+        "price": 8,
+        "category_tag": "side_soup"
+      },
+      {
+        "dish_id": "d132",
+        "raw_name": "白灼芥兰",
+        "restaurant_name": "顺德私房菜",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "时蔬",
+        "price": 18,
+        "category_tag": "side_soup"
+      },
+      {
+        "dish_id": "d133",
+        "raw_name": "清炒西兰花",
+        "restaurant_name": "家常菜馆",
+        "restaurant_category_raw": "中式",
+        "category_raw": "时蔬",
+        "price": 16,
+        "category_tag": "side_soup"
+      },
+      {
+        "dish_id": "d134",
+        "raw_name": "凉拌黄瓜",
+        "restaurant_name": "家常菜馆",
+        "restaurant_category_raw": "中式",
+        "category_raw": "凉菜",
+        "price": 10,
+        "category_tag": "side_soup"
+      },
+      {
+        "dish_id": "d135",
+        "raw_name": "拍黄瓜",
+        "restaurant_name": "蜀香源",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "凉菜",
+        "price": 12,
+        "category_tag": "side_soup"
+      }
+    ]
+  },
+  {
+    "batch_idx": 28,
+    "dish_ids": [
+      "d136",
+      "d137",
+      "d138",
+      "d139",
+      "d140"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d136",
+        "raw_name": "豆浆",
+        "restaurant_name": "早餐店",
+        "restaurant_category_raw": "中式",
+        "category_raw": "饮品",
+        "price": 4,
+        "category_tag": "side_soup"
+      },
+      {
+        "dish_id": "d137",
+        "raw_name": "冰美式咖啡",
+        "restaurant_name": "咖啡店",
+        "restaurant_category_raw": "西式",
+        "category_raw": "饮品",
+        "price": 18,
+        "category_tag": "side_soup"
+      },
+      {
+        "dish_id": "d138",
+        "raw_name": "珍珠奶茶",
+        "restaurant_name": "茶饮店",
+        "restaurant_category_raw": "饮品",
+        "category_raw": "饮品",
+        "price": 18,
+        "category_tag": "side_soup"
+      },
+      {
+        "dish_id": "d139",
+        "raw_name": "可乐 中杯",
+        "restaurant_name": "麦当劳",
+        "restaurant_category_raw": "西式",
+        "category_raw": "饮品",
+        "price": 8,
+        "category_tag": "side_soup"
+      },
+      {
+        "dish_id": "d140",
+        "raw_name": "烤鸡翅 3只",
+        "restaurant_name": "韩式料理",
+        "restaurant_category_raw": "韩式",
+        "category_raw": "小食",
+        "price": 18,
+        "category_tag": "side_soup"
+      }
+    ]
+  },
+  {
+    "batch_idx": 29,
+    "dish_ids": [
+      "d141",
+      "d142",
+      "d143",
+      "d144",
+      "d145"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d141",
+        "raw_name": "毛豆",
+        "restaurant_name": "啤酒屋",
+        "restaurant_category_raw": "中式",
+        "category_raw": "小食",
+        "price": 10,
+        "category_tag": "side_soup"
+      },
+      {
+        "dish_id": "d142",
+        "raw_name": "【🔥 超值秒杀】爆款 第二份半价 红烧肉饭",
+        "restaurant_name": "本帮菜馆",
+        "restaurant_category_raw": "江浙",
+        "category_raw": "活动",
+        "price": 38,
+        "category_tag": "boundary"
+      },
+      {
+        "dish_id": "d143",
+        "raw_name": "番茄沙司",
+        "restaurant_name": "麦当劳",
+        "restaurant_category_raw": "西式",
+        "category_raw": "调料",
+        "price": 2,
+        "category_tag": "boundary"
+      },
+      {
+        "dish_id": "d144",
+        "raw_name": "一次性筷子套装(餐具)",
+        "restaurant_name": "中式快餐",
+        "restaurant_category_raw": "中式",
+        "category_raw": "餐具",
+        "price": 1,
+        "category_tag": "boundary"
+      },
+      {
+        "dish_id": "d145",
+        "raw_name": "免费赠饮 柠檬水",
+        "restaurant_name": "西餐厅",
+        "restaurant_category_raw": "西式",
+        "category_raw": "赠品",
+        "price": 0,
+        "category_tag": "boundary"
+      }
+    ]
+  },
+  {
+    "batch_idx": 30,
+    "dish_ids": [
+      "d146",
+      "d147",
+      "d148",
+      "d149",
+      "d150"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d146",
+        "raw_name": "葱姜蒜调料包",
+        "restaurant_name": "家常菜馆",
+        "restaurant_category_raw": "中式",
+        "category_raw": "调料",
+        "price": 1,
+        "category_tag": "boundary"
+      },
+      {
+        "dish_id": "d147",
+        "raw_name": "猪扒饭+冬阴功汤",
+        "restaurant_name": "泰式餐厅",
+        "restaurant_category_raw": "泰式",
+        "category_raw": "招牌",
+        "price": 38,
+        "category_tag": "boundary"
+      },
+      {
+        "dish_id": "d148",
+        "raw_name": "赣味辣椒炒鸡",
+        "restaurant_name": "赣菜小馆",
+        "restaurant_category_raw": "赣菜",
+        "category_raw": "招牌",
+        "price": 36,
+        "category_tag": "boundary"
+      },
+      {
+        "dish_id": "d149",
+        "raw_name": "过桥米线",
+        "restaurant_name": "云南米线",
+        "restaurant_category_raw": "云南",
+        "category_raw": "招牌",
+        "price": 28,
+        "category_tag": "boundary"
+      },
+      {
+        "dish_id": "d150",
+        "raw_name": "客家盐焗鸡",
+        "restaurant_name": "客家小厨",
+        "restaurant_category_raw": "客家",
+        "category_raw": "招牌",
+        "price": 48,
+        "category_tag": "boundary"
+      }
+    ]
+  },
+  {
+    "batch_idx": 31,
+    "dish_ids": [
+      "d151",
+      "d152",
+      "d153",
+      "d154",
+      "d155"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d151",
+        "raw_name": "虾饺",
+        "restaurant_name": "广式茶楼分店",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "点心",
+        "price": 28,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d152",
+        "raw_name": "鲜虾肠粉",
+        "restaurant_name": "广式肠粉店分店",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "招牌",
+        "price": 18,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d153",
+        "raw_name": "桂林米粉",
+        "restaurant_name": "桂林米粉店",
+        "restaurant_category_raw": "广西",
+        "category_raw": "招牌",
+        "price": 16,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d154",
+        "raw_name": "干炒牛河",
+        "restaurant_name": "潮汕牛肉店分店",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "热菜",
+        "price": 38,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d155",
+        "raw_name": "牛排蛋白碗(无谷物 沙拉+牛排+牛油果+坚果)",
+        "restaurant_name": "Wagas 分店",
+        "restaurant_category_raw": "西式",
+        "category_raw": "蛋白碗",
+        "price": 58,
+        "category_tag": "adversarial"
+      }
+    ]
+  },
+  {
+    "batch_idx": 32,
+    "dish_ids": [
+      "d156",
+      "d157",
+      "d158",
+      "d159",
+      "d160"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d156",
+        "raw_name": "关东煮 萝卜+魔芋+海带卷",
+        "restaurant_name": "便利店分店",
+        "restaurant_category_raw": "日式",
+        "category_raw": null,
+        "price": 18,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d157",
+        "raw_name": "番茄牛尾汤套餐(汤底+米饭+小菜)",
+        "restaurant_name": "西式快餐",
+        "restaurant_category_raw": "西式",
+        "category_raw": "套餐",
+        "price": 68,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d158",
+        "raw_name": "麻辣烫自选套餐(荤素+米线)",
+        "restaurant_name": "杨国福分店",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "套餐",
+        "price": 35,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d159",
+        "raw_name": "双拼烧腊饭(叉烧+烧鸭)",
+        "restaurant_name": "粤式烧腊分店",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "饭类",
+        "price": 42,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d160",
+        "raw_name": "广式腊肠煲仔饭",
+        "restaurant_name": "煲仔饭专门店",
+        "restaurant_category_raw": "粤菜",
+        "category_raw": "招牌",
+        "price": 36,
+        "category_tag": "adversarial"
+      }
+    ]
+  },
+  {
+    "batch_idx": 33,
+    "dish_ids": [
+      "d161",
+      "d162",
+      "d163",
+      "d164",
+      "d165"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d161",
+        "raw_name": "烟熏培根奶油意面",
+        "restaurant_name": "意面工坊分店",
+        "restaurant_category_raw": "西式",
+        "category_raw": "意面",
+        "price": 48,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d162",
+        "raw_name": "蜜汁鸡翅",
+        "restaurant_name": "西餐厅分店",
+        "restaurant_category_raw": "西式",
+        "category_raw": "招牌",
+        "price": 32,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d163",
+        "raw_name": "照烧三文鱼便当(+味噌汤+小菜)",
+        "restaurant_name": "日式便当",
+        "restaurant_category_raw": "日式",
+        "category_raw": "套餐",
+        "price": 55,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d164",
+        "raw_name": "拔丝地瓜",
+        "restaurant_name": "杭帮菜分店",
+        "restaurant_category_raw": "江浙",
+        "category_raw": "甜品",
+        "price": 22,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d165",
+        "raw_name": "京酱肉丝(配薄饼)",
+        "restaurant_name": "京味斋分店",
+        "restaurant_category_raw": "其他",
+        "category_raw": "招牌",
+        "price": 34,
+        "category_tag": "adversarial"
+      }
+    ]
+  },
+  {
+    "batch_idx": 34,
+    "dish_ids": [
+      "d166",
+      "d167",
+      "d168",
+      "d169",
+      "d169b"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d166",
+        "raw_name": "一次性筷子套装(餐具)",
+        "restaurant_name": "中式快餐分店",
+        "restaurant_category_raw": "中式",
+        "category_raw": "餐具",
+        "price": 0,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d167",
+        "raw_name": "老干妈油辣椒酱(单卖瓶装)",
+        "restaurant_name": "便利店分店",
+        "restaurant_category_raw": "中式",
+        "category_raw": "调料",
+        "price": 3,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d168",
+        "raw_name": "恰巴塔三明治 4 件套",
+        "restaurant_name": "西式咖啡分店",
+        "restaurant_category_raw": "西式",
+        "category_raw": "套餐",
+        "price": 48,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d169",
+        "raw_name": "麻辣香锅 单人份",
+        "restaurant_name": "麻辣香锅店",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "套餐",
+        "price": 28,
+        "category_tag": "adversarial"
+      },
+      {
+        "dish_id": "d169b",
+        "raw_name": "麻辣香锅 双人份",
+        "restaurant_name": "麻辣香锅店",
+        "restaurant_category_raw": "川菜",
+        "category_raw": "套餐",
+        "price": 56,
+        "category_tag": "adversarial"
+      }
+    ]
+  },
+  {
+    "batch_idx": 35,
+    "dish_ids": [
+      "d170"
+    ],
+    "dishes": [
+      {
+        "dish_id": "d170",
+        "raw_name": "猪排咖喱饭套餐+冰红茶",
+        "restaurant_name": "日式定食屋分店",
+        "restaurant_category_raw": "日式",
+        "category_raw": "套餐",
+        "price": 42,
+        "category_tag": "adversarial"
+      }
+    ]
+  }
+]

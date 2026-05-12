@@ -25,6 +25,14 @@ final (v3) changelog (r2 audit 1 P1 + 3 P2 修补, 准确率 98%):
   - 西式蛋白碗 is_complete_meal=true (本就是一餐, 即使无谷物)
   - 商业能量棒/燕麦棒 cooking_method=烤 (压制烘焙, 非生)
   - 复合粉面套餐 cooking_method 按粉/面本体取 (煮 / 凉拌), 配菜的工艺不主导
+r3 changelog (dual-model golden set spike, 5 errors patched):
+  - d010 示例输出 spicy_level=2 改 0 (与第 169 行规则文字"非食物兜底 spicy=0"自相矛盾, dual-model 识别)
+  - 新增红薯粉/绿豆粉/魔芋粉 → 白米 锚点 (酸辣粉等粉类淀粉)
+  - 新增锚到 1: 回锅肉(甜面酱) / 鱼香肉丝 / 宫保鸡丁 (字面无锚但实际含糖)
+  - 沉淀 main_ingredient_type 命名 vs 体积优先级 (酸豆角肉末 main=红肉, 麻婆豆腐 main=豆制品)
+  - 沉淀 dish_role 凉菜大份蛋白足 → 主菜 (vs 配菜需要少量蛋白)
+  - 沉淀 wetness 浸卤等价规则: 钵钵鸡 = 关东煮 = wetness=2
+  - 沉淀 processed_meat 菜单未明示原则: 麻辣香锅 default false (vs 毛血旺固定含午餐肉 default true)
 r2 changelog (spike 50 audit, 12/50 violation 修补):
   - wetness: 套餐里若列出汤/粥 → 整套 wetness=3 (修 d_035_031 / d_170_038)
   - dish_role: 复合粉面 + 蛋 + 小菜 ≥ 3 件 + 主食 → 套餐 (修 d_121_014)
@@ -203,6 +211,7 @@ see: docs/DECISIONS.md D-032
 判别词锚点:
 - 锚到 2: 红烧 / 糖醋 / 照烧 / 京酱 / 酱烧 / 烧汁 / 茄汁 / 普通叉烧 / 烧鸭 (默认烧腊都带糖) / 咕咾 / 韩辣酱 / 泰甜辣酱 / 黑椒甜
 - 锚到 3: 蜜汁 / 蜂蜜 / 拔丝 / 麦芽糖 / 浓糖款明确写"重糖"
+- 锚到 1 (实际含糖但菜名无显式锚词): 回锅肉 (甜面酱) / 鱼香肉丝 (鱼香汁糖醋) / 宫保鸡丁 (宫保汁微糖)
 - 锚到 0: 白灼 / 清炒 / 水煮 / 麻辣 / 盐焗 / 孜然 / 椒盐 / 葱姜 / 黑胡椒 (无糖) / 酱油普通 / 卤水
 
 注: LLM 倾向把所有"非明确甜"的菜打 0, 这是错的。看到烧/红/酱/糖/蜜/照 任一字眼, 至少 2; 加蜜/蜂/拔/麦芽 锚到 3。
@@ -245,6 +254,7 @@ see: docs/DECISIONS.md D-032
 
 判定原则:
 - 米粉/河粉/粿条/肠粉等精制米制品归"白米" (高 GI, 与白米饭等价)
+- **红薯粉/绿豆粉/魔芋粉** (酸辣粉/凉皮等粉类淀粉提取物) 归 "白米" (精制淀粉高 GI 类推, 不在原 prompt 锚词但等价米粉)
 - 不确定面是否全麦 → 默认"精制面"
 - 单一主食按其类型直接判
 - **复合套餐多主食 → 按更精制 / 更高 GI 的标** (例: 燕麦鱼鱼+肉夹馍套餐 → 精制面; 燕麦+白米饭 → 白米)
@@ -308,7 +318,7 @@ see: docs/DECISIONS.md D-032
   {"dish_id":"d007","canonical_name":"燕麦坚果碗","cuisine":"西式","main_ingredient_type":"主食","cooking_method":"生","oil_level":2,"protein_grams_estimate":10,"vegetable_ratio_estimate":0.1,"is_complete_meal":true,"spicy_level":0,"dish_role":"主食","processed_meat_flag":false,"sweet_sauce_level":1,"wetness":1,"grain_type":"粗粮","tags":["高纤维","适合减脂"]},
   {"dish_id":"d008","canonical_name":"紫菜蛋花汤","cuisine":"湘菜","main_ingredient_type":"汤","cooking_method":"煮","oil_level":2,"protein_grams_estimate":5,"vegetable_ratio_estimate":0.3,"is_complete_meal":false,"spicy_level":0,"dish_role":"汤","processed_meat_flag":false,"sweet_sauce_level":0,"wetness":3,"grain_type":"无","tags":["清淡","汤水"]},
   {"dish_id":"d009","canonical_name":"烧鸭腿拼叉烧饭 含汤","cuisine":"粤菜","main_ingredient_type":"红肉","cooking_method":"烤","oil_level":3,"protein_grams_estimate":35,"vegetable_ratio_estimate":0.1,"is_complete_meal":true,"spicy_level":0,"dish_role":"套餐","processed_meat_flag":false,"sweet_sauce_level":2,"wetness":2,"grain_type":"白米","tags":["高蛋白","下饭"]},
-  {"dish_id":"d010","canonical_name":"蒜蓉辣椒酱","cuisine":"其他","main_ingredient_type":"其他","cooking_method":"凉拌","oil_level":1,"protein_grams_estimate":0,"vegetable_ratio_estimate":0,"is_complete_meal":false,"spicy_level":2,"dish_role":"小食","processed_meat_flag":false,"sweet_sauce_level":0,"wetness":1,"grain_type":"无","tags":["小份"]}
+  {"dish_id":"d010","canonical_name":"蒜蓉辣椒酱","cuisine":"其他","main_ingredient_type":"其他","cooking_method":"凉拌","oil_level":1,"protein_grams_estimate":0,"vegetable_ratio_estimate":0,"is_complete_meal":false,"spicy_level":0,"dish_role":"小食","processed_meat_flag":false,"sweet_sauce_level":0,"wetness":1,"grain_type":"无","tags":["小份"]}
 ]
 ```
 
