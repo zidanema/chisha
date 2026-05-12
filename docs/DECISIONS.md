@@ -1185,3 +1185,50 @@ V3 prompt r3 patch (已 sync 主 `prompts/tag_dishes.md`):
 - v3 prompt 后续迭代到 v4
 
 依赖: D-031 (v2 prompt), D-032 (v3 prompt v5 字段)
+
+---
+
+## D-037: 生产打标默认模型切到 deepseek-v4-flash
+日期: 2026-05-12
+状态: active
+
+背景:
+D-036 重建的 171 条 dual-model golden set 跑完 6 模型横评 (`eval/dish_tagging_eval/report.md`), 发现:
+- 准确率冠军 `sonnet-4.6` 字段 acc 89.4% / 100万条 $4572
+- `deepseek-flash` 字段 acc 88.9% / 100万条 $100 (距冠军 -0.5pp, 成本仅 2.2%)
+- `haiku-4.5` 字段 acc 85.2% / 100万条 $1424 (距冠军 -4.2pp, 此前默认 "haiku 主跑 + sonnet 回退" 的分层方案在新 golden set 下不再成立)
+
+DeepSeek v4 系列在新 golden set 上表现超预期, pro/flash 双雄打平 (88.9% vs 89.0%), flash 便宜 13×, 没必要选 pro。
+
+考虑过的方案:
+- A. 默认 sonnet-4.6 (准确率优先)
+- B. 默认 haiku-4.5 (原方案, 吞吐快)
+- C. 默认 deepseek-flash (性价比, 距 top -0.5pp + 成本 2.2%)
+- D. 分层: deepseek-flash 主跑 + sonnet-4.6 回退低置信样本
+
+决定: **C** (默认 deepseek-flash, 不做分层)
+
+理由:
+- 准确率 gap 0.5pp 落在 golden set 自身边界争议 (16 条 P0/P1/P2 KNOWN_ISSUES) 噪声内, 分层带来的边际收益 <1pp 但增加链路复杂度
+- 13240 菜全量打标按 flash 实测成本预估 ~$1.3, 几乎可忽略, 后续迭代版本可以激进重打
+- 评测系统 (`eval/dish_tagging_eval/run_eval.py`) 保持 6 模型横评不变, 仅生产链路切换
+
+工程产物:
+- `chisha/llm_client_openrouter.py:DEFAULT_BULK_MODEL` 从 `anthropic/claude-sonnet-4.5` → `deepseek/deepseek-v4-flash`
+- `scripts/tag_via_api.py --model` 默认值同步 (经由 DEFAULT_BULK_MODEL 导入)
+- `eval/dish_tagging_eval/scripts/make_report.py` 综合打分权重从等权 → cost 0.7 + time 0.3 (生产打标看长期成本, 单条延迟次要)
+- `eval/dish_tagging_eval/report.md` 重生成, 推荐口径自动切到 flash
+
+反对意见 / 风险:
+- **DeepSeek 数据合规**: OpenRouter 转发 DeepSeek, 实际 inference 在 DeepSeek 后端. 菜名不含 PII, 风险可控
+- **v3 prompt 对 deepseek 适配度未充分测试**: 当前评测 88.9% 是单 prompt 跑出, 没做 deepseek-specific prompt tuning; 跑大规模生产前先 smoke 100 条
+- **OpenRouter rate limit 未实测**: 评测时 batch=20 / concurrency=20 跑 deepseek-flash 没触发 429, 但 13240 菜单账号串跑可能撞限; 必要时申请提升或加 sleep
+- **deepseek-flash 输出比 sonnet 啰嗦 ~20%**: 评测中 output_tokens 实测偏高, 但成本依然便宜 14×, 不构成问题
+
+触发重审的条件:
+- 跑生产数据发现 deepseek-flash 在某类边界 case 上系统性翻车 (例如 oil_level / sweet_sauce_level 与 golden set 偏差扩大)
+- 模型供应商关停 / 提价 (DeepSeek v5 出来或 OpenRouter 提 markup)
+- v4 prompt 重大升级后, 新 golden set 横评推荐换模型
+- 业务侧要求更高准确率 (例如健康关怀类用户 / 推送内容审核)
+
+依赖: D-032 (v3 prompt), D-036 (dual-model golden set)

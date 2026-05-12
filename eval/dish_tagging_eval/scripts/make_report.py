@@ -165,17 +165,17 @@ def render(summary: dict) -> str:
     lines.append("## 结论与建议\n")
     by_acc = sorted(rows, key=lambda x: -x[1]["field_accuracy_micro"])
     top = by_acc[0]
-    # 性价比候选: 准确率 ≥ top - 5pp 的里, 同时综合 (100万条成本) + (10万条耗时) 排序
+    # 性价比候选: 准确率 ≥ top - 5pp 的里, 综合 (100万条成本) + (10万条耗时) 排序
+    # 权重: cost 0.7 + time 0.3 — 生产打标核心看长期成本, 单条延迟次要(可隔夜跑)
     threshold = top[1]["field_accuracy_micro"] - 0.05
     cands = [r for r in rows if r[1]["field_accuracy_micro"] >= threshold]
-    # 综合分: cost 归一化 + time 归一化 (越小越好)
     if cands:
         max_cost = max(c[1]["estimated_1M_cost_usd"] for c in cands)
         max_time = max(c[1]["est_100k_seconds_at_concurrency10"] for c in cands)
         for c in cands:
             cn = c[1]["estimated_1M_cost_usd"] / max(1, max_cost)
             tn = c[1]["est_100k_seconds_at_concurrency10"] / max(1, max_time)
-            c[1]["_combined"] = cn + tn  # 等权 (改 0.7/0.3 等可调)
+            c[1]["_combined"] = 0.7 * cn + 0.3 * tn
         cands.sort(key=lambda x: x[1]["_combined"])
         cheapest_acceptable = cands[0]
     else:
@@ -218,23 +218,25 @@ def render(summary: dict) -> str:
                  f"1万条 ${cost_10k_for(top[1]):.1f} / "
                  f"{fmt_dur(top[1]['est_10k_seconds_at_concurrency10'])}; "
                  f"贵但快, 小批量首选 |")
-    # 速度+准确率均衡 (haiku)
-    haiku = models.get('haiku-4.5')
-    if haiku:
-        lines.append(f"| 数据量 1万-10万 / 准确率可放宽 | **`haiku-4.5`** | "
-                     f"字段准确率 {fmt_pct(haiku['field_accuracy_micro'])}(距冠军 "
-                     f"-{(top[1]['field_accuracy_micro']-haiku['field_accuracy_micro'])*100:.1f}pp), "
-                     f"但吞吐 {haiku['throughput_rows_per_s_at_concurrency10']:.1f} 条/秒, "
-                     f"10万条 {fmt_dur(haiku['est_100k_seconds_at_concurrency10'])}, "
-                     f"${cost_10k_for(haiku)*10:.0f} |")
-    # 极致省钱 (deepseek-flash) - 但要注明慢
-    flash = models.get('deepseek-flash')
-    if flash:
-        lines.append(f"| 数据量 ≥ 10万 / 时间不敏感 | **`deepseek-flash`** | "
-                     f"100万条仅 ${flash['estimated_1M_cost_usd']:.0f} (冠军的 "
-                     f"{flash['estimated_1M_cost_usd']/top[1]['estimated_1M_cost_usd']*100:.1f}%), "
-                     f"但 10万条要 {fmt_dur(flash['est_100k_seconds_at_concurrency10'])}, "
-                     f"准确率 {fmt_pct(flash['field_accuracy_micro'])} |")
+    # 性价比均衡 (cheapest_acceptable = 综合 cost+time 归一化最优, 准确率 >= top-5pp)
+    # 这一档 = 生产打标默认模型 (见 chisha/llm_client_openrouter.py DEFAULT_BULK_MODEL)
+    bulk_alias = cheapest_acceptable[0]
+    bulk_s = cheapest_acceptable[1]
+    if bulk_alias != top[0]:
+        lines.append(f"| 数据量 1万-10万 / 性价比均衡 ⭐ **(生产打标默认)** | **`{bulk_alias}`** | "
+                     f"字段准确率 {fmt_pct(bulk_s['field_accuracy_micro'])}(距冠军 "
+                     f"-{(top[1]['field_accuracy_micro']-bulk_s['field_accuracy_micro'])*100:.1f}pp), "
+                     f"吞吐 {bulk_s['throughput_rows_per_s_at_concurrency10']:.1f} 条/秒, "
+                     f"100万条 ${bulk_s['estimated_1M_cost_usd']:.0f} ({bulk_s['estimated_1M_cost_usd']/top[1]['estimated_1M_cost_usd']*100:.1f}% 冠军成本), "
+                     f"10万条 {fmt_dur(bulk_s['est_100k_seconds_at_concurrency10'])} |")
+    # 极致省钱: cheapest_by_cost, 若与 bulk 不同则单列
+    if cheapest_by_cost[0] not in (top[0], bulk_alias):
+        cb_s = cheapest_by_cost[1]
+        lines.append(f"| 数据量 ≥ 10万 / 时间不敏感 | **`{cheapest_by_cost[0]}`** | "
+                     f"100万条仅 ${cb_s['estimated_1M_cost_usd']:.0f} (冠军的 "
+                     f"{cb_s['estimated_1M_cost_usd']/top[1]['estimated_1M_cost_usd']*100:.1f}%), "
+                     f"10万条 {fmt_dur(cb_s['est_100k_seconds_at_concurrency10'])}, "
+                     f"准确率 {fmt_pct(cb_s['field_accuracy_micro'])} |")
     lines.append("")
 
     lines.append("### 4. 是否分层方案?\n")
@@ -257,13 +259,14 @@ def render(summary: dict) -> str:
         lines.append("")
 
     lines.append("### 5. 最终决策 (基于本次实测)\n")
-    # 给出明确的"如果是我"的推荐
     rec_lines = []
-    rec_lines.append(f"- 如果**只跑一次几千条 → `sonnet-4.6`**:准确率 {fmt_pct(top_acc)} + 速度最快档 + 一次性成本可接受")
-    if haiku and haiku['field_accuracy_micro'] >= 0.85:
-        rec_lines.append(f"- 如果**几万条且要在 1 天内出结果 → `haiku-4.5`**:吞吐最快, 1 万条 ${cost_10k_for(haiku):.0f} / 10 万条 ${cost_10k_for(haiku)*10:.0f}, 准确率 {fmt_pct(haiku['field_accuracy_micro'])} 可被分层补救")
-    if flash:
-        rec_lines.append(f"- 如果**几十万条 + 离线异步 + 极致省钱 → `deepseek-flash`**:成本几乎可忽略, 但要忍受 {fmt_dur(flash['est_100k_seconds_at_concurrency10'])}/10万条的耗时")
+    rec_lines.append(f"- **生产打标默认 → `{bulk_alias}`** (`chisha/llm_client_openrouter.py:DEFAULT_BULK_MODEL`): "
+                     f"准确率 {fmt_pct(bulk_s['field_accuracy_micro'])}, 100万条 ${bulk_s['estimated_1M_cost_usd']:.0f}, "
+                     f"距冠军 -{(top_acc-bulk_s['field_accuracy_micro'])*100:.1f}pp 性价比最优")
+    rec_lines.append(f"- 如果**只跑一次几千条 → `{top[0]}`**:准确率最高 {fmt_pct(top_acc)} + 速度最快档 + 一次性成本可接受")
+    if cheapest_by_cost[0] not in (top[0], bulk_alias):
+        cb_s = cheapest_by_cost[1]
+        rec_lines.append(f"- 如果**几十万条 + 离线异步 + 极致省钱 → `{cheapest_by_cost[0]}`**:成本 ${cb_s['estimated_1M_cost_usd']:.0f}/100万条, 但要忍受 {fmt_dur(cb_s['est_100k_seconds_at_concurrency10'])}/10万条的耗时")
     for x in rec_lines: lines.append(x)
     lines.append("")
 

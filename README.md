@@ -68,13 +68,20 @@
 
 #### 1. 真实 LLM 打标（替换 mock）
 
+> ⚠️ V3 生产打标走 `scripts/tag_via_api.py`（OpenRouter）, 默认模型 `deepseek/deepseek-v4-flash` (见 [D-037](docs/DECISIONS.md#d-037), 171 条 dual-model golden 横评最优性价比)
+> `scripts/tag_dishes.py` 是 Anthropic 直连旧脚本, 已停用
+
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-xxx
-# 先 spike 50 条抽查
-uv run python -m scripts.tag_dishes shenzhen-bay --limit 50
+# .env 需有 OPENROUTER_API_KEY
+# 先 spike 50 条抽查 (默认 deepseek-flash)
+uv run python scripts/tag_via_api.py shenzhen-bay --limit 50
 # 抽查 50 条准确率 ≥ 80% 后再跑全量
-uv run python -m scripts.tag_dishes shenzhen-bay
-uv run python -m scripts.tag_dishes home
+uv run python scripts/tag_via_api.py shenzhen-bay
+uv run python scripts/tag_via_api.py home
+
+# 显式覆盖模型 (例如 ceiling 准确率回归)
+uv run python scripts/tag_via_api.py shenzhen-bay --limit 50 \
+  --model anthropic/claude-sonnet-4.6
 ```
 
 #### 2. 抽查召回 100 条（看是否合理）

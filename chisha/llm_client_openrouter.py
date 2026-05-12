@@ -4,7 +4,7 @@
 - 旧 chisha/llm_client.py 走 Anthropic 直连, 仍由 reason / 推荐链路使用; 不动它
 - 这个 file 专给 v3 全量打标用 (tag_via_api.py 走 OpenRouter)
 - 走 OpenAI Python SDK + base_url=OpenRouter, 模型名按 OR 命名空间
-  (anthropic/claude-sonnet-4.5 / anthropic/claude-opus-4.5 等)
+  (deepseek/deepseek-v4-flash / anthropic/claude-sonnet-4.6 / anthropic/claude-opus-4.5 等)
 
 环境变量 (从 .env load):
 - OPENROUTER_API_KEY (必需)
@@ -24,7 +24,12 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_REPO_ROOT / ".env")
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_BULK_MODEL = "anthropic/claude-sonnet-4.5"
+# 2026-05-12 D-037: bulk 默认从 sonnet-4.5 切到 deepseek-v4-flash
+# 依据: eval/dish_tagging_eval 171 条 dual-model golden 横评
+#   - field acc 88.9% (距 sonnet-4.6 冠军 -0.5pp)
+#   - 100万条预估 $100 (sonnet-4.6 $4572, 便宜 45x)
+# 高准确率要求的样本仍可用 --model anthropic/claude-sonnet-4.6 显式覆盖
+DEFAULT_BULK_MODEL = "deepseek/deepseek-v4-flash"
 DEFAULT_AUDIT_MODEL = "anthropic/claude-opus-4.5"
 
 

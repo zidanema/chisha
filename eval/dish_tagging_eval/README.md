@@ -2,8 +2,10 @@
 
 > 评测目标:`tag_dishes_v3` 在 5-6 个 OpenRouter 主流模型上的字段级准确率,产出**推荐生产模型 + 是否分层方案**的对比报告。
 >
+> **当前结论**: 生产打标默认 `deepseek/deepseek-v4-flash` (字段 acc 88.9%, 距 sonnet 冠军 -0.5pp, 100万条 $100, 见 D-037)
+>
 > 任务规范:`../dish_tagging_model_eval_spec.md`
-> 决策记录:`docs/DECISIONS.md` D-031 / D-032 (prompt) / **D-036** (dual-model golden set 重建)
+> 决策记录:`docs/DECISIONS.md` D-031 / D-032 (prompt) / **D-036** (dual-model golden set 重建) / **D-037** (生产默认切 deepseek-flash)
 
 ## Golden set (171 条, 2026-05-12 Opus + Codex 双模型共创)
 
