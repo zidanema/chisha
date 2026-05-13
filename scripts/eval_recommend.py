@@ -160,7 +160,7 @@ def compute_metrics(top: list[dict], expected: dict) -> dict[str, Any]:
         oils.extend(d["nutrition_profile"].get("oil_level", 3) for d in dishes)
         if rest.get("distance_m", -1) > 0:
             distances.append(rest["distance_m"])
-        prices.append(sum(d.get("price", 0) for d in dishes))
+        prices.append(sum((d.get("price") or 0) for d in dishes))
         cuisines.extend(d.get("cuisine", "") for d in dishes if d.get("cuisine"))
         # V2 字段 (合流后才有)
         for d in dishes:
@@ -336,7 +336,7 @@ def _check_assertion(line: str, top: list[dict],
         thresh = int(m.group(1))
         bad = []
         for c in top:
-            tp = sum(d.get("price", 0) for d in c.get("dishes", []))
+            tp = sum((d.get("price") or 0) for d in c.get("dishes", []))
             if tp > thresh:
                 bad.append(tp)
         return ("PASS" if not bad else "FAIL",

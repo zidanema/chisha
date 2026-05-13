@@ -44,8 +44,8 @@ def test_hard_filter_avoid_dish(basic_profile):
                   main_ingredient_type="纯素", vegetable_ratio_estimate=0.95,
                   protein_grams_estimate=3),
     ]
-    out = hard_filter(dishes, basic_profile, set())
-    assert {d["dish_id"] for d in out} == {"d2"}
+    out, _ = hard_filter(dishes, basic_profile, set())
+    assert {d["dish_id"] for d in out} =={"d2"}
 
 
 def test_hard_filter_spicy(basic_profile):
@@ -53,8 +53,8 @@ def test_hard_filter_spicy(basic_profile):
         make_dish(dish_id="d1", spicy_level=3),  # 重辣，超 tolerance=2
         make_dish(dish_id="d2", spicy_level=2),
     ]
-    out = hard_filter(dishes, basic_profile, set())
-    assert {d["dish_id"] for d in out} == {"d2"}
+    out, _ = hard_filter(dishes, basic_profile, set())
+    assert {d["dish_id"] for d in out} =={"d2"}
 
 
 def test_hard_filter_sales_missing_not_filtered(basic_profile):
@@ -64,8 +64,8 @@ def test_hard_filter_sales_missing_not_filtered(basic_profile):
         make_dish(dish_id="d2", monthly_sales=5),    # 显式 < 10, 过滤
         make_dish(dish_id="d3", monthly_sales=100),  # 保留
     ]
-    out = hard_filter(dishes, basic_profile, set())
-    assert {d["dish_id"] for d in out} == {"d1", "d3"}
+    out, _ = hard_filter(dishes, basic_profile, set())
+    assert {d["dish_id"] for d in out} =={"d1", "d3"}
 
 
 def test_hard_filter_unavailable(basic_profile):
@@ -73,8 +73,8 @@ def test_hard_filter_unavailable(basic_profile):
         make_dish(dish_id="d1", is_available=False),
         make_dish(dish_id="d2", is_available=True),
     ]
-    out = hard_filter(dishes, basic_profile, set())
-    assert {d["dish_id"] for d in out} == {"d2"}
+    out, _ = hard_filter(dishes, basic_profile, set())
+    assert {d["dish_id"] for d in out} =={"d2"}
 
 
 def test_diversity_filter_excludes_recent_restaurant(basic_profile):

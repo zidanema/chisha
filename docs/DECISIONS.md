@@ -1308,3 +1308,362 @@ V2 e2e 5 次空跑验收 (2026-05-12, profile.yaml 真用, mood 三档对照):
 - reason 直接点出 "命中 want_light"/"是你点名爱的菜", 不再模板化
 
 依赖: D-033 (V2 合并触发), D-035 (LLM 精排结构化输出)
+
+---
+
+## D-039: 推荐调试台作为独立工件
+
+**2026-05-13**
+
+### 背景
+V2 推荐链路 e2e 跑通后, 用户开始调试推荐效果, 但命令行 dry_run 看不到中间状态
+(召回丢弃原因 / 16 维 score breakdown / LLM rerank 的 payload+response), 改 profile.yaml 调权重也要重启脚本.
+
+### 决策
+新增独立调试台工件 (FastAPI + 单文件 HTML), 与 OpenClaw 接入完全解耦:
+
+- `chisha/debug_recommend.py`: V2 instrumented 管道, 每阶段记录中间状态;
+  支持 profile_overrides (页面端覆盖, 不写盘) / trace_target (追溯某 combo 命运) /
+  compare_moods (并排跑多个 daily_mood)
+- `chisha/debug_server.py`: FastAPI on port 8765, endpoints:
+  GET / (调试台) / GET /docs (logic.html) / POST /api/debug_recommend /
+  POST /api/compare_moods / GET /api/profile
+- `chisha/static/debug.html`: 单文件工程师调试台 (4 段 L1/L2/L3/Final 折叠 + L2 表点行展开 16 维 breakdown)
+
+### Why
+- 推荐效果迭代周期短 (调权重→看效果→改权重), 命令行/重启脚本拖慢节奏
+- 浏览器调试时能看完整 payload, 才能判断 LLM rerank "选这条/丢那条" 的逻辑
+- 独立工件 = 不污染主链路代码 + 不和 OpenClaw 接入争抢决策
+
+### 与 OpenClaw 接入的关系
+- 调试台是 **dev-only 工程师视图**, OpenClaw 飞书卡片是 **用户视图**, 两者并行
+- 调试台先把推荐质量打磨好 (调权重 / 调 profile 字段), 再做 OpenClaw 接入 → 避免到了飞书卡片才发现推荐烂
+
+### 工程产物
+- `chisha/debug_recommend.py` (~600 行, 含 `_traced_hard_filter` 委托给生产 `hard_filter`)
+- `chisha/debug_server.py` (~110 行)
+- `chisha/static/debug.html`, `chisha/static/logic.html` (另 session 迭代)
+- 新依赖: fastapi>=0.115, uvicorn>=0.32 (pyproject.toml)
+
+### 启动
+```bash
+uv run python -m chisha.debug_server
+# → http://127.0.0.1:8765
+```
+
+依赖: 无新决策依赖
+
+---
+
+## D-040: combo 生成数量约束由 profile 显式注入
+
+**2026-05-13**
+
+### 背景
+V1 `build_combos_for_restaurant` 硬编码"路线 B = 1 蛋白 × 1 蔬菜 × 0/1 主食",
+不允许"补蔬菜" (1p+2v) 或"凑蛋白" (2p+1v) 场景. 用户洞察: combo 阶段不应该卡数量,
+应该由 profile 显式注入, 让 agent 自由控制.
+
+### 决策
+combo 阶段**只过营养合规** (plate_rule 弱约束三件套), 数量约束由 profile 注入:
+
+```yaml
+recall:
+  max_dishes_per_combo: 4
+  max_protein_per_combo: 2     # 允许凑蛋白
+  max_veg_per_combo: 2         # 允许补蔬菜
+  max_carb_per_combo: 1
+```
+
+路线 B 枚举 (n_p, n_v, n_c) ∈ [1,max_p] × [1,max_v] × [0,max_c],
+满足 n_p+n_v+n_c ≤ max_dishes 的所有组合.
+
+### Why
+- 用户外卖场景"先满足蔬菜需求, 再满足蛋白需求"是合理的, 1v 不够时补 2v
+- 把数量决策从代码里搬到 profile, 让用户/agent 不改代码就能调
+- 与 D-041 "召回宽召回, 用 profile 硬过滤" 原则一致
+
+### 取舍
+- 组合数膨胀: 单餐厅 raw combos median 16 → 48 (3x), 但 per_restaurant_max=20 截断后实际负载可控
+- LLM payload 38K → 46K chars (V2 rerank), 仍远低于上下文上限
+- 实测召回总 combos: 454 → 2206 (×4.8), L2 打分压力可接受
+
+### 工程产物
+- `chisha/recall.py:build_combos_for_restaurant` 重写为参数化枚举
+- 各池按 monthly_sales 降序 [:6 / :5 / :3] 防爆炸
+- 路线 A 加 `max_n <= 0 → []` 守护 (Codex audit 提出, D-039 review)
+- profile.yaml 新增 4 个 recall.* 配置项
+
+依赖: D-023 (弱约束三件套)
+
+---
+
+## D-041: 召回硬过滤双层架构 (hard_max_* / prefer_max_*)
+
+**2026-05-13**
+
+### 背景
+用户在调试台发现:
+- avoid_dishes 是 exact match, 18 个变体漏过 ("腐竹红烧肉+香米饭" 没命中 "红烧肉")
+- min_monthly_sales=10 砍掉 24% 长尾菜, 但 popularity 打分维度已经在处理低销, 重复
+- per_restaurant_max=3 在召回阶段过度剪枝, V2 LLM rerank 自带品牌多样性
+- 缺关键硬约束: 价格上限 / ETA 上限 / 餐厅黑名单 / 主蛋白黑名单 / 烹饪方式黑名单 / 菜系硬黑名单
+
+### 决策
+
+**架构原则**: 召回阶段尽量召回 + 用 profile 显式硬约束剪枝;
+判定一个约束是"硬"还是"软"的标准:
+- **硬**: 用户红线, 违反就不能出现 → 召回过滤 (减少后续算力)
+- **软**: 偏好但能权衡, 多目标 → 打分维度 / LLM 精排
+
+**字段命名规范**:
+- `hard_max_*` / `banned_*` / `avoid_*` → 召回硬过滤
+- `prefer_max_*` → 打分软扣分 (与 `hard_max_*` 配对)
+
+**P0 落地 (零数据成本)**:
+- `delivery_constraints.hard_max_eta_min`: ETA 超此值的餐厅整家 ban (距离不卡, 外卖场景)
+- `price_range.{hard_max_lunch, hard_max_dinner}`: combo 总价绝对上限, 超即 ban
+- `preferences.avoid_restaurants`: 餐厅名/品牌 substring 模糊匹配
+- `avoid_dishes`: 改 substring 模糊匹配 (从 exact match)
+
+**P1 落地 (零数据成本)**:
+- `preferences.avoid_main_ingredients`: 主蛋白黑名单 (如 [海鲜])
+- `preferences.avoid_cooking_methods`: 烹饪方式黑名单 (如 [油炸])
+- `preferences.banned_cuisines`: cuisine 硬黑名单 (区别于已有 disliked_cuisines 软)
+
+**P2 延后 (需要重打标, 暂不做)**:
+- allergens / calories / dietary_flags
+
+**软字段重命名**:
+- `lunch_max` → `prefer_max_lunch`, `dinner_max` → `prefer_max_dinner`
+- `max_delivery_eta_min` → `prefer_max_eta_min`
+- `score.py` 用 `new_name or old_name` 保留向后兼容入口
+
+**`hard_filter()` 重构**: 返回 `(kept, dropped)` 元组, dropped 每项含 `reason: str`;
+新参 `rest_ban_reasons: dict[rid, str]` 让调试管道注入"ETA超限/avoid_name/diversity"等具体原因.
+`debug_recommend._traced_hard_filter` 从 60 行重复逻辑改为 11 行薄包装, 委托给生产函数.
+
+**配置调整**:
+- `hard_max_oil_level`: 5 → 4 (实际 ban 最油的 872 道菜)
+- `min_monthly_sales`: 10 → 0 (关闭, 长尾交给 popularity)
+- `per_restaurant_max`: 3 → 20 (放开召回, 多样性留给排序)
+- 删除 `recall.top_n` (死配置, 没人引用)
+
+**bug 修复**:
+- `dish_price()` helper 处理 `price=None` 安全求和 (Codex audit 发现)
+- `refine.py:120` 加 `meal_type=state.meal_type` (refine 之前没应用 combo 总价过滤)
+- `build_combos_for_restaurant` 路线 A 加 `max_n <= 0 → []` 守护
+
+### 工程产物
+- `chisha/recall.py`: `compute_extra_banned_restaurants` + `combo_price_filter` + `combo_total_price` + `dish_price` 新增; `hard_filter` 重构
+- `chisha/api.py` / `chisha/refine.py`: 调用 `recall()` 时传 `meal_type=`
+- `chisha/score.py`: `eta_penalty` / `price_penalty` 读新字段名 (留老 fallback)
+- `profile.yaml`: 新增 7 个字段, 重命名 3 个, 删 1 个
+- `tests/test_recall_d041.py`: 8 个新测试 (Codex audit 提出, 含 traced=production 一致性)
+- 既有 224 + 新增 8 = 232 测试全过
+
+### Why
+- "召回宽召回, profile 显式 ban" 是业界共识 (Etsy/Yelp 模型)
+- 硬/软命名规范让用户读 profile.yaml 时一眼分清"红线 vs 偏好"
+- hard_filter 单一真理源, 消除 trace/production 漂移风险
+
+### 横评（Codex audit 共识）
+- 3 个 bug 全修 (price=None / refine 漏传 / route A max_n)
+- 2 个设计问题接受 (drift 重构 + 命名统一)
+- 2 个设计问题确认无问题 (ETA=-1 / 组合上限 ~830 worst case)
+- 1 个死配置删除 (recall.top_n)
+
+依赖: D-023 (plate_rule), D-040 (combo 生成参数化)
+
+
+## D-042: L2 排序后 per-restaurant cap + 调权微调
+
+**2026-05-13**
+
+### 背景
+用户发现 L2 打分 top30 两个症状: (1) 潮汕粥/汤水扎堆; (2) 同一家餐厅多个 combo 排前面.
+
+诊断: 潮汕粥类在 cuisine_preference(+0.5) / wetness(+0.5) / carb_quality(粥被列入 GRAIN_GOOD, +0.6) / low_oil(+0.8) 四个维度同时拿满 ~2.4 分纯加成; L2 不做商家去重, per_restaurant_max=20 让单店最多 20 个 combo 进 ranked, 分数相近一起占据 top30, 商家去重直到 L3 `_enforce_brand_unique` 才发生, 太晚.
+
+### 决策
+- `GRAIN_GOOD` 移除"粥" (粥本质精制白米, 汤水价值由 wetness 维度覆盖, 不重复加分)
+- `V2_DEFAULT_WEIGHTS.cuisine_preference` 0.5 → 0.2 (软偏好不应和营养底线一个量级)
+- 新增 `cap_per_restaurant(ranked, k)`: rank_combos 后立即调用, 每家餐厅 ranked 内最多保留 k=3 条, 其余下放 tail. 不丢任何 combo.
+- 新增 `resolve_cap_k(profile)`: 统一三路径 (api/refine/debug) K 读取入口, 从 `profile.recall.per_restaurant_top_k` 读, 默认 3.
+- profile.yaml `scoring_weights` 显式补齐 16 维 (此前只有 6 V1 维度, 其他靠 V2_DEFAULT_WEIGHTS 兜底).
+- debug.html / logic.html 加 cap 前后对比统计展示 + 文档章节.
+
+### 关键 fix (Codex review)
+- **MAJOR**: refine.py 二轮路径漏 cap → 已补
+- **MINOR**: 生产 k 硬编码 vs debug 读 profile 不一致 → 用 `resolve_cap_k` 统一
+- **MINOR**: 匿名 combo (无 id 无 name) 错误聚合 → 改用 `id(c)` sentinel
+
+### 工程产物
+- `chisha/score.py`: `cap_per_restaurant` + `resolve_cap_k`, GRAIN_GOOD 改, cuisine_preference 默认 0.2
+- `chisha/api.py` / `chisha/refine.py` / `chisha/debug_recommend.py`: 接入 cap
+- `profile.yaml`: scoring_weights 补 10 个新 key + recall.per_restaurant_top_k
+- `chisha/static/debug.html` / `chisha/static/logic.html`: UI + 文档
+- `tests/test_score_v2.py`: 新增 11 个测试 (cap 行为 + 粥/cuisine_preference 调权 + resolve_cap_k 4 个场景)
+- 245 测试全过
+
+### 实测效果
+- top30 涉及餐厅数 7 → 15 (lunch), 5 → 13 (dinner)
+- 单店最多 combo 10 → 3
+
+### 但事后发现 (引出 D-043)
+- 单店霸榜解决了, 潮汕菜系扎堆并未解决 (仍 10/30)
+- 用户问"为什么仅几个因素就让排序高度集中" → 数据分析揭示 8 个死分维度, top30 总分跨度仅 0.34
+
+依赖: D-033 (V2 score), D-040, D-041
+
+
+## D-043: L2 打分体系重设计 + 反馈闭环最小实现
+
+**2026-05-13**
+
+### 背景
+D-042 cap 后用户报告: top30 仍高度同质 (潮汕粥/汤水类), 排序集中在少数店. 数据分析显示打分 16 维度中:
+
+- **8 维度死分** (top30 std=0): vegetable_floor_pass / protein_floor_pass / variety_bonus / processed_meat / sweet_sauce / distance / taste_match / context_boost
+- **8 维度活但弱** (std 0.04-0.11): cuisine_preference / wetness / carb_quality / popularity / low_oil 等
+- top30 总分跨度仅 0.34, top5 跨度 0.18 → 任何一个高区分度维度命中即锁榜
+
+死分三种成因:
+- 结构性 (召回已强制): vegetable/protein floor
+- 使用性 (API 没传 hints/mood): taste_match / context_boost / distance
+- 数据稀疏: processed_meat / sweet_sauce / variety_bonus (3 天窗口全员命中)
+
+### 决策
+
+详见 [`docs/RECOMMEND_PRINCIPLES.md`](RECOMMEND_PRINCIPLES.md) 沉淀的 11 条原则。本决策的核心架构变更：
+
+#### P0 · 砍死权重 + 加菜系/形态 cap
+- 删 `vegetable_floor_pass` / `protein_floor_pass` / `distance` 权重 = 0 (在 V2_DEFAULT_WEIGHTS 设 0, profile.yaml 同步)
+- `chisha/score.py` 新增 `food_form` 规则推断 (从 canonical_name + cooking_method 推断, 不重打标): 粥/汤/面/饭/凉拌/烤/油炸/蒸/煎/炒/卤水/其他
+- 加 `cap_per_cuisine(top30_max=6)` + `cap_per_food_form(top30_max=8)` 单层函数, 实际生产用 `apply_caps` 一次遍历 + 三计数器同时满足三层约束 (Codex review 修复了串联实现的 BUG)
+
+#### P1 · 改活死维度
+- `variety_bonus`: 0/0.5 二值 → 上次同 main_ingredient_type 距今 N 天, 分数 = min(1, N/7), 窗口拉到 7 天
+- `popularity`: log10 归一 → top30 内 percentile (rank-based)
+- `taste_match`: 接 profile 静态 hints 兜底 (offline 抽 taste_description → taste_boost_tags/taste_penalty_tags)
+- `context_boost`: 没传 mood → 时段/季节默认 (午餐 want_balanced, 夏季高温 want_light), 置信度低 (权重 0.25)
+- `processed_meat` / `sweet_sauce` 三档:
+  - L1 硬过滤 (用户明确 banned): profile.preferences.banned_processed_meat / banned_sweet_sauce_level_3
+  - L2 软扣 (有数据 + 未禁): 现有逻辑保留
+  - UNKNOWN (无数据): 0, 不当 MISS
+
+#### P2 · 实测 std 校准 + 不可补偿惩罚
+- 跑 P0+P1 后的实跑, 统计每维度 top30 std
+- 按"影响力 = std × 权重"重新分配权重 (写回 profile.yaml + V2_DEFAULT_WEIGHTS)
+- 加 `apply_unforgivable_penalty(score, combo)`: 命中"重 sweet_sauce + 重 processed_meat 同时"等不可补偿组合, score *= 0.5 直接打折
+
+#### P3 · 反馈闭环最小实现
+- 新增 `chisha/long_term_prefs.py`: 聚合用户反馈 chips → 加权计数, 拉普拉斯平滑 + 时间衰减 (半衰期 30 天)
+- `refine.py` 在 parse_feedback 后调 `append_feedback` 写入历史 (生产数据采集路径)
+- `rank_combos` 启动时调 `load_runtime_hints` 加载, 与 profile.taste_description 抽出的静态 hints + 显式 taste_hints 三源合并注入 taste_match
+- 反馈数据落 `data/feedback_history.jsonl` (人可读, append-only)
+- 不做权重在线更新 (P4, 数据量不够); 不做 LinUCB / LTR (单用户场景过早复杂化)
+
+### 与 Codex 跨专家会诊的关键分歧
+
+| 分歧点 | claude 原方案 | Codex 反对 | 最终采纳 |
+|---|---|---|---|
+| processed_meat 处理 | 全挪 L1 | 把"未知风险"伪装成"确定违规" | 三档处理 |
+| taste_match 起始权重 | 0.8 | 兜底 hints 多是宽泛词, 可能新死分 | 0.4 起步, P2 按实测 std 校准 |
+| variety 改进 | N 天函数 | main_ingredient 太粗, 漏"形态"维度 | 第一版 N 天, 同步加 food_form cap 覆盖形态 |
+| cap 配方 | 只加 cap_per_cuisine | 不够, 必须 cap_per_food_form | 三层 cap 串联 |
+| 反馈闭环 | 不在范围 | 最根本批评, 单用户系统的杠杆点 | 纳入 P3, 最小可行实现 |
+
+### 工程产物（D-043）
+- 见 `chisha/score.py` (cap_per_cuisine / cap_per_food_form / 不可补偿惩罚 / 改活维度函数)
+- `chisha/recall.py` (food_form 推断 + processed_meat banned 硬过滤)
+- `chisha/long_term_prefs.py` (新模块)
+- `profile.yaml` (新增字段 + 权重重设)
+- `tests/test_score_v2.py` / `tests/test_long_term_prefs.py`
+- `docs/RECOMMEND_PRINCIPLES.md` (设计原则沉淀, 后续改动必须先对照)
+
+依赖: D-042 (cap_per_restaurant), D-033 (V2 score), [`docs/RECOMMEND_PRINCIPLES.md`](RECOMMEND_PRINCIPLES.md)
+
+---
+
+## D-044: profile.yaml 真实化 + 口味偏好层与健康目标层分离
+
+**2026-05-13**
+
+### 背景
+V1-V2 期间 profile.yaml 一直是 mock 数据 (goal=减脂增肌, 价格 35/50, avoid_dishes 是
+推测出来的红烧/糖醋黑名单, taste_description 半口语化). D-043 把打分体系调活之后,
+推荐质量的下一个瓶颈是 profile 输入端: 系统拿着假偏好喂打分, 上限就到这.
+
+本轮通过和用户 (志丹本人) 多轮口述 + 历史外卖订单回顾, 重建 profile, 并在过程中
+识别出一个关键的方法论错误: 之前从"过去 2 个月点了什么"反推"口味偏好", 把**为了
+健康妥协后的实际选择**误读成**真实口味偏好**.
+
+具体案例: 用户过去常点潮汕牛肉 / 酸菜鱼 / 翘脚牛肉 (带汤水的清淡牛肉), 我据此抽
+象成"喜欢清爽不油带汤水". 用户纠正: 实际口味更喜欢辣椒炒 / 糖醋 / 红烧重口, 之
+前选汤水类是因为这些菜"看起来安全, 控热量风险低", 是健康妥协的产物.
+
+如果系统按"妥协后行为"训练, 会永远在重复用户过往的清淡选择, 学不到真实偏好, 也
+出不来多样性 —— 这恰恰是用户启动这个推荐系统要解决的"反复点这几家吃腻"的核心矛盾.
+
+### 关键发现: 朋友A失败教训改写优化目标
+用户长期吃朋友A私人订制健康餐 (蛋白足 + 油少 + 味淡), 但每每半夜反弹点宵夜烧烤, 总热量
+反而更高. 这个失败模式说明推荐目标不是 "这一顿热量最低", 而是 **"这一顿能撑到下一顿"**.
+所以"饱腹感"是隐藏的核心约束, 必须通过现有字段 (min_protein_g 拉高 / 复合碳水偏好 /
+必含主食) 联合表达.
+
+### 决策
+
+#### A. 三层分离的 taste_description
+重写 `profile.yaml.taste_description`, 显式分四段:
+1. **健康目标** (哈佛餐盘 + 朋友A失败模式)
+2. **真实口味偏好** (不考虑健康约束, 喜欢什么就写什么——辣椒炒/糖醋/蜜汁/红烧都允许出现)
+3. **历史行为 ≠ 偏好** (显式提示 LLM: 别把过往妥协选择当偏好)
+4. **真实负向** (干煸/纯凉拌/海鲜——是真不喜欢, 不是健康过滤剩下的)
+
+#### B. profile 字段按真实需求校准
+- `basics.goal`: 减脂增肌期 → 体重控制+力量训练期 (保饱腹感)
+- `basics.zones.dinner`: home → shenzhen-bay (工作日晚餐其实也在公司)
+- `plate_rule.min_protein_g`: 25 → **40** (朋友A 25g 验证不饱; 按 标准体重 + 力量训练
+  4 次/周 日蛋白 115-140g 反推, 单餐 35-45g 是甜区. 80g 不可行——单餐 80g 蛋白
+  需 ~300g 净肉, 外卖几乎达不到, 会锁死召回池)
+- `preferences.liked_cuisines`: 删"东北"(口述无), 加"粤菜"
+- `preferences.avoid_dishes`: 清空 [红烧肉, 梅菜扣肉, 锅包肉, 糖醋里脊, 拔丝]
+  —— **健康过滤走属性维度** (oil_level / sweet_sauce_level / processed_meat_flag),
+  不走菜名黑名单, 否则永远在重复历史妥协
+- `preferences.spicy_tolerance`: 2 → 3 (用户自评能吃重辣)
+- `price_range.hard_max_lunch/dinner`: 80/100 → **150/150**
+- `price_range.prefer_max_lunch/dinner`: 35/50 → **120/120** (实际常态 80-120)
+
+#### C. 留给未来 (V2+)
+- **"破戒款"投放**: 用户口味喜欢糖醋/蜜汁/红烧, 但健康角度要控. 不 ban, 改靠
+  V2 的 explore 槽位 (D-015 5 中 2 explore) + `daily_mood=want_indulgent` session
+  级临时上调 oil/sweet 容忍度, 每周给 1 次破戒推荐. V1 不显式实现, 但 profile
+  不再 ban 这些菜, 给未来留口子.
+- **早餐推荐**: 当前未点外卖, V2 范围内补.
+- **宵夜场景**: 不纳入推荐. 系统目标之一是让中晚餐够饱以消除宵夜需求 (隐藏成功
+  指标: 宵夜频次 ↓).
+- **"干净卫生"字段化**: 偏好评分稳/销量有验证的店, V2 通过 `prefer_min_restaurant_rating`
+  或现有 popularity rank-based 间接表达, 当前不加新字段.
+
+### 反对意见 / 风险
+- **40g 蛋白卡掉 5-15% 召回**: 主要剔除"卤粉/纯素套餐/轻食小份"这类蛋白不足组合,
+  即用户想要避开的"朋友A失败模式"组合, 不是误伤.
+- **"历史行为 ≠ 偏好"对 LLM 是否真有效, 待验证**: 这段提示是给 LLM rerank
+  prompt 看的. 如果 LLM 仍按订单频次推断偏好, 后续考虑在 prompt 模板加显式
+  指令"用户历史订单仅供参考, 不代表口味偏好上限".
+- **重写 taste_description 后, 短期推荐结果会和过往订单差异变大**: 这是预期效果,
+  但需要观察用户是否真的接受"以前没点过但口味命中"的新菜.
+
+### 触发重审的条件
+- 用户实际跑一段时间后反馈推出来的还是太清淡 / 还是反复推老灶台同样几家——
+  可能 taste_description 提示对 LLM 没生效, 需要进 prompt 模板.
+- 单餐 40g 在召回侧实际打掉的组合比例 >25%, 可能要降到 35g.
+- 用户体重 / 饱腹感真实反馈数据攒到 30+ 条 (V2.2 学到 learned_profile 之前),
+  应该回头看口味偏好抽象是否还需要校准.
+
+### 工程产物
+- `profile.yaml` (本次改动)
+- 后续 V2.x rerank prompt 模板: 加入"历史行为 ≠ 偏好"显式说明 (待 V2 启用 LLM 精排时一并改)
+
+依赖: D-023 (弱约束三件套), D-029 (spicy_tolerance 整数), D-033 (V2 字段), D-041 (双层硬/软约束)

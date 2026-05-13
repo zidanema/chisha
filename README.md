@@ -46,8 +46,10 @@
 | [DESIGN.md](DESIGN.md) | 设计与实现 · 架构、schema、API、prompt、避坑 | 实现时随时查 |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | 决策日志 · 关键决策为什么这样而不是那样 | 想推翻某个设计前先看 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 路线图 · V1/V2/V3 边界，已砍清单 | 想加新功能前先看 |
+| [docs/RECOMMEND_PRINCIPLES.md](docs/RECOMMEND_PRINCIPLES.md) | 推荐系统分层原则与方法论（D-043 沉淀）| 改打分/召回/重排前**必读** |
 
 **首次接触请按顺序读：PRD → ROADMAP → DESIGN → DECISIONS**。
+改推荐链路前请额外读 RECOMMEND_PRINCIPLES。
 
 ---
 
@@ -155,16 +157,31 @@ chisha/
 │       └── dishes_tagged.json
 ├── chisha/                    # L2 推荐层代码（Python 包）
 │   ├── __init__.py
-│   ├── api.py                 # recommend_meal 主入口
-│   ├── recall.py              # 召回 + 弱约束三件套校验
-│   ├── score.py               # 打分（V1 无个性化项）
-│   ├── reason.py              # LLM 写一句话理由（V1 LLM 唯一用途）
-│   └── llm_client.py
+│   ├── api.py                 # recommend_meal 主入口 (V1 + V2)
+│   ├── recall.py              # 召回 + 硬过滤双层 + combo 灵活组合 (D-040/041)
+│   ├── score.py               # 打分 V2 ~12 维
+│   ├── rerank.py              # V2 LLM 精排 top30→5 (D-035)
+│   ├── context.py             # ContextSnapshot 注入层 (D-034)
+│   ├── refine.py              # refine 二轮 (D-033)
+│   ├── reason.py              # LLM 写一句话理由（V1 路径用）
+│   ├── llm_client.py          # provider auto-detect (D-038)
+│   ├── debug_recommend.py     # 调试台用的 instrumented 管道 (D-039)
+│   ├── debug_server.py        # FastAPI 调试台 server (D-039)
+│   ├── long_term_prefs.py     # 反馈闭环 P3 (D-043): 反馈历史 → boost/penalty hints
+│   └── static/                # 调试台前端 (debug.html / logic.html)
 ├── integrations/
-│   └── openclaw/              # V1 接入 OpenClaw + 飞书
+│   └── openclaw/              # V1 接入 OpenClaw + 飞书 (cron 待装)
 │       ├── skill.py
 │       └── feishu_card.py
-├── scripts/                   # 数据维护脚本（打标等）
+├── scripts/                   # 数据维护脚本（打标 / 召回审计等）
 ├── prompts/                   # LLM prompt 模板
-└── tests/
+└── tests/                     # 308 测试 (D-041 audit + D-042 cap + D-043 重设计/反馈闭环)
+```
+
+### 启调试台（D-039）
+
+```bash
+uv run python -m chisha.debug_server
+# → http://127.0.0.1:8765
+# 浏览器看 L1 召回 / L2 16 维打分 / L3 LLM 精排 payload / Final 5 卡片
 ```

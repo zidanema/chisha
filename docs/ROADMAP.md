@@ -14,13 +14,18 @@
 
 预计 V1 完成时间：本对话讨论后 4-6 周。
 
-**当前状态（2026-05-12）**：
+**当前状态（2026-05-13）**：
 
 - 打标：v3 全量重打两 zone 13,240 菜（D-032）；dual-model golden set 171 条（D-036, Opus+Codex 共创, 4 大字段一致率 99.27%）；6 模型横评后生产默认 `deepseek-v4-flash`（D-037, field acc 88.9%, 100万条 $100）。
 - 推荐 V2 链路端到端跑通：Context 注入 / score V2 ~12 维 / LLM 精排 top30→5（D-035） / refine + session（D-033 V2.1）/ LLM 抽象 Phase 1 provider auto-detect（D-038, 商家去重兜底）。
-- 5 次空跑（mood × meal_type 对照）：mood/taste 信号生效，0 同商家重复，reason 直引"命中 want_light"等。
-- 100 候选合理性扫描：lunch 84% / dinner 64% pass，0 硬约束违规，flag 全部是软约束油超 3（湘川菜常态 + 末段炸物店）。
-- 架构重构推迟到 V1.5（[D-030](DECISIONS.md#d-030)），下一步：飞书 + OpenClaw 接入（用户当前在另一 session 做调试前端页面）。
+- **推荐调试台已上线**（[D-039](DECISIONS.md#d-039)）：FastAPI on port 8765, instrumented V2 管道, L1/L2/L3/Final 四段折叠 + 16 维 score breakdown + LLM payload 全可见 + profile 临时覆盖 + combo 追溯 + mood 三栏对比。
+- **召回硬过滤升级**（[D-041](DECISIONS.md#d-041)）：双层架构 `hard_max_*` 召回 ban / `prefer_max_*` 打分扣；新增 ETA / combo 总价 / 餐厅/主蛋白/烹饪/菜系 6 类硬黑名单。
+- **combo 生成参数化**（[D-040](DECISIONS.md#d-040)）：多蛋白多蔬菜由 profile 注入；召回总 combos 454 → 2206。
+- **L2 cap + 重设计 + 反馈闭环**（[D-042](DECISIONS.md#d-042) / [D-043](DECISIONS.md#d-043)）：3 层 cap（restaurant/cuisine/food_form）防扎堆；砍 3 个死权重；改活 popularity/variety/taste/context；加 unforgivable penalty；反馈闭环 P3 落地（`chisha/long_term_prefs.py`）。**top30 score 跨度 0.34 → 4.997（15×）**。详见 [`RECOMMEND_PRINCIPLES.md`](RECOMMEND_PRINCIPLES.md)。
+- **profile.yaml 真实化**（[D-044](DECISIONS.md#d-044)，2026-05-13）：从用户口述 + 历史订单回顾重建 profile（goal/zones/min_protein_g/avoid_dishes/price/taste_description 全量校正）。沉淀两个普适方法论到 [RECOMMEND_PRINCIPLES](RECOMMEND_PRINCIPLES.md) §12 §13：**偏好层 ≠ 行为层** + **隐藏目标识别**。
+- 架构重构推迟到 V1.5（[D-030](DECISIONS.md#d-030)）。
+- **测试**：308 全过（D-041 audit + D-042 cap + D-043 重设计/反馈闭环 + 之前老测试）。
+- **下一步**：用新真实化 profile 跑调试台验证推荐质量（关注是否从"反复几家舒适圈"跳出）→ OpenClaw + 飞书接入（D-022, integrations/openclaw/ 骨架已搭, cron 待装）。
 
 ---
 
@@ -45,6 +50,12 @@
 - [x] **V2 路径：LLM 精排 top30→5 + Context + session**（[D-033](DECISIONS.md#d-033) / [D-034](DECISIONS.md#d-034) / [D-035](DECISIONS.md#d-035)）
 - [x] **LLM 抽象 Phase 1**（[D-038](DECISIONS.md#d-038)）：provider auto-detect + 商家去重兜底
 - [x] 5 次空跑测试（mood × meal_type 对照, 真 LLM Sonnet-4.6, 0 同商家重复）
+- [x] **推荐调试台**（[D-039](DECISIONS.md#d-039)）：浏览器单页, L1/L2/L3/Final 全可见, combo 追溯, mood 对比
+- [x] **召回硬过滤双层架构**（[D-041](DECISIONS.md#d-041)）：ETA/价格/餐厅/主蛋白/烹饪/菜系 6 类硬 ban + 命名规范
+- [x] **combo 生成参数化**（[D-040](DECISIONS.md#d-040)）：多蛋白多蔬菜由 profile 注入
+- [x] **L2 cap_per_restaurant + 三层 cap（restaurant/cuisine/food_form）**（[D-042](DECISIONS.md#d-042) / [D-043](DECISIONS.md#d-043)）：防潮汕粥/同店扎堆
+- [x] **L2 打分体系重设计**（[D-043](DECISIONS.md#d-043)）：删死权重 + 改活 popularity/variety/taste/context + unforgivable penalty
+- [x] **反馈闭环 P3 最小实现**（[D-043](DECISIONS.md#d-043)）：`long_term_prefs.py` 反馈历史 → boost/penalty hints（取代旧 V2.0 计划，留 V2.0 待真采集数据补完）
 - [ ] **接入 OpenClaw + 飞书卡片**（D-022）：integrations/openclaw/{skill,feishu_card}.py 骨架已搭，cron 调度待装
 - [ ] 工作日 11:25 / 18:00 自用一周，纸笔记录每次推荐质量
 
@@ -204,7 +215,7 @@
 | 想法 | 砍掉的原因 | 关联决策 |
 |---|---|---|
 | 训练日感知（练后加蛋白） | 增益小、复杂度高，V1 暂不做 | D-016 |
-| 价格硬约束 | 不在乎预算，方法论是结构正确 | DESIGN.md 早期讨论 |
+| ~~价格硬约束~~ | ~~不在乎预算，方法论是结构正确~~ → **D-041 翻案: 加 hard_max_lunch/dinner combo 总价硬上限** | D-041 |
 | 全局协同过滤（"和你类似的人爱吃") | 单用户场景没意义 | D-001 |
 | seed_dishes 列表替代 taste_description | 自然语言更高效 | D-014 |
 | 严过滤（油脂硬卡）| 结构正确比绝对低脂重要 | D-006 |
@@ -246,6 +257,8 @@
 | OpenClaw 飞书集成出现重大变更 / 不可用 | D-022 接入对象 |
 | 用户连续 2 周采纳率 ≥ 60% 但反馈集中"蔬菜不够" | D-023 弱约束三件套 |
 | V1 自用一周后 top 3 重复严重 / 与 taste_description 错位明显 | D-024 V1 不做 LLM 精排 |
+| 自用后推荐仍频繁推老灶台 / 乐凯撒 / 徐记舒适圈 | D-044 偏好层提示对 LLM 是否生效, 可能要进 rerank prompt 模板 |
+| 单餐 40g 蛋白召回打掉组合 >25% | D-044 min_protein_g 下调（35g 备选） |
 | 同维度（cuisine,cooking,ingredient）反馈中"A 店好 B 店差"集中 | D-025 offset 粒度 |
 | 6 个月后偏好维度的 N 仍 ≤ 5 | D-025 offset 粒度 |
 | chisha-collector 项目停止维护 / schema 大改 | D-027 数据来源（已被 D-030 推翻方向，留作历史） |

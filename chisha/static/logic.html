@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>chisha 推荐管道逻辑 · V2</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a22;
+    --panel2: #1c2230;
+    --border: #2a3142;
+    --fg: #e6e9ef;
+    --fg-dim: #8b94a5;
+    --accent: #6ea8ff;
+    --green: #5dd39e;
+    --red: #ff6b6b;
+    --orange: #ffb454;
+    --yellow: #ffd86e;
+    --purple: #c397ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--fg);
+    font-size: 14px; line-height: 1.65;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    min-height: 100vh;
+  }
+  .toc {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    padding: 20px 16px;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  .toc h1 {
+    font-size: 14px;
+    color: var(--accent);
+    margin: 0 0 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .toc a {
+    display: block;
+    color: var(--fg-dim);
+    text-decoration: none;
+    padding: 5px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+    margin-bottom: 2px;
+  }
+  .toc a:hover { background: var(--panel2); color: var(--fg); }
+  .toc a.sub { padding-left: 20px; font-size: 12px; }
+  .toc .back {
+    display: block;
+    margin-top: 20px;
+    padding: 8px 10px;
+    background: var(--accent);
+    color: #0a1020;
+    border-radius: 4px;
+    font-weight: 600;
+    text-align: center;
+    font-size: 12px;
+  }
+  .toc .back:hover { background: var(--accent); color: #0a1020; filter: brightness(1.1); }
+
+  .main { padding: 28px 40px 60px; max-width: 1000px; }
+
+  h1.title { font-size: 24px; margin: 0 0 4px; }
+  .subtitle { color: var(--fg-dim); margin-bottom: 28px; font-size: 13px; }
+
+  section { margin-bottom: 36px; }
+  h2 {
+    font-size: 18px;
+    margin: 0 0 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    scroll-margin-top: 20px;
+  }
+  h3 {
+    font-size: 15px;
+    color: var(--accent);
+    margin: 20px 0 8px;
+    scroll-margin-top: 20px;
+  }
+  h4 {
+    font-size: 13px;
+    color: var(--purple);
+    margin: 14px 0 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  p { margin: 8px 0; }
+
+  code {
+    background: var(--panel2);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 12.5px;
+    color: var(--yellow);
+  }
+
+  pre {
+    background: #0a0d13;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-size: 12.5px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    color: #c9d1d9;
+    line-height: 1.5;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0 14px;
+    font-size: 13px;
+  }
+  th, td {
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    color: var(--fg-dim);
+    font-weight: 500;
+    background: var(--panel);
+    font-size: 12px;
+  }
+  tbody tr:hover td { background: rgba(110, 168, 255, 0.04); }
+  td code { font-size: 12px; }
+
+  .layer-box {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 12px 0;
+  }
+  .layer-box.l1 { border-left: 4px solid var(--green); }
+  .layer-box.l2 { border-left: 4px solid var(--accent); }
+  .layer-box.l3 { border-left: 4px solid var(--orange); }
+  .layer-box.ctx { border-left: 4px solid var(--purple); }
+
+  .badge {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 3px;
+    font-size: 11px;
+    margin: 0 2px;
+    font-family: ui-monospace, monospace;
+  }
+  .badge-pos { background: rgba(93, 211, 158, 0.15); color: var(--green); }
+  .badge-neg { background: rgba(255, 107, 107, 0.15); color: var(--red); }
+  .badge-info { background: rgba(110, 168, 255, 0.15); color: var(--accent); }
+  .badge-warn { background: rgba(255, 180, 84, 0.15); color: var(--orange); }
+  .badge-grey { background: var(--panel2); color: var(--fg-dim); }
+
+  .callout {
+    background: rgba(110, 168, 255, 0.06);
+    border-left: 3px solid var(--accent);
+    padding: 10px 14px;
+    border-radius: 0 4px 4px 0;
+    margin: 12px 0;
+    font-size: 13px;
+  }
+  .callout.warn {
+    background: rgba(255, 180, 84, 0.06);
+    border-left-color: var(--orange);
+  }
+  .callout strong { color: var(--accent); }
+  .callout.warn strong { color: var(--orange); }
+
+  ul, ol { padding-left: 22px; margin: 6px 0; }
+  li { margin: 4px 0; }
+
+  /* SVG container */
+  .diagram-wrap {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px;
+    margin: 14px 0;
+    overflow-x: auto;
+    text-align: center;
+  }
+  .diagram-wrap svg { max-width: 100%; }
+
+  .footnote { color: var(--fg-dim); font-size: 12px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav class="toc">
+    <h1>目录</h1>
+    <a href="#overview">整体管道</a>
+    <a href="#diagram">数据流图</a>
+    <a href="#l1">L1 召回</a>
+    <a href="#l2">L2 打分 (16 维)</a>
+    <a href="#l2-g1" class="sub">G1 基础 6 维</a>
+    <a href="#l2-g2" class="sub">G2 营养 5 维</a>
+    <a href="#l2-g3" class="sub">G3 履约 3 维</a>
+    <a href="#l2-g4" class="sub">G4 偏好/情境 2 维</a>
+    <a href="#l3">L3 LLM 精排</a>
+    <a href="#context">Context 注入</a>
+    <a href="#checklist">调试 checklist</a>
+    <a href="#glossary">字段词典</a>
+    <a href="/" class="back">← 回调试台</a>
+  </nav>
+
+  <main class="main">
+    <h1 class="title">推荐管道逻辑 · V2</h1>
+    <div class="subtitle">对应调试台 (debug.html) 的 L1 / L2 / L3 / 终选四个 section。代码入口: <code>chisha.api._recommend_meal_v2</code> / instrumented: <code>chisha.debug_recommend.debug_recommend</code></div>
+
+    <section id="overview">
+      <h2>整体管道</h2>
+      <p>从 profile + zone 数据 出发，经过 <strong>三个独立层</strong> 收敛到 5 张卡片：</p>
+      <pre>profile + zone 数据  →  L1 召回  →  L2 打分  →  L3 LLM 精排  →  终选 5
+                        (规则过滤)  (16 维加权)  (top30→5)</pre>
+      <p>三个层之间的核心收敛比（lunch / shenzhen-bay / 默认 profile 快照, 2026-05-13）：</p>
+      <table>
+        <thead><tr><th>层</th><th>输入规模</th><th>输出规模</th><th>主导决策</th></tr></thead>
+        <tbody>
+          <tr><td>L1 召回</td><td>11123 dish / 239 家</td><td>2206 combos</td><td>规则（profile + meal_log + meal_type）</td></tr>
+          <tr><td>L2 打分</td><td>2206 combos</td><td>top 30</td><td>16 维加权和（确定性）</td></tr>
+          <tr><td>L3 精排</td><td>top 30</td><td>top 5 (3+2)</td><td>LLM 语义判断 + 规则 fallback</td></tr>
+        </tbody>
+      </table>
+      <div class="callout warn">
+        <strong>数字仅供示意</strong>：这些数量会随 <code>profile.recall.per_restaurant_max</code>、<code>price_range.hard_max_*</code>、<code>preferences.*</code> 黑名单等参数变化，实际跑一次看调试台 L1 stat-grid 才准。<br>
+        当前快照：<code>per_restaurant_max=20</code>、<code>hard_max_oil_level=4</code>、<code>hard_max_eta_min=45</code>、<code>hard_max_lunch=80</code>。
+      </div>
+      <div class="callout"><strong>调试心法</strong>：先看 L1 召回数量正不正常，再看 L2 top10 的 breakdown 找异常分量，最后看 L3 的 LLM payload/response。每一层都能独立判断对错。</div>
+    </section>
+
+    <section id="diagram">
+      <h2>数据流图</h2>
+      <div class="diagram-wrap">
+<svg viewBox="0 0 880 1200" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, PingFang SC, sans-serif" font-size="12">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6ea8ff"/>
+    </marker>
+    <marker id="arrow-soft" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b94a5"/>
+    </marker>
+  </defs>
+
+  <!-- 输入数据 (顶部三个) -->
+  <g>
+    <rect x="40" y="20" width="200" height="70" rx="6" fill="#1c2230" stroke="#2a3142"/>
+    <text x="140" y="42" text-anchor="middle" fill="#e6e9ef" font-weight="600">profile.yaml</text>
+    <text x="140" y="60" text-anchor="middle" fill="#8b94a5" font-size="11">zone / weights / plate_rule</text>
+    <text x="140" y="76" text-anchor="middle" fill="#8b94a5" font-size="11">taste_description / preferences</text>
+
+    <rect x="340" y="20" width="200" height="70" rx="6" fill="#1c2230" stroke="#2a3142"/>
+    <text x="440" y="42" text-anchor="middle" fill="#e6e9ef" font-weight="600">zone 数据 (data/)</text>
+    <text x="440" y="60" text-anchor="middle" fill="#8b94a5" font-size="11">dishes_tagged.json ~11000</text>
+    <text x="440" y="76" text-anchor="middle" fill="#8b94a5" font-size="11">restaurants.json ~239</text>
+
+    <rect x="640" y="20" width="200" height="70" rx="6" fill="#1c2230" stroke="#2a3142"/>
+    <text x="740" y="42" text-anchor="middle" fill="#e6e9ef" font-weight="600">meal_log.jsonl</text>
+    <text x="740" y="60" text-anchor="middle" fill="#8b94a5" font-size="11">近 7 天吃过什么</text>
+    <text x="740" y="76" text-anchor="middle" fill="#8b94a5" font-size="11">(diversity 依据)</text>
+  </g>
+
+  <!-- ContextSnapshot -->
+  <g>
+    <rect x="290" y="120" width="300" height="56" rx="6" fill="#241a2f" stroke="#c397ff"/>
+    <text x="440" y="142" text-anchor="middle" fill="#c397ff" font-weight="600">ContextSnapshot (build_context)</text>
+    <text x="440" y="160" text-anchor="middle" fill="#8b94a5" font-size="11">daily_mood / weekday / last_meal / recent_chips</text>
+  </g>
+
+  <!-- 流入 Context -->
+  <line x1="140" y1="90" x2="320" y2="120" stroke="#8b94a5" stroke-width="1" marker-end="url(#arrow-soft)"/>
+  <line x1="740" y1="90" x2="560" y2="120" stroke="#8b94a5" stroke-width="1" marker-end="url(#arrow-soft)"/>
+
+  <!-- L1 召回 (D-041 后, 5 步) -->
+  <g>
+    <rect x="40" y="210" width="800" height="340" rx="8" fill="#161a22" stroke="#5dd39e" stroke-width="2"/>
+    <text x="60" y="234" fill="#5dd39e" font-weight="700" font-size="14">L1 召回 (recall.py) · 5 步</text>
+    <text x="780" y="234" fill="#8b94a5" font-size="11" text-anchor="end">D-041: 加 P0 餐厅 ban + P1 菜级黑名单 + combo 价过滤</text>
+
+    <!-- ① 餐厅 ban -->
+    <rect x="60" y="252" width="240" height="130" rx="4" fill="#1c2230"/>
+    <text x="180" y="272" text-anchor="middle" fill="#5dd39e" font-weight="600">① 餐厅级 ban (P0)</text>
+    <text x="180" y="288" text-anchor="middle" fill="#ffb454" font-size="10">D-041</text>
+    <text x="76" y="308" fill="#e6e9ef" font-size="11">• ETA &gt; hard_max_eta_min</text>
+    <text x="76" y="326" fill="#e6e9ef" font-size="11">• 名字命中 avoid_restaurants</text>
+    <text x="76" y="344" fill="#e6e9ef" font-size="11">• 近 7 天吃过的餐厅</text>
+    <text x="76" y="368" fill="#8b94a5" font-size="11">→ avoid_rests 集合</text>
+
+    <!-- ② hard_filter -->
+    <rect x="320" y="252" width="240" height="130" rx="4" fill="#1c2230"/>
+    <text x="440" y="272" text-anchor="middle" fill="#5dd39e" font-weight="600">② hard_filter (菜级)</text>
+    <text x="336" y="294" fill="#e6e9ef" font-size="11">• 来自 ① 的 avoid_rests</text>
+    <text x="336" y="310" fill="#e6e9ef" font-size="11">• avoid_dishes 子串</text>
+    <text x="336" y="326" fill="#e6e9ef" font-size="11">• 辣度 / 油 超硬上限</text>
+    <text x="336" y="342" fill="#ffb454" font-size="11">• 主蛋白/烹饪/菜系 黑名单</text>
+    <text x="336" y="356" fill="#e6e9ef" font-size="11">• 月销 / is_available</text>
+    <text x="336" y="376" fill="#8b94a5" font-size="11">11123 → 9790 dish (示例)</text>
+
+    <!-- ③ diversity_filter -->
+    <rect x="580" y="252" width="240" height="130" rx="4" fill="#1c2230"/>
+    <text x="700" y="272" text-anchor="middle" fill="#5dd39e" font-weight="600">③ diversity_filter</text>
+    <text x="596" y="294" fill="#e6e9ef" font-size="11">近 3 天吃过的主蛋白</text>
+    <text x="596" y="310" fill="#e6e9ef" font-size="11">(红肉/白肉/海鲜/豆制品)</text>
+    <text x="596" y="326" fill="#e6e9ef" font-size="11">同类菜剔除</text>
+    <text x="596" y="350" fill="#8b94a5" font-size="11">纯素/主食/蛋 不受约束</text>
+    <text x="596" y="368" fill="#8b94a5" font-size="11">→ 9790 dish (示例)</text>
+
+    <!-- ④ build_combos -->
+    <rect x="60" y="400" width="370" height="130" rx="4" fill="#1c2230"/>
+    <text x="245" y="420" text-anchor="middle" fill="#5dd39e" font-weight="600">④ build_combos</text>
+    <text x="76" y="442" fill="#e6e9ef" font-size="11">路线 A：完整套餐(盖饭/便当)</text>
+    <text x="76" y="458" fill="#e6e9ef" font-size="11">    + 0/1 道蔬菜</text>
+    <text x="76" y="474" fill="#e6e9ef" font-size="11">路线 B：蛋白 × 蔬菜 × (主食)</text>
+    <text x="76" y="492" fill="#ffd86e" font-size="11">弱约束: ≥1 蔬菜 &amp; 蛋白≥25g</text>
+    <text x="76" y="510" fill="#8b94a5" font-size="11">每家 per_restaurant_max=20 → 2777 combos</text>
+
+    <!-- ⑤ combo_price_filter -->
+    <rect x="450" y="400" width="370" height="130" rx="4" fill="#1c2230"/>
+    <text x="635" y="420" text-anchor="middle" fill="#5dd39e" font-weight="600">⑤ combo_price_filter (D-041)</text>
+    <text x="466" y="442" fill="#e6e9ef" font-size="11">lunch: 总价 &gt; hard_max_lunch (80)</text>
+    <text x="466" y="458" fill="#e6e9ef" font-size="11">dinner: 总价 &gt; hard_max_dinner (100)</text>
+    <text x="466" y="476" fill="#e6e9ef" font-size="11">→ 整 combo 丢弃</text>
+    <text x="466" y="500" fill="#8b94a5" font-size="11">软上限 lunch_max/dinner_max</text>
+    <text x="466" y="514" fill="#8b94a5" font-size="11">放 L2 price 维度软扣分 → 2206 终</text>
+
+    <!-- L1 内 arrows -->
+    <line x1="300" y1="317" x2="320" y2="317" stroke="#5dd39e" stroke-width="2" marker-end="url(#arrow)"/>
+    <line x1="560" y1="317" x2="580" y2="317" stroke="#5dd39e" stroke-width="2" marker-end="url(#arrow)"/>
+    <!-- ③ → ④ 下折 -->
+    <path d="M 700 382 L 700 392 L 245 392 L 245 400" fill="none" stroke="#5dd39e" stroke-width="2" marker-end="url(#arrow)"/>
+    <!-- ④ → ⑤ -->
+    <line x1="430" y1="465" x2="450" y2="465" stroke="#5dd39e" stroke-width="2" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- 流入 L1 -->
+  <line x1="140" y1="90" x2="180" y2="210" stroke="#6ea8ff" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#arrow)"/>
+  <line x1="440" y1="90" x2="440" y2="210" stroke="#6ea8ff" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="740" y1="90" x2="700" y2="210" stroke="#6ea8ff" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#arrow)"/>
+
+  <!-- L2 打分 -->
+  <g>
+    <rect x="40" y="590" width="800" height="220" rx="8" fill="#161a22" stroke="#6ea8ff" stroke-width="2"/>
+    <text x="60" y="614" fill="#6ea8ff" font-weight="700" font-size="14">L2 打分 (rank_combos)</text>
+    <text x="780" y="614" fill="#8b94a5" font-size="11" text-anchor="end">每个 combo × 16 维 × 权重 → score (确定性)</text>
+
+    <rect x="60" y="630" width="186" height="160" rx="4" fill="#1c2230"/>
+    <text x="153" y="650" text-anchor="middle" fill="#6ea8ff" font-weight="600" font-size="12">G1 基础 6 维</text>
+    <text x="76" y="672" fill="#e6e9ef" font-size="11">vegetable_floor_pass</text>
+    <text x="76" y="690" fill="#e6e9ef" font-size="11">protein_floor_pass</text>
+    <text x="76" y="708" fill="#e6e9ef" font-size="11">low_oil</text>
+    <text x="76" y="726" fill="#e6e9ef" font-size="11">popularity</text>
+    <text x="76" y="744" fill="#e6e9ef" font-size="11">cuisine_preference</text>
+    <text x="76" y="762" fill="#e6e9ef" font-size="11">variety_bonus</text>
+
+    <rect x="256" y="630" width="186" height="160" rx="4" fill="#1c2230"/>
+    <text x="349" y="650" text-anchor="middle" fill="#6ea8ff" font-weight="600" font-size="12">G2 营养 5 维</text>
+    <text x="272" y="672" fill="#e6e9ef" font-size="11">carb_quality</text>
+    <text x="272" y="690" fill="#e6e9ef" font-size="11">processed_meat (-)</text>
+    <text x="272" y="708" fill="#e6e9ef" font-size="11">sweet_sauce (-)</text>
+    <text x="272" y="726" fill="#e6e9ef" font-size="11">wetness</text>
+    <text x="272" y="744" fill="#e6e9ef" font-size="11">dish_role_match</text>
+
+    <rect x="452" y="630" width="186" height="160" rx="4" fill="#1c2230"/>
+    <text x="545" y="650" text-anchor="middle" fill="#6ea8ff" font-weight="600" font-size="12">G3 履约 3 维</text>
+    <text x="468" y="672" fill="#e6e9ef" font-size="11">distance (-)</text>
+    <text x="468" y="690" fill="#e6e9ef" font-size="11">eta (-)</text>
+    <text x="468" y="708" fill="#e6e9ef" font-size="11">price (-)</text>
+    <text x="468" y="744" fill="#8b94a5" font-size="11">超阈值才线性扣分</text>
+
+    <rect x="648" y="630" width="172" height="160" rx="4" fill="#1c2230"/>
+    <text x="734" y="650" text-anchor="middle" fill="#6ea8ff" font-weight="600" font-size="12">G4 偏好/情境</text>
+    <text x="664" y="672" fill="#e6e9ef" font-size="11">taste_match</text>
+    <text x="664" y="690" fill="#8b94a5" font-size="11">(LLM hint, V2 初版恒 0)</text>
+    <text x="664" y="720" fill="#c397ff" font-size="11">context_boost</text>
+    <text x="664" y="738" fill="#8b94a5" font-size="11">(daily_mood 软调权)</text>
+  </g>
+
+  <!-- L1 → L2 -->
+  <line x1="440" y1="550" x2="440" y2="590" stroke="#6ea8ff" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="450" y="575" fill="#8b94a5" font-size="11">2206 combos (示例)</text>
+
+  <!-- Context → L2 G4 -->
+  <line x1="440" y1="176" x2="734" y2="630" stroke="#c397ff" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-soft)"/>
+
+  <!-- L3 LLM 精排 -->
+  <g>
+    <rect x="40" y="850" width="800" height="200" rx="8" fill="#161a22" stroke="#ffb454" stroke-width="2"/>
+    <text x="60" y="874" fill="#ffb454" font-weight="700" font-size="14">L3 LLM 精排 (rerank.py)</text>
+    <text x="780" y="874" fill="#8b94a5" font-size="11" text-anchor="end">top30 → 3 exploit + 2 explore</text>
+
+    <rect x="60" y="892" width="370" height="140" rx="4" fill="#1c2230"/>
+    <text x="245" y="912" text-anchor="middle" fill="#ffb454" font-weight="600" font-size="12">payload (build_payload)</text>
+    <text x="76" y="934" fill="#e6e9ef" font-size="11">• top 30 candidate (combo_index + 关键字段)</text>
+    <text x="76" y="952" fill="#e6e9ef" font-size="11">• profile.taste_description / liked / avoid</text>
+    <text x="76" y="970" fill="#e6e9ef" font-size="11">• ContextSnapshot.to_llm_dict()</text>
+    <text x="76" y="988" fill="#e6e9ef" font-size="11">• config: n=5 / n_explore=2</text>
+    <text x="76" y="1014" fill="#8b94a5" font-size="11">prompt 文件: prompts/rerank_topn.md</text>
+
+    <rect x="450" y="892" width="370" height="140" rx="4" fill="#1c2230"/>
+    <text x="635" y="912" text-anchor="middle" fill="#ffb454" font-weight="600" font-size="12">LLM 输出 (校验后)</text>
+    <text x="466" y="934" fill="#e6e9ef" font-size="11">{rank, combo_index, is_explore,</text>
+    <text x="466" y="952" fill="#e6e9ef" font-size="11"> fit_score 0~1, health_flags{6},</text>
+    <text x="466" y="970" fill="#e6e9ef" font-size="11"> risk_flags[], one_line_reason}</text>
+    <text x="466" y="996" fill="#ff6b6b" font-size="11">校验失败 → fallback_rerank (规则版)</text>
+    <text x="466" y="1014" fill="#ff6b6b" font-size="11">不足 5 → _enforce_brand_unique 兜底</text>
+
+    <line x1="430" y1="962" x2="450" y2="962" stroke="#ffb454" stroke-width="2" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- L2 → L3 -->
+  <line x1="440" y1="810" x2="440" y2="850" stroke="#6ea8ff" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="450" y="836" fill="#8b94a5" font-size="11">top 30</text>
+
+  <!-- Context → L3 (虚线) -->
+  <line x1="290" y1="148" x2="245" y2="892" stroke="#c397ff" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-soft)"/>
+
+  <!-- 终选 -->
+  <g>
+    <rect x="240" y="1090" width="400" height="80" rx="8" fill="#1a2030" stroke="#5dd39e" stroke-width="2"/>
+    <text x="440" y="1116" text-anchor="middle" fill="#5dd39e" font-weight="700" font-size="15">终选 5 张卡片</text>
+    <text x="440" y="1138" text-anchor="middle" fill="#e6e9ef" font-size="11">rank / 餐厅 / 菜+价 / fit_score / health_flags</text>
+    <text x="440" y="1156" text-anchor="middle" fill="#8b94a5" font-size="11">3 exploit (蓝) + 2 explore (橙)</text>
+  </g>
+  <line x1="440" y1="1050" x2="440" y2="1090" stroke="#ffb454" stroke-width="2" marker-end="url(#arrow)"/>
+</svg>
+      </div>
+      <div class="callout">
+        <strong>图例</strong>：实线 = 主数据流；紫色虚线 = ContextSnapshot 注入；绿色虚线 = 可选/兜底。每个层级的颜色与调试台 section 头一致（L1 绿 / L2 蓝 / L3 橙 / Context 紫）。
+      </div>
+    </section>
+
+    <section id="l1">
+      <h2>L1 召回 · 5 步串联（D-041 后）</h2>
+      <p>输入：zone 全量 dishes_tagged + restaurants + meal_log + meal_type。</p>
+      <p>D-041 在原来 3 步基础上加了 <strong>P0 餐厅级硬过滤</strong>（ETA / 名字）+ <strong>P1 菜级黑名单</strong>（主蛋白/烹饪方式/菜系）+ <strong>combo 级价格硬过滤</strong>。现在是 5 步串联。</p>
+
+      <div class="layer-box l1">
+        <h4>① 餐厅级 ban · compute_extra_banned_restaurants <span class="badge badge-warn">D-041</span></h4>
+        <p>遍历 restaurants.json，命中任一规则的<strong>整家餐厅</strong>都从候选池移除。</p>
+        <table>
+          <thead><tr><th>规则</th><th>触发</th><th>profile 字段</th></tr></thead>
+          <tbody>
+            <tr><td>ETA 超硬上限</td><td><code>delivery_eta_min &gt; hard_max_eta_min</code>（外卖只卡 ETA 不卡距离）</td><td><code>delivery_constraints.hard_max_eta_min</code></td></tr>
+            <tr><td>名字命中黑名单</td><td>餐厅 name + brand 拼起来子串匹配 avoid_restaurants（如 "烧烤"、"麦当劳"）</td><td><code>preferences.avoid_restaurants</code></td></tr>
+            <tr><td>近期已吃</td><td>近 <code>no_same_restaurant_within_days</code>（默认 7）天的 meal_log 出现过</td><td><code>diversity.no_same_restaurant_within_days</code></td></tr>
+          </tbody>
+        </table>
+        <div class="footnote">三个集合并集 = <code>avoid_rests</code>，传给下一步 ②。调试台 L1 stat-grid 分别展示 ban·ETA / ban·avoid 名字 / ban·近期吃过 三个数字。</div>
+      </div>
+
+      <div class="layer-box l1">
+        <h4>② 菜级 hard_filter（含 P1 三个黑名单）</h4>
+        <p>一条条 dish 砍。命中任一就丢，并记录原因。<span class="badge badge-warn">D-041 加 3 行</span></p>
+        <table>
+          <thead><tr><th>规则</th><th>触发</th><th>profile 字段</th></tr></thead>
+          <tbody>
+            <tr><td>所属餐厅被 ban</td><td>来自 ① 的 avoid_rests</td><td>—</td></tr>
+            <tr><td>命中 avoid_dishes</td><td>菜名子串匹配（"红烧肉" 命中 "红烧肉饭" 也丢）</td><td><code>preferences.avoid_dishes</code></td></tr>
+            <tr><td>辣度超上限</td><td><code>spicy_level &gt; spicy_tolerance</code></td><td><code>preferences.spicy_tolerance</code></td></tr>
+            <tr><td>油超硬上限</td><td><code>oil_level &gt; hard_max_oil_level</code></td><td><code>plate_rule.hard_max_oil_level</code></td></tr>
+            <tr style="color: var(--orange);"><td>主蛋白黑名单</td><td><code>main_ingredient_type ∈ avoid_main_ingredients</code> 精确匹配</td><td><code>preferences.avoid_main_ingredients</code></td></tr>
+            <tr style="color: var(--orange);"><td>烹饪方式黑名单</td><td><code>cooking_method ∈ avoid_cooking_methods</code> 精确匹配</td><td><code>preferences.avoid_cooking_methods</code></td></tr>
+            <tr style="color: var(--orange);"><td>菜系黑名单</td><td><code>cuisine ∈ banned_cuisines</code> 精确匹配（如 ["饮品甜品"]）</td><td><code>preferences.banned_cuisines</code></td></tr>
+            <tr><td>月销不达标</td><td><code>monthly_sales &gt; 0 AND &lt; min_monthly_sales</code><br>（==0 视为无数据，不卡）</td><td><code>recall.min_monthly_sales</code></td></tr>
+            <tr><td>下架</td><td><code>metadata.is_available == False</code></td><td>—</td></tr>
+          </tbody>
+        </table>
+        <div class="callout">
+          <strong>banned_cuisines vs disliked_cuisines</strong>：前者硬过滤（召回阶段直接 ban，菜永远不出现），后者软扣分（L2 <code>cuisine_preference</code> 维度 -1）。
+        </div>
+      </div>
+
+      <div class="layer-box l1">
+        <h4>③ diversity_filter · 主蛋白多样性（菜级）</h4>
+        <p>近 <code>no_same_main_ingredient_within_days</code>（默认 3）天吃过的<strong>主蛋白</strong>（仅 <code>红肉</code> / <code>白肉</code> / <code>海鲜</code> / <code>豆制品</code>）→ 砍该 main_ingredient_type 的菜。</p>
+        <div class="footnote">纯素 / 主食 / 蛋 不受此约束。</div>
+      </div>
+
+      <div class="layer-box l1">
+        <h4>④ build_combos · 两条路线</h4>
+        <p>按餐厅分桶，每家最多生成 <code>per_restaurant_max</code> 个 combo。</p>
+        <p><strong>路线 A · 完整套餐</strong>：盖饭/便当类（<code>is_complete_meal=True</code>）单菜 → 也可 +1 蔬菜补蔬。</p>
+        <p><strong>路线 B · 笛卡尔积</strong>：蛋白菜 × 蔬菜 × （主食可选），覆盖三件套。</p>
+        <p>每个 combo 必须过 <strong>弱约束三件套</strong>（D-023）：</p>
+        <ul>
+          <li>至少 <code>min_vegetable_dishes</code>（默认 1）道蔬菜（vegetable_ratio≥0.6 或 main_ingredient_type=纯素）</li>
+          <li>combo 总蛋白 ≥ <code>min_protein_g</code>（默认 25g）</li>
+        </ul>
+        <p><strong>combo 去重</strong>：按 frozenset(dish_id) 去重，路线 A/B 撞车时只保留一份。</p>
+      </div>
+
+      <div class="layer-box l1">
+        <h4>⑤ combo_price_filter · 总价硬过滤 <span class="badge badge-warn">D-041</span></h4>
+        <p>按 meal_type 选阈值，combo 总价（所有菜 price 之和）超阈值 → 整 combo 丢弃：</p>
+        <ul>
+          <li><code>meal_type=lunch</code> → 用 <code>price_range.hard_max_lunch</code>（默认 80）</li>
+          <li><code>meal_type=dinner</code> → 用 <code>price_range.hard_max_dinner</code>（默认 100）</li>
+        </ul>
+        <div class="footnote">价格双层：<code>hard_max_*</code> = 召回硬卡死；<code>lunch_max/dinner_max</code> = L2 软扣分（price 维度，超出线性扣分）。</div>
+      </div>
+
+      <div class="callout"><strong>调试台看哪</strong>：<br>
+        L1 stat-grid 11 个数字：全量菜 → 三类 ban 数 → hard_filter 后菜 → diversity 后菜 → 出 combo 餐厅 → combos（价过滤前）→ drop·价超限 → 最终 combos。<br>
+        <strong>「餐厅级 ban 明细」</strong>：D-041 ① 命中的餐厅（ETA / 名字）逐家列出。<br>
+        <strong>「combo 价格硬过滤」</strong>：D-041 ⑤ 被丢的 combo 前 20 条，看总价超了多少。<br>
+        <strong>「硬过滤丢弃原因聚合」</strong>：把所有丢弃 reason 里的数字归一成 <code>N</code>，统计条数排序，一眼看出"是辣度卡多 还是 主蛋白卡多"。
+      </div>
+    </section>
+
+    <section id="l2">
+      <h2>L2 打分 · 16 维加权和</h2>
+      <p>每个 combo 算 16 个分量 × 各自权重 → 求和 = <code>score</code>。<strong>没有归一化</strong>，所以 score 是浮点累加（V2 默认权重下大约 1~6 区间）。</p>
+      <p>权重在 <code>profile.scoring_weights</code> 里配；缺字段 → 走 <code>V2_DEFAULT_WEIGHTS</code>（见 <code>chisha/score.py</code>）。</p>
+
+      <div class="layer-box l2" id="l2-g1">
+        <h4>G1 · 基础 6 维（V1 留下来的，合规 + 流行度）</h4>
+        <table>
+          <thead><tr><th>维度</th><th>怎么算</th><th>默认权重</th></tr></thead>
+          <tbody>
+            <tr><td><code>vegetable_floor_pass</code></td><td>蔬菜数达 <code>min_vegetable_dishes</code> → 1，否则 0</td><td>1.0</td></tr>
+            <tr><td><code>protein_floor_pass</code></td><td>蛋白总量过 <code>min_protein_g</code> → 1</td><td>1.0</td></tr>
+            <tr><td><code>low_oil</code></td><td>combo 平均油，≤prefer → 0.5~1，&gt;prefer 线性扣到 -0.5</td><td>0.8</td></tr>
+            <tr><td><code>popularity</code></td><td>log10(月销均值) / 3，0~1</td><td>0.4</td></tr>
+            <tr><td><code>cuisine_preference</code></td><td>命中 liked +1，命中 disliked -1</td><td>0.2 <span class="badge badge-grey" title="D-042: 0.5→0.2，避免软偏好和营养底线一个量级">↓D-042</span></td></tr>
+            <tr><td><code>variety_bonus</code></td><td>combo 主蛋白/烹饪方式 近 3 天没出现过 → +0.5</td><td>0.3</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="layer-box l2" id="l2-g2">
+        <h4>G2 · 营养 5 维（D-032 新字段，靠 LLM 打标后填）</h4>
+        <table>
+          <thead><tr><th>维度</th><th>怎么算</th><th>默认权重</th></tr></thead>
+          <tbody>
+            <tr><td><code>carb_quality</code></td><td>dish_role=主食 时，grain_type ∈ {糙米杂粮/全麦面/粗粮} +1，白米/精面 -1，求和裁 [-1,1]。<br><span class="badge badge-grey" title="D-042: 粥本质精制白米，营养上不属于全谷，其汤水价值由 wetness 维度覆盖">D-042: 粥已移出 GRAIN_GOOD</span></td><td>0.6</td></tr>
+            <tr><td><code>processed_meat</code></td><td>含 processed_meat_flag 的主菜扣 1，配菜扣 0.5（最多扣 1.5）<br><span class="badge badge-neg">取负</span></td><td>1.0</td></tr>
+            <tr><td><code>sweet_sauce</code></td><td>sweet_sauce_level ≥3 扣 1，==2 扣 0.5（最多扣 1.5）<br><span class="badge badge-neg">取负</span></td><td>0.7</td></tr>
+            <tr><td><code>wetness</code></td><td>combo 含 wetness ≥3（汤底）→ 1；==2（卤水）→ 0.5</td><td>0.5</td></tr>
+            <tr><td><code>dish_role_match</code></td><td>{主菜 / 配菜 / 主食} 覆盖度，3 类全 → 1，2 类 → 0.5</td><td>0.4</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="layer-box l2" id="l2-g3">
+        <h4>G3 · 履约 3 维（懒得跑远 / 不想等 / 别太贵）</h4>
+        <table>
+          <thead><tr><th>维度</th><th>怎么算</th><th>默认权重</th></tr></thead>
+          <tbody>
+            <tr><td><code>distance</code></td><td>distance &gt; prefer_distance_m 才扣，线性 0~1 <span class="badge badge-neg">取负</span></td><td>0.3</td></tr>
+            <tr><td><code>eta</code></td><td>ETA &gt; max_delivery_eta_min 才扣 <span class="badge badge-neg">取负</span></td><td>0.4</td></tr>
+            <tr><td><code>price</code></td><td>combo 总价 &gt; lunch_max/dinner_max 才扣 <span class="badge badge-neg">取负</span></td><td>0.5</td></tr>
+          </tbody>
+        </table>
+        <div class="footnote">三个都是<strong>阈值制</strong>：不超就完全不扣分（=0），不会因为"距离 1000m" 比 "距离 500m" 扣得多。</div>
+      </div>
+
+      <div class="layer-box l2" id="l2-g4">
+        <h4>G4 · 偏好/情境 2 维（最玄学的两维）</h4>
+        <table>
+          <thead><tr><th>维度</th><th>怎么算</th><th>默认权重</th></tr></thead>
+          <tbody>
+            <tr><td><code>taste_match</code></td><td>由 LLM 反馈解析员产出的 taste_hints (boost/penalty) 触发；V2 初版 hints=None 时恒 0</td><td>0.6</td></tr>
+            <tr><td><code>context_boost</code></td><td>daily_mood 软调权，见 <a href="#context">Context 注入</a></td><td>0.4</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout"><strong>调试台看哪</strong>：<br>
+        L2 section → 顶部权重 badge 行（profile_overrides 生效后这里会变）<br>
+        top 30 表格 <strong>点 row 展开</strong> → 右半边是 breakdown，按绝对值大到小排序，绿正/红负/灰零；一眼看出"这条凭啥排第 3"。<br>
+        左半边是 combo 内每道菜的全字段（main_ingredient_type / cooking_method / oil / wetness / sweet / grain / 蛋白 g），方便对营养标签准不准。
+      </div>
+
+      <h3>D-042 · per-restaurant cap（防同店霸榜 top30）</h3>
+      <p>打分排完序后，<code>rank_combos</code> → <code>cap_per_restaurant(k=3)</code>：每家餐厅最多保留前 3 个 combo，其余按全局分数顺位下放到尾部。</p>
+      <ul>
+        <li><strong>动机</strong>：<code>per_restaurant_max=20</code> 让单店最多 20 个 combo 进入打分；分数相近的同店变体会一起挤在 top30，挤掉真正多样的候选；LLM 精排只看 top30，前面没多样性，后面也救不回来。</li>
+        <li><strong>实现</strong>：<code>cap_per_restaurant</code> 按 ranked 顺序遍历，每 restaurant_id 计数 ≥ k 后扔到 tail；返回 head+tail，<strong>不丢任何 combo</strong>。</li>
+        <li><strong>K 来源</strong>：<code>profile.recall.per_restaurant_top_k</code>（默认 3）。生产 V1/V2/refine 三条路径都走 <code>resolve_cap_k(profile)</code>，缺字段或非法整数回退默认。<code>k=0</code> passthrough（不 cap）。</li>
+        <li><strong>调试台显示</strong>：L2 stat-grid 显示 cap 前后的「top30 餐厅数」「单店最多 combo」对比，cap 起作用时数字会变颜色。</li>
+      </ul>
+
+      <div class="callout">
+        <strong>为啥不在召回阶段直接 cap？</strong> 召回的 <code>per_restaurant_max=20</code> 是<strong>组合空间预算</strong>（避免一家店产出 200 个组合炸内存），cap 是<strong>排序后多样性</strong>（同店分数相近的 combo 别一起霸榜）。两者职责不同：前者裁原料、后者裁成品。
+      </div>
+    </section>
+
+    <section id="l3">
+      <h2>L3 LLM 精排 · top30 → 5</h2>
+      <p>把 L2 的 top 30 + profile + context 打包成 JSON，让 LLM 选 5 个，强制 3 exploit + 2 explore。</p>
+
+      <h3>送给 LLM 的 payload</h3>
+      <pre>{
+  "config": {"n": 5, "n_explore": 2},
+  "profile": {
+    "taste_description": "...",
+    "liked_cuisines": [...], "disliked_cuisines": [...],
+    "avoid_dishes": [...], "spicy_tolerance": 2
+  },
+  "context": {  // ContextSnapshot.to_llm_dict()
+    "meal_type": "lunch", "weekday": ..., "daily_mood": "want_soup",
+    "last_meal": {...}, "recent_feedback": [...]
+  },
+  "candidates": [
+    { "combo_index": 0,
+      "restaurant": {"name": ..., "cuisine": ..., "distance_m": ..., "eta_min": ...},
+      "dishes": [{"canonical_name", "cuisine", "price",
+                  "main_ingredient_type", "cooking_method",
+                  "oil_level", "spicy_level",
+                  "dish_role", "processed_meat_flag",
+                  "sweet_sauce_level", "wetness", "grain_type"}],
+      "total_price": ..., "score": ... },
+    ...
+  ]
+}</pre>
+      <p>Prompt 文件：<code>prompts/rerank_topn.md</code>，里面用 <code>{INPUT_PAYLOAD}</code> 占位填充。</p>
+
+      <h3>LLM 必须返回</h3>
+      <p>每条 candidate 必填以下字段，否则 <code>_validate_llm_candidates</code> 返回 None，整批 fallback。</p>
+      <table>
+        <thead><tr><th>字段</th><th>类型</th><th>校验</th></tr></thead>
+        <tbody>
+          <tr><td>rank</td><td>int</td><td>1..n 连续</td></tr>
+          <tr><td>combo_index</td><td>int</td><td>回指 top30 的 index，不重复，≥0</td></tr>
+          <tr><td>is_explore</td><td>bool</td><td>—</td></tr>
+          <tr><td>fit_score</td><td>float</td><td>0.0 ~ 1.0 闭区间</td></tr>
+          <tr><td>health_flags</td><td>dict</td><td>必含 veg_ok / protein_ok / oil_ok / processed_meat / sweet_sauce / wetness</td></tr>
+          <tr><td>risk_flags</td><td>list</td><td>可空</td></tr>
+          <tr><td>taste_match</td><td>—</td><td>可空</td></tr>
+          <tr><td>one_line_reason</td><td>str</td><td>≤30 字（LLM 自律，无硬限）</td></tr>
+        </tbody>
+      </table>
+
+      <h3>失败路径 · fallback_rerank</h3>
+      <p>LLM 输出无 JSON / 校验失败 / 调用异常 → 走规则版：</p>
+      <ul>
+        <li>exploit：打分 top (n - n_explore) 走 <code>diversify_top</code>（品牌+菜系强制多样性）</li>
+        <li>explore：剩余里挑中段、近 7 天没吃过的 cuisine/method（_pick_explore）</li>
+        <li>所有字段用最简规则填占位（one_line_reason 用 "汤水清爽，低油1.7，蛋白达标" 风格）</li>
+      </ul>
+
+      <div class="callout warn">
+        <strong>_enforce_brand_unique 兜底</strong>：LLM 选完后做一次品牌去重；若去重后不足 5 个，从 top30 里拿没用过品牌的补；<strong>这些补位条 fit_score 是原始 score（&gt;1）</strong>，one_line_reason 写"为多样性补位"。在调试台上看到 fit&gt;1 / 理由是 "为多样性补位" 就是它。
+      </div>
+
+      <div class="callout"><strong>调试台看哪</strong>：<br>
+        L3 section → status badge：<span class="badge badge-pos">成功</span> / <span class="badge badge-neg">失败/fallback</span> / <span class="badge badge-grey">未调用</span><br>
+        「LLM payload」折叠 ~38K 字符<br>
+        「LLM 原始返回」折叠 ~2K 字符（提取 JSON 之前的原始字符串）<br>
+        「parsed_candidates」校验后的 5 条<br>
+        status bar 的 <strong>fallback</strong> 橙色 badge = 走了 fallback；<strong>LLM</strong> 绿色 badge = LLM 接管。
+      </div>
+    </section>
+
+    <section id="context">
+      <h2>Context 注入 · 软调权</h2>
+      <p><code>ContextSnapshot</code>（D-034）每次推荐前生成，不做硬过滤，只做软调权：</p>
+      <ul>
+        <li><strong>L2 阶段</strong>：<code>context_boost</code> 维度按 mood 给 combo +/- 调（权重 0.4）</li>
+        <li><strong>L3 阶段</strong>：整个 snapshot 拍进 LLM payload，LLM 自己用语义判断（"用户今天 want_soup，所以我更倾向带汤水的"）</li>
+      </ul>
+
+      <h3>6 个 daily_mood 的 L2 效应</h3>
+      <p>看 <code>chisha.score.context_boost</code>：</p>
+      <table>
+        <thead><tr><th>mood</th><th>触发条件</th><th>调分</th></tr></thead>
+        <tbody>
+          <tr><td><code>want_soup</code></td><td>combo 有汤水（wetness_bonus &gt; 0）</td><td><span class="badge badge-pos">+0.5</span></td></tr>
+          <tr><td><code>want_light</code></td><td>平均油 ≤2</td><td><span class="badge badge-pos">+0.3</span></td></tr>
+          <tr><td><code>want_light</code></td><td>平均油 ≥4</td><td><span class="badge badge-neg">-0.3</span></td></tr>
+          <tr><td><code>low_carb</code></td><td>combo 含主食 dish</td><td><span class="badge badge-neg">-0.3</span></td></tr>
+          <tr><td><code>want_clean</code></td><td>含 processed_meat</td><td><span class="badge badge-neg">-0.4</span></td></tr>
+          <tr><td><code>want_indulgent</code></td><td>油 ≤2（太清淡不解馋）</td><td><span class="badge badge-neg">-0.2</span></td></tr>
+          <tr><td><code>neutral</code> / None</td><td>—</td><td>0</td></tr>
+        </tbody>
+      </table>
+      <p>这些值经 G4 权重（默认 0.4）后才进入 score，所以实际 deltascore = 表中的值 × 0.4。</p>
+    </section>
+
+    <section id="checklist">
+      <h2>调试 checklist · 哪一层出问题</h2>
+      <table>
+        <thead><tr><th>症状</th><th>看哪</th><th>判断</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>推出来的菜很离谱</td>
+            <td>L1「丢弃原因聚合」</td>
+            <td>某类菜被大量误丢（如辣度门槛太严）→ 调 <code>spicy_tolerance</code></td>
+          </tr>
+          <tr>
+            <td>top10 全是粥/全是同品牌</td>
+            <td>L2 row 展开 breakdown</td>
+            <td>看是哪几维分数压倒性正，把对应权重调下来 / 调多样性参数</td>
+          </tr>
+          <tr>
+            <td>L2 top 和 L3 final 顺序差很多</td>
+            <td>L3「LLM 原始返回」</td>
+            <td>读 LLM 的 one_line_reason，多半是它根据 taste_description 重新判断</td>
+          </tr>
+          <tr>
+            <td>想喝汤但没推汤</td>
+            <td>L2 breakdown 看 <code>wetness</code> + <code>context_boost</code></td>
+            <td>wetness 字段全是 0 → 打标质量问题；context_boost 没生效 → mood 没选 want_soup</td>
+          </tr>
+          <tr>
+            <td>LLM 总 fallback</td>
+            <td>L3 fallback_reason</td>
+            <td>"无 JSON" → prompt 输出格式漂；"校验失败" → 字段名/范围错</td>
+          </tr>
+          <tr>
+            <td>想看某道菜为什么没被推</td>
+            <td>combo 追溯 (左栏底)</td>
+            <td>一眼看清在 hard_filter / diversity / 没构成合规 combo / 排名靠后 哪一关被淘汰</td>
+          </tr>
+          <tr>
+            <td>fit_score 大于 1</td>
+            <td>final 卡片</td>
+            <td>这条是 _enforce_brand_unique 兜底补位，没经过 LLM；理由写"为多样性补位"</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="glossary">
+      <h2>字段词典 · 调试时常查</h2>
+      <h3>打标字段（dishes_tagged 的 nutrition_profile）</h3>
+      <table>
+        <thead><tr><th>字段</th><th>类型/取值</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td>main_ingredient_type</td><td>红肉/白肉/海鲜/蛋/豆制品/纯素/主食/混合</td><td>主蛋白来源；多样性过滤靠它</td></tr>
+          <tr><td>cooking_method</td><td>清蒸/炖煮/凉拌/煎炒/油炸/烧烤/...</td><td>多样性 / explore 用</td></tr>
+          <tr><td>oil_level</td><td>int 1~5</td><td>1 清淡 ~ 5 重油</td></tr>
+          <tr><td>spicy_level</td><td>int 0~3</td><td>0 不辣 ~ 3 重辣</td></tr>
+          <tr><td>protein_grams_estimate</td><td>float</td><td>预估蛋白克数</td></tr>
+          <tr><td>vegetable_ratio_estimate</td><td>0~1</td><td>≥0.6 算蔬菜菜</td></tr>
+          <tr><td>dish_role</td><td>主菜/配菜/主食/汤/套餐</td><td>组合校验 + carb_quality 用</td></tr>
+          <tr><td>processed_meat_flag</td><td>bool</td><td>火腿/培根/午餐肉/腊肠/香肠等</td></tr>
+          <tr><td>sweet_sauce_level</td><td>int 0~3</td><td>糖醋/锅包肉/照烧风味，≥2 扣分</td></tr>
+          <tr><td>wetness</td><td>int 1~3</td><td>1 干 / 2 卤水 / 3 可喝汤底</td></tr>
+          <tr><td>grain_type</td><td>糙米杂粮/全麦面/粗粮/粥/白米/精制面/...</td><td>仅 dish_role=主食 时看；D-042 起<strong>"粥"不算 GRAIN_GOOD</strong>（精制白米煮，汤水价值已被 wetness 维度覆盖）</td></tr>
+          <tr><td>is_complete_meal</td><td>bool</td><td>盖饭/便当类，单菜就能构成主菜+主食</td></tr>
+        </tbody>
+      </table>
+
+      <h3>health_flags（LLM 返回 / fallback 都填）</h3>
+      <table>
+        <thead><tr><th>字段</th><th>含义</th><th>"好"是哪个值</th></tr></thead>
+        <tbody>
+          <tr><td>veg_ok</td><td>combo 有蔬菜</td><td>true</td></tr>
+          <tr><td>protein_ok</td><td>总蛋白 ≥25g</td><td>true</td></tr>
+          <tr><td>oil_ok</td><td>平均油 ≤3</td><td>true</td></tr>
+          <tr><td>processed_meat</td><td>含加工肉</td><td>false</td></tr>
+          <tr><td>sweet_sauce</td><td>含甜口</td><td>false</td></tr>
+          <tr><td>wetness</td><td>有汤水</td><td>true</td></tr>
+        </tbody>
+      </table>
+      <div class="footnote">调试台 final 卡片上：绿色 flag = 好的方向；红色 flag = 警告方向。</div>
+    </section>
+
+    <p style="text-align: center; color: var(--fg-dim); margin-top: 50px; font-size: 12px;">
+      代码: <code>chisha/recall.py</code> · <code>chisha/score.py</code> · <code>chisha/rerank.py</code> · <code>chisha/context.py</code><br>
+      调试入口: <code>chisha/debug_recommend.py</code> · <code>chisha/debug_server.py</code>
+    </p>
+  </main>
+</div>
+</body>
+</html>

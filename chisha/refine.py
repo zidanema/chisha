@@ -18,7 +18,7 @@ from chisha.context import build_context
 from chisha.feedback import FeedbackParsed, parse_feedback
 from chisha.recall import recall
 from chisha.rerank import rerank
-from chisha.score import rank_combos
+from chisha.score import apply_caps, rank_combos
 from chisha.session import SessionState, load_session, save_session
 
 
@@ -27,17 +27,17 @@ from chisha.session import SessionState, load_session, save_session
 # 维度名与 score.taste_match_bonus 对齐: wetness/low_oil/sweet_sauce/processed_meat/
 #                                       carb_heavy/spicy
 _CHIP_TO_HINT: dict[str, tuple[str, str]] = {
-    # boost
+    # boost (token 必须与 score.taste_match_bonus 支持的对齐)
     "想喝汤": ("boost", "wetness"),
     "想清淡": ("boost", "low_oil"),
-    "想吃辣": ("boost", "spicy"),
-    "想吃肉": ("boost", "protein"),
     # penalty
-    "太油": ("penalty", "low_oil"),       # 翻转后变 boost low_oil
+    "太油": ("penalty", "low_oil"),       # 见 chips_to_taste_hints 末尾翻转逻辑
     "太甜": ("penalty", "sweet_sauce"),
     "太辣": ("penalty", "spicy"),
     "加工肉太多": ("penalty", "processed_meat"),
     "主食太多": ("penalty", "carb_heavy"),
+    # 注: "想吃辣" / "想吃肉" 移除 (Codex review): taste_match_bonus 未实现这两个
+    # boost token, 留着是静默无效的死映射. 想加回来需先扩 taste_match_bonus.
 }
 
 
@@ -103,6 +103,27 @@ def refine(
     # 1. parse_feedback: user_input → chips + note
     fb: FeedbackParsed = parse_feedback(text=user_input, use_llm=use_llm)
 
+    # D-043 P3: 反馈写入 long_term_prefs (闭环数据采集)
+    # 失败不阻断 refine, 反馈学习是 best-effort
+    try:
+        from chisha.long_term_prefs import append_feedback
+        last_combo_sig = None
+        if state.last_candidates:
+            top1 = state.last_candidates[0]
+            last_combo_sig = (top1.get("restaurant", {}).get("name", "?")
+                              + " | " + ", ".join(top1.get("dish_names") or []))
+        append_feedback(
+            chips=fb.chips,
+            rating_taste=fb.rating_taste,
+            want_again=fb.want_again,
+            meal_type=state.meal_type,
+            session_id=session_id,
+            combo_signature=last_combo_sig,
+            root=root,
+        )
+    except Exception:
+        pass
+
     # 2. chips → taste_hints
     hints = chips_to_taste_hints(fb.chips)
 
@@ -117,10 +138,14 @@ def refine(
     )
 
     # 4. recall + rank + rerank (refine=True → no explore)
-    combos = recall(profile, rests, tagged, meal_log, today)
+    combos = recall(profile, rests, tagged, meal_log, today,
+                    meal_type=state.meal_type)
     ranked = rank_combos(combos, profile, meal_log, today,
                           context=ctx, taste_hints=hints,
-                          meal_type=state.meal_type)
+                          meal_type=state.meal_type,
+                          root=root)  # D-043 Codex 二审: 闭合 root 一致性
+    # D-043: refine 二轮也走三层 cap (restaurant + cuisine + food_form)
+    ranked = apply_caps(ranked, profile)
     top30 = ranked[:30]
     reranked = rerank(top30, profile, context=ctx, meal_log=meal_log,
                        n=n, n_explore=0, refine=True, use_llm=use_llm)

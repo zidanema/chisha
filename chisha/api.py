@@ -22,7 +22,7 @@ from chisha.recall import (
     recall,
 )
 from chisha.rerank import rerank as v2_rerank
-from chisha.score import diversify_top, rank_combos
+from chisha.score import apply_caps, diversify_top, rank_combos
 from chisha.session import create_session, save_session
 
 
@@ -45,7 +45,8 @@ def _format_candidate(rank: int, c: dict) -> dict:
         }
         for d in dishes
     ]
-    total_price = sum(d["price"] for d in dishes)
+    from chisha.recall import dish_price
+    total_price = sum(dish_price(d) for d in dishes)
     avg_oil = round(
         sum(d["nutrition_profile"]["oil_level"] for d in dishes)
         / max(1, len(dishes)), 1
@@ -131,9 +132,10 @@ def recommend_meal(
     session_id = _gen_session_id(meal_type)
 
     # 1. 召回
-    combos = recall(profile, rests, tagged, meal_log, today)
-    # 2. 打分排序
-    ranked = rank_combos(combos, profile, meal_log, today)
+    combos = recall(profile, rests, tagged, meal_log, today, meal_type=meal_type)
+    # 2. 打分排序 + 三层 cap (D-043: restaurant + cuisine + food_form)
+    ranked = rank_combos(combos, profile, meal_log, today, root=root)
+    ranked = apply_caps(ranked, profile)
     # 3. 多样性 top 3 (按品牌+菜系去重，避免同连锁霸榜)
     top = diversify_top(ranked, n=3, max_per_brand=1, max_per_cuisine=2)
     # 4. LLM 写理由
@@ -187,10 +189,11 @@ def _recommend_meal_v2(
     ctx = build_context(profile, meal_log, meal_type, today,
                         daily_mood=daily_mood, refine_input=None)
     # 2. 召回
-    combos = recall(profile, rests, tagged, meal_log, today)
-    # 3. V2 打分 (~12 维, 含 context)
+    combos = recall(profile, rests, tagged, meal_log, today, meal_type=meal_type)
+    # 3. V2 打分 (~12 维, 含 context) + 三层 cap (D-043)
     ranked = rank_combos(combos, profile, meal_log, today,
-                          context=ctx, meal_type=meal_type)
+                          context=ctx, meal_type=meal_type, root=root)
+    ranked = apply_caps(ranked, profile)
     # 4. LLM 精排 top30 → 5 (3 exploit + 2 explore, D-015)
     top30 = ranked[:30]
     reranked = v2_rerank(top30, profile, context=ctx, meal_log=meal_log,

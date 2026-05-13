@@ -164,7 +164,7 @@ cases:
       today: 2026-05-13
       profile_overrides:
         price_range:
-          lunch_max: 40
+          prefer_max_lunch: 40
       context_overrides: {}
       meal_log_seed: []
     expected:

@@ -77,7 +77,9 @@ def build_payload(
                 }
                 for d in c.get("dishes", [])
             ],
-            "total_price": sum(d.get("price", 0) for d in c.get("dishes", [])),
+            "total_price": sum(
+                (d.get("price") or 0) for d in c.get("dishes", [])
+            ),
             "score": round(c.get("score", 0), 3),
         })
 

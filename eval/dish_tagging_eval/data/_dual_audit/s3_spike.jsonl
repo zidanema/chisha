@@ -1,5 +1,0 @@
-{"dish_id":"d010","consensus_status":"agree","disagreement_fields":[],"adjudication":"全 6 字段 agree。Codex 确认 spicy_level=0 选择正确,prompt 规则文字优先于示例。Final = Opus S1。"}
-{"dish_id":"d155","consensus_status":"agree","disagreement_fields":[],"adjudication":"全 6 字段 agree。西式蛋白碗 6 边界规则联动正确(is_complete_meal=true / grain=无 / role=主菜)。Final = Opus S1。"}
-{"dish_id":"d159","consensus_status":"agree","disagreement_fields":[],"adjudication":"全 6 字段 agree。中式烧腊 + 单点饭=主食 + sweet=2 + processed=false 联动正确。Final = Opus S1。"}
-{"dish_id":"d162","consensus_status":"agree","disagreement_fields":[],"adjudication":"5 agree + 1 uncertain(tags 下饭)。'下饭'语义是'配饭好吃',即使本菜无饭仍成立;Opus 维持。Final = Opus S1。"}
-{"dish_id":"d169","consensus_status":"codex_wins","disagreement_fields":["processed_meat_flag"],"adjudication":"6 agree + 1 uncertain(processed_meat)。Codex 反驳合理:菜单未明示丸料/午餐肉,标准化时保守 false。Opus 接受修正 → processed_meat_flag=false。其他 6 字段维持。"}

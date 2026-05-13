@@ -1,4 +1,4 @@
-"""LLM 抽象 (Phase 1 of D-037).
+"""LLM 抽象 (Phase 1 of D-038).
 
 provider auto-detect:
 - 有 ANTHROPIC_API_KEY → Anthropic 直连 (claude-sonnet-4-6)

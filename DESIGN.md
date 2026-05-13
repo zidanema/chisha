@@ -452,6 +452,10 @@ v3 新增 5 字段（D-032，2026-05-11）：
 
 ### 5.3 profile.yaml
 
+> 以下 yaml 仅为 schema 示例。**实际生产 profile.yaml 见仓库根目录**，已按
+> [D-044](docs/DECISIONS.md#d-044) 真实化重建（goal/zones/min_protein_g/avoid_dishes/price/taste_description 全量校正），
+> 且引入"偏好层 vs 健康目标层分离"四段式 taste_description 结构（详见 [RECOMMEND_PRINCIPLES §12](docs/RECOMMEND_PRINCIPLES.md)）。
+
 ```yaml
 basics:
   name: <YOUR_NAME>
@@ -692,27 +696,44 @@ canonical_name：
 
 #### 召回（规则）
 
+设计原则（[D-041](docs/DECISIONS.md#d-041)）：**召回阶段尽量召回 + 用 profile 显式硬约束剪枝**；
+硬约束（命名 `hard_max_*` / `banned_*` / `avoid_*`）放召回，软约束（`prefer_max_*`）放打分。
+
 ```
-1. 候选商家：profile.office_zone 内
-2. 硬过滤（非协商）：
-   - profile.preferences.avoid_dishes（菜名匹配）
-   - dish.spicy_level > profile.spicy_tolerance（整数比较）
-   - dish.monthly_sales < 10 且无评分
+1. 候选商家：profile.basics.zones[meal_type] 内
+2. 餐厅级硬 ban：
+   - 近 7 天 meal_log 吃过的 restaurant_id（多样性）
+   - delivery_constraints.hard_max_eta_min: ETA 超此值整家 ban（外卖只看 ETA, 不卡距离）
+   - preferences.avoid_restaurants: 餐厅名/品牌 substring 模糊匹配
+3. 菜级硬过滤（非协商）：
+   - preferences.avoid_dishes: canonical_name substring 模糊匹配
+   - preferences.avoid_main_ingredients: main_ingredient_type 精确匹配（如 [海鲜]）
+   - preferences.avoid_cooking_methods: cooking_method 精确匹配（如 [油炸]）
+   - preferences.banned_cuisines: dish.cuisine 精确匹配（硬，区别于 disliked_cuisines 软）
+   - dish.spicy_level > profile.spicy_tolerance
+   - dish.oil_level > plate_rule.hard_max_oil_level（默认 4，5=不卡）
+   - dish.monthly_sales > 0 且 < recall.min_monthly_sales（默认 0=关闭，低销量由 popularity 打分维度处理）
    - dish.is_available = false
-   - dish.oil_level > profile.plate_rule.hard_max_oil_level（V1 默认 5，等于不卡）
    - V2+: personal_offsets 中 score_offset ≤ -2.0
    - V2+: learned_profile.blacklist 命中
-3. 多样性过滤（基于 meal_log，V1 第一周空 log 时无效，是已知现象）：
-   - 7 天内吃过的 restaurant_id
-   - 3 天内吃过的 main_ingredient_type
-4. 组合策略（每家餐厅最多产 3 个组合，避免笛卡尔积爆炸）：
-   - 路线 A：is_complete_meal=true 的单菜 + 必要时补 1 道蔬菜
-   - 路线 B：同 restaurant 内 [蛋白] × [蔬菜（vegetable_ratio_estimate ≥ 0.6）] × [主食 0/1]
-5. 弱约束三件套校验（D-023，组合级，不达标的整组淘汰）：
+4. 主蛋白多样性：3 天内吃过的 main_ingredient_type ∈ {红肉/白肉/海鲜/豆制品} 的菜剔除
+5. 组合策略（数量上限由 profile.recall.* 显式注入，D-040）：
+   - 路线 A: is_complete_meal=true 的单菜 + 可选 1 道蔬菜
+   - 路线 B: n_p 蛋白 × n_v 蔬菜 × n_c 主食
+       其中 n_p ∈ [1, max_protein_per_combo=2], n_v ∈ [1, max_veg_per_combo=2],
+            n_c ∈ [0, max_carb_per_combo=1], 且 n_p+n_v+n_c ∈ [1, max_dishes_per_combo=4]
+   - 各池按 monthly_sales 降序取 [:6/:5/:3] 做枝剪, 防笛卡尔爆炸
+   - 单餐厅最多保留 per_restaurant_max（默认 20）个 combo, 多样性留给后续排序
+6. 弱约束三件套校验（D-023，组合级，不达标的整组淘汰）：
    - 至少含 1 道 vegetable_ratio_estimate ≥ 0.6 的菜
    - 总 protein_grams_estimate ≥ profile.plate_rule.min_protein_g
-6. 按打分排序，截取 top 100
+7. combo 总价硬过滤: 超 price_range.hard_max_{lunch,dinner} 的整组 ban
+   （仅当 recall(meal_type=...) 传入 meal_type 时生效；V1/V2/refine 主入口都传）
+8. 输出未排序 combos 池, 交给 score.py 排序
 ```
+
+`hard_filter()` 返回 `(kept, dropped)` 元组，dropped 每项含 `reason` 字段, 便于
+[`debug_recommend`](../chisha/debug_recommend.py) 调试台直接展示丢弃明细，避免 trace 与生产逻辑漂移。
 
 #### 打分（公式）
 
@@ -739,10 +760,10 @@ combo_score (V2) =
   - sweet_sauce_penalty      × 0.7    # sweet_sauce_level=high 扣分
   + soup_or_broth_bonus      × 0.5    # 至少 1 道 soup_or_broth_flag=true
   + dish_role_match_bonus    × 0.4    # combo dish_role 结构合理（主菜+配菜+主食）
-  # 履约维度（已有数据未用）
-  - distance_penalty         × 0.3    # 超 prefer_distance_m 线性
-  - eta_penalty              × 0.4    # 超 max_delivery_eta_min 线性
-  - price_penalty            × 0.5    # 超 price_range.{lunch,dinner}_max 线性
+  # 履约维度（D-041 双层: hard_max_* 召回 ban / prefer_max_* 这里软扣）
+  - distance_penalty         × 0.3    # 超 prefer_distance_m 线性 (用户不卡距离, 默认 0)
+  - eta_penalty              × 0.4    # 超 prefer_max_eta_min 线性
+  - price_penalty            × 0.5    # 超 price_range.prefer_max_{lunch,dinner} 线性
   # taste_description 进决策（不再只进 reason）
   + taste_match_bonus        × 0.6    # LLM 反馈解析员推断的 boost
   - taste_violation_penalty  × 0.6    # 命中 taste_description 的负向（如"不要甜口"）
@@ -936,6 +957,19 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` ([D-03
 | **27** | **数据来源边界：sister project chisha-collector 维护** | **D-027** |
 | **28** | **北极星指标修正（用连续采纳率替代决策时间）** | **D-028** |
 | **29** | **profile.spicy_tolerance 改整数 0-3** | **D-029** |
+| 30 | 数据链路重构方向：单仓三子模块（V1.5） | D-030 |
+| 33 | V2.0+V2.1 合并触发：Context + LLM 精排 + refine + session | D-033 |
+| 34 | ContextSnapshot 注入层 | D-034 |
+| 35 | LLM 精排 top30→5（3 exploit + 2 explore） | D-035 |
+| 36 | Dual-model audit 共创（Opus+Codex） | D-036 |
+| 37 | 生产打标默认 deepseek-v4-flash | D-037 |
+| 38 | LLM 抽象 Phase 1（provider auto-detect）+ 商家去重兜底 | D-038 |
+| 39 | 推荐调试台（FastAPI on 8765） | D-039 |
+| 40 | combo 生成参数化（max_protein/veg/carb 由 profile 注入） | D-040 |
+| 41 | 召回硬过滤双层架构（hard_max_* / prefer_max_*） | D-041 |
+| **42** | **L2 排序后 cap_per_restaurant（防同店霸榜）** | **D-042** |
+| **43** | **L2 打分体系重设计 + 三层 cap + 反馈闭环 P3**（必读 [`docs/RECOMMEND_PRINCIPLES.md`](docs/RECOMMEND_PRINCIPLES.md)） | **D-043** |
+| **44** | **profile.yaml 真实化 + 口味偏好层与健康目标层分离** | **D-044** |
 
 ---
 
