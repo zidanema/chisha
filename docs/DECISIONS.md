@@ -1159,8 +1159,7 @@ LLM 精排输出 schema (V2):
 - `eval/dish_tagging_eval/CRITICAL_RULES.md` — 规则集中沉淀
 - `eval/dish_tagging_eval/RALPH_LOOP_PROMPT.md` — ralph-loop iteration prompt
 - `eval/dish_tagging_eval/KNOWN_ISSUES.md` — 16 条边界争议落账 (P0/P1/P2)
-- `data/golden_set.jsonl` — 171 条新主产物
-- `data/golden_set.v1.jsonl` — 旧 150 条备份
+- `data/golden_set.jsonl` — 171 条新主产物 (旧 150 条 Sonnet 版本于 2026-05-13 清理, git 历史可查)
 
 跑完指标:
 - Schema 通过 171/171 = 100%

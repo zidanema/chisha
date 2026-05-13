@@ -220,16 +220,16 @@
 
 ```
 dish_tagging_eval/
-├── README.md                    # 如何运行
+├── README.md                    # 如何运行 (实际目录树以 README 为准)
 ├── config.yaml                  # 模型列表、batch、并发
 ├── prompts/
 │   └── tag_dishes_v3_draft.md   # 原 prompt(从外部 copy 进来,不修改)
 ├── data/
-│   └── golden_set.jsonl         # 150 条 golden(input + expected)
+│   └── golden_set.jsonl         # 171 条 golden(D-036 后, input + expected)
 ├── results/
 │   └── {model_alias}.jsonl      # 各模型跑出的结果
 ├── scripts/
-│   ├── build_golden_set.py      # 半自动构造 golden(调 Sonnet 生成候选)
+│   ├── dual_pipeline.py         # Step 1 (D-036 后): Opus+Codex 双模型共创 + anchor_violations
 │   ├── run_eval.py              # OpenRouter 调用
 │   ├── score.py                 # 评分
 │   └── make_report.py           # 生成 report.md

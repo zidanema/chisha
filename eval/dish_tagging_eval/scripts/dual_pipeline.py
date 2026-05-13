@@ -4,15 +4,15 @@ CLI 子命令(供 ralph-loop iteration 用):
   status        显示进度 (已完成 / 待跑 / failed)
   next-batch    输出下一个未完成 batch 的 5 dishes (JSON, 给 Opus S1)
   mark-done <batch_idx>   验证 final_batch_NNN.jsonl 通过校验后, 标记 progress.json
-  merge         把所有 final_batch_*.jsonl 合并成 data/golden_set_dual.jsonl
+  merge         把所有 final_batch_*.jsonl 合并成 data/golden_set.jsonl
 
-状态文件:
+状态文件 (首次运行自动重建):
   scripts/_dual_state/batch_plan.json   34 batches 切片 (一次性生成)
   scripts/_dual_state/progress.json     运行时进度: {"completed":[1,2,...],"failed":[]}
 
 数据文件:
   data/_dual_audit/final_batch_001.jsonl ... final_batch_034.jsonl  每 batch 5 条 final
-  data/golden_set_dual.jsonl   merge 后的最终 171 条
+  data/golden_set.jsonl   merge 后的最终 171 条
 
 输出格式: stdout 输出可被 ralph iteration 解析的紧凑信息. 错误用 exit code != 0.
 """
@@ -26,15 +26,39 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from build_golden_set import anchor_violations  # noqa: E402
 from _or_client import validate_record  # noqa: E402
 from dish_inputs_v2 import all_inputs_v2  # noqa: E402
+
+
+def anchor_violations(raw_name: str, exp: dict) -> list[str]:
+    """对一条 expected 跑反直觉锚点自检, 返回违反列表(空 = 通过)."""
+    v = []
+    n = raw_name
+    if any(k in n for k in ("红烧", "糖醋", "照烧", "京酱", "拔丝", "无锡酱")):
+        if exp.get("sweet_sauce_level", 0) < 2:
+            v.append(f"sweet_sauce_level<2 for '{n}'")
+    if "蜜汁" in n or "蜂蜜" in n:
+        if exp.get("sweet_sauce_level", 0) < 2:
+            v.append(f"sweet_sauce_level<2 for honey '{n}'")
+    if any(k in n for k in ("叉烧", "烧鸭", "烧鹅", "烧腊", "卤水", "白切鸡")) and "腊" not in n and "肠" not in n:
+        if exp.get("processed_meat_flag") is True:
+            v.append(f"processed_meat_flag=true for fresh-roast '{n}'")
+    if any(k in n for k in ("腊肠", "培根", "午餐肉", "蟹柳", "火腿肠", "热狗")):
+        if exp.get("processed_meat_flag") is False:
+            v.append(f"processed_meat_flag=false for processed '{n}'")
+    if any(k in n for k in ("套餐", "+饭", "+饮料", "+主食", "+汤", "+小菜", "拼盘")):
+        if exp.get("dish_role") != "套餐":
+            v.append(f"dish_role!=套餐 for '{n}'")
+    if any(k in n for k in ("米粉", "河粉", "粿条", "肠粉", "螺蛳粉", "桂林米粉", "云南米线")):
+        if exp.get("grain_type") != "白米":
+            v.append(f"grain_type!=白米 for rice-noodle '{n}'")
+    return v
 
 STATE_DIR = SCRIPTS / "_dual_state"
 AUDIT_DIR = ROOT / "data" / "_dual_audit"
 BATCH_PLAN_PATH = STATE_DIR / "batch_plan.json"
 PROGRESS_PATH = STATE_DIR / "progress.json"
-GOLDEN_FINAL = ROOT / "data" / "golden_set_dual.jsonl"
+GOLDEN_FINAL = ROOT / "data" / "golden_set.jsonl"
 BATCH_SIZE = 5
 
 
@@ -194,7 +218,7 @@ def cmd_mark_done(batch_idx: int) -> int:
 
 
 def cmd_merge() -> int:
-    """合并所有 final + spike 到 golden_set_dual.jsonl, 按 dish_id 升序."""
+    """合并所有 final + spike 到 golden_set.jsonl, 按 dish_id 升序."""
     plan = load_batch_plan()
     prog = load_progress()
     completed = set(prog.get("completed", []))

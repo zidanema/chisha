@@ -84,7 +84,6 @@
 ## 信息沉淀路径
 
 - 完整规则参考: `eval/dish_tagging_eval/CRITICAL_RULES.md`
-- 双模型 audit 链路 (S1/Codex/final): `data/_dual_audit/{s1,final}_batch_NNN.jsonl`
-- 进度状态: `scripts/_dual_state/progress.json`
 - V3 prompt patched: `prompts/tag_dishes_v3_draft.md` (eval 下)
-- V3 prompt 原版备份: `prompts/tag_dishes_v3_pre_dual.md` (eval 下)
+- 双模型 audit 链路与进度状态: 2026-05-13 清理 (流程已完结, 历史见 git log commit 5727b21)
+- V3 prompt 原版: 历史在 git (commit 5727b21 之前)

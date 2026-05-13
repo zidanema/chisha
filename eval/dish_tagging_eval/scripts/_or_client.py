@@ -1,4 +1,4 @@
-"""OpenRouter 客户端封装 - 共用给 build_golden_set / run_eval."""
+"""OpenRouter 客户端封装 - 共用给 dual_pipeline / run_eval."""
 from __future__ import annotations
 
 import asyncio

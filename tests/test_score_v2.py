@@ -561,24 +561,71 @@ def test_apply_caps_chains_all_three():
     assert len(out) == len(ranked)
 
 
-# ─────────────────────── D-043: resolve_caps
+# ─────────────────────── D-043/D-045: resolve_caps
 def test_resolve_caps_defaults():
     out = resolve_caps({})
-    assert out == {"restaurant": 3, "cuisine": 6, "food_form": 8}
+    assert out == {"restaurant": 3, "brand": 2, "cuisine": 6, "food_form": 8}
 
 
 def test_resolve_caps_from_profile():
-    p = {"recall": {"per_restaurant_top_k": 2, "per_cuisine_top_k": 4,
-                     "per_food_form_top_k": 6}}
-    assert resolve_caps(p) == {"restaurant": 2, "cuisine": 4, "food_form": 6}
+    p = {"recall": {"per_restaurant_top_k": 2, "per_brand_top_k": 1,
+                     "per_cuisine_top_k": 4, "per_food_form_top_k": 6}}
+    assert resolve_caps(p) == {"restaurant": 2, "brand": 1, "cuisine": 4, "food_form": 6}
 
 
 def test_resolve_caps_invalid_falls_back():
-    p = {"recall": {"per_restaurant_top_k": "bad", "per_cuisine_top_k": -1}}
+    p = {"recall": {"per_restaurant_top_k": "bad", "per_brand_top_k": "x",
+                     "per_cuisine_top_k": -1}}
     out = resolve_caps(p)
     assert out["restaurant"] == 3
+    assert out["brand"] == 2
     assert out["cuisine"] == 6
     assert out["food_form"] == 8
+
+
+# ─────────────────────── D-045: brand cap (连锁分店去重)
+def test_apply_caps_brand_cap_dedupes_chain_stores():
+    """同品牌不同分店应被 brand cap 限制, 即使每家分店 rid 不同."""
+    def _c(rid, brand, cuisine, name="菜"):
+        return {
+            "restaurant": {"id": rid, "name": rid, "brand": brand},
+            "dishes": [make_dish(canonical_name=name, cuisine=cuisine)],
+            "score": 1.0,
+        }
+    # Super Model 三家分店 + 一家其他, brand cap=2 应只放行前 2 家 Super Model
+    ranked = [
+        _c("r_222", "Super Model 超模厨房", "轻食健康"),
+        _c("r_219", "Super Model 超模厨房", "轻食健康"),
+        _c("r_220", "Super Model 超模厨房", "轻食健康"),
+        _c("r_018", "醉湘楼", "湘菜"),
+    ]
+    profile = {"recall": {"per_brand_top_k": 2,
+                          "per_restaurant_top_k": 10,
+                          "per_cuisine_top_k": 10,
+                          "per_food_form_top_k": 10}}
+    out = apply_caps(ranked, profile)
+    # head = 前 3 条 (2 个 Super Model + 1 个 醉湘楼), tail = r_220
+    head_brands = [c["restaurant"]["brand"] for c in out[:3]]
+    assert head_brands.count("Super Model 超模厨房") == 2
+    assert "醉湘楼" in head_brands
+    # 第 4 条是被 demote 的 r_220
+    assert out[3]["restaurant"]["id"] == "r_220"
+
+
+def test_apply_caps_brand_cap_falls_back_to_rid_when_brand_missing():
+    """brand 字段缺失时回退到 rid (单店即单品牌, 不应过度合并)."""
+    def _c(rid, cuisine):
+        return {
+            "restaurant": {"id": rid, "name": rid},  # 无 brand
+            "dishes": [make_dish(cuisine=cuisine)],
+            "score": 1.0,
+        }
+    ranked = [_c("r_001", "湘菜"), _c("r_002", "湘菜"), _c("r_003", "湘菜")]
+    profile = {"recall": {"per_brand_top_k": 1, "per_restaurant_top_k": 10,
+                          "per_cuisine_top_k": 10, "per_food_form_top_k": 10}}
+    out = apply_caps(ranked, profile)
+    # brand 回退 rid, 三家不同 rid → 都过 brand cap
+    assert [c["restaurant"]["id"] for c in out[:3]] == ["r_001", "r_002", "r_003"]
 
 
 # ─────────────────────── D-043: variety_bonus 连续函数

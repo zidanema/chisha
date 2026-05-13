@@ -1,7 +1,7 @@
 """20 条对抗 case (d151-d170), 复用旧 ANCHOR_10 + 旧 CANDIDATES.
 
 每条对应 plan 里的边界规则或已知幻觉, 用于扩充 dual-model golden set 的边界覆盖率.
-build_golden_set_dual.py 通过 all_inputs_v2() 拿到 ANCHOR_10 + CANDIDATES + ADVERSARIAL_20.
+dual_pipeline.py 通过 all_inputs_v2() 拿到 ANCHOR_10 + CANDIDATES + ADVERSARIAL_20.
 """
 from dish_inputs import ANCHOR_10, ANCHOR_EXPECTED, CANDIDATES  # noqa: F401
 

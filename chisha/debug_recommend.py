@@ -504,12 +504,18 @@ def debug_recommend(
         rest = c.get("restaurant") or {}
         return rest.get("id") or rest.get("name")
 
+    def _brand_key(c):
+        rest = c.get("restaurant") or {}
+        return rest.get("brand") or rest.get("id") or rest.get("name")
+
     def _cuisine_key(c):
         dishes = c.get("dishes") or []
         return dishes[0].get("cuisine") if dishes else None
 
     rest_before = _count_keys(ranked_raw[:30], _rest_key)
     rest_after = _count_keys(ranked[:30], _rest_key)
+    brand_before = _count_keys(ranked_raw[:30], _brand_key)
+    brand_after = _count_keys(ranked[:30], _brand_key)
     cuisine_before = _count_keys(ranked_raw[:30], _cuisine_key)
     cuisine_after = _count_keys(ranked[:30], _cuisine_key)
     form_before = _count_keys(ranked_raw[:30], combo_food_form)
@@ -551,6 +557,13 @@ def debug_recommend(
                 max(rest_before.values(), default=0),
             "top30_max_per_restaurant_after_cap":
                 max(rest_after.values(), default=0),
+            # D-045 brand 层
+            "top30_unique_brands_before_cap": len(brand_before),
+            "top30_unique_brands_after_cap": len(brand_after),
+            "top30_max_per_brand_before_cap":
+                max(brand_before.values(), default=0),
+            "top30_max_per_brand_after_cap":
+                max(brand_after.values(), default=0),
             "top30_unique_cuisines_before_cap": len(cuisine_before),
             "top30_unique_cuisines_after_cap": len(cuisine_after),
             "top30_max_per_cuisine_before_cap":

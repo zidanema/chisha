@@ -679,14 +679,19 @@ def resolve_cap_k(profile: dict | None, default: int = 3) -> int:
 
 
 def resolve_caps(profile: dict | None) -> dict[str, int]:
-    """D-043: 三层 cap 配置统一入口.
+    """L2 cap 配置统一入口 (D-043 三层 + D-045 brand 层).
 
     Returns:
-        {"restaurant": int, "cuisine": int, "food_form": int}
+        {"restaurant": int, "brand": int, "cuisine": int, "food_form": int}
+
+    brand 层防连锁分店扎榜: Super Model 有 r_222/r_219/r_220 三家分店,
+    restaurant 层各 cap=3 时品牌总量上限 9, 体感被同品牌刷屏. brand 层
+    取 profile.recall.per_brand_top_k (默认 2), 比 restaurant 紧一档.
     """
     rcfg = (profile or {}).get("recall") or {}
     return {
         "restaurant": _safe_cap(rcfg.get("per_restaurant_top_k", 3), 3),
+        "brand": _safe_cap(rcfg.get("per_brand_top_k", 2), 2),
         "cuisine": _safe_cap(rcfg.get("per_cuisine_top_k", 6), 6),
         "food_form": _safe_cap(rcfg.get("per_food_form_top_k", 8), 8),
     }
@@ -696,31 +701,37 @@ def apply_caps(
     ranked: list[dict],
     profile: dict | None,
 ) -> list[dict]:
-    """D-043: 三层 cap 同时满足 (restaurant + cuisine + food_form).
+    """D-043 三层 cap + D-045 brand 层: restaurant + brand + cuisine + food_form 同时满足.
 
     Codex review 修复: 之前是串联调用三个单层 cap, 后层会把前层 demote 的 tail
-    重新纳入 head, 导致约束失效. 现在一次遍历同时维护三个计数器, head 必须
-    同时满足全部三层约束.
+    重新纳入 head, 导致约束失效. 现在一次遍历同时维护四个计数器, head 必须
+    同时满足全部四层约束.
 
-    cap=0 表示该层不做约束.
+    cap=0 表示该层不做约束. brand 缺失回退到 rid (单店即单品牌).
     """
     caps = resolve_caps(profile)
     cap_r = caps["restaurant"]
+    cap_b = caps["brand"]
     cap_c = caps["cuisine"]
     cap_f = caps["food_form"]
     head: list[dict] = []
     tail: list[dict] = []
     cnt_r: dict[str, int] = {}
+    cnt_b: dict[str, int] = {}
     cnt_c: dict[str, int] = {}
     cnt_f: dict[str, int] = {}
     for c in ranked:
         rest = c.get("restaurant") or {}
         rid = rest.get("id") or rest.get("name")
+        brand = rest.get("brand") or rid
         dishes = c.get("dishes") or []
         cui = dishes[0].get("cuisine") if dishes else None
         form = combo_food_form(c)
         # 任一层 cap 已满 → 下放 tail
         if cap_r > 0 and rid and cnt_r.get(rid, 0) >= cap_r:
+            tail.append(c)
+            continue
+        if cap_b > 0 and brand and cnt_b.get(brand, 0) >= cap_b:
             tail.append(c)
             continue
         if cap_c > 0 and cui and cnt_c.get(cui, 0) >= cap_c:
@@ -732,6 +743,8 @@ def apply_caps(
         head.append(c)
         if rid:
             cnt_r[rid] = cnt_r.get(rid, 0) + 1
+        if brand:
+            cnt_b[brand] = cnt_b.get(brand, 0) + 1
         if cui:
             cnt_c[cui] = cnt_c.get(cui, 0) + 1
         if form:

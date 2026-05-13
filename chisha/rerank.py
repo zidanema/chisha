@@ -403,35 +403,46 @@ def rerank(
 def _enforce_brand_unique(
     mapped: list[dict], top_combos: list[dict], n: int
 ) -> list[dict]:
-    """LLM 可能漏掉商家去重指令 — 同 restaurant.id 在 top n 只能出现 1 次。
+    """LLM 可能漏掉去重指令 — 同 brand (连锁) 在 top n 只能出现 1 次.
 
-    保留每家店首次出现的那条 (LLM 已按 rank 排好), 不够 n 个时从 top_combos
-    剩余 combos 里按 score 补齐 (跳过已用商家)。
+    D-045: 之前只按 restaurant.id 去重, 连锁分店会同时占榜 (如 Super Model
+    三家分店在 top5 占 3 条). 改成按 brand 去重 + rid 作为缺失兜底, 与 L2
+    apply_caps 的 brand 层语义保持一致.
+
+    保留每家品牌首次出现的那条 (LLM 已按 rank 排好), 不够 n 个时从
+    top_combos 剩余 combos 里按 score 补齐 (跳过已用品牌).
     """
     if not mapped:
         return mapped
-    seen_rest: set[str] = set()
+
+    def _brand_key(c: dict) -> str:
+        rest = c.get("restaurant") or {}
+        return rest.get("brand") or rest.get("id", "")
+
+    seen_brand: set[str] = set()
     out: list[dict] = []
     for c in mapped:
-        rid = (c.get("restaurant") or {}).get("id", "")
-        if rid in seen_rest:
+        bk = _brand_key(c)
+        if bk and bk in seen_brand:
             continue
-        seen_rest.add(rid)
+        if bk:
+            seen_brand.add(bk)
         out.append(c)
     if len(out) >= n:
         return out[:n]
-    # 不够 n 个: 从 top_combos 按 score 补 (避免和已选商家重复)
+    # 不够 n 个: 从 top_combos 按 score 补 (避免和已选品牌重复)
     used_combo_ids = {id(c) for c in mapped}
     for c in top_combos:
         if len(out) >= n:
             break
         if id(c) in used_combo_ids:
             continue
-        rid = (c.get("restaurant") or {}).get("id", "")
-        if rid in seen_rest:
+        bk = _brand_key(c)
+        if bk and bk in seen_brand:
             continue
         # 补齐用的 combo 没经 LLM 评分, 填占位字段
-        seen_rest.add(rid)
+        if bk:
+            seen_brand.add(bk)
         fill = {
             **c,
             "rank": len(out) + 1,
@@ -439,7 +450,7 @@ def _enforce_brand_unique(
             "fit_score": c.get("score", 0),
             "health_flags": {},
             "taste_match": None,
-            "risk_flags": ["商家去重补位"],
+            "risk_flags": ["品牌去重补位"],
             "one_line_reason": "为多样性补位, 此条无 LLM 评分",
         }
         out.append(fill)
