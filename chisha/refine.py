@@ -146,8 +146,10 @@ def refine(
                           root=root)  # D-043 Codex 二审: 闭合 root 一致性
     # D-043: refine 二轮也走三层 cap (restaurant + cuisine + food_form)
     ranked = apply_caps(ranked, profile)
-    top30 = ranked[:30]
-    reranked = rerank(top30, profile, context=ctx, meal_log=meal_log,
+    # D-046: top30 → topK (与 v2 主路径一致, 二审实测后 K=60)
+    from chisha.rerank import L3_INPUT_TOP_K
+    top_k = ranked[:L3_INPUT_TOP_K]
+    reranked = rerank(top_k, profile, context=ctx, meal_log=meal_log,
                        n=n, n_explore=0, refine=True, use_llm=use_llm)
 
     # 5. 更新 session

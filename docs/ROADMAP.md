@@ -23,8 +23,9 @@
 - **combo 生成参数化**（[D-040](DECISIONS.md#d-040)）：多蛋白多蔬菜由 profile 注入；召回总 combos 454 → 2206。
 - **L2 cap + 重设计 + 反馈闭环**（[D-042](DECISIONS.md#d-042) / [D-043](DECISIONS.md#d-043)）：3 层 cap（restaurant/cuisine/food_form）防扎堆；砍 3 个死权重；改活 popularity/variety/taste/context；加 unforgivable penalty；反馈闭环 P3 落地（`chisha/long_term_prefs.py`）。**top30 score 跨度 0.34 → 4.997（15×）**。详见 [`RECOMMEND_PRINCIPLES.md`](RECOMMEND_PRINCIPLES.md)。
 - **profile.yaml 真实化**（[D-044](DECISIONS.md#d-044)，2026-05-13）：从用户口述 + 历史订单回顾重建 profile（goal/zones/min_protein_g/avoid_dishes/price/taste_description 全量校正）。沉淀两个普适方法论到 [RECOMMEND_PRINCIPLES](RECOMMEND_PRINCIPLES.md) §12 §13：**偏好层 ≠ 行为层** + **隐藏目标识别**。
+- **L3 精排 prompt + payload 重构**（[D-046](DECISIONS.md#d-046)，2026-05-13）：①top30 → top60（二审实测 shenzhen-bay top41-60 有 10 brand / 12 餐厅的真实多样性增量，top61+ 才同质化崩；不上 80/100 避开同分平台 + 输出漏号风险）；②prompt 拆 system / user, system 进 Anthropic prompt cache（~1.7k tokens 100% 命中）；③payload 紧凑符号化（每菜一行约 80-100 chars, 默认值省略）；④health_flags 从 LLM 输出移除, 改 rerank.py 规则后处理；⑤加观测埋点：每次记录 LLM 选中的 combo_index 分布（一周后用 P(idx ≥ 40) 量化"L3 是否看到了 L2 没识别的好货"）。实测 input tokens ~22k → ~6.2k（cache 命中时, 省 72%, N 还涨了一倍）。
 - 架构重构推迟到 V1.5（[D-030](DECISIONS.md#d-030)）。
-- **测试**：308 全过（D-041 audit + D-042 cap + D-043 重设计/反馈闭环 + 之前老测试）。
+- **测试**：311 全过（D-041 audit + D-042 cap + D-043 重设计/反馈闭环 + D-046 校验 + 之前老测试）。
 - **下一步**：用新真实化 profile 跑调试台验证推荐质量（关注是否从"反复几家舒适圈"跳出）→ OpenClaw + 飞书接入（D-022, integrations/openclaw/ 骨架已搭, cron 待装）。
 
 ---

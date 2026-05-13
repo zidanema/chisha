@@ -186,13 +186,11 @@ from chisha.rerank import _validate_llm_candidates
 
 
 def _good_cand(idx=0, rank=1, explore=False):
+    """D-046: LLM 不再输出 health_flags, 校验器也跟着删."""
     return {
         "rank": rank, "is_explore": explore, "combo_index": idx,
         "fit_score": 0.85, "taste_match": 0.8, "risk_flags": [],
         "one_line_reason": "ok",
-        "health_flags": {"veg_ok": True, "protein_ok": True, "oil_ok": True,
-                          "processed_meat": False, "sweet_sauce": False,
-                          "wetness": True},
     }
 
 
@@ -223,10 +221,80 @@ def test_llm_validate_rank_not_continuous():
     assert _validate_llm_candidates([a, b], n_max=5) is None
 
 
-def test_llm_validate_health_flags_missing_subkey():
+def test_llm_validate_taste_match_out_of_range():
+    """D-046: taste_match 越界应被拒."""
     bad = _good_cand(0, 1)
-    del bad["health_flags"]["wetness"]
+    bad["taste_match"] = 2.5
     assert _validate_llm_candidates([bad], n_max=5) is None
+
+
+def test_llm_validate_taste_match_allows_none():
+    """D-046: taste_match=None 仍允许 (兼容 fallback)."""
+    c = _good_cand(0, 1)
+    c["taste_match"] = None
+    assert _validate_llm_candidates([c], n_max=5) is not None
+
+
+# D-046 二审 (真 Codex review): 补强校验测试
+
+def test_llm_validate_combo_index_upper_bound_reject():
+    """idx >= input_size 必须拒绝 (Codex 发现的静默丢弃 bug)."""
+    bad = _good_cand(99, 1)  # idx=99 但 input_size=60
+    assert _validate_llm_candidates(
+        [bad], n_max=5, input_size=60
+    ) is None
+
+
+def test_llm_validate_combo_index_upper_bound_pass():
+    """idx 在 input_size 范围内应通过."""
+    c = _good_cand(59, 1)
+    assert _validate_llm_candidates(
+        [c], n_max=5, input_size=60
+    ) is not None
+
+
+def test_llm_validate_combo_index_upper_bound_optional():
+    """不传 input_size 时不做上界校验 (向后兼容)."""
+    c = _good_cand(999, 1)
+    assert _validate_llm_candidates([c], n_max=5) is not None
+
+
+def test_llm_validate_n_explore_count_mismatch_reject():
+    """LLM 漏写 / 多写 explore 数应拒绝."""
+    # 期望 n=3, n_explore=1, 但全部都是 exploit
+    cands = [_good_cand(i, i + 1, explore=False) for i in range(3)]
+    assert _validate_llm_candidates(
+        cands, n_max=3, input_size=60, n_explore_expected=1
+    ) is None
+
+
+def test_llm_validate_n_explore_position_mismatch_reject():
+    """exploit 必须在前, explore 必须在后."""
+    # 期望 3 个 candidate, n_explore=1, 但 explore 放在 rank=1 位置
+    cands = [
+        _good_cand(0, 1, explore=True),   # 应该 false
+        _good_cand(1, 2, explore=False),
+        _good_cand(2, 3, explore=False),  # 应该 true
+    ]
+    assert _validate_llm_candidates(
+        cands, n_max=3, input_size=60, n_explore_expected=1
+    ) is None
+
+
+def test_llm_validate_n_explore_correct_pass():
+    """exploit 在前, explore 在后, 数量对 → 通过."""
+    cands = [
+        _good_cand(0, 1, explore=False),
+        _good_cand(1, 2, explore=False),
+        _good_cand(2, 3, explore=False),
+        _good_cand(3, 4, explore=True),
+        _good_cand(4, 5, explore=True),
+    ]
+    out = _validate_llm_candidates(
+        cands, n_max=5, input_size=60, n_explore_expected=2
+    )
+    assert out is not None
+    assert len(out) == 5
 
 
 def test_llm_validate_n_max_truncates():

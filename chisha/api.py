@@ -194,9 +194,10 @@ def _recommend_meal_v2(
     ranked = rank_combos(combos, profile, meal_log, today,
                           context=ctx, meal_type=meal_type, root=root)
     ranked = apply_caps(ranked, profile)
-    # 4. LLM 精排 top30 → 5 (3 exploit + 2 explore, D-015)
-    top30 = ranked[:30]
-    reranked = v2_rerank(top30, profile, context=ctx, meal_log=meal_log,
+    # 4. LLM 精排 topK → 5 (3 exploit + 2 explore, D-015; D-046: 30 → 60)
+    from chisha.rerank import L3_INPUT_TOP_K
+    top_k = ranked[:L3_INPUT_TOP_K]
+    reranked = v2_rerank(top_k, profile, context=ctx, meal_log=meal_log,
                           n=5, n_explore=2, refine=False, use_llm=use_llm_rerank)
     # 5. 创建 session (供 refine 二轮用)
     state = create_session(session_id, meal_type, zone, daily_mood=daily_mood)

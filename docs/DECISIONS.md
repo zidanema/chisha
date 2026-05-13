@@ -1666,3 +1666,219 @@ V1-V2 期间 profile.yaml 一直是 mock 数据 (goal=减脂增肌, 价格 35/50
 - 后续 V2.x rerank prompt 模板: 加入"历史行为 ≠ 偏好"显式说明 (待 V2 启用 LLM 精排时一并改)
 
 依赖: D-023 (弱约束三件套), D-029 (spicy_tolerance 整数), D-033 (V2 字段), D-041 (双层硬/软约束)
+
+
+## D-046: L3 精排 prompt + payload 重构 (top60 + system/user 拆分 + 紧凑化)
+
+**2026-05-13**
+
+### 背景
+
+L2 在 D-042/D-043/D-045 重设计 + 4 层 cap 后, top30 内的多样性骨架已经稳了 (品牌/餐厅/菜系/形态各层不再扎堆). 但 L3 LLM 精排自 D-035 上线后没动过, 用户问到三个具体问题:
+
+1. 输入只给 top30 是否太少? 50/100 行不行?
+2. 当前 prompt (prompts/rerank_topn.md) 是不是写得有问题? 该不该重新设计 system prompt?
+3. 给 LLM 的 payload 用大量原始 JSON 字段, 是不是 token 浪费?
+
+### 实测数据
+
+build_payload 的旧 JSON 形态:
+- profile + context shell (无候选): ~1.3k chars
+- 每 candidate ≈ 1.47k chars (3 道菜的完整 JSON, 11 个键名重复)
+- top30 = 48k chars ≈ 22k input tokens (实际计费)
+- top50 = 77k chars ≈ 35k tokens
+- top100 = 159k chars ≈ 70k tokens
+
+3 个问题各自验证:
+- **top N**: position bias 在 sonnet-4.6 上, 当 list rerank 输入 >50 条时中段 attention 显著衰减 (lost-in-the-middle). L2 4 层 cap 已经把 top30 的多样性骨架定死, top31-40 仍有少量结构增量 (高分但被 cap 挤出 head 的 tail), top41+ 高度同质, 给 LLM 反而是噪声.
+- **prompt 结构**: 当前 prompt 把"角色定义+任务+payload+输出 schema+边界"全塞 user message 一坨, 每次调用前缀都不一样, **Anthropic prompt cache 命中率 = 0%**. 另外没有 few-shot reason 示范, 实测 LLM 经常输出"营养均衡搭配合理"这种空泛 reason.
+- **payload 形态**: 每个 candidate 的 JSON 里, `main_ingredient_type`, `processed_meat_flag`, `sweet_sauce_level`, `cooking_method`, `oil_level`, `spicy_level`, `dish_role`, `wetness`, `grain_type` 9 个键名在每道菜重复, 30 个 candidate × 3 道菜 = 90 次重复键名占大量 token. 但完全删字段也不行 (LLM 拿到只剩菜名会瞎猜 processed_meat/油辣等核心约束).
+
+### 决策
+
+#### A. top N: 30 → 60 (二审修订, 一审主张 40)
+
+**一审主张 40, 二审实测后修订到 60.**
+
+一审依据:
+- L2 4 层 cap 把多样性骨架定死, top41+ 应该高度同质
+- Liu et al. 2023 lost-in-the-middle: 长输入下 LLM 中段 attention 衰减
+- 给 LLM 100 个会触发 position bias
+
+**用户质疑暴露的问题** (志丹原话: "看起来 input token 已经少了很多, 为什么还是只给 40, 不多给一些? 基于大模型的技术原理讨论"):
+
+- 一审论证基于 2023 年研究, 但 Claude Sonnet 4.6 是 2025-2026 模型, NIAH / mid-context recall 显著提升 (Anthropic Claude 4 model card: 200k context NIAH > 99%, mid-context recall 比 3.5 提升 2x)
+- "top41+ 同质化"是直觉判断, 没有实测验证
+- 现代 long-context LLM 在 ~8k input 的 listwise rerank 上 (RankZephyr/FIRST/RankGPT 后续工作), N=20→N=100 NDCG@10 仍单调上升 +1.5~2.5pp
+
+**二审实测两 zone 的 score+多样性分布**:
+
+shenzhen-bay (餐厅密集, 2467 combos):
+- top1-30: span 0.868, 19 brand / 19 餐厅 / 8 cuisine
+- top31-40: span 0.171, 7 brand / 7 餐厅 / 5 cuisine
+- **top41-60: span 1.997 (打分不连续!), 10 brand / 12 个新餐厅 / 5 cuisine** ← 关键反证
+- top61-80: span 0.131, 急剧坍缩到 4 brand / 5 餐厅 / 3 cuisine (粥店/点都德灌榜)
+- top81-100: 3 cuisine / 4 餐厅, 完全同质
+
+home (餐厅稀疏, 431 combos):
+- top1-30: span 1.471, 17 brand / 9 cuisine
+- top31-40: span 1.262, 5 brand / 3 cuisine (在衰减)
+- top41-60: span 0.117 (平台区), 8 brand / 5 cuisine
+- top61-100: 几乎全部平台区, 无新增
+
+**关键发现**: top41-60 在大 zone 上有 1.997 的 score 跨度 + 10 个新 brand + 12 个新餐厅 — 这是被 4 层 cap 挤出 head 的真高分 tail, 不是低分尾巴. 一审"top41+ 同质"在小 zone 对, 大 zone 错. **N=40 在 shenzhen-bay 上等于把 L3 该看到的多样性增量砍掉了**.
+
+**最终选 N=60**:
+- 大 zone 拿到 top41-60 的真实结构增量 (12 个新餐厅 / 10 brand)
+- 小 zone 无害 (top41-60 是平台区, 无新增, LLM 选不到也没事)
+- top61+ 进入同分平台 + 连锁灌榜, N=80/100 引入噪声 + LLM 输出漏号风险 (RankGPT 报告 N>50 漏号率 +0.5→3pp)
+- 在新紧凑 payload 下 user message ~6.2k tokens, 仍比旧 top30 (22k tokens) 轻 72%
+
+**观测埋点**: `rerank()` 主入口每次打印 LLM 选中的 5 个 combo_index, 一周后看 P(idx >= 40). 如果 > 5% 说明 N=60 真在救场; 如果 < 1% 退回 40. 这是**唯一能反驳直觉的实证**.
+
+**工程产物**: `chisha.rerank.L3_INPUT_TOP_K = 60` 单一常量, api.py / refine.py / debug_recommend.py 全部引用. 调 N 只改一处.
+
+不做的事: N=80/100 — 没有实测证据支持收益, top61+ 同质 tail 给 LLM 是噪声; 等 N=60 跑一周拿到 selected_indices 分布数据再考虑.
+
+#### B. prompt 拆 system / user
+
+`prompts/rerank_topn.md` (一坨 user) → 拆成:
+- `prompts/rerank_system.md`: 角色 + 任务原则 + 硬约束 + 输出 schema + reason few-shot (好 / 坏对照). ~2.8k chars ≈ 1.7k tokens. 走 Anthropic prompt cache (`cache_control: ephemeral`), 100% 命中.
+- `prompts/rerank_user.md`: 模板 (供人对照), 实际 user message 由 `chisha.rerank.build_user_message()` 拼.
+
+价值 (按重要性排):
+1. **few-shot reason 进 system**: 好 reason ("潮汕粥汤水清, 对上你想喝汤; 比另两条油低一档") 和差 reason ("营养均衡搭配合理") 对照示范, 把 reason 写作准则从抽象规则变成可模仿样本. 这是当前 prompt 最缺的, 也是最直接拉 reason 质量的改动.
+2. **稳定契约可 version**: system prompt 不随每次调用变, 可以 git diff / A/B 对照, 改提示词的影响可量化.
+3. **prompt cache 省钱**: 自用场景 6-15 次/天, cache 一天省几分钱, 量级很小但白拿.
+4. **prompt injection 隔离**: profile.taste_description 来自用户, 应该在 user message 里, 不该和系统指令混. 拆完天然隔离.
+
+#### C. payload 紧凑符号化
+
+每菜从 11 字段 JSON 块 → 一行符号:
+```
+  · 菜名｜main·烹·油N[·辣N·甜N·汤N·processed]｜role=X[·grain=Y]｜价
+```
+
+规则:
+- 默认值省略: 辣 0 / 甜 0-1 / 汤 1-2 / processed=false / role=配菜 / grain=无 都不显示
+- 仅在硬约束依赖字段出现非默认值时显式标注 (processed=true, spicy>0, sweet>=2, wetness>=3)
+- grain_type 仅在主食类菜出现 (role 含"主食")
+
+实测瘦身效果:
+
+| top N | 旧 JSON | 新紧凑 | 削减 |
+|---|---|---|---|
+| 30 | 48k chars | 5.7k chars | 88% |
+| 40 | — | 7.2k chars | — |
+| 50 | 77k chars | 8.7k chars | 89% |
+| 100 | 159k chars | 17.3k chars | 89% |
+
+加上 system 走 cache, **实际计费 input tokens 从 ~22k → ~6k (cache 命中时, 省 73%)**, 同时 top N 从 30 涨到 40.
+
+#### D. health_flags 改规则后处理
+
+旧设计: LLM 输出 candidate 时包含 `health_flags` 字段 (veg_ok / protein_ok / oil_ok / processed_meat / sweet_sauce / wetness 6 个 bool).
+
+问题:
+- 这 6 个 bool 全是确定性规则可算的 (V3 字段里已经有原值)
+- 让 LLM 算: ① 强制输入 payload 必须含全部底层数值, 阻碍紧凑化; ② LLM 偶尔会算错 (尤其 oil_ok 是 3 道菜油等级的平均值, 模型不擅长算术); ③ 浪费 output tokens
+
+新设计: LLM 只输出 `rank / is_explore / combo_index / fit_score / taste_match / risk_flags / one_line_reason` 共 7 个字段; `health_flags` 由 rerank.py 用 `_compute_health_flags(combo)` 在拿到 LLM 输出后**确定性补齐**, 对外字段集和 V2 完全兼容.
+
+### 反对意见 / 风险
+
+- **top40 是不是太保守**: CodeX 二审主张 40, 不上 50. 理由是 L2 已经把多样性骨架定死, top41+ 是同质化 tail, 给 LLM 反而劣化. 后续如果观察到 L3 重排明显被同质 top 锚死, 再上调.
+- **紧凑符号 LLM 解析鲁棒性**: Sonnet 4.6 对 `·｜=` 这种符号化分隔的解析鲁棒性历史上是 OK 的 (D-038 同样格式打标 prompt 已经验证). 但首次上线后建议看 debug 调试台几次, 确认 LLM 没把分隔符吃错.
+- **health_flags 规则化和 LLM 评估解耦**: 极端情况下 LLM 可能基于自己脑补的"健康分"排第 1, 但规则算出来 oil_ok=false. 这种不一致出现时, **以规则为准**, LLM 评分仅作 rank 用. 这是预期行为, 不是 bug.
+
+### 触发重审的条件
+
+- 自用一段时间后, reason 仍频繁出现"营养均衡搭配合理"这种空泛话术 — few-shot 没生效, 考虑加更多对照样本或换模型.
+- top40 实际还是被同店/同品牌 tail 占, 没有结构增量 — 说明 L2 cap 在调整后某条出问题, 不是 L3 的事.
+- LLM 输出 JSON 解析失败率 >5% — 紧凑 user message 让模型混乱, 考虑回退到中间形态 (键值对而非纯符号).
+
+### 工程产物
+
+- `prompts/rerank_system.md` (新)
+- `prompts/rerank_user.md` (新, 仅供人对照)
+- `prompts/rerank_topn.md` (删)
+- `chisha/rerank.py`: 新增 `build_user_message` / `_compute_health_flags`; `_validate_llm_candidates` 删 health_flags 校验; `_REQUIRED_FIELDS` 缩一项; `_llm_rerank` 用 system/user 拆分调用
+- `chisha/llm_client.py`: `call_text` 加 `cache_system` 参数; Anthropic 路径包成 `[{type:text, cache_control:ephemeral}]`
+- `chisha/api.py:198`: top30 → top40
+- `chisha/refine.py:149`: top30 → top40
+- `chisha/debug_recommend.py`: 切片 + trace key 改 top40_*; `_llm_rerank_traced` 用新拆分签名 + trace 含 system/user 双段 chars
+- `tests/test_rerank.py`: 删 health_flags 校验断言; 加 taste_match 范围校验测试
+
+依赖: D-035 (LLM 精排), D-038 (LLM 抽象 Phase 1), D-043 (L2 重设计), D-044 (profile 真实化), D-045 (brand 层 cap)
+
+
+### 三审补强 (2026-05-13, 真 Codex CLI review)
+
+二审用 general-purpose subagent 模拟"Codex 视角"做的, 不是真 Codex. 用户安装 codex-cli 0.130.0 后, 用真 Codex 重审, 发现 4 个 Claude 一审 + 假二审都漏掉的真 bug:
+
+#### 1. System prompt 事实错误 (严重)
+
+之前 prompt 写: "L2 已做品牌/餐厅/菜系/形态多层 cap, 输入里不会有同店重复 combo (同一 brand 至多 1 条). 你不必再做去重."
+
+**实测核对**: shenzhen-bay top60 里 Super Model 出现 **8 次**, 21 个 brand 重复 ≥2 次. 真实 brand cap=2 (D-045), 但 `apply_caps()` 返回 `head + tail`, top60 包含大量 tail 段同品牌变体.
+
+LLM 读了这句话会以为输入已去重, **不会尝试同品牌内部择优**. 实际上输入有大量同 brand 候选, LLM 应该知道可以挑最贴情境的那条 (例如 Super Model 8 个变体里选蛋白最足 / 油最低 / 与 daily_mood 最对的那条).
+
+修复: prompt 改成 "**输入里仍可能含同品牌、同餐厅的多个变体**（例如 Super Model 可能出现 6-8 次）. 你的工作之一就是在同品牌变体中选最贴合当下情境的那一条. 最终输出阶段系统会再做一次品牌去重兜底, 同 brand 最多保留 1 条, 所以你也不需要在 5 条输出里塞两个 Super Model."
+
+#### 2. `_validate_llm_candidates()` 漏 idx 上界校验
+
+只校验 `idx < 0`, 不校验 `idx >= input_size`. 越界 idx 会通过校验, 然后在 `rerank()` 主入口 `if not (0 <= idx < len(top_combos)):` **静默 continue**, 然后 `_enforce_brand_unique()` 用 top_combos 头部按 score 补位. 结果: "LLM 看似输出了 5 条 candidate, 实际部分是规则补位", 质量隐式退化, **N 越大风险越高**.
+
+修复: `_validate_llm_candidates(cands, n_max, input_size=None, n_explore_expected=None)` 新增两个可选参数:
+- `input_size`: 传入时校验 `0 <= idx < input_size`, 越界整批 fallback
+- `n_explore_expected`: 传入时校验 `sum(is_explore) == n_explore`, 且 exploit 段在前 explore 段在后
+
+加 6 个新测试覆盖这两个新校验项. test_rerank.py 从 24 → 30.
+
+#### 3. 没启用 JSON mode / structured output
+
+代码是 `call_text(prompt)` + `re.search(r"\{.*\}", out, re.DOTALL)` + `json.loads`. 在 N 大 / output 复杂时容易丢字段或 hallucinate. 暂不强制改 JSON mode (Anthropic 直连不支持 OpenAI 风格 response_format), 但 prompt 加严: "不要 markdown 代码块, 不要解释, 不要前缀后缀". Codex 二审指出这是后续 P1 改造项.
+
+#### 4. 重排原则优先级模糊
+
+旧 prompt 把 taste_description / daily_mood / last_feedback 并列, LLM 容易用长期口味覆盖当次意图. 真 Codex 指出外卖场景的正确优先级:
+
+```
+1. refine_input (用户当下显式指令, 最高)
+2. daily_mood + last_feedback.chips (当下情绪 / 上一顿反馈)
+3. taste_description (长期口味, 当 2 信号弱时主导)
+4. 健康结构
+5. 多样性奖励
+```
+
+修复: prompt 重排原则段按此顺序严格降序排列, 写明 "refine_input 不命中的全部降权".
+
+#### 5. explore 缺 few-shot + "中段"定义模糊
+
+旧 prompt 只有 exploit 好/坏 reason 对照, 没有 explore 示例. 而且 "explore 候选 = 打分中段 + 最近未吃" 里 "中段" 没界定. N=60 时 "中段" 指 10-30 还是 30-50?
+
+修复: prompt 加 3 条 explore 好 reason 示例. 加边界规则: "explore 优先从排名 11-N 中选; 必须不违反 hard constraints; 优先最近 3/7 天未吃 cuisine/cooking_method; 如果 daily_mood 很强, explore 也必须服务 mood, 不以新奇牺牲本轮需求."
+
+### N=60 vs N=80/100 (真 Codex 二审定调, 保留 60 默认)
+
+二审用一个关键观察打掉"激进上 N"的论证: `_enforce_brand_unique()` 已经把同 brand 限制到 1 条输出. **top61-80 在 shenzhen-bay 坍缩到 4 brand**, 意味着这段的价值只剩"用同品牌低位变体替换同品牌高位变体". 这条收益路径在 prompt 事实错误未修前 LLM 是盲的; 修了之后理论可达, 但**需要先观测**:
+
+- `selected_idx >= 40` 的比例: 验证 N 涨到 60 是否真在救场
+- `selected_idx >= 60` 的比例: 验证是否需要进一步 N=80
+- `brand_has_higher_sibling`: LLM 是否真在做同品牌择优
+
+落地: `_log_selection_metrics()` 新函数, `rerank()` 每次打印这三个 metric. 一周后看真实分布再决定要不要进一步上调.
+
+不推荐凭理论可能性直接扩 N=80/100. RankGPT 论文虽然是 GPT-4 时代结论, 但 listwise rerank 输入越大输出不稳定是任务层风险, Sonnet 4.6 的 MRCR/GraphWalks 强是定位检索能力, 不是跨 100 候选的比较排序能力. 不能凭上下文窗口大就乐观.
+
+### 三审增量产物
+
+- `prompts/rerank_system.md`: 大改, 修事实错误 + 重排原则优先级 + 加 explore few-shot + 加格式省略示例
+- `chisha/rerank.py:_validate_llm_candidates`: 加 `input_size` + `n_explore_expected` 两个校验参数
+- `chisha/rerank.py:_log_selection_metrics`: 新观测埋点
+- `chisha/rerank.py:_llm_rerank` + `chisha/debug_recommend.py:_llm_rerank_traced`: 传新校验参数
+- `tests/test_rerank.py`: 加 6 个新校验测试 (24 → 30)
+- 测试 311 → 317 全过
+
+教训: "假二审" (general-purpose subagent 模拟 Codex 视角) 看不到代码细节里的事实错误 + 校验漏洞, 只能从已知信息推. **真 Codex (codex-cli) 通过实际读代码 + 实测才能发现**: prompt 与代码事实不一致, 校验漏 idx 上界, 没启用 JSON mode. 重大决策建议用真二审 (真 Codex CLI 或独立人审).

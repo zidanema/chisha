@@ -44,16 +44,20 @@ def call_text(
     max_tokens: int = 4096,
     temperature: float = 0.0,
     system: Optional[str] = None,
+    cache_system: bool = False,
 ) -> str:
     """单次 LLM 调用, 返回纯文本.
 
     Args:
         model: 显式覆盖. None 时按 provider 取默认 (Anthropic short / OR 命名空间).
+        cache_system: True 时把 system block 打上 ephemeral cache_control
+            (Anthropic prompt caching). 仅 Anthropic 直连真正生效, OpenRouter
+            兼容路径忽略 (它的 cache 由 OR 自行管理, 用 system 作前缀已经足够).
     """
     if _has_anthropic_key():
         return _call_anthropic(prompt, model=model or _ANTHROPIC_MODEL,
                                 max_tokens=max_tokens, temperature=temperature,
-                                system=system)
+                                system=system, cache_system=cache_system)
     if _has_openrouter_key():
         return _call_openrouter(prompt, model=model or _OPENROUTER_MODEL,
                                  max_tokens=max_tokens, temperature=temperature,
@@ -64,7 +68,8 @@ def call_text(
 
 
 def _call_anthropic(prompt: str, *, model: str, max_tokens: int,
-                    temperature: float, system: Optional[str]) -> str:
+                    temperature: float, system: Optional[str],
+                    cache_system: bool = False) -> str:
     import anthropic
     client = anthropic.Anthropic()
     kwargs: dict = dict(
@@ -74,7 +79,14 @@ def _call_anthropic(prompt: str, *, model: str, max_tokens: int,
         messages=[{"role": "user", "content": prompt}],
     )
     if system:
-        kwargs["system"] = system
+        if cache_system:
+            kwargs["system"] = [{
+                "type": "text",
+                "text": system,
+                "cache_control": {"type": "ephemeral"},
+            }]
+        else:
+            kwargs["system"] = system
     resp = client.messages.create(**kwargs)
     return resp.content[0].text
 

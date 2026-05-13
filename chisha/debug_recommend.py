@@ -35,9 +35,13 @@ from chisha.recall import (
     load_zone_data,
 )
 from chisha.rerank import (
+    L3_INPUT_TOP_K,
+    SYSTEM_PROMPT_PATH,
+    _compute_health_flags,
     _enforce_brand_unique,
     _validate_llm_candidates,
     build_payload,
+    build_user_message,
     fallback_rerank,
 )
 from chisha.score import (
@@ -46,7 +50,8 @@ from chisha.score import (
 
 
 ROOT = Path(__file__).resolve().parent.parent
-PROMPT_PATH = ROOT / "prompts" / "rerank_topn.md"
+# D-046: prompt 拆 system / user, 不再单文件
+# SYSTEM_PROMPT_PATH 从 chisha.rerank 复用
 
 
 # ---------- profile 工具 ----------
@@ -402,13 +407,19 @@ def _format_ranked_for_trace(
 # ---------- L3 LLM rerank traced ----------
 
 def _llm_rerank_traced(
-    payload: dict, model: str | None, n_max: int
+    top_combos: list[dict], profile: dict, context, n: int, n_explore: int,
+    model: str | None, n_max: int,
 ) -> dict:
-    """调 LLM, 返回 trace dict (含 prompt / raw / parsed / used_fallback)."""
+    """调 LLM, 返回 trace dict (含 system/user prompt / raw / parsed / used_fallback).
+
+    D-046: system/user 拆分; system 走 Anthropic prompt cache.
+    trace 把两段 prompt 都打回去, 便于 debug 看实际给 LLM 的输入.
+    """
     out: dict[str, Any] = {
         "used": False,
         "model": model,
-        "prompt_chars": 0,
+        "system_prompt_chars": 0,
+        "user_message_chars": 0,
         "raw_response": None,
         "raw_response_chars": 0,
         "parsed_candidates": None,
@@ -416,14 +427,19 @@ def _llm_rerank_traced(
     }
     try:
         from chisha.llm_client import call_text
-        prompt = PROMPT_PATH.read_text(encoding="utf-8").replace(
-            "{INPUT_PAYLOAD}", json.dumps(payload, ensure_ascii=False, indent=2)
-        )
-        out["prompt_chars"] = len(prompt)
-        kwargs: dict[str, Any] = {"max_tokens": 4096, "temperature": 0.0}
+        system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        user_msg = build_user_message(top_combos, profile, context,
+                                       n=n, n_explore=n_explore)
+        out["system_prompt_chars"] = len(system_prompt)
+        out["user_message_chars"] = len(user_msg)
+        out["user_message_preview"] = user_msg[:2000]
+        kwargs: dict[str, Any] = {
+            "max_tokens": 2048, "temperature": 0.0,
+            "system": system_prompt, "cache_system": True,
+        }
         if model:
             kwargs["model"] = model
-        raw = call_text(prompt, **kwargs)
+        raw = call_text(user_msg, **kwargs)
         out["used"] = True
         out["raw_response"] = raw
         out["raw_response_chars"] = len(raw)
@@ -433,9 +449,13 @@ def _llm_rerank_traced(
             return out
         data = json.loads(m.group(0))
         cands = data.get("candidates")
-        validated = _validate_llm_candidates(cands, n_max=n_max)
+        validated = _validate_llm_candidates(
+            cands, n_max=n_max,
+            input_size=len(top_combos),
+            n_explore_expected=n_explore,
+        )
         if validated is None:
-            out["fallback_reason"] = "candidates 校验失败 (字段缺失/越界)"
+            out["fallback_reason"] = "candidates 校验失败 (字段缺失/越界/数量)"
             return out
         out["parsed_candidates"] = validated
     except Exception as e:
@@ -489,7 +509,7 @@ def debug_recommend(
         combos, profile, meal_log, today,
         context=ctx, meal_type=meal_type, root=root,
     )
-    # D-043: 三层 cap (restaurant + cuisine + food_form), 防扎堆 top30
+    # D-043: 三层 cap (restaurant + cuisine + food_form), 防扎堆 topk
     caps = resolve_caps(profile)
     ranked = apply_caps(ranked_raw, profile)
 
@@ -512,26 +532,26 @@ def debug_recommend(
         dishes = c.get("dishes") or []
         return dishes[0].get("cuisine") if dishes else None
 
-    rest_before = _count_keys(ranked_raw[:30], _rest_key)
-    rest_after = _count_keys(ranked[:30], _rest_key)
-    brand_before = _count_keys(ranked_raw[:30], _brand_key)
-    brand_after = _count_keys(ranked[:30], _brand_key)
-    cuisine_before = _count_keys(ranked_raw[:30], _cuisine_key)
-    cuisine_after = _count_keys(ranked[:30], _cuisine_key)
-    form_before = _count_keys(ranked_raw[:30], combo_food_form)
-    form_after = _count_keys(ranked[:30], combo_food_form)
+    rest_before = _count_keys(ranked_raw[:L3_INPUT_TOP_K], _rest_key)
+    rest_after = _count_keys(ranked[:L3_INPUT_TOP_K], _rest_key)
+    brand_before = _count_keys(ranked_raw[:L3_INPUT_TOP_K], _brand_key)
+    brand_after = _count_keys(ranked[:L3_INPUT_TOP_K], _brand_key)
+    cuisine_before = _count_keys(ranked_raw[:L3_INPUT_TOP_K], _cuisine_key)
+    cuisine_after = _count_keys(ranked[:L3_INPUT_TOP_K], _cuisine_key)
+    form_before = _count_keys(ranked_raw[:L3_INPUT_TOP_K], combo_food_form)
+    form_after = _count_keys(ranked[:L3_INPUT_TOP_K], combo_food_form)
 
     # 统计每维度 std (区分度) — 帮助看是否仍有死分
     import statistics
     dim_stats: dict[str, dict[str, float]] = {}
-    if ranked[:30]:
+    if ranked[:L3_INPUT_TOP_K]:
         all_dims: set[str] = set()
-        for c in ranked[:30]:
+        for c in ranked[:L3_INPUT_TOP_K]:
             all_dims.update((c.get("score_breakdown") or {}).keys())
         for dim in all_dims:
             vals = [
                 (c.get("score_breakdown") or {}).get(dim, 0.0)
-                for c in ranked[:30]
+                for c in ranked[:L3_INPUT_TOP_K]
             ]
             dim_stats[dim] = {
                 "min": round(min(vals), 3),
@@ -550,67 +570,77 @@ def debug_recommend(
                 - min((c["score"] for c in ranked), default=0), 3),
             "weights": profile.get("scoring_weights", {}),
             "caps": caps,
-            # cap 前后对比 (top30)
-            "top30_unique_restaurants_before_cap": len(rest_before),
-            "top30_unique_restaurants_after_cap": len(rest_after),
-            "top30_max_per_restaurant_before_cap":
+            # cap 前后对比 (topk)
+            "topk_unique_restaurants_before_cap": len(rest_before),
+            "topk_unique_restaurants_after_cap": len(rest_after),
+            "topk_max_per_restaurant_before_cap":
                 max(rest_before.values(), default=0),
-            "top30_max_per_restaurant_after_cap":
+            "topk_max_per_restaurant_after_cap":
                 max(rest_after.values(), default=0),
             # D-045 brand 层
-            "top30_unique_brands_before_cap": len(brand_before),
-            "top30_unique_brands_after_cap": len(brand_after),
-            "top30_max_per_brand_before_cap":
+            "topk_unique_brands_before_cap": len(brand_before),
+            "topk_unique_brands_after_cap": len(brand_after),
+            "topk_max_per_brand_before_cap":
                 max(brand_before.values(), default=0),
-            "top30_max_per_brand_after_cap":
+            "topk_max_per_brand_after_cap":
                 max(brand_after.values(), default=0),
-            "top30_unique_cuisines_before_cap": len(cuisine_before),
-            "top30_unique_cuisines_after_cap": len(cuisine_after),
-            "top30_max_per_cuisine_before_cap":
+            "topk_unique_cuisines_before_cap": len(cuisine_before),
+            "topk_unique_cuisines_after_cap": len(cuisine_after),
+            "topk_max_per_cuisine_before_cap":
                 max(cuisine_before.values(), default=0),
-            "top30_max_per_cuisine_after_cap":
+            "topk_max_per_cuisine_after_cap":
                 max(cuisine_after.values(), default=0),
-            "top30_unique_food_forms_before_cap": len(form_before),
-            "top30_unique_food_forms_after_cap": len(form_after),
-            "top30_max_per_food_form_before_cap":
+            "topk_unique_food_forms_before_cap": len(form_before),
+            "topk_unique_food_forms_after_cap": len(form_after),
+            "topk_max_per_food_form_before_cap":
                 max(form_before.values(), default=0),
-            "top30_max_per_food_form_after_cap":
+            "topk_max_per_food_form_after_cap":
                 max(form_after.values(), default=0),
             # 各维度 std (死分诊断)
-            "dim_stats_top30": dim_stats,
+            "dim_stats_topk": dim_stats,
+            # cap 前后观测窗口大小 (= L3 LLM 输入候选数, D-046 二审: 60)
+            "topk_window": L3_INPUT_TOP_K,
             # 兼容旧 key (前端尚未升级时用)
             "per_restaurant_cap_k": caps["restaurant"],
         },
-        "top": _format_ranked_for_trace(ranked, top=30),
+        "top": _format_ranked_for_trace(ranked, top=L3_INPUT_TOP_K),
     }
 
     # ---- L3 LLM 精排 ----
     if use_llm_rerank is None:
         from chisha.llm_client import has_llm_key
         use_llm_rerank = has_llm_key()
-    top30 = ranked[:30]
+    topk = ranked[:L3_INPUT_TOP_K]
+    # legacy JSON payload 仍存留, 给 trace 可观测性 (实际 LLM 输入是
+    # build_user_message 的紧凑文本, 见 _llm_rerank_traced).
     payload = build_payload(
-        top30, profile, ctx, meal_log, n=n_return, n_explore=n_explore
+        topk, profile, ctx, meal_log, n=n_return, n_explore=n_explore
     )
     l3_llm = {"used": False, "skipped_reason": "use_llm_rerank=False"}
     final_candidates: list[dict] = []
     fallback_used = False
-    if use_llm_rerank and top30:
-        l3_llm = _llm_rerank_traced(payload, model=None, n_max=n_return)
+    if use_llm_rerank and topk:
+        l3_llm = _llm_rerank_traced(
+            topk, profile, ctx,
+            n=n_return, n_explore=n_explore,
+            model=None, n_max=n_return,
+        )
         if l3_llm.get("parsed_candidates"):
             mapped: list[dict] = []
             for cand in l3_llm["parsed_candidates"][:n_return]:
                 idx = cand.get("combo_index", -1)
-                if not (0 <= idx < len(top30)):
+                if not (0 <= idx < len(topk)):
                     continue
-                merged = {**top30[idx], **cand}
+                # D-046: health_flags 规则后处理
+                cand["health_flags"] = _compute_health_flags(topk[idx])
+                merged = {**topk[idx], **cand}
                 mapped.append(merged)
-            mapped = _enforce_brand_unique(mapped, top30, n=n_return)
+            mapped = _enforce_brand_unique(mapped, topk, n=n_return)
             final_candidates = mapped
     if not final_candidates:
         fallback_used = True
         final_candidates = fallback_rerank(
-            top30, n=n_return, n_explore=n_explore, meal_log=meal_log
+            topk, n=n_return, n_explore=n_explore, meal_log=meal_log
         )
 
     # ---- 终选格式化 ----

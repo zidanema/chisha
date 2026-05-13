@@ -227,14 +227,14 @@
       <h2>整体管道</h2>
       <p>从 profile + zone 数据 出发，经过 <strong>三个独立层</strong> 收敛到 5 张卡片：</p>
       <pre>profile + zone 数据  →  L1 召回  →  L2 打分  →  L3 LLM 精排  →  终选 5
-                        (规则过滤)  (16 维加权)  (top30→5)</pre>
+                        (规则过滤)  (16 维加权)  (top60→5, D-046)</pre>
       <p>三个层之间的核心收敛比（lunch / shenzhen-bay / 默认 profile 快照, 2026-05-13）：</p>
       <table>
         <thead><tr><th>层</th><th>输入规模</th><th>输出规模</th><th>主导决策</th></tr></thead>
         <tbody>
           <tr><td>L1 召回</td><td>11123 dish / 239 家</td><td>2206 combos</td><td>规则（profile + meal_log + meal_type）</td></tr>
-          <tr><td>L2 打分</td><td>2206 combos</td><td>top 30</td><td>16 维加权和（确定性）</td></tr>
-          <tr><td>L3 精排</td><td>top 30</td><td>top 5 (3+2)</td><td>LLM 语义判断 + 规则 fallback</td></tr>
+          <tr><td>L2 打分</td><td>2206 combos</td><td>top 60</td><td>16 维加权和（确定性）+ 4 层 cap</td></tr>
+          <tr><td>L3 精排</td><td>top 60</td><td>top 5 (3+2)</td><td>LLM 语义判断 + 规则 fallback</td></tr>
         </tbody>
       </table>
       <div class="callout warn">
@@ -401,20 +401,20 @@
   <g>
     <rect x="40" y="850" width="800" height="200" rx="8" fill="#161a22" stroke="#ffb454" stroke-width="2"/>
     <text x="60" y="874" fill="#ffb454" font-weight="700" font-size="14">L3 LLM 精排 (rerank.py)</text>
-    <text x="780" y="874" fill="#8b94a5" font-size="11" text-anchor="end">top30 → 3 exploit + 2 explore</text>
+    <text x="780" y="874" fill="#8b94a5" font-size="11" text-anchor="end">top60 → 3 exploit + 2 explore (D-046)</text>
 
     <rect x="60" y="892" width="370" height="140" rx="4" fill="#1c2230"/>
     <text x="245" y="912" text-anchor="middle" fill="#ffb454" font-weight="600" font-size="12">payload (build_payload)</text>
-    <text x="76" y="934" fill="#e6e9ef" font-size="11">• top 30 candidate (combo_index + 关键字段)</text>
+    <text x="76" y="934" fill="#e6e9ef" font-size="11">• top 60 candidate (紧凑符号化, D-046)</text>
     <text x="76" y="952" fill="#e6e9ef" font-size="11">• profile.taste_description / liked / avoid</text>
     <text x="76" y="970" fill="#e6e9ef" font-size="11">• ContextSnapshot.to_llm_dict()</text>
     <text x="76" y="988" fill="#e6e9ef" font-size="11">• config: n=5 / n_explore=2</text>
-    <text x="76" y="1014" fill="#8b94a5" font-size="11">prompt 文件: prompts/rerank_topn.md</text>
+    <text x="76" y="1014" fill="#8b94a5" font-size="11">prompt: rerank_system.md (cached) + build_user_message</text>
 
     <rect x="450" y="892" width="370" height="140" rx="4" fill="#1c2230"/>
     <text x="635" y="912" text-anchor="middle" fill="#ffb454" font-weight="600" font-size="12">LLM 输出 (校验后)</text>
     <text x="466" y="934" fill="#e6e9ef" font-size="11">{rank, combo_index, is_explore,</text>
-    <text x="466" y="952" fill="#e6e9ef" font-size="11"> fit_score 0~1, health_flags{6},</text>
+    <text x="466" y="952" fill="#e6e9ef" font-size="11"> fit_score / taste_match 0~1,</text>
     <text x="466" y="970" fill="#e6e9ef" font-size="11"> risk_flags[], one_line_reason}</text>
     <text x="466" y="996" fill="#ff6b6b" font-size="11">校验失败 → fallback_rerank (规则版)</text>
     <text x="466" y="1014" fill="#ff6b6b" font-size="11">不足 5 → _enforce_brand_unique 兜底</text>
@@ -601,34 +601,39 @@
     </section>
 
     <section id="l3">
-      <h2>L3 LLM 精排 · top30 → 5</h2>
-      <p>把 L2 的 top 30 + profile + context 打包成 JSON，让 LLM 选 5 个，强制 3 exploit + 2 explore。</p>
+      <h2>L3 LLM 精排 · top60 → 5 <span class="badge">D-046</span></h2>
+      <p>把 L2 的 top 60 + profile + context 拼成紧凑文本（每菜一行），让 LLM 选 5 个，强制 3 exploit + 2 explore。prompt 拆 system / user，system 走 Anthropic prompt cache 100% 命中。</p>
 
-      <h3>送给 LLM 的 payload</h3>
-      <pre>{
-  "config": {"n": 5, "n_explore": 2},
-  "profile": {
-    "taste_description": "...",
-    "liked_cuisines": [...], "disliked_cuisines": [...],
-    "avoid_dishes": [...], "spicy_tolerance": 2
-  },
-  "context": {  // ContextSnapshot.to_llm_dict()
-    "meal_type": "lunch", "weekday": ..., "daily_mood": "want_soup",
-    "last_meal": {...}, "recent_feedback": [...]
-  },
-  "candidates": [
-    { "combo_index": 0,
-      "restaurant": {"name": ..., "cuisine": ..., "distance_m": ..., "eta_min": ...},
-      "dishes": [{"canonical_name", "cuisine", "price",
-                  "main_ingredient_type", "cooking_method",
-                  "oil_level", "spicy_level",
-                  "dish_role", "processed_meat_flag",
-                  "sweet_sauce_level", "wetness", "grain_type"}],
-      "total_price": ..., "score": ... },
-    ...
-  ]
-}</pre>
-      <p>Prompt 文件：<code>prompts/rerank_topn.md</code>，里面用 <code>{INPUT_PAYLOAD}</code> 占位填充。</p>
+      <h3>送给 LLM 的 user message（build_user_message）</h3>
+      <pre>[CONFIG] n=5 n_explore=2
+
+[PROFILE]
+口味描述: 喜欢辣椒炒/糖醋/红烧重口...
+喜欢: ['湘菜', '川菜', '潮汕', ...]
+不喜欢: ['饮品甜品', '烧烤']
+avoid: []
+辣度耐受: 3
+
+[CONTEXT]
+饭期: lunch
+心情: want_soup
+上顿: (无)
+最近 3 天 cuisine: (空)
+最近 3 天 cooking: (空)
+上次反馈 chips: (无)
+refine 输入: (无)
+
+[CANDIDATES]
+[0] 潮汕牛肉粥馆（2.1km/25min/L2 2.70/¥28.5）
+  · 牛肉粥｜红肉·炖·油1·汤4｜role=主菜｜18.0
+  · 凉拌青菜｜纯素·凉拌·油1｜8.5
+  · 卤蛋｜白肉·卤·油1｜2.0
+[1] Super Model（3.5km/30min/L2 2.90/¥38.6）
+  · 烤鸡牛肉套餐｜白肉·烤·油3｜role=套餐｜32.8
+  · 蒸贝贝南瓜｜纯素·蒸·油1｜2.8
+  · 黑米饭｜主食·煮·油1｜role=主食·grain=糙米杂粮｜3.0
+...</pre>
+      <p>System prompt：<code>prompts/rerank_system.md</code>（~2.8k chars, 1.7k tokens, 100% cached）。User message 由 <code>chisha.rerank.build_user_message()</code> 动态拼装。默认值省略（辣 0 / 甜 0-1 / 汤 1-2 / processed=false / role=配菜）。</p>
 
       <h3>LLM 必须返回</h3>
       <p>每条 candidate 必填以下字段，否则 <code>_validate_llm_candidates</code> 返回 None，整批 fallback。</p>
@@ -636,15 +641,15 @@
         <thead><tr><th>字段</th><th>类型</th><th>校验</th></tr></thead>
         <tbody>
           <tr><td>rank</td><td>int</td><td>1..n 连续</td></tr>
-          <tr><td>combo_index</td><td>int</td><td>回指 top30 的 index，不重复，≥0</td></tr>
+          <tr><td>combo_index</td><td>int</td><td>回指 top60 的 index，不重复，≥0</td></tr>
           <tr><td>is_explore</td><td>bool</td><td>—</td></tr>
           <tr><td>fit_score</td><td>float</td><td>0.0 ~ 1.0 闭区间</td></tr>
-          <tr><td>health_flags</td><td>dict</td><td>必含 veg_ok / protein_ok / oil_ok / processed_meat / sweet_sauce / wetness</td></tr>
+          <tr><td>taste_match</td><td>float / null</td><td>0.0 ~ 1.0 或 null</td></tr>
           <tr><td>risk_flags</td><td>list</td><td>可空</td></tr>
-          <tr><td>taste_match</td><td>—</td><td>可空</td></tr>
           <tr><td>one_line_reason</td><td>str</td><td>≤30 字（LLM 自律，无硬限）</td></tr>
         </tbody>
       </table>
+      <p class="callout"><strong>health_flags 不再让 LLM 算（D-046）</strong>：<code>veg_ok / protein_ok / oil_ok / processed_meat / sweet_sauce / wetness</code> 这 6 个 bool 全是确定性规则可算的，由 <code>rerank.py:_compute_health_flags</code> 在拿到 LLM 输出后补齐。对外字段集和 V2 完全兼容。</p>
 
       <h3>失败路径 · fallback_rerank</h3>
       <p>LLM 输出无 JSON / 校验失败 / 调用异常 → 走规则版：</p>
@@ -655,12 +660,12 @@
       </ul>
 
       <div class="callout warn">
-        <strong>_enforce_brand_unique 兜底</strong>：LLM 选完后做一次品牌去重；若去重后不足 5 个，从 top30 里拿没用过品牌的补；<strong>这些补位条 fit_score 是原始 score（&gt;1）</strong>，one_line_reason 写"为多样性补位"。在调试台上看到 fit&gt;1 / 理由是 "为多样性补位" 就是它。
+        <strong>_enforce_brand_unique 兜底</strong>：LLM 选完后做一次品牌去重；若去重后不足 5 个，从 top60 里拿没用过品牌的补；<strong>这些补位条 fit_score 是原始 score（&gt;1）</strong>，one_line_reason 写"为多样性补位"。在调试台上看到 fit&gt;1 / 理由是 "为多样性补位" 就是它。
       </div>
 
       <div class="callout"><strong>调试台看哪</strong>：<br>
         L3 section → status badge：<span class="badge badge-pos">成功</span> / <span class="badge badge-neg">失败/fallback</span> / <span class="badge badge-grey">未调用</span><br>
-        「LLM payload」折叠 ~38K 字符<br>
+        「LLM user message」折叠 ~7K 字符（D-046 紧凑化, 旧版 ~38K）<br>
         「LLM 原始返回」折叠 ~2K 字符（提取 JSON 之前的原始字符串）<br>
         「parsed_candidates」校验后的 5 条<br>
         status bar 的 <strong>fallback</strong> 橙色 badge = 走了 fallback；<strong>LLM</strong> 绿色 badge = LLM 接管。

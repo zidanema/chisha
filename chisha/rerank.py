@@ -1,16 +1,23 @@
-"""LLM 精排 (D-035): top30 candidates → 5 个候选 (3 exploit + 2 explore).
+"""LLM 精排 (D-035 → D-046): topN candidates → 5 个候选 (3 exploit + 2 explore).
 
-输入: 打分后 top30 combos + ContextSnapshot + profile + meal_log 摘要.
-输出: list[dict], 每条 candidate 含强制结构化字段:
+D-046 重构 (2026-05-13):
+- top N 从 30 → 40 (L2 4 层 cap 已把多样性骨架定死, top31-40 仍有结构增量,
+  top41+ 高度同质, 且 lost-in-the-middle 会让 LLM 看不见中后段)
+- prompt 拆 system / user:
+  - system (prompts/rerank_system.md): 角色 + 任务 + 输出 schema + few-shot,
+    打 Anthropic prompt cache, 100% 命中
+  - user: 紧凑符号化的 PROFILE+CONTEXT+CANDIDATES, 每菜一行约 80-100 字符
+- payload 紧凑化: 每 candidate 从 ~1.47k chars 砍到 ~600 chars, 默认值省略
+- health_flags 从 LLM 输出移除, 改 rerank.py 收到结果后用规则算 (确定性 +
+  省 input/output token + 不再让 LLM 算油的算术平均). 最终对外字段不变.
+
+输入: 打分后 top40 combos + ContextSnapshot + profile + meal_log.
+输出: list[dict], 每条 candidate 含:
     rank / is_explore / combo_index / fit_score / health_flags /
     taste_match / risk_flags / one_line_reason
 
 LLM 失败 → fallback (规则) 退化到打分 top n + 规则 reason, 保证管道不断.
 refine=True 时 n_explore=0 (D-015).
-
-注: 本模块依赖 schema 升级后的 5 字段 (dish_role / processed_meat_flag /
-sweet_sauce_level / soup_or_broth_flag / grain_type), 字段缺失时 LLM/规则
-都会返回保守值 (空 health_flags), 不破坏管道.
 """
 from __future__ import annotations
 
@@ -24,15 +31,156 @@ if TYPE_CHECKING:
     from chisha.context import ContextSnapshot
 
 ROOT = Path(__file__).resolve().parent.parent
-PROMPT_PATH = ROOT / "prompts" / "rerank_topn.md"
+SYSTEM_PROMPT_PATH = ROOT / "prompts" / "rerank_system.md"
 
 
-# 输出 schema 必填字段
+# L3 LLM rerank 的输入候选数 (D-046 一审: 40 → 二审: 60).
+# 二审依据 (Codex 实测两 zone 分布):
+#   shenzhen-bay top41-60 score 跨度 1.997, 10 brand / 12 个新餐厅 / 5 cuisine,
+#     这一段是被 L2 4 层 cap 挤出 head 的真高分 tail, 不是低分尾巴.
+#   shenzhen-bay top61+ 急剧坍缩到 4 brand 同质化 (粥店 / 点都德灌榜).
+#   home 40 后已进入平台区, 60 仍稳但无新增.
+# 选 60 = 大 zone 拿到真实多样性增量, 小 zone 无害; 不上 80/100 避开同质 tail
+# 引入噪声 + LLM 输出漏号风险. 现代 Sonnet 4.6 NIAH/mid-context 能力足够撑 ~6.5k
+# tokens 的 listwise rerank (Anthropic Claude 4 model card).
+L3_INPUT_TOP_K = 60
+
+
+# LLM 输出的必填字段 (D-046: 删了 health_flags, 由规则后处理算)
 _REQUIRED_FIELDS = {
     "rank", "is_explore", "combo_index",
-    "fit_score", "health_flags", "taste_match",
+    "fit_score", "taste_match",
     "risk_flags", "one_line_reason",
 }
+
+
+# ─────────────────────── payload 紧凑化 (D-046) ───────────────────────
+
+
+def _fmt_dish_line(d: dict) -> str:
+    """单菜紧凑一行: `菜名｜main·烹·油N[·辣N·甜N·汤N]·[processed]｜role=X[·grain=Y]｜价`
+
+    默认值不输出 (辣 0, 甜 0, 汤 1-2 不显示, processed False 不显示);
+    role=配菜 默认省略 (最常见); grain 仅主食类菜显示.
+    """
+    np_ = d.get("nutrition_profile") or {}
+    name = d.get("canonical_name", "?")
+    main = np_.get("main_ingredient_type") or ""
+    method = np_.get("cooking_method") or ""
+    oil = np_.get("oil_level", 3)
+    spicy = np_.get("spicy_level", 0)
+    sweet = np_.get("sweet_sauce_level", 0) or 0
+    wet = np_.get("wetness", 1) or 1
+    role = np_.get("dish_role") or "配菜"
+    grain = np_.get("grain_type") or ""
+    processed = bool(np_.get("processed_meat_flag"))
+    price = d.get("price", 0) or 0
+
+    # 第一段: main·烹·油N (固定显示)
+    seg1 = []
+    if main: seg1.append(main)
+    if method: seg1.append(method)
+    seg1.append(f"油{int(oil)}")
+    # 条件标注
+    if spicy and int(spicy) > 0:
+        seg1.append(f"辣{int(spicy)}")
+    if sweet and int(sweet) >= 2:
+        seg1.append(f"甜{int(sweet)}")
+    if wet and int(wet) >= 3:
+        seg1.append(f"汤{int(wet)}")
+    if processed:
+        seg1.append("processed")
+    # 第二段: role 仅在不是配菜时显示
+    seg2 = []
+    if role and role != "配菜":
+        seg2.append(f"role={role}")
+    if grain and grain != "无" and (role == "主食" or "主食" in (role or "")):
+        seg2.append(f"grain={grain}")
+
+    parts = ["·".join(seg1)]
+    if seg2:
+        parts.append("·".join(seg2))
+    parts.append(f"{float(price):.1f}")
+    return f"  · {name}｜{'｜'.join(parts)}"
+
+
+def _fmt_combo_block(idx: int, c: dict) -> str:
+    """单 combo 紧凑块: header 行 + 每菜一行."""
+    rest = c.get("restaurant") or {}
+    name = rest.get("name", "?")
+    dist_m = rest.get("distance_m", -1)
+    eta = rest.get("delivery_eta_min", -1)
+    score = c.get("score", 0)
+    dishes = c.get("dishes") or []
+    total = sum((d.get("price") or 0) for d in dishes)
+    dist_str = f"{int(dist_m)/1000:.1f}km" if isinstance(dist_m, (int, float)) and dist_m > 0 else "?"
+    eta_str = f"{int(eta)}min" if isinstance(eta, (int, float)) and eta > 0 else "?"
+    header = f"[{idx}] {name}（{dist_str}/{eta_str}/L2 {score:.2f}/¥{total:.1f}）"
+    lines = [header] + [_fmt_dish_line(d) for d in dishes]
+    return "\n".join(lines)
+
+
+def _profile_block(profile: dict) -> str:
+    prefs = profile.get("preferences", {}) or {}
+    lines = [
+        "[PROFILE]",
+        f"口味描述: {profile.get('taste_description','') or '(空)'}",
+        f"喜欢: {prefs.get('liked_cuisines') or []}",
+        f"不喜欢: {prefs.get('disliked_cuisines') or []}",
+        f"avoid: {prefs.get('avoid_dishes') or []}",
+        f"辣度耐受: {prefs.get('spicy_tolerance', 2)}",
+    ]
+    return "\n".join(lines)
+
+
+def _context_block(context: "ContextSnapshot | None") -> str:
+    if context is None:
+        return "[CONTEXT] null"
+    cd = context.to_llm_dict()
+    # 上顿摘要: 取 cuisine + dishes 数, 不全展开
+    last_meal = cd.get("last_meal") or {}
+    if last_meal:
+        d = last_meal.get("dishes") or []
+        names = "+".join((x.get("canonical_name") or "?") for x in d[:3])
+        last_meal_brief = (
+            f"{last_meal.get('meal_type','?')} {last_meal.get('cuisine','')}: {names}"
+        )
+    else:
+        last_meal_brief = "(无)"
+    recent = cd.get("recent_3d_cuisines") or {}
+    methods_3d = cd.get("recent_3d_cooking_methods") or {}
+    last_fb = cd.get("last_feedback") or {}
+    chips = last_fb.get("chips") if isinstance(last_fb, dict) else None
+    lines = [
+        "[CONTEXT]",
+        f"饭期: {cd.get('meal_type')}",
+        f"心情: {cd.get('daily_mood') or '(无)'}",
+        f"上顿: {last_meal_brief}",
+        f"最近 3 天 cuisine: {dict(list(recent.items())[:8]) if recent else '(空)'}",
+        f"最近 3 天 cooking: {dict(list(methods_3d.items())[:8]) if methods_3d else '(空)'}",
+        f"上次反馈 chips: {chips or '(无)'}",
+        f"refine 输入: {cd.get('refine_input') or '(无)'}",
+    ]
+    return "\n".join(lines)
+
+
+def build_user_message(
+    top_combos: list[dict],
+    profile: dict,
+    context: "ContextSnapshot | None",
+    n: int,
+    n_explore: int,
+) -> str:
+    """拼 user message: CONFIG + PROFILE + CONTEXT + CANDIDATES, 紧凑符号化."""
+    blocks = [
+        f"[CONFIG] n={n} n_explore={n_explore}",
+        _profile_block(profile),
+        _context_block(context),
+        "[CANDIDATES]",
+    ]
+    for idx, c in enumerate(top_combos):
+        blocks.append(_fmt_combo_block(idx, c))
+    return "\n\n".join(blocks)
 
 
 def build_payload(
@@ -43,7 +191,11 @@ def build_payload(
     n: int,
     n_explore: int,
 ) -> dict:
-    """打包 LLM rerank 输入."""
+    """打包 LLM rerank 输入 (legacy JSON 形态, 主要给 debug trace 用).
+
+    D-046: 实际给 LLM 的是 build_user_message() 的紧凑文本. 本函数保留是为了
+    debug_recommend trace 兼容 + 单测断言. 字段集和 V2 保持一致.
+    """
     candidates = []
     for idx, c in enumerate(top_combos):
         rest = c.get("restaurant", {})
@@ -66,7 +218,6 @@ def build_payload(
                         d["nutrition_profile"].get("cooking_method", ""),
                     "oil_level": d["nutrition_profile"].get("oil_level", 3),
                     "spicy_level": d["nutrition_profile"].get("spicy_level", 0),
-                    # V2 5 字段
                     "dish_role": d["nutrition_profile"].get("dish_role"),
                     "processed_meat_flag":
                         d["nutrition_profile"].get("processed_meat_flag", False),
@@ -112,7 +263,6 @@ def fallback_rerank(
         return []
     from chisha.score import diversify_top
     n_exploit = max(1, n - n_explore)
-    # exploit: 用 diversify_top 强制品牌/菜系多样性 (复用 V1 行为)
     exploit = diversify_top(top_combos, n=n_exploit, max_per_brand=1,
                              max_per_cuisine=2)
     used_ids = {id(c) for c in exploit}
@@ -139,13 +289,7 @@ def _pick_explore(
     meal_log: list[dict],
     n_explore: int,
 ) -> list[dict]:
-    """explore 候选: 优先打分中段 + 最近 7 天没吃过的 cuisine/cooking_method.
-
-    规则:
-    1. 收集最近 7 天已吃 cuisine + cooking_method + already_used 的 cuisine/method
-    2. 在 rest 中段 (前 50%) 取那些 cuisine 或 cooking_method 不在已用集中的
-    3. 不够时退化到中段切片
-    """
+    """explore 候选: 优先打分中段 + 最近 7 天没吃过的 cuisine/cooking_method."""
     import datetime as dt2
     cutoff = dt2.date.today() - dt2.timedelta(days=7)
     used_cuisines: set[str] = set()
@@ -183,7 +327,6 @@ def _pick_explore(
             if len(novel) >= n_explore:
                 break
     if len(novel) < n_explore:
-        # 退化: 中段切片
         for c in mid_pool:
             if c not in novel:
                 novel.append(c)
@@ -192,10 +335,16 @@ def _pick_explore(
     return novel[:n_explore]
 
 
-def _to_rerank_dict(combo: dict, rank: int, is_explore: bool,
-                    fit_score: float) -> dict[str, Any]:
-    """combo + meta → rerank 输出 dict (含 _REQUIRED_FIELDS)."""
-    dishes = combo.get("dishes", [])
+# ─────────────────────── 健康字段规则计算 (D-046) ───────────────────────
+
+
+def _compute_health_flags(combo: dict) -> dict:
+    """从 combo 的菜品字段规则化算 health_flags. LLM 不再算这个.
+
+    必填子键 (与历史对外字段兼容):
+        veg_ok / protein_ok / oil_ok / processed_meat / sweet_sauce / wetness
+    """
+    dishes = combo.get("dishes", []) or []
     veg_ok = any(
         (d.get("nutrition_profile") or {}).get("vegetable_ratio_estimate", 0) >= 0.6
         or (d.get("nutrition_profile") or {}).get("main_ingredient_type") == "纯素"
@@ -222,22 +371,38 @@ def _to_rerank_dict(combo: dict, rank: int, is_explore: bool,
         for d in dishes
     )
     return {
+        "veg_ok": veg_ok,
+        "protein_ok": total_p >= 25,
+        "oil_ok": avg_oil <= 3,
+        "processed_meat": has_processed,
+        "sweet_sauce": sweet,
+        "wetness": has_wet,
+    }
+
+
+def _to_rerank_dict(combo: dict, rank: int, is_explore: bool,
+                    fit_score: float) -> dict[str, Any]:
+    """combo + meta → rerank 输出 dict (规则 fallback 用)."""
+    flags = _compute_health_flags(combo)
+    dishes = combo.get("dishes", []) or []
+    total_p = sum(
+        (d.get("nutrition_profile") or {}).get("protein_grams_estimate", 0)
+        for d in dishes
+    )
+    avg_oil = (
+        sum((d.get("nutrition_profile") or {}).get("oil_level", 3) for d in dishes)
+        / max(1, len(dishes))
+    )
+    return {
         **combo,
         "rank": rank,
         "is_explore": is_explore,
         "combo_index": combo.get("combo_index", -1),
         "fit_score": round(float(fit_score), 3),
-        "health_flags": {
-            "veg_ok": veg_ok,
-            "protein_ok": total_p >= 25,
-            "oil_ok": avg_oil <= 3,
-            "processed_meat": has_processed,
-            "sweet_sauce": sweet,
-            "wetness": has_wet,
-        },
+        "health_flags": flags,
         "taste_match": None,        # rule fallback 不做语义匹配
         "risk_flags": [],
-        "one_line_reason": _rule_reason(combo, has_wet, avg_oil, total_p),
+        "one_line_reason": _rule_reason(combo, flags["wetness"], avg_oil, total_p),
     }
 
 
@@ -263,21 +428,25 @@ def _rule_reason(combo: dict, has_wet: bool, avg_oil: float, total_p: float) -> 
     return "，".join(bits)[:30]
 
 
-_HEALTH_FLAGS_KEYS = {"veg_ok", "protein_ok", "oil_ok", "processed_meat",
-                       "sweet_sauce", "wetness"}
-
-
-def _validate_llm_candidates(cands: list, n_max: int) -> list[dict] | None:
+def _validate_llm_candidates(
+    cands: list, n_max: int,
+    input_size: int | None = None,
+    n_explore_expected: int | None = None,
+) -> list[dict] | None:
     """LLM 输出深度校验. 任何错误返回 None 让上游 fallback.
 
+    D-046 二审补强 (真 Codex review):
+    - 加 combo_index 上界校验 (input_size 传入时), 防越界 idx 静默被丢然后规则补位
+    - 加 n_explore 数量校验 (n_explore_expected 传入时), 防 LLM 漏写或多写 explore
+    - 加 一坨 candidates 总数 == n_max 校验 (n_max 是期望输出数)
+
     检查:
-    - 必填字段
-    - fit_score 是 0-1 数值
-    - rank 是连续 1..len 整数
-    - combo_index 不重复, >= 0
-    - is_explore 是 bool
-    - health_flags 含核心子键
-    - 数量 <= n_max
+    - 必填字段 (_REQUIRED_FIELDS, 不含 health_flags)
+    - fit_score / taste_match 0-1 数值
+    - rank 连续 1..len
+    - combo_index 不重复, 0 <= idx < input_size
+    - is_explore bool, exploit 段在前 explore 段在后
+    - 数量 <= n_max; explore 数量 == n_explore_expected (若传入)
     """
     if not isinstance(cands, list) or not cands:
         return None
@@ -292,61 +461,86 @@ def _validate_llm_candidates(cands: list, n_max: int) -> list[dict] | None:
         if missing:
             print(f"  [rerank] candidate#{i} 缺字段 {missing}")
             return None
-        # combo_index
         idx = c.get("combo_index")
         if not isinstance(idx, int) or idx < 0:
             print(f"  [rerank] candidate#{i} combo_index 非法: {idx!r}")
+            return None
+        # D-046 二审: idx 上界校验
+        if input_size is not None and idx >= input_size:
+            print(f"  [rerank] candidate#{i} combo_index 越界: "
+                  f"{idx} >= input_size {input_size}")
             return None
         if idx in seen_idx:
             print(f"  [rerank] candidate#{i} combo_index 重复: {idx}")
             return None
         seen_idx.add(idx)
-        # fit_score
         fs = c.get("fit_score")
         if not isinstance(fs, (int, float)) or not (0.0 <= float(fs) <= 1.0):
             print(f"  [rerank] candidate#{i} fit_score 越界: {fs!r}")
             return None
-        # is_explore bool
+        tm = c.get("taste_match")
+        # taste_match 允许 None (兼容), 否则必须 0-1
+        if tm is not None and (
+            not isinstance(tm, (int, float)) or not (0.0 <= float(tm) <= 1.0)
+        ):
+            print(f"  [rerank] candidate#{i} taste_match 越界: {tm!r}")
+            return None
         if not isinstance(c.get("is_explore"), bool):
             return None
-        # health_flags 子键
-        hf = c.get("health_flags")
-        if not isinstance(hf, dict):
-            return None
-        if not _HEALTH_FLAGS_KEYS.issubset(hf.keys()):
-            missing_hf = _HEALTH_FLAGS_KEYS - set(hf.keys())
-            print(f"  [rerank] candidate#{i} health_flags 缺 {missing_hf}")
-            return None
-        # risk_flags 必须是 list
         if not isinstance(c.get("risk_flags"), list):
             return None
-    # rank 连续 1..len
     ranks = sorted(c["rank"] for c in cands if isinstance(c.get("rank"), int))
     if ranks != list(range(1, len(cands) + 1)):
         print(f"  [rerank] rank 不连续: {ranks}")
         return None
+    # D-046 二审: explore 数量校验
+    if n_explore_expected is not None:
+        n_explore_actual = sum(1 for c in cands if c.get("is_explore"))
+        if n_explore_actual != n_explore_expected:
+            print(f"  [rerank] explore 数量错误: 期望 {n_explore_expected}, "
+                  f"实际 {n_explore_actual}")
+            return None
+        # exploit 段在前, explore 段在后
+        for i, c in enumerate(cands):
+            expected_explore = i >= (len(cands) - n_explore_expected)
+            if bool(c.get("is_explore")) != expected_explore:
+                print(f"  [rerank] candidate#{i} (rank={c.get('rank')}) "
+                      f"is_explore={c.get('is_explore')} 但应该是 "
+                      f"{expected_explore} (exploit 在前 explore 在后)")
+                return None
     return cands
 
 
-def _llm_rerank(payload: dict, model: str | None = None,
+def _llm_rerank(top_combos: list[dict], profile: dict,
+                context: "ContextSnapshot | None", n: int, n_explore: int,
+                model: str | None = None,
                 n_max: int = 5) -> list[dict] | None:
-    """调 LLM 返回 list of candidate dict, 失败返回 None (上游 fallback)."""
+    """调 LLM 返回 list of candidate dict, 失败返回 None (上游 fallback).
+
+    D-046: system / user 拆分; system 进 Anthropic prompt cache.
+    """
     try:
         from chisha.llm_client import call_text
-        prompt = PROMPT_PATH.read_text(encoding="utf-8").replace(
-            "{INPUT_PAYLOAD}", json.dumps(payload, ensure_ascii=False, indent=2)
-        )
-        kwargs: dict[str, Any] = {"max_tokens": 4096, "temperature": 0.0}
+        system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        user_msg = build_user_message(top_combos, profile, context,
+                                       n=n, n_explore=n_explore)
+        kwargs: dict[str, Any] = {
+            "max_tokens": 2048, "temperature": 0.0,
+            "system": system_prompt, "cache_system": True,
+        }
         if model:
             kwargs["model"] = model
-        out = call_text(prompt, **kwargs)
-        # 提 JSON
+        out = call_text(user_msg, **kwargs)
         m = re.search(r"\{.*\}", out, re.DOTALL)
         if not m:
             return None
         data = json.loads(m.group(0))
         cands = data.get("candidates")
-        return _validate_llm_candidates(cands, n_max=n_max)
+        return _validate_llm_candidates(
+            cands, n_max=n_max,
+            input_size=len(top_combos),
+            n_explore_expected=n_explore,
+        )
     except Exception as e:
         print(f"  [rerank fallback] LLM 失败 ({type(e).__name__}: {str(e)[:80]})")
         return None
@@ -366,8 +560,8 @@ def rerank(
     """主入口. LLM 精排 + fallback.
 
     Args:
-        top_combos: 打分后已排序的 candidates (top 30 推荐, 但传更多也可).
-        profile / context / meal_log: 见 build_payload.
+        top_combos: 打分后已排序的 candidates (V2 默认 top40, D-046).
+        profile / context / meal_log: 见 build_user_message.
         n: 输出候选数, 默认 5.
         n_explore: explore 候选数, 默认 2 (D-015).
         refine: True 时 n_explore=0 (D-015).
@@ -382,22 +576,75 @@ def rerank(
         use_llm = has_llm_key()
 
     if use_llm:
-        payload = build_payload(top_combos, profile, context, meal_log, n, n_explore)
-        llm_out = _llm_rerank(payload, model=model, n_max=n)
+        llm_out = _llm_rerank(top_combos=top_combos,
+                               profile=profile, context=context,
+                               n=n, n_explore=n_explore,
+                               model=model, n_max=n)
         if llm_out is not None:
             mapped: list[dict] = []
             for cand in llm_out[:n]:
                 idx = cand.get("combo_index", -1)
                 if not (0 <= idx < len(top_combos)):
                     continue
+                # health_flags 由规则补齐 (D-046: LLM 不再输出此字段)
+                cand["health_flags"] = _compute_health_flags(top_combos[idx])
                 merged = {**top_combos[idx], **cand}
                 mapped.append(merged)
             mapped = _enforce_brand_unique(mapped, top_combos, n=n)
             if mapped:
+                _log_selection_metrics(mapped, top_combos)
                 return mapped
 
     return fallback_rerank(top_combos, n=n, n_explore=n_explore,
                             meal_log=meal_log)
+
+
+def _log_selection_metrics(
+    mapped: list[dict], top_combos: list[dict]
+) -> None:
+    """D-046 二审 (真 Codex review) 观测埋点.
+
+    打印 LLM 选中的 5 条 combo_index 落点分布 + 是否有更高分同 brand 被绕过.
+    一周后用这些 metric 决策 N=60 是否需要调:
+    - P(idx >= 40): N 从 40 涨到 60 是否真的让 L3 看见 L2 没识别的好货
+    - P(idx >= 60): 是否需要进一步上调到 80/100
+    - brand_has_higher_sibling: LLM 是否真在做"同品牌内部择优"
+    """
+    def _brand_key(c: dict) -> str:
+        rest = c.get("restaurant") or {}
+        return rest.get("brand") or rest.get("id") or ""
+
+    selected = [c.get("combo_index", -1) for c in mapped]
+    # 落点 band
+    def _band(i: int) -> str:
+        if i < 0: return "?"
+        if i < 10: return "0-9"
+        if i < 20: return "10-19"
+        if i < 30: return "20-29"
+        if i < 40: return "30-39"
+        if i < 60: return "40-59"
+        if i < 80: return "60-79"
+        return "80+"
+    bands = [_band(i) for i in selected]
+    # 同 brand 是否有更高分 sibling 被 LLM 跳过 (i.e. 同品牌内部择优是否启用)
+    brand_to_first_idx: dict[str, int] = {}
+    for i, c in enumerate(top_combos):
+        bk = _brand_key(c)
+        if bk and bk not in brand_to_first_idx:
+            brand_to_first_idx[bk] = i
+    has_higher_sibling = []
+    for c in mapped:
+        idx = c.get("combo_index", -1)
+        bk = _brand_key(c)
+        if bk and bk in brand_to_first_idx and brand_to_first_idx[bk] < idx:
+            has_higher_sibling.append(
+                f"#{idx}(brand 最高 #{brand_to_first_idx[bk]})"
+            )
+    higher_str = ", ".join(has_higher_sibling) if has_higher_sibling else "无"
+    print(
+        f"  [rerank] LLM 选中 idx={selected} band={bands} "
+        f"window={len(top_combos)} | 同品牌择优 (跳过更高分 sibling): {higher_str}"
+    )
 
 
 def _enforce_brand_unique(
@@ -405,12 +652,8 @@ def _enforce_brand_unique(
 ) -> list[dict]:
     """LLM 可能漏掉去重指令 — 同 brand (连锁) 在 top n 只能出现 1 次.
 
-    D-045: 之前只按 restaurant.id 去重, 连锁分店会同时占榜 (如 Super Model
-    三家分店在 top5 占 3 条). 改成按 brand 去重 + rid 作为缺失兜底, 与 L2
-    apply_caps 的 brand 层语义保持一致.
-
-    保留每家品牌首次出现的那条 (LLM 已按 rank 排好), 不够 n 个时从
-    top_combos 剩余 combos 里按 score 补齐 (跳过已用品牌).
+    D-045: 按 brand 去重 + rid 作为缺失兜底, 与 L2 apply_caps 的 brand 层
+    语义保持一致. 不够 n 个时从 top_combos 剩余 combos 里按 score 补齐.
     """
     if not mapped:
         return mapped
@@ -430,7 +673,7 @@ def _enforce_brand_unique(
         out.append(c)
     if len(out) >= n:
         return out[:n]
-    # 不够 n 个: 从 top_combos 按 score 补 (避免和已选品牌重复)
+    # 不够 n 个: 从 top_combos 按 score 补齐
     used_combo_ids = {id(c) for c in mapped}
     for c in top_combos:
         if len(out) >= n:
@@ -440,7 +683,6 @@ def _enforce_brand_unique(
         bk = _brand_key(c)
         if bk and bk in seen_brand:
             continue
-        # 补齐用的 combo 没经 LLM 评分, 填占位字段
         if bk:
             seen_brand.add(bk)
         fill = {
@@ -448,13 +690,12 @@ def _enforce_brand_unique(
             "rank": len(out) + 1,
             "is_explore": False,
             "fit_score": c.get("score", 0),
-            "health_flags": {},
+            "health_flags": _compute_health_flags(c),
             "taste_match": None,
             "risk_flags": ["品牌去重补位"],
             "one_line_reason": "为多样性补位, 此条无 LLM 评分",
         }
         out.append(fill)
-    # rank 重排
     for i, c in enumerate(out, start=1):
         c["rank"] = i
     return out

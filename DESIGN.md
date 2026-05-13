@@ -789,23 +789,27 @@ combo_score (V2.2+) =
 - 决策见 [D-024](docs/DECISIONS.md#d-024)
 - 成本：3 次 LLM 调用 × ≤ 200 token = 单次推荐 < ¥0.05
 
-#### V2.x 精排：LLM rerank top 30 → 5 (3 exploit + 2 explore)
+#### V2.x 精排：LLM rerank top 60 → 5 (3 exploit + 2 explore)
 
-V2 启用 LLM 精排（[D-035](docs/DECISIONS.md#d-035)）。输入：
+V2 启用 LLM 精排（[D-035](docs/DECISIONS.md#d-035) 初版 / [D-046](docs/DECISIONS.md#d-046) prompt+payload 重构）。输入：
 - ContextSnapshot (D-034: 餐期 / zone / last_meal / recent_3d / last_feedback / daily_mood / refine_input)
 - profile.taste_description 自然语言
-- 打分后 top 30 candidates (含 dish_role / processed_meat / sweet_sauce / soup_or_broth / grain_type)
+- 打分后 top 60 candidates (D-046: 30 → 60, 二审实测后修订, 紧凑符号化形态)
 - 最近 3 天 meal_log 摘要
 
-输出：强制结构化 JSON, 每条 candidate 含 `fit_score / health_flags / taste_match / risk_flags / one_line_reason`。
-5 个候选 = 3 exploit (fit_score 排) + 2 explore (打分中段、最近未吃过、未尝试菜系/做法)，命中 [D-015](docs/DECISIONS.md#d-015)。
-refine 时 explore_count=0 (D-015)。
+prompt 拆 system / user (D-046):
+- `prompts/rerank_system.md`: 角色 + 任务原则 + 硬约束 + 输出 schema + reason few-shot. ~1.7k tokens, 走 Anthropic prompt cache 100% 命中.
+- user message: 由 `chisha.rerank.build_user_message()` 拼成紧凑文本, 每菜一行 `菜名｜main·烹·油N[·辣N·甜N·汤N·processed]｜role=X[·grain=Y]｜价`, 默认值省略.
 
-LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` ([D-038](docs/DECISIONS.md#d-038) Phase 1 provider auto-detect: ANTHROPIC_API_KEY → `claude-sonnet-4-6`; OPENROUTER_API_KEY → `anthropic/claude-sonnet-4.6`)。temperature=0.0。失败兜底：退化到打分 top n + 规则 reason。
+输出：强制 JSON, 每条 candidate 含 `rank / is_explore / combo_index / fit_score / taste_match / risk_flags / one_line_reason`。`health_flags` 由 [`rerank.py:_compute_health_flags`](../chisha/rerank.py) 在拿到 LLM 输出后**规则后处理**补齐 (D-046, LLM 不算确定性可计算的字段).
 
-兜底机制：LLM rerank 输出后 [`chisha/rerank.py:_enforce_brand_unique`](../chisha/rerank.py) 强制商家去重（同 `restaurant.id` 至多 1 次，LLM 漏遵守时由后处理兜底，对应 prompts/rerank_topn.md 硬约束）。
+5 个候选 = 3 exploit (fit_score 排) + 2 explore (打分中段、最近未吃过、未尝试菜系/做法)，命中 [D-015](docs/DECISIONS.md#d-015)。refine 时 explore_count=0 (D-015)。
 
-成本估算：单次推荐 1 次 LLM 调用，约 ¥0.05-0.10/次（top30 candidates × 200 token + context + prompt overhead）。
+LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` ([D-038](docs/DECISIONS.md#d-038) Phase 1 provider auto-detect: ANTHROPIC_API_KEY → `claude-sonnet-4-6`; OPENROUTER_API_KEY → `anthropic/claude-sonnet-4.6`)。temperature=0.0。`cache_system=True` 让 Anthropic 直连走 prompt cache。失败兜底：退化到打分 top n + 规则 reason。
+
+兜底机制：LLM rerank 输出后 [`chisha/rerank.py:_enforce_brand_unique`](../chisha/rerank.py) 强制 brand 去重 (D-045: 与 L2 apply_caps brand 层语义对齐)。
+
+成本估算：单次推荐 1 次 LLM 调用 ≈ 6.2k input tokens (cache 命中时, top60) + ≤ 800 output tokens; 旧版 ~22k input。约 ¥0.02-0.04/次。`chisha.rerank.L3_INPUT_TOP_K` 单一常量控制 N，调整无需散改多处。
 
 ### 5.7 输出 JSON schema
 
@@ -970,6 +974,8 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` ([D-03
 | **42** | **L2 排序后 cap_per_restaurant（防同店霸榜）** | **D-042** |
 | **43** | **L2 打分体系重设计 + 三层 cap + 反馈闭环 P3**（必读 [`docs/RECOMMEND_PRINCIPLES.md`](docs/RECOMMEND_PRINCIPLES.md)） | **D-043** |
 | **44** | **profile.yaml 真实化 + 口味偏好层与健康目标层分离** | **D-044** |
+| **45** | **L2 cap 增加 brand 层（连锁去重）** | **D-045** |
+| **46** | **L3 精排 prompt + payload 重构（top60 + system/user 拆分 + 紧凑化 + health_flags 规则后处理）** | **D-046** |
 
 ---
 
