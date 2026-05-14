@@ -1882,3 +1882,40 @@ LLM 读了这句话会以为输入已去重, **不会尝试同品牌内部择优
 - 测试 311 → 317 全过
 
 教训: "假二审" (general-purpose subagent 模拟 Codex 视角) 看不到代码细节里的事实错误 + 校验漏洞, 只能从已知信息推. **真 Codex (codex-cli) 通过实际读代码 + 实测才能发现**: prompt 与代码事实不一致, 校验漏 idx 上界, 没启用 JSON mode. 重大决策建议用真二审 (真 Codex CLI 或独立人审).
+
+
+---
+
+## D-047 — LLM Provider 抽象 + Claude Code CLI 路径
+
+**日期**: 2026-05-14
+**状态**: 已实施
+
+**背景**: 自用阶段每天 1-2 次推荐, 用 ANTHROPIC_API_KEY 月成本 ¥20-100,
+而本机已有 Max 订阅. 让 chisha 复用订阅额度调 LLM, 同时保留 API key /
+OpenRouter 路径供未来分发用户使用.
+
+**方案**: subprocess 调 `claude -p`, 10 个隔离 flag (`--effort low` /
+`--tools ""` / `--disable-slash-commands` / `--setting-sources ""` /
+`--strict-mcp-config` / `--no-session-persistence` / `--system-prompt-file` /
+`--input-format text` 等), cwd 在 `~/.cache/chisha/llm_tmp/` 私有目录,
+env 过滤 `CLAUDE_*` 防干扰, Popen + start_new_session 防 orphan.
+
+**架构**: `chisha/llm_providers/` 子包, 三 provider (anthropic_api /
+openrouter / claude_code_cli) 统一签名; `chisha/llm_client.py` 成薄路由层;
+profile.yaml `llm` 段控制 + 环境变量 `CHISHA_LLM_PROVIDER` 强制覆盖.
+
+**实测**: N=60 sonnet effort=low 端到端 60s, 输出结构正确;
+订阅消耗 1 message 配额/次. 详见:
+- spec: `docs/superpowers/specs/2026-05-14-claude-code-cli-provider-design.md`
+- plan: `docs/superpowers/plans/2026-05-14-claude-code-cli-provider.md`
+
+**关键陷阱 (实测发现 + Codex review 补强)**:
+1. Claude Code 默认 system prompt 注入 ~10k tokens → `--tools ""` 砍到 ~1.8k
+2. 默认 effort 触发 extended thinking 让 N=60 跑 200s+ → `--effort low` 降到 60s
+3. argv 超 ~8k chars 异常 → system 用 `--system-prompt-file`, user 用 stdin
+4. `--bare` 跳过 CLAUDE.md 但和 OAuth 互斥 → 用 cwd + env 过滤代替
+5. `tempfile` SIGKILL 时残留 → 启动 sweep `chisha_sys_*.md` >1h 旧文件
+6. CHISHA_LLM_PROVIDER="" 空白要当 unset, 不能 raise
+7. 显式选 provider 但凭据缺失要 RuntimeError 给清晰错误, 不能 silent fallback
+
