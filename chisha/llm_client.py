@@ -1,14 +1,11 @@
-"""LLM 抽象 (Phase 1 of D-038).
+"""LLM 调用入口 (D-047).
 
-provider auto-detect:
-- 有 ANTHROPIC_API_KEY → Anthropic 直连 (claude-sonnet-4-6)
-- 否则有 OPENROUTER_API_KEY → OpenRouter (anthropic/claude-sonnet-4.6)
-- 都没有 → 调用方 try/except 接住, 退化到 rule fallback
+provider 路由 + 选择策略:
+- env CHISHA_LLM_PROVIDER 强制 > profile.llm.provider 显式 > auto-detect
+- auto 顺序: ANTHROPIC_API_KEY > claude_code_cli 订阅 > OPENROUTER_API_KEY
+- 显式选定 (env/profile) 时检查可用性, 不可用直接 RuntimeError 给清晰错误
 
-调用方 (reason.py / rerank.py) 不感知 provider, 只调 call_text(prompt, ...).
-
-未来 Phase 2 (chisha 被外部 agent 当 Skill 调用时): recommend_meal 加
-llm_call: Callable | None 注入点, agent 传自己的 LLM closure 覆盖默认。
+具体 provider 实现见 chisha/llm_providers/.
 """
 from __future__ import annotations
 
@@ -18,23 +15,92 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-# .env load (与 llm_client_openrouter 同源)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_REPO_ROOT / ".env")
 
-
-# Anthropic 直连模型 (短名)
-_ANTHROPIC_MODEL = "claude-sonnet-4-6"
-# OpenRouter 模型 (命名空间形式)
-_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6"
+from chisha.llm_providers import anthropic_api, claude_code_cli, openrouter
 
 
-def _has_anthropic_key() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+_PROVIDER_NAMES = {"anthropic", "openrouter", "claude_code_cli"}
 
 
-def _has_openrouter_key() -> bool:
-    return bool(os.environ.get("OPENROUTER_API_KEY"))
+def _is_available(provider: str) -> bool:
+    return {
+        "anthropic": anthropic_api.is_available,
+        "openrouter": openrouter.is_available,
+        "claude_code_cli": claude_code_cli.is_available,
+    }[provider]()
+
+
+def _resolve_provider(profile_llm: Optional[dict]) -> str:
+    """决定走哪个 provider. env > profile > auto.
+
+    显式选定 (env/profile) 时检查可用性, 不可用直接 RuntimeError.
+    """
+    # 1. 环境变量强制 (空白当 unset)
+    env_raw = os.environ.get("CHISHA_LLM_PROVIDER") or ""
+    env_val = env_raw.strip()
+    if env_val:
+        if env_val not in _PROVIDER_NAMES:
+            raise ValueError(
+                f"未知 CHISHA_LLM_PROVIDER={env_val!r}, "
+                f"合法值: {sorted(_PROVIDER_NAMES)}"
+            )
+        if not _is_available(env_val):
+            raise RuntimeError(
+                f"CHISHA_LLM_PROVIDER={env_val} 但该 provider 不可用 "
+                f"(缺 API key 或 CLI 未登录)"
+            )
+        return env_val
+
+    # 2. profile 配置
+    if profile_llm:
+        pv_raw = profile_llm.get("provider") or "auto"
+        pv = pv_raw.strip()
+        if pv and pv != "auto":
+            if pv not in _PROVIDER_NAMES:
+                raise ValueError(
+                    f"未知 profile.llm.provider={pv!r}, "
+                    f"合法值: {sorted(_PROVIDER_NAMES)} 或 'auto'"
+                )
+            if not _is_available(pv):
+                raise RuntimeError(
+                    f"profile.llm.provider={pv} 但该 provider 不可用 "
+                    f"(缺 API key 或 CLI 未登录)"
+                )
+            return pv
+
+    # 3. auto-detect
+    if anthropic_api.is_available():
+        return "anthropic"
+    if claude_code_cli.is_available():
+        return "claude_code_cli"
+    if openrouter.is_available():
+        return "openrouter"
+    raise RuntimeError(
+        "无可用 LLM provider. 选项: "
+        "(1) 设 ANTHROPIC_API_KEY (2) 装 + 登录 Claude Code (claude auth login) "
+        "(3) 设 OPENROUTER_API_KEY"
+    )
+
+
+def _resolve_model(provider: str, model: Optional[str],
+                    profile_llm: Optional[dict]) -> Optional[str]:
+    """显式 model > profile.model.<provider> > None (provider 用自己默认)."""
+    if model:
+        return model
+    if profile_llm:
+        m = (profile_llm.get("model") or {}).get(provider)
+        if m:
+            return m
+    return None
+
+
+_PROVIDER_MODULES = {
+    "anthropic": anthropic_api,
+    "openrouter": openrouter,
+    "claude_code_cli": claude_code_cli,
+}
 
 
 def call_text(
@@ -45,78 +111,35 @@ def call_text(
     temperature: float = 0.0,
     system: Optional[str] = None,
     cache_system: bool = False,
+    profile_llm: Optional[dict] = None,
 ) -> str:
-    """单次 LLM 调用, 返回纯文本.
+    """单次 LLM 调用入口.
 
     Args:
-        model: 显式覆盖. None 时按 provider 取默认 (Anthropic short / OR 命名空间).
-        cache_system: True 时把 system block 打上 ephemeral cache_control
-            (Anthropic prompt caching). 仅 Anthropic 直连真正生效, OpenRouter
-            兼容路径忽略 (它的 cache 由 OR 自行管理, 用 system 作前缀已经足够).
+        prompt: user 消息
+        model: 显式 model 覆盖 (优先级最高)
+        system / cache_system / max_tokens / temperature: 透传 provider
+        profile_llm: 从 profile.yaml 读到的 'llm' 段
     """
-    if _has_anthropic_key():
-        return _call_anthropic(prompt, model=model or _ANTHROPIC_MODEL,
-                                max_tokens=max_tokens, temperature=temperature,
-                                system=system, cache_system=cache_system)
-    if _has_openrouter_key():
-        return _call_openrouter(prompt, model=model or _OPENROUTER_MODEL,
-                                 max_tokens=max_tokens, temperature=temperature,
-                                 system=system)
-    raise RuntimeError(
-        "未配置 ANTHROPIC_API_KEY 或 OPENROUTER_API_KEY, 无法调 LLM"
-    )
-
-
-def _call_anthropic(prompt: str, *, model: str, max_tokens: int,
-                    temperature: float, system: Optional[str],
-                    cache_system: bool = False) -> str:
-    import anthropic
-    client = anthropic.Anthropic()
-    kwargs: dict = dict(
-        model=model,
+    provider = _resolve_provider(profile_llm)
+    final_model = _resolve_model(provider, model, profile_llm)
+    # observability: 让用户看见实际走哪路, 防止 .env 残留 key 偷偷打掉订阅
+    print(f"  [llm] provider={provider} model={final_model or '(default)'}")
+    # 动态属性查找, 让 unittest.mock.patch(模块.call) 能生效
+    return _PROVIDER_MODULES[provider].call(
+        prompt,
+        system=system,
+        model=final_model,
         max_tokens=max_tokens,
         temperature=temperature,
-        messages=[{"role": "user", "content": prompt}],
+        cache_system=cache_system,
     )
-    if system:
-        if cache_system:
-            kwargs["system"] = [{
-                "type": "text",
-                "text": system,
-                "cache_control": {"type": "ephemeral"},
-            }]
-        else:
-            kwargs["system"] = system
-    resp = client.messages.create(**kwargs)
-    return resp.content[0].text
-
-
-def _call_openrouter(prompt: str, *, model: str, max_tokens: int,
-                      temperature: float, system: Optional[str]) -> str:
-    from openai import OpenAI
-    base_url = os.environ.get(
-        "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
-    )
-    client = OpenAI(
-        api_key=os.environ["OPENROUTER_API_KEY"], base_url=base_url
-    )
-    messages: list[dict] = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
-    resp = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        extra_headers={
-            "HTTP-Referer": "https://github.com/chisha-private",
-            "X-Title": "chisha recommend",
-        },
-    )
-    return resp.choices[0].message.content or ""
 
 
 def has_llm_key() -> bool:
-    """供调用方决定是否走 LLM (代替原来直接 os.environ 检查 ANTHROPIC)."""
-    return _has_anthropic_key() or _has_openrouter_key()
+    """兼容老 API: 是否有任何可用 provider."""
+    try:
+        _resolve_provider(None)
+        return True
+    except RuntimeError:
+        return False
