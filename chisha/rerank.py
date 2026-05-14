@@ -527,6 +527,7 @@ def _llm_rerank(top_combos: list[dict], profile: dict,
         kwargs: dict[str, Any] = {
             "max_tokens": 2048, "temperature": 0.0,
             "system": system_prompt, "cache_system": True,
+            "profile_llm": profile.get("llm"),  # D-047: provider 路由
         }
         if model:
             kwargs["model"] = model

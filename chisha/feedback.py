@@ -117,7 +117,8 @@ def rule_parse(text: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- LLM 路径 ----
-def _llm_parse(text: str) -> dict[str, Any] | None:
+def _llm_parse(text: str,
+                profile_llm: dict | None = None) -> dict[str, Any] | None:
     """调 LLM 返回 dict, 失败返回 None (上游 fallback)."""
     try:
         from chisha.llm_client import call_text
@@ -126,7 +127,8 @@ def _llm_parse(text: str) -> dict[str, Any] | None:
         ).replace(
             "{CHIP_VOCAB}", ", ".join(sorted(CHIP_VOCAB))
         )
-        out = call_text(prompt, max_tokens=512, temperature=0.0)
+        out = call_text(prompt, max_tokens=512, temperature=0.0,
+                         profile_llm=profile_llm)
         # 提取 JSON (LLM 偶尔包 ```json ... ```)
         m = re.search(r"\{.*\}", out, re.DOTALL)
         if not m:
@@ -166,30 +168,33 @@ def parse_feedback(
     rating_satisfaction: int | None = None,
     want_again: bool | None = None,
     use_llm: bool | None = None,
+    profile_llm: dict | None = None,
 ) -> FeedbackParsed:
     """合并 UI 结构化字段 + 自然语言文本, 输出规范化 FeedbackParsed.
 
     UI chip / rating / want_again 是用户显式选的, 优先级最高.
-    text 用 LLM (有 key) 或规则解析, 推断的 chip 与 UI chip 合并去重,
-    推断的 rating/want_again 仅在 UI 未填时回填.
+    text 用 LLM (有 provider 可用) 或规则解析, 推断的 chip 与 UI chip 合并
+    去重, 推断的 rating/want_again 仅在 UI 未填时回填.
 
     Args:
         text: 用户自由文本, 可空.
         chips: UI 上勾的 chip 列表, 必须 ∈ CHIP_VOCAB (越界丢弃).
         rating_taste / rating_satisfaction: 1-5 或 None.
         want_again: True / False / None.
-        use_llm: 强制开关 (None=auto, 看 ANTHROPIC_API_KEY).
+        use_llm: 强制开关 (None=auto, 看任何 LLM provider 是否可用).
+        profile_llm: D-047 — 透传 profile.yaml 的 llm 段给 LLM router.
     """
     text = (text or "").strip()
     ui_chips = _normalize_chips(chips)
 
     if use_llm is None:
-        use_llm = bool(text) and bool(os.environ.get("ANTHROPIC_API_KEY"))
+        from chisha.llm_client import has_llm_key
+        use_llm = bool(text) and has_llm_key()
 
     parsed: dict[str, Any] = {}
     if text:
         if use_llm:
-            llm_result = _llm_parse(text)
+            llm_result = _llm_parse(text, profile_llm=profile_llm)
             parsed = llm_result if llm_result is not None else rule_parse(text)
         else:
             parsed = rule_parse(text)
