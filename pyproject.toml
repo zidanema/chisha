@@ -27,6 +27,8 @@ pythonpath = ["."]
 markers = [
     "requires_claude_cli: tests that need claude CLI + Max subscription (opt-in, skipped in CI)",
 ]
+# 默认不跑 integration; 显式 -m requires_claude_cli 才跑 (Codex review P2#4)
+addopts = "-m 'not requires_claude_cli'"
 
 [build-system]
 requires = ["hatchling"]

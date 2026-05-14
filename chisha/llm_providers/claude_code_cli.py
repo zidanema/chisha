@@ -32,13 +32,24 @@ _TMP_DIR = Path(os.environ.get("XDG_CACHE_HOME") or
 _TMP_PREFIX = "chisha_sys_"
 _TMP_STALE_SEC = 3600        # >1h 的残留文件清掉
 
+# 必须从子进程 env 里清掉的"会让 Claude Code 走付费 API 而非订阅"的变量
+# Codex review P1#1: ANTHROPIC_API_KEY 存在时 Claude Code 优先走 API, 订阅被劫持
+_BLOCKED_ENV_PREFIXES = ("CLAUDE_", "ANTHROPIC_")
+_BLOCKED_ENV_EXACT = {
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_BASE_URL",
+}
+
+# auth status 正向 cache TTL (Codex review P2#3): 防 revoked token 永久 stale
+_POSITIVE_TTL_SEC = 300      # 5 min
+
 
 class CCCLIError(Exception):
     """Claude Code CLI 调用失败"""
 
 
-# 进程级 cache: claude auth status 调用一次 ~500ms, 不重复
-_cli_check_cache: Optional[bool] = None
+# 进程级 cache: (result, expiry_ts) — 仅缓存正向, 负向永不缓存
+_cli_check_cache: Optional[tuple] = None
 
 
 def _ensure_tmp_dir() -> Path:
@@ -67,33 +78,40 @@ def _sweep_stale_tmp_files() -> None:
 
 
 def _check_cli() -> bool:
-    """检查 claude CLI 是否可用 + 订阅登录态."""
+    """检查 claude CLI 是否可用 + 订阅登录态.
+
+    Codex review P2#3:
+    - 仅缓存"可用"的正向结果, 有 TTL (_POSITIVE_TTL_SEC)
+    - 不缓存"不可用"的负向结果, 下次再探, 防 transient timeout 永久标记 stale
+    """
     global _cli_check_cache
+    # 正向 cache 命中 + 未过期
     if _cli_check_cache is not None:
-        return _cli_check_cache
+        result, expiry = _cli_check_cache
+        if time.time() < expiry:
+            return result
     bin_path = shutil.which("claude")
     if not bin_path:
-        _cli_check_cache = False
-        return False
+        return False  # 不缓存负向
     try:
         r = subprocess.run(
             [bin_path, "auth", "status"],
             capture_output=True, text=True, timeout=5,
         )
         if r.returncode != 0:
-            _cli_check_cache = False
-            return False
+            return False  # 不缓存负向
         info = json.loads(r.stdout)
         ok = (
             bool(info.get("loggedIn"))
             and info.get("apiProvider") == "firstParty"
         )
-        _cli_check_cache = ok
-        return ok
+        if ok:
+            _cli_check_cache = (True, time.time() + _POSITIVE_TTL_SEC)
+            return True
+        return False  # 不缓存负向
     except (subprocess.TimeoutExpired, subprocess.SubprocessError,
             json.JSONDecodeError, OSError):
-        _cli_check_cache = False
-        return False
+        return False  # 不缓存负向
 
 
 def reset_cli_check_cache() -> None:
@@ -106,6 +124,25 @@ def is_available() -> bool:
     return _check_cli()
 
 
+def _pdeathsig_preexec() -> None:
+    """Linux 专属: 让 kernel 在父进程死时给子进程发 SIGTERM.
+
+    Codex review P1#2: start_new_session 把子进程从父的 session 分离,
+    parent SIGKILL 时子会变 orphan. prctl(PR_SET_PDEATHSIG, SIGTERM)
+    确保 kernel 主动杀子.
+    """
+    import sys
+    if sys.platform != "linux":
+        return
+    try:
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        # PR_SET_PDEATHSIG = 1, signal = 15 (SIGTERM)
+        libc.prctl(1, 15, 0, 0, 0)
+    except (OSError, AttributeError):
+        pass
+
+
 def _run_with_session_isolation(
     cmd: list, *, input_text: str, env: dict, cwd: str, timeout: int,
 ) -> subprocess.CompletedProcess:
@@ -113,6 +150,9 @@ def _run_with_session_isolation(
 
     父进程被信号杀时, 子进程不会成 orphan 继续吃 CPU. 超时主动 terminate ->
     kill 整个进程组.
+
+    Codex review P1#2: 加 preexec_fn 用 prctl PR_SET_PDEATHSIG, 让 Linux
+    kernel 在父被 SIGKILL 时也能杀子.
     """
     proc = subprocess.Popen(
         cmd,
@@ -122,7 +162,8 @@ def _run_with_session_isolation(
         text=True,
         cwd=cwd,
         env=env,
-        start_new_session=True,  # 关键: 子进程在新 session
+        start_new_session=True,
+        preexec_fn=_pdeathsig_preexec,
     )
     try:
         stdout, stderr = proc.communicate(input=input_text, timeout=timeout)
@@ -205,9 +246,13 @@ def call(
         if sys_tmp_path:
             cmd += ["--system-prompt-file", sys_tmp_path]
 
-        # 过滤 CLAUDE_* 全部变量
-        env = {k: v for k, v in os.environ.items()
-                if not k.startswith("CLAUDE_")}
+        # 过滤 CLAUDE_* / ANTHROPIC_* / OPENROUTER_* 等会让 Claude Code 走
+        # 付费 API 而非订阅 OAuth 的变量 (Codex review P1#1).
+        env = {
+            k: v for k, v in os.environ.items()
+            if not any(k.startswith(p) for p in _BLOCKED_ENV_PREFIXES)
+            and k not in _BLOCKED_ENV_EXACT
+        }
 
         t0 = time.time()
         try:

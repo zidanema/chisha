@@ -222,6 +222,99 @@ def test_call_filters_claude_prefix_env(monkeypatch):
         assert "PATH" in env
 
 
+def test_call_filters_llm_credential_env(monkeypatch):
+    """ANTHROPIC_API_KEY / OPENROUTER_API_KEY 不能传给 claude 子进程,
+    否则订阅路径会被劫持到付费 API (Codex review P1#1)."""
+    from chisha.llm_providers import claude_code_cli as cc
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-leak-anth")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-leak-or")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "should-also-strip")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    with _patch_cli_available(), \
+         patch("chisha.llm_providers.claude_code_cli.subprocess.Popen") as mp:
+        mp.return_value = _make_popen(returncode=0, stdout=_GOOD_OUT)
+        cc.call("p")
+        env = mp.call_args.kwargs["env"]
+        assert "ANTHROPIC_API_KEY" not in env
+        assert "OPENROUTER_API_KEY" not in env
+        assert "ANTHROPIC_AUTH_TOKEN" not in env
+        assert "PATH" in env
+
+
+def test_call_sets_pdeathsig_preexec(monkeypatch):
+    """preexec_fn 应设置 PR_SET_PDEATHSIG, 让 Linux 在父被 SIGKILL 时
+    自动杀子进程 (Codex review P1#2). 仅 Linux 生效, 其他平台不强求."""
+    import sys
+    if sys.platform != "linux":
+        pytest.skip("PR_SET_PDEATHSIG 仅 Linux")
+    from chisha.llm_providers import claude_code_cli as cc
+    with _patch_cli_available(), \
+         patch("chisha.llm_providers.claude_code_cli.subprocess.Popen") as mp:
+        mp.return_value = _make_popen(returncode=0, stdout=_GOOD_OUT)
+        cc.call("p", system="s")
+        preexec = mp.call_args.kwargs.get("preexec_fn")
+        assert preexec is not None, "应设 preexec_fn 用 prctl"
+
+
+# ====================== _check_cli TTL ======================
+
+
+def test_check_cli_does_not_cache_negative_result(monkeypatch):
+    """negative result 不缓存, 下次重试 (Codex review P2#3).
+
+    transient timeout 不应永久标记不可用.
+    """
+    from chisha.llm_providers import claude_code_cli as cc
+    monkeypatch.setattr("chisha.llm_providers.claude_code_cli.shutil.which",
+                         lambda _: "/bin/claude")
+    call_count = {"n": 0}
+
+    def _fake_run(*a, **kw):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise subprocess.TimeoutExpired("claude", 5)
+        return _make_proc(
+            returncode=0,
+            stdout=json.dumps({"loggedIn": True, "apiProvider": "firstParty"}),
+        )
+
+    monkeypatch.setattr(
+        "chisha.llm_providers.claude_code_cli.subprocess.run", _fake_run
+    )
+    assert cc.is_available() is False  # 第一次 timeout
+    assert cc.is_available() is True   # 第二次成功
+    assert call_count["n"] == 2, "negative result 不应缓存"
+
+
+def test_check_cli_positive_result_has_ttl(monkeypatch):
+    """positive 缓存有 TTL, 过期后重新查 (防 revoked token)."""
+    from chisha.llm_providers import claude_code_cli as cc
+    import time as _t
+    monkeypatch.setattr("chisha.llm_providers.claude_code_cli.shutil.which",
+                         lambda _: "/bin/claude")
+    monkeypatch.setattr(
+        "chisha.llm_providers.claude_code_cli._POSITIVE_TTL_SEC", 0.1
+    )
+    call_count = {"n": 0}
+
+    def _fake_run(*a, **kw):
+        call_count["n"] += 1
+        return _make_proc(
+            returncode=0,
+            stdout=json.dumps({"loggedIn": True, "apiProvider": "firstParty"}),
+        )
+
+    monkeypatch.setattr(
+        "chisha.llm_providers.claude_code_cli.subprocess.run", _fake_run
+    )
+    cc.is_available()
+    cc.is_available()
+    assert call_count["n"] == 1, "TTL 内复用 cache"
+    _t.sleep(0.15)
+    cc.is_available()
+    assert call_count["n"] == 2, "TTL 后重查"
+
+
 def test_call_uses_new_session_for_orphan_safety():
     """Popen start_new_session=True 防 orphan"""
     from chisha.llm_providers import claude_code_cli as cc
