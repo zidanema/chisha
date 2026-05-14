@@ -190,10 +190,14 @@ def call(
     *,
     system: Optional[str] = None,
     model: Optional[str] = None,
-    max_tokens: int = 4096,    # 兼容签名, CLI 不直接支持
-    temperature: float = 0.0,  # 同上
+    # ⚠️ max_tokens 在 CLI 路径不生效 (D-048 MAJOR 1, Codex review).
+    # claude -p 子进程没有 max_tokens 协议参数, 这个值只是 API 兼容签名占位.
+    # 防 inline CoT 失控的真实兜底是 timeout_sec (默认 180s), 超时后子进程
+    # SIGKILL, 上游 _run_llm_rerank 接住 subprocess.TimeoutExpired 走 fallback.
+    max_tokens: int = 4096,
+    temperature: float = 0.0,  # 同上, CLI 不接受
     cache_system: bool = False,  # 同上, CLI 自管 prompt cache
-    json_mode: bool = False,   # 兼容签名, CLI 不支持
+    json_mode: bool = False,   # 同上, CLI 不接受
     tools: Optional[list] = None,
     tool_choice: Optional[dict] = None,
     timeout_sec: int = _DEFAULT_TIMEOUT,
@@ -205,11 +209,12 @@ def call(
         prompt: user message (走 stdin)
         system: system prompt (走 --system-prompt-file 临时文件)
         model: 'sonnet' / 'opus' / 'claude-sonnet-4-6' 等
-        timeout_sec: 子进程超时 (默认 180s)
+        timeout_sec: 子进程超时 (默认 180s). **这是 CLI 路径唯一的输出长度兜底**,
+            max_tokens 在 CLI 不生效 (D-048 MAJOR 1).
         effort: extended thinking 强度, low/medium/high/xhigh/max
         tools / tool_choice: CLI 不支持原生 tool_use, 传入会抛
             NotImplementedError. 调用方应改走 anthropic / openrouter.
-        json_mode: CLI 不直接支持, 静默忽略.
+        max_tokens / temperature / cache_system / json_mode: CLI 不支持, 静默忽略.
 
     Returns:
         dict, 字段: type="text", content, stop_reason, usage, model, raw_text

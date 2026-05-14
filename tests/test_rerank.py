@@ -314,17 +314,15 @@ def test_llm_validate_is_explore_must_be_bool():
 # ─────────────────────── D-047 merge: provider routing + tool_use fallback
 
 
-def test_run_llm_rerank_falls_back_when_provider_raises_not_implemented(
+def test_run_llm_rerank_falls_back_when_provider_call_raises(
     top_30_combos, basic_profile_v2, monkeypatch,
 ):
-    """profile.llm.provider=claude_code_cli + rerank 调 tool_use 时 provider
-    抛 NotImplementedError, _run_llm_rerank 必须捕获并走 fallback,
-    不让异常冒到顶层 (D-047 merge MINOR 3, Codex review)."""
+    """provider.call 抛任何异常时 _run_llm_rerank 必须捕获并走 fallback,
+    不让异常冒到顶层 (D-047 merge MINOR 3 + D-049 CLI 分流后保留兜底)."""
     from unittest.mock import patch
 
     from chisha.rerank import _run_llm_rerank
 
-    # 清掉真 key 让 _resolve_provider 不会因为 ANTHROPIC_API_KEY 抢答
     for k in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "CHISHA_LLM_PROVIDER"):
         monkeypatch.delenv(k, raising=False)
 
@@ -333,7 +331,7 @@ def test_run_llm_rerank_falls_back_when_provider_raises_not_implemented(
     with patch("chisha.llm_providers.claude_code_cli.is_available",
                 return_value=True), \
          patch("chisha.llm_providers.claude_code_cli.call",
-                side_effect=NotImplementedError("cc-cli 不支持 tools")):
+                side_effect=RuntimeError("CLI 进程异常")):
         res = _run_llm_rerank(
             top_30_combos, profile, context=None,
             n=5, n_explore=2, n_max=5,
@@ -341,7 +339,295 @@ def test_run_llm_rerank_falls_back_when_provider_raises_not_implemented(
         )
 
     assert res["status"] == "fallback"
-    assert "NotImplementedError" in (res["fallback_reason"] or "")
+    assert "RuntimeError" in (res["fallback_reason"] or "")
+
+
+def test_run_llm_rerank_cli_provider_parses_json_text(
+    top_30_combos, basic_profile_v2, monkeypatch,
+):
+    """CLI provider 路径: rerank 不传 tools, 解析 LLM 输出的 JSON 对象
+    走 ok (D-049: CLI 不支持 tool_use, 走软约束 + JSON 解析)."""
+    import json
+    from unittest.mock import patch
+
+    from chisha.rerank import _run_llm_rerank
+
+    for k in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "CHISHA_LLM_PROVIDER"):
+        monkeypatch.delenv(k, raising=False)
+
+    profile = {**basic_profile_v2, "llm": {"provider": "claude_code_cli"}}
+
+    fake_obj = {"candidates": [
+        {"rank": 1, "is_explore": False, "combo_index": 0,
+         "fit_score": 0.85, "taste_match": 0.7,
+         "risk_flags": [], "one_line_reason": "命中清淡偏好"},
+        {"rank": 2, "is_explore": False, "combo_index": 5,
+         "fit_score": 0.8, "taste_match": 0.65,
+         "risk_flags": [], "one_line_reason": "蛋白足"},
+        {"rank": 3, "is_explore": False, "combo_index": 10,
+         "fit_score": 0.75, "taste_match": 0.6,
+         "risk_flags": [], "one_line_reason": "汤水合心情"},
+        {"rank": 4, "is_explore": True, "combo_index": 18,
+         "fit_score": 0.6, "taste_match": 0.5,
+         "risk_flags": [], "one_line_reason": "新菜系试一下"},
+        {"rank": 5, "is_explore": True, "combo_index": 22,
+         "fit_score": 0.55, "taste_match": 0.4,
+         "risk_flags": [], "one_line_reason": "近 3 天没出现"},
+    ]}
+    fake_resp = {
+        "type": "text",
+        "content": json.dumps(fake_obj, ensure_ascii=False),
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 100, "output_tokens": 200},
+        "model": "sonnet",
+        "raw_text": json.dumps(fake_obj, ensure_ascii=False),
+    }
+
+    captured_kwargs: dict = {}
+
+    def fake_call(prompt, **kwargs):
+        captured_kwargs.update(kwargs)
+        return fake_resp
+
+    with patch("chisha.llm_providers.claude_code_cli.is_available",
+                return_value=True), \
+         patch("chisha.llm_providers.claude_code_cli.call",
+                side_effect=fake_call):
+        res = _run_llm_rerank(
+            top_30_combos, profile, context=None,
+            n=5, n_explore=2, n_max=5,
+            profile_llm=profile["llm"],
+        )
+
+    # CLI 路径下 rerank 不应启用 tools/tool_choice (call_text 总转发 keyword,
+    # None 表示 rerank 没主动设)
+    assert captured_kwargs.get("tools") is None
+    assert captured_kwargs.get("tool_choice") is None
+    # system_prompt 应被 patch 成 CLI 版本 ("# 输出方式 (claude_code_cli")
+    assert "claude_code_cli" in captured_kwargs.get("system", "")
+    assert res["status"] == "ok", res
+    assert len(res["candidates"]) == 5
+
+
+def test_run_llm_rerank_cli_provider_fallback_on_garbage_text(
+    top_30_combos, basic_profile_v2, monkeypatch,
+):
+    """CLI provider 输出非 JSON 时, 走 fallback 且 reason 提示解析失败."""
+    from unittest.mock import patch
+
+    from chisha.rerank import _run_llm_rerank
+
+    for k in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "CHISHA_LLM_PROVIDER"):
+        monkeypatch.delenv(k, raising=False)
+
+    profile = {**basic_profile_v2, "llm": {"provider": "claude_code_cli"}}
+
+    fake_resp = {
+        "type": "text",
+        "content": "好的, 我来分析一下用户当前需要... (一大堆 CoT 后没出 JSON)",
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 100, "output_tokens": 50},
+        "model": "sonnet",
+        "raw_text": "好的, 我来分析一下用户当前需要... (一大堆 CoT 后没出 JSON)",
+    }
+
+    with patch("chisha.llm_providers.claude_code_cli.is_available",
+                return_value=True), \
+         patch("chisha.llm_providers.claude_code_cli.call",
+                return_value=fake_resp):
+        res = _run_llm_rerank(
+            top_30_combos, profile, context=None,
+            n=5, n_explore=2, n_max=5,
+            profile_llm=profile["llm"],
+        )
+
+    assert res["status"] == "fallback"
+    assert "无法解析" in (res["fallback_reason"] or "")
+
+
+def test_run_llm_rerank_hard_fails_on_bad_provider_name(
+    top_30_combos, basic_profile_v2, monkeypatch,
+):
+    """D-048 BLOCKER: profile.llm.provider=未知 → status='config_error',
+    不再静默 fallback 假装 L3 跑过 (Codex review)."""
+    from chisha.rerank import _run_llm_rerank
+
+    for k in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "CHISHA_LLM_PROVIDER"):
+        monkeypatch.delenv(k, raising=False)
+
+    profile = {**basic_profile_v2, "llm": {"provider": "foo_invalid"}}
+    res = _run_llm_rerank(
+        top_30_combos, profile, context=None,
+        n=5, n_explore=2, n_max=5,
+        profile_llm=profile["llm"],
+    )
+
+    assert res["status"] == "config_error"
+    assert res["config_error"] is True
+    assert res["resolved_provider"] is None
+    assert "未知 profile.llm.provider" in (res["fallback_reason"] or "")
+    assert res["candidates"] is None
+
+
+def test_run_llm_rerank_hard_fails_on_provider_unavailable(
+    top_30_combos, basic_profile_v2, monkeypatch,
+):
+    """D-048 BLOCKER: profile.llm.provider=anthropic 但缺 API key →
+    status='config_error', 不静默 fallback."""
+    from unittest.mock import patch
+
+    from chisha.rerank import _run_llm_rerank
+
+    for k in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "CHISHA_LLM_PROVIDER"):
+        monkeypatch.delenv(k, raising=False)
+
+    profile = {**basic_profile_v2, "llm": {"provider": "anthropic"}}
+
+    # 同时禁用 .env 里残留 key 的影响
+    with patch("chisha.llm_providers.anthropic_api.is_available",
+                return_value=False):
+        res = _run_llm_rerank(
+            top_30_combos, profile, context=None,
+            n=5, n_explore=2, n_max=5,
+            profile_llm=profile["llm"],
+        )
+
+    assert res["status"] == "config_error"
+    assert res["config_error"] is True
+    assert "不可用" in (res["fallback_reason"] or "")
+
+
+def test_patch_system_prompt_for_cli_raises_if_section_missing():
+    """D-048 MAJOR 3: prompt 改了 '# 输出方式' 标题 (比如改成 '## 输出方式')
+    时 _patch_system_prompt_for_cli 必须 ValueError, 不静默放过."""
+    import pytest
+
+    from chisha.rerank import _patch_system_prompt_for_cli
+
+    # 把 # 输出方式 改成 ## 输出方式, 模拟未来 prompt 改标题层级
+    broken_prompt = (
+        "# 重排原则\n\n规则1\n\n"
+        "## 输出方式\n\n通过 tool select_top_candidates 输出\n\n"
+        "# 边界\n\n现在等待 user 消息, 收到后立刻调 select_top_candidates 返回."
+    )
+    with pytest.raises(ValueError, match="找不到 '# 输出方式' 段"):
+        _patch_system_prompt_for_cli(broken_prompt)
+
+
+def test_patch_system_prompt_for_cli_raises_if_tail_instruction_missing():
+    """D-048 MAJOR 3: prompt 末尾文案改了也要 ValueError."""
+    import pytest
+
+    from chisha.rerank import _patch_system_prompt_for_cli
+
+    # 有 # 输出方式 段但没有末尾 "现在等待...select_top_candidates" 那句
+    no_tail = (
+        "# 输出方式\n\n通过 tool select_top_candidates 输出\n\n"
+        "# 边界\n\n候选不足时返回少于 n 条."
+    )
+    with pytest.raises(ValueError, match="找不到末尾"):
+        _patch_system_prompt_for_cli(no_tail)
+
+
+def test_patch_system_prompt_for_cli_succeeds_on_real_prompt():
+    """sanity: 当前 prompts/rerank_system.md 应被成功 patch."""
+    from chisha.rerank import SYSTEM_PROMPT_PATH, _patch_system_prompt_for_cli
+
+    raw = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+    patched = _patch_system_prompt_for_cli(raw)
+    # # 输出方式 段被替换 (原段说"通过 tool 强制结构化输出")
+    assert "D-047: 你不直接写 JSON" not in patched
+    # CLI 段落被注入
+    assert "claude_code_cli no-tool 路径" in patched
+    # 末尾指令被替换成 JSON 版本
+    assert "立刻输出 JSON 对象" in patched
+    # 原末尾的 "立刻调 select_top_candidates 返回" 已替换
+    assert "立刻调 select_top_candidates 返回" not in patched
+
+
+def test_parse_json_object_from_text_handles_fence_and_prefix():
+    """_parse_json_object_from_text 多 fallback 路径."""
+    from chisha.rerank import _parse_json_object_from_text
+
+    # 直接合法 JSON
+    assert _parse_json_object_from_text('{"candidates": []}') == {"candidates": []}
+    # ```json fence 包裹
+    fenced = '```json\n{"candidates": [{"rank": 1}]}\n```'
+    assert _parse_json_object_from_text(fenced) == {"candidates": [{"rank": 1}]}
+    # 前后有说明文字
+    noisy = '我来给你输出: {"candidates": [{"rank": 1}]} 完成.'
+    assert _parse_json_object_from_text(noisy) == {"candidates": [{"rank": 1}]}
+    # 完全无 JSON
+    assert _parse_json_object_from_text("纯文本没有 json") is None
+    assert _parse_json_object_from_text("") is None
+
+
+def test_parse_json_skips_unrelated_dict_before_candidates():
+    """D-048 MAJOR 2: CoT 中先出现无关 dict, 后才出 candidates dict —
+    必须跳过无关 dict, 取含 candidates 的那个."""
+    from chisha.rerank import _parse_json_object_from_text
+
+    text = (
+        '让我分析一下: {"meal_type": "lunch", "mood": "want_light"} 然后输出:\n'
+        '{"candidates": [{"rank": 1, "combo_index": 5}]}'
+    )
+    res = _parse_json_object_from_text(text)
+    assert res is not None
+    assert "candidates" in res
+    assert res["candidates"][0]["combo_index"] == 5
+
+
+def test_parse_json_handles_truncated_tail():
+    """D-048 MAJOR 2: LLM max_tokens 截断, 末尾 JSON 不完整 — 不能 crash,
+    要么返回 None 要么返回 fallback dict (调用方再用 'candidates' 字段判断)."""
+    from chisha.rerank import _parse_json_object_from_text
+
+    # 整体外层截断, 内嵌 dict 完整 → 可能返回内嵌 dict 作兜底, 但调用方
+    # 检查 'candidates' key 时会发现缺失走 fallback_reason
+    truncated = '{"candidates": [{"rank": 1, "combo_index": 5}, {"rank": 2,'
+    res = _parse_json_object_from_text(truncated)
+    # 不 crash 即可; 如果返回 dict 不能有 candidates (那才是 bug)
+    assert res is None or "candidates" not in res
+
+    # 完全损坏 (单个 `{` 后立刻乱码) → None
+    broken = '{"rank": 1, "garbage:'
+    assert _parse_json_object_from_text(broken) is None
+
+    # 前面有完整 dict 后面截断 → 前面那个 dict 作兜底
+    partial_ok = (
+        '让我先列出 mood: {"mood": "light"} 完整, 然后输出: '
+        '{"candidates": [{"rank": 1,'
+    )
+    res = _parse_json_object_from_text(partial_ok)
+    assert res == {"mood": "light"}
+
+
+def test_parse_json_picks_candidates_over_fallback_dict():
+    """D-048 MAJOR 2: 多个 JSON 对象时优先选含 'candidates' key 的, 而不是首个."""
+    from chisha.rerank import _parse_json_object_from_text
+
+    text = (
+        '{"foo": 1}\n'
+        '{"bar": 2}\n'
+        '{"candidates": [{"rank": 1}]}\n'
+    )
+    res = _parse_json_object_from_text(text)
+    assert res == {"candidates": [{"rank": 1}]}
+
+
+def test_parse_json_handles_explainer_after_fence():
+    """D-048 MAJOR 2: ```json fence``` 后面有 LLM 加的解释文字时, 仍优先 fence
+    内容."""
+    from chisha.rerank import _parse_json_object_from_text
+
+    text = (
+        '```json\n'
+        '{"candidates": [{"rank": 1, "combo_index": 10}]}\n'
+        '```\n\n'
+        '解释: rank 1 是 want_light 最优选项, ...'
+    )
+    res = _parse_json_object_from_text(text)
+    assert res == {"candidates": [{"rank": 1, "combo_index": 10}]}
 
 
 def test_run_llm_rerank_picks_per_provider_default_model(

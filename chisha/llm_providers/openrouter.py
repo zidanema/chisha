@@ -137,7 +137,10 @@ def _parse_response(resp, *, model: str) -> dict:
             "type": "tool_use",
             "tool_name": tc.function.name,
             "tool_input": tool_input,
-            "stop_reason": finish,  # OR 通常是 "tool_calls" 或 "stop"
+            # finish_reason 可能是 "tool_calls" (主流) 或 "stop" (某些路由
+            # 在 forced tool_choice 下返回, D-048 MAJOR 5). 真信号在 type +
+            # tool_name + tool_input, rerank.py 不再硬断言 stop string.
+            "stop_reason": finish,
             "usage": usage,
             "model": model,
             "raw_text": tc.function.arguments or "",

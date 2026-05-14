@@ -1688,3 +1688,41 @@ V1-V2 期间 profile.yaml 一直是 mock 数据 (goal=减脂增肌, 价格 35/50
 7. 显式选 provider 但凭据缺失要 RuntimeError 给清晰错误, 不能 silent fallback
 
 依赖: D-038 (LLM 抽象 Phase 1), D-047 Part A (call_text dict 接口)
+
+---
+
+## D-048 — L3 双路径收口: CLI no-tool 分流 + 配置错 hard-fail + trace 结构化
+
+**2026-05-14** · 架构决策 → 完整实施细节见 [IMPLEMENTATION_LOG.md#D-048](IMPLEMENTATION_LOG.md#d-048)
+
+**背景**: D-047 Part A (opus + tool_use forced schema) 与 Part B (Claude Code CLI provider) 同日 merge 后, 暴露出协同 gap — claude_code_cli provider 不支持 tool_use, 但 `rerank.py` 硬编码 `tools=[_RERANK_TOOL]`. 实际效果: auto 路由选 CLI 时, 每次 LLM 调用必抛 NotImplementedError → 静默走 L2 兜底, 用户以为在跑 L3 LLM 精排, 实际不是。
+
+**决策**: 在 rerank 层做 provider 分流, 维持双路径架构 (而非统一 schema):
+- **主路径** (anthropic / openrouter): 保留 D-047 Part A 的 tool_use forced schema, 17/18 成功率, 适合分发
+- **自用降级** (claude_code_cli): 走 prompt 软约束 + JSON 解析, 复用 Max 订阅免费额度. 质量上限低于主路径, 仅推荐自用调试
+
+切换方式: 改 `profile.yaml llm.provider` 或设 `CHISHA_LLM_PROVIDER` env. auto 模式按 `ANTHROPIC > CLI 订阅 > OR` 优先级自动选。
+
+**Codex review 三项强约束** (BLOCKER + MAJOR 3 + MINOR 1):
+1. **配置错误 hard-fail, 不静默**: `_resolve_provider` 抛 ValueError/RuntimeError 时, `_run_llm_rerank` 不再被外层 `except Exception` 吞成普通 fallback, 而是返回 `status="config_error"` + `config_error=True` + 清晰错误信息. trace UI 必须区分"L3 真跑通"vs"L3 调用失败 fallback"vs"配置错根本没跑"。
+2. **prompt patch 未命中显式报错**: `_patch_system_prompt_for_cli` 找不到 `# 输出方式` 段时 ValueError, 防未来 prompt 改标题层级后 CLI 静默用 tool_use 失效。
+3. **trace 结构化**: 加 `resolved_provider` / `config_error` / `status` 字段, debug 台能直观看出 L3 实际状态。
+
+**Codex review 次要改动** (MAJOR 1/2/5 + MINOR 2):
+- CLI 的 `max_tokens` 是假保护 (子进程没 cap), 真兜底是 `timeout_sec=180`. 注释 + 文档同步说明
+- JSON parser 第三层 fallback 改用 `json.JSONDecoder().raw_decode` 从每个 `{` 起点扫描, 取首个含 `candidates` 的 dict (旧的"首 { 到末 }"在 CoT 含无关 `{}` 时会拼入垃圾失败)
+- OR 路径断言改成 `type=="tool_use" + tool_name` 强约束, `stop_reason` 仅 debug 提示 (OR 某些路由对合法 tool_call 也可能返回 finish_reason="stop")
+- 加 4 个 parser 边界测试: 无关 dict 在前 / 截断 JSON / 多 dict 选 candidates / fence 后附 explainer
+
+**实测三态**:
+| 场景 | status | provider | latency | cost | candidates |
+|---|---|---|---|---|---|
+| CLI (auto + Max 订阅) | ok | claude_code_cli | 43s | $0.091 (首次 cache write) | 5/5 |
+| OR + tool_use | ok | openrouter | 28s | $0.059 | 5/5 |
+| `CHISHA_LLM_PROVIDER=foo_invalid` | **config_error** | None (latency=None) | — | — | 0 + 规则 fallback 保管道不断 |
+
+**未做 / 推后**:
+- profile.yaml `model.claude_code_cli=sonnet` 与 D-047 Part A 决策 (主路径 opus) 表面冲突, 已加注释说明这是 CLI 走订阅时的有意配置 (sonnet effort=low 性价比更好), 不动决策
+- CLI 路径下 `# 不要做的事` 段仍含 "select_top_candidates" 字样 (patch 函数只替换主指令段), 实测 LLM 输出未受影响, 不修
+
+依赖: D-047 Part A (tool_use schema), D-047 Part B (LLM Provider 抽象)

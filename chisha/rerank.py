@@ -92,6 +92,148 @@ _RERANK_TOOL = {
 }
 _RERANK_TOOL_CHOICE = {"type": "tool", "name": "select_top_candidates"}
 
+
+# claude_code_cli provider 不支持 tool_use 强制 schema, 走"软约束 + JSON 解析"
+# 路径. 质量上限低于 tool_use (D-047 Part A 18-case 实测: tool_use 94% vs
+# json_mode 67%), 仅自用阶段用 Max 订阅复用额度调试. 不要作为默认主路径.
+_CLI_OUTPUT_SECTION = """# 输出方式 (claude_code_cli no-tool 路径)
+
+直接输出一个 JSON 对象, 形如:
+
+{"candidates": [
+  {"rank": 1, "is_explore": false, "combo_index": 12,
+   "fit_score": 0.85, "taste_match": 0.7,
+   "risk_flags": ["油偏高"], "one_line_reason": "..."},
+  ...
+]}
+
+字段约束:
+- rank: 1..n 连续整数
+- is_explore: bool. 前 (n - n_explore) 个 false (exploit), 后 n_explore 个 true (explore). refine 模式 n_explore=0 时全部 false.
+- combo_index: 必须是输入 [idx] 段里出现过的整数, 不能凭空生成, 不能超出输入候选数, 不能重复.
+- fit_score: 0.0-1.0, 综合匹配度
+- taste_match: 0.0-1.0, 与 taste_description 命中度
+- risk_flags: 短词字符串数组, 无风险给 []
+- one_line_reason: ≤ 30 字, 必须具体 + 对比 + 不堆形容词.
+
+严格要求:
+- 输出仅 JSON 对象本体, 以 { 开头 } 结尾
+- 不要 markdown 代码块包裹 (不要 ```json ... ```)
+- 不要前后说明文字
+- 不要任何思考过程, 直接给结果
+"""
+
+_CLI_TAIL_INSTRUCTION = "现在等待 user 消息, 收到后立刻输出 JSON 对象 (无包裹)."
+
+
+def _patch_system_prompt_for_cli(system_prompt: str) -> str:
+    """把 system_prompt 里的 '# 输出方式' 段替换成 CLI no-tool 版本,
+    并把末尾"调 select_top_candidates"一句改成"输出 JSON 对象".
+
+    D-048 (Codex MAJOR 3): 未命中目标段时显式 ValueError, 不静默放过.
+    防止未来 prompt 改标题 (比如 "## 输出方式" 或 "# 输出协议") 后 CLI
+    收到 tool_use 指令但 claude_code_cli provider 不支持, 链路只能整体 fallback
+    而错误根因被埋没.
+    """
+    lines = system_prompt.splitlines()
+    out: list[str] = []
+    matched_section = False
+    matched_tail = False
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("# 输出方式"):
+            matched_section = True
+            # 跳过整个 "# 输出方式" 段, 直到下一个 "# " 开头 (不是 "## ")
+            j = i + 1
+            while j < len(lines):
+                nxt = lines[j]
+                if nxt.startswith("# ") and not nxt.startswith("## "):
+                    break
+                j += 1
+            out.append(_CLI_OUTPUT_SECTION.rstrip())
+            out.append("")
+            i = j
+            continue
+        # 末尾那句固定文案替换
+        if "select_top_candidates" in line and "现在等待" in line:
+            matched_tail = True
+            out.append(_CLI_TAIL_INSTRUCTION)
+            i += 1
+            continue
+        out.append(line)
+        i += 1
+
+    if not matched_section:
+        raise ValueError(
+            "prompts/rerank_system.md 找不到 '# 输出方式' 段, _patch_system_prompt_for_cli "
+            "无法把 tool_use 指令替换成 CLI 的 JSON 输出指令. 检查 prompt 是否改了标题 "
+            "(应为 '# 输出方式' 顶级标题), 或同步更新 rerank.py 里的 patch 逻辑."
+        )
+    if not matched_tail:
+        raise ValueError(
+            "prompts/rerank_system.md 找不到末尾的 '...select_top_candidates...现在等待...' "
+            "指令, 同步检查 prompt 末尾文案和 _patch_system_prompt_for_cli 的匹配条件."
+        )
+    return "\n".join(out)
+
+
+def _parse_json_object_from_text(raw: str) -> dict | None:
+    """从 LLM 输出文本里解析出 {"candidates": [...]} 对象.
+
+    D-048 MAJOR 2 (Codex review): 第三层 fallback 改用 json.JSONDecoder.raw_decode
+    从每个 `{` 起点扫描, 取第一个可解析且含 'candidates' 的 dict. 旧的"首 {
+    到末 }"在 CoT 包含无关 `{}` 时会拼入垃圾导致整个解析失败.
+
+    多 fallback (按优先级):
+    1. json.loads(raw)        — LLM 完美遵守 prompt 时命中
+    2. ```json fence``` 包裹   — sonnet 偶尔加 markdown 包裹
+    3. raw_decode 扫所有 `{`   — CoT 前缀或后缀有杂物时
+    """
+    import json
+    import re
+
+    if not raw or not raw.strip():
+        return None
+    text = raw.strip()
+
+    # 1. 直接解析
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
+
+    # 2. ```json ... ``` 或 ``` ... ``` 包裹
+    fence = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
+    if fence:
+        try:
+            obj = json.loads(fence.group(1).strip())
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+
+    # 3. raw_decode 扫描所有 `{` 起点, 取第一个含 'candidates' 的合法 JSON dict.
+    #    优先 candidates dict, 避免吃到 CoT 里的无关 `{...}` 片段.
+    decoder = json.JSONDecoder()
+    fallback_obj: dict | None = None  # 万一没有 candidates dict, 第一个合法 dict 作兜底
+    for m in re.finditer(r"\{", text):
+        try:
+            obj, _end = decoder.raw_decode(text, m.start())
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        if "candidates" in obj:
+            return obj
+        if fallback_obj is None:
+            fallback_obj = obj
+
+    return fallback_obj
+
+
 # D-047 默认走 opus (V3+V4 实测质量略胜 sonnet 65% 成本溢价但更尊重 taste).
 # 故障时调用方传 model="anthropic/claude-sonnet-4.6" 降级 (绝不加 thinking,
 # Anthropic 官方明确 forced tool_choice + extended thinking 不兼容).
@@ -100,6 +242,11 @@ _RERANK_TOOL_CHOICE = {"type": "tool", "name": "select_top_candidates"}
 # - anthropic 直连: claude-opus-4-7 (短名, '-')
 # - openrouter: anthropic/claude-opus-4.7 (前缀+'.')
 # - claude_code_cli: opus (CLI 短别名)
+#
+# ⚠️ D-048 (Codex MAJOR 4): 这里是 *无 profile override 时的兜底默认*.
+# profile.yaml `llm.model.<provider>` 一旦设了, _run_llm_rerank 会让 call_text
+# 走 profile 配置 (而不是这里的默认). 当前 profile.yaml 三个 provider 都
+# 显式配 sonnet, 实际生效不是这里写的 opus. 见 docs/DECISIONS.md D-048.
 _RERANK_MODEL_BY_PROVIDER = {
     "anthropic": "claude-opus-4-7",
     "openrouter": "anthropic/claude-opus-4.7",
@@ -673,12 +820,28 @@ def _run_llm_rerank(
     import time
     # D-047 merge 修复: 按 resolved provider 选默认 rerank model, 保留
     # profile.llm.model.<provider> 覆盖能力. 见 docs/DECISIONS.md D-047 Part B.
-    from chisha.llm_client import _resolve_provider, call_text
+    from chisha.llm_client import _resolve_model, _resolve_provider, call_text
+
+    # D-048 BLOCKER (Codex): provider 配置错误 (CHISHA_LLM_PROVIDER=foo /
+    # profile.llm.provider=anthropic 但缺 key) 必须 hard-fail, 不能被下方
+    # except Exception 吞成静默 L2 fallback. 调用方应当看到 status=="config_error"
+    # 并向用户报清楚原因, 而不是收到伪装的 fallback 结果.
     try:
-        resolved_provider = _resolve_provider(profile_llm)
-    except (RuntimeError, ValueError):
-        # 无可用 provider — 让下方 try/except 接住 call_text 报错统一走 fallback
-        resolved_provider = None
+        resolved_provider: str | None = _resolve_provider(profile_llm)
+    except (RuntimeError, ValueError) as e:
+        return {
+            "status": "config_error",
+            "config_error": True,
+            "resolved_provider": None,
+            "fallback_reason": f"LLM provider 配置错误: {type(e).__name__}: {str(e)[:200]}",
+            "candidates": None,
+            "llm_response": None,
+            "system_prompt_chars": 0,
+            "user_message_chars": 0,
+            "user_message_full": "",
+            "model": None,
+            "latency_ms": None,
+        }
 
     if model:
         # 显式 model 入参最高优先级
@@ -690,30 +853,40 @@ def _run_llm_rerank(
     ):
         # profile.llm.model.<provider> 显式配置时, 透传 None 让 call_text 用 profile
         final_model = None
-    elif resolved_provider:
+    else:
         final_model = _RERANK_MODEL_BY_PROVIDER.get(
             resolved_provider, _DEFAULT_RERANK_MODEL
         )
-    else:
-        final_model = _DEFAULT_RERANK_MODEL
+
+    # trace.model 显示真实生效 model (D-048: 不再用 _RERANK_MODEL_BY_PROVIDER
+    # 默认值兜底, 那会让 profile 配 sonnet 但 trace 显示 opus). 调用前先算
+    # expected_trace_model, 调用后用 llm_response.model 覆盖为 provider 实际报告值.
+    expected_trace_model = _resolve_model(resolved_provider, final_model,
+                                          profile_llm) or _RERANK_MODEL_BY_PROVIDER.get(
+        resolved_provider, _DEFAULT_RERANK_MODEL
+    )
 
     out: dict[str, Any] = {
         "status": "fallback",
+        "config_error": False,
+        "resolved_provider": resolved_provider,
         "fallback_reason": None,
         "candidates": None,
         "llm_response": None,
         "system_prompt_chars": 0,
         "user_message_chars": 0,
         "user_message_full": "",
-        # trace 里记 final_model (None 表示 "走 profile/provider 默认"),
-        # 实际值在 llm_response.model 里; 兜底显示推测的 rerank default.
-        "model": final_model or _RERANK_MODEL_BY_PROVIDER.get(
-            resolved_provider or "", _DEFAULT_RERANK_MODEL
-        ),
+        "model": expected_trace_model,
         "latency_ms": None,
     }
+    is_cli = (resolved_provider == "claude_code_cli")
     try:
-        system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        system_prompt_raw = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        if is_cli:
+            # CLI 路径不走 tool_use, 把 "# 输出方式" 段替换成"直接输出 JSON"
+            system_prompt = _patch_system_prompt_for_cli(system_prompt_raw)
+        else:
+            system_prompt = system_prompt_raw
         user_msg = build_user_message(top_combos, profile, context,
                                        n=n, n_explore=n_explore)
         out["system_prompt_chars"] = len(system_prompt)
@@ -721,42 +894,73 @@ def _run_llm_rerank(
         out["user_message_full"] = user_msg
         kwargs: dict[str, Any] = {
             "model": final_model,
-            "max_tokens": 2048,
+            # D-048 MAJOR 1 (Codex): CLI 路径 max_tokens 是 *假保护* — claude_code_cli
+            # 不实际 cap CLI 子进程输出长度, 这里写 4096 只是占位/兼容签名. 真正
+            # 兜底是 claude_code_cli.py:_DEFAULT_TIMEOUT (默认 180s) 超时. sonnet
+            # inline CoT 失控时不会卡 max_tokens, 而是直到超时. timeout 触发后
+            # _run_llm_rerank 的 except 会捕获 subprocess.TimeoutExpired,
+            # fallback_reason 会标 TimeoutExpired:... 调用方可据此区分.
+            "max_tokens": 4096 if is_cli else 2048,
             "temperature": 0.0,
             "system": system_prompt,
             "cache_system": True,
-            "tools": [_RERANK_TOOL],
-            "tool_choice": _RERANK_TOOL_CHOICE,
             "profile_llm": profile_llm,  # D-047: provider 路由
         }
+        if not is_cli:
+            kwargs["tools"] = [_RERANK_TOOL]
+            kwargs["tool_choice"] = _RERANK_TOOL_CHOICE
         t0 = time.time()
         resp = call_text(user_msg, **kwargs)
         out["latency_ms"] = int((time.time() - t0) * 1000)
         out["llm_response"] = resp
+        # D-048: trace.model 用 provider 真实报告值覆盖 (expected_trace_model
+        # 只是预测, llm_response.model 是 provider/CLI 真返回的, 更可信).
+        if isinstance(resp, dict) and resp.get("model"):
+            out["model"] = resp["model"]
 
-        # B2: 强制断言 stop_reason 是 tool_use, 否则 LLM 没调 tool, 走 fallback.
-        # Anthropic 直连 stop_reason 是 "tool_use", OR 是 "tool_calls".
-        stop = resp.get("stop_reason")
-        if resp.get("type") != "tool_use" or stop not in ("tool_use", "tool_calls"):
-            out["fallback_reason"] = (
-                f"LLM 未调 tool (type={resp.get('type')}, stop={stop})"
-            )
-            return out
+        if is_cli:
+            # CLI 路径: 解析 text 输出为 JSON 对象, 取 candidates 字段
+            raw_text = resp.get("content") or resp.get("raw_text") or ""
+            obj = _parse_json_object_from_text(raw_text)
+            if obj is None:
+                out["fallback_reason"] = (
+                    f"CLI 输出无法解析为 JSON 对象 (前 120 字: {raw_text[:120]!r})"
+                )
+                return out
+            cands = obj.get("candidates")
+            if not isinstance(cands, list):
+                out["fallback_reason"] = (
+                    f"JSON 对象缺 candidates 数组: keys={list(obj.keys())}"
+                )
+                return out
+        else:
+            # D-048 MAJOR 5 (Codex): 强约束以 type=="tool_use" + tool_name 为准,
+            # stop_reason 不作硬断言 (OR 在某些路由上对合法 tool_call 会返回
+            # finish_reason="stop" 而非 "tool_calls"; Anthropic 直连一般是
+            # "tool_use", OR OpenAI-compat 路径一般是 "tool_calls" 但非保证).
+            # 真信号在结构化字段 type / tool_name / tool_input, 不在 stop string.
+            if resp.get("type") != "tool_use":
+                out["fallback_reason"] = (
+                    f"LLM 未调 tool (type={resp.get('type')}, "
+                    f"stop={resp.get('stop_reason')})"
+                )
+                return out
 
-        if resp.get("tool_name") != _RERANK_TOOL["name"]:
-            out["fallback_reason"] = (
-                f"LLM 调了错的 tool: {resp.get('tool_name')!r}"
-            )
-            return out
+            if resp.get("tool_name") != _RERANK_TOOL["name"]:
+                out["fallback_reason"] = (
+                    f"LLM 调了错的 tool: {resp.get('tool_name')!r}"
+                )
+                return out
 
-        tool_input = resp.get("tool_input")
-        if not isinstance(tool_input, dict):
-            out["fallback_reason"] = (
-                f"tool_input 非 dict: {type(tool_input).__name__}"
-            )
-            return out
+            tool_input = resp.get("tool_input")
+            if not isinstance(tool_input, dict):
+                out["fallback_reason"] = (
+                    f"tool_input 非 dict: {type(tool_input).__name__}"
+                )
+                return out
 
-        cands = tool_input.get("candidates")
+            cands = tool_input.get("candidates")
+
         validated, detail = _validate_llm_candidates_v(
             cands, n_max=n_max,
             input_size=len(top_combos),
@@ -788,6 +992,12 @@ def _llm_rerank(top_combos: list[dict], profile: dict,
         n=n, n_explore=n_explore, n_max=n_max, model=model,
         profile_llm=profile.get("llm"),
     )
+    if res["status"] == "config_error":
+        # D-048 BLOCKER: provider 配置错误显式 ERROR 级日志, 不当普通 fallback.
+        # prod 路径仍 return None 让链路继续 (规则 fallback 保证管道不断),
+        # 但 stderr 清晰标记区别于 transient 调用失败.
+        print(f"  [rerank CONFIG ERROR] {res['fallback_reason']}", flush=True)
+        return None
     if res["status"] != "ok":
         print(f"  [rerank fallback] {res['fallback_reason']}")
         return None

@@ -423,11 +423,16 @@ def _llm_rerank_traced(
     # 兼容旧字段命名: raw_response / parsed_candidates / used / fallback_reason
     raw_text = (llm_resp.get("raw_text") or "") if isinstance(llm_resp, dict) else ""
     return {
+        # D-048: status 三态 — "ok" (L3 真跑通) / "fallback" (LLM 调了但出问题)
+        # / "config_error" (provider 路由配置错根本没跑). UI 应分开标记.
+        "status": res.get("status"),
+        "config_error": res.get("config_error", False),
+        "resolved_provider": res.get("resolved_provider"),
         "used": res["status"] == "ok" or llm_resp != {},
         "model": res.get("model"),
         "system_prompt_chars": res["system_prompt_chars"],
         "user_message_chars": res["user_message_chars"],
-        "user_message_preview": res["user_message_full"][:2000],
+        "user_message_preview": (res["user_message_full"] or "")[:2000],
         "user_message_full": res["user_message_full"],  # D-047 实验用, 后续可去
         "raw_response": raw_text,
         "raw_response_chars": len(raw_text),
