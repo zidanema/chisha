@@ -24,6 +24,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "requires_claude_cli: tests that need claude CLI + Max subscription (opt-in, skipped in CI)",
+]
 
 [build-system]
 requires = ["hatchling"]
