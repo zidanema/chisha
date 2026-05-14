@@ -330,14 +330,30 @@ def _fmt_combo_block(idx: int, c: dict) -> str:
     return "\n".join(lines)
 
 
+def _fmt_list_or_none(xs) -> str:
+    """空 → '(无)', 否则空格分隔 (跟 system prompt '(无)/(空)' 风格统一,
+    不输出 Python repr '[]')."""
+    if not xs:
+        return "(无)"
+    return " ".join(str(x) for x in xs)
+
+
+def _fmt_counts_or_none(d) -> str:
+    """空 → '(空)', 否则 'key×N key×N' 紧凑形式 (替代 Python dict repr,
+    更可读且 token 略省)."""
+    if not d:
+        return "(空)"
+    return " ".join(f"{k}×{v}" for k, v in list(d.items())[:8])
+
+
 def _profile_block(profile: dict) -> str:
     prefs = profile.get("preferences", {}) or {}
     lines = [
         "[PROFILE]",
         f"口味描述: {profile.get('taste_description','') or '(空)'}",
-        f"喜欢: {prefs.get('liked_cuisines') or []}",
-        f"不喜欢: {prefs.get('disliked_cuisines') or []}",
-        f"avoid: {prefs.get('avoid_dishes') or []}",
+        f"喜欢: {_fmt_list_or_none(prefs.get('liked_cuisines'))}",
+        f"不喜欢: {_fmt_list_or_none(prefs.get('disliked_cuisines'))}",
+        f"avoid: {_fmt_list_or_none(prefs.get('avoid_dishes'))}",
         f"辣度耐受: {prefs.get('spicy_tolerance', 2)}",
     ]
     return "\n".join(lines)
@@ -366,8 +382,8 @@ def _context_block(context: "ContextSnapshot | None") -> str:
         f"饭期: {cd.get('meal_type')}",
         f"心情: {cd.get('daily_mood') or '(无)'}",
         f"上顿: {last_meal_brief}",
-        f"最近 3 天 cuisine: {dict(list(recent.items())[:8]) if recent else '(空)'}",
-        f"最近 3 天 cooking: {dict(list(methods_3d.items())[:8]) if methods_3d else '(空)'}",
+        f"最近 3 天 cuisine: {_fmt_counts_or_none(recent)}",
+        f"最近 3 天 cooking: {_fmt_counts_or_none(methods_3d)}",
         f"上次反馈 chips: {chips or '(无)'}",
         f"refine 输入: {cd.get('refine_input') or '(无)'}",
     ]

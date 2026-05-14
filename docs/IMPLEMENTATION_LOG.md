@@ -29,6 +29,7 @@
 | [D-046.1](#d-0461-l3-精排-max_tokens--json_mode-临时修-废弃) | L3 临时修(废弃) | — |
 | [D-047](#d-047-l3-精排重构--tool_use-forced-schema--opus-默认--top60--cache_control) | L3 tool_use forced schema + opus | — |
 | [D-048](#d-048--l3-双路径收口-cli-no-tool-分流--配置错-hard-fail--trace-结构化) | L3 双路径 (CLI + API/OR) + config_error | — |
+| [D-048.1](#d-0481--l3-精排-prompt-清理-工程注释移除--few-shot-修冲突--user-message-字段渲染统一) | L3 prompt 可读性清理 + few-shot 修硬约束冲突 | — |
 
 ---
 
@@ -644,3 +645,115 @@ else:
 9. **AI 自己 review 的盲点**: D-047 Part A merge 完, 自己跑过测试 (含那个 NotImplementedError fallback 测试) 还自我感觉良好. 直到 Codex 独立读才看出"配置错被吞 = silent fallback 反模式". 教训: 凡是有"系统看似正常但实际跑错"风险的改动, 必须 Codex / 独立第三方 review, 不能只靠自检.
 
 依赖: D-038 (LLM 抽象 Phase 1), D-047 Part A (tool_use schema), D-047 Part B (LLM Provider 抽象)
+
+---
+
+## D-048.1 — L3 精排 prompt 清理: 工程注释移除 + few-shot 修冲突 + user message 字段渲染统一
+
+**2026-05-14** · 工程实施 (D-048 后续 prompt-only 清理, 无 schema/链路改动)
+
+### 触发
+
+用户作为「人」读 `prompts/rerank_system.md` 时主观感觉"工程注释泄漏、目标埋得深、中英文穿插", 提出和 Codex 作为「大模型 / agent 开发专家」一起 review。
+
+### 联合 review (Claude + Codex 各自独立读)
+
+发起命令: `Skill(codex:rescue)` → `Agent(codex:codex-rescue)`. Codex 用 `gpt-5.3-codex` 独立读 `prompts/rerank_system.md` + `rerank.py:build_user_message` + 相关 helper. 输出 ≤600 字的 A/B/C/D 报告。
+
+#### 共识发现 (Claude + Codex 都识别)
+
+| # | 问题 | 影响 |
+|---|---|---|
+| 1 | 工程元注释泄漏: `D-046, D-047 改 tool_use 强制 schema` / `稳态部分 — 进 Anthropic prompt cache` / `L1 召回 + L2 打分（含品牌/餐厅/菜系/形态四层去重 cap）` / `系统会再做一次品牌去重兜底` / `你算了也会被覆盖` 共 6 处, 整段进 cache 喂给 LLM | 占 KV cache, 注意力分配错; "兜底"语气还会鼓励 LLM 放松约束 |
+| 2 | 目标被格式说明淹没 (任务陈述在第 4 行, 但格式速查+读法占到第 39 行才到排序原则) | LLM 注意力被前置的字段表稀释 |
+| 3 | 工程性硬约束 (explore-last / combo_index 不重复) 必须留 system, schema 只管类型不够 | 保留 |
+
+#### Codex 独有发现 (Claude 漏的, 高价值)
+
+| # | 问题 | 影响 |
+|---|---|---|
+| A | few-shot 与硬约束直接冲突: `蒸贝贝南瓜｜纯素·蒸·油1·甜1` 显式写 `甜1`, 但 `_fmt_dish_line:297` 是 `sweet >= 2` 才显示, **代码实际不会产出 `甜1`** → 教 LLM 错误的格式直觉 | LLM 可能基于示例反推"原来 0-1 也会出现", 误判输入 |
+| B | `麻婆豆腐｜豆制品·炒·油3·辣4·甜2·processed｜role=主菜｜18` 示例同时有 `processed` + `role=主菜`, **直接违反第 53 行硬约束"主菜带 processed 丢弃"** → few-shot 在教违规组合 | LLM 学到"main 菜带 processed 是合法格式", 可能不丢弃 |
+| C | 段标签错配: prompt 写 `[PROFILE+CONTEXT]` 是合并段, 但 `_profile_block` / `_context_block` 实际拼成独立的 `[PROFILE]` 和 `[CONTEXT]` 两段 | LLM 找字段时按错的 section 名查 |
+
+#### Claude 独有发现
+
+| # | 问题 | 影响 |
+|---|---|---|
+| D | 读法示例价格精度 `¥18` vs 代码实际 `f"{price:.1f}"` 输出 `18.0` | 小, 但示例对齐代码行为更可信 |
+| E | `_profile_block` 空集合渲染成 Python `repr`: `喜欢: []` / `avoid: []` 像代码残留 | 跟 system prompt `(无)/(空)/未写即 false` 系列风格不一致 |
+| F | `_context_block` 最近 3 天 cuisine 渲染成 Python dict repr `{'川菜': 3, '日料': 1}` (单引号风) | LLM 能解析, 但 `川菜×3 日料×1` 更紧凑、更符合中文 prompt 风格 |
+
+#### 不动 (评估过但 churn > 收益)
+
+- `int(dist_m)/1000` 在 `_fmt_combo_block:326` 是真 bug (2150m 显示 2.0km 而非 2.1km), 但属数值精度而非 prompt 优化, 应单独修
+- `?` 缺失占位 / `心情` vs `daily_mood` 中英映射: LLM 上下文足够推断, 改了 churn 不划算
+
+### 修改
+
+#### system prompt (`prompts/rerank_system.md`)
+
+- **顶部 HTML 注释**只保留 CLI patch 锚点警告 (`# 输出方式` 标题 + 文末 `select_top_candidates + 现在等待` 行是 `_patch_system_prompt_for_cli` 的锚点), 其它工程元信息全删
+- 任务陈述前置到第 1 行
+- 删 "L1 召回 + L2 打分" / "系统会兜底" / "你算了也会被覆盖" / D-046, D-047 编号
+- 字段说明从散文 + bullet 改成表格
+- few-shot 修冲突:
+  - `蒸贝贝南瓜｜...·甜1` → `蒸贝贝南瓜｜纯素·蒸·油1` (跟 sweet >= 2 才显示的代码一致)
+  - `麻婆豆腐｜...processed｜role=主菜` → `腊肠｜红肉·炒·油3·processed｜8.0` (配菜默认省略, 不踩硬约束)
+- 价格示例 `¥18` → `¥18.0` 对齐 `:.1f`
+- 结构重排: 任务 → 硬约束 → 重排原则 → 输入速查 → 输出协议 → reason 示范 → 边界
+- 长度: 6538 → 5784 字符 (-12%)。重点不是压 token, 是注意力 focus
+
+#### user message helper (`rerank.py`)
+
+新增两个小 helper, 统一 fallback 风格:
+
+```python
+def _fmt_list_or_none(xs) -> str:
+    """空 → '(无)', 否则空格分隔. 替代 Python '[]' repr."""
+
+def _fmt_counts_or_none(d) -> str:
+    """空 → '(空)', 否则 'key×N key×N'. 替代 Python dict repr."""
+```
+
+`_profile_block` / `_context_block` 用上后, user message 输出变化示例:
+
+```
+# 改前
+喜欢: ['粤菜', '潮汕']
+不喜欢: []
+最近 3 天 cuisine: {'川菜': 3, '日料': 1}
+
+# 改后
+喜欢: 粤菜 潮汕
+不喜欢: (无)
+最近 3 天 cuisine: 川菜×3 日料×1
+```
+
+#### sample (`prompts/rerank_user.md`)
+
+跟代码实际输出对齐:
+- `[PROFILE]` / `[CONTEXT]` 用实际数据示例而非 `{占位符}`, 方便人对照
+- `黑米饭｜主食·煮·油1·grain=糙米杂粮` 修成 `黑米饭｜主食·煮·油1｜role=主食·grain=糙米杂粮` (代码 seg2 含 role+grain, 不是 seg1)
+
+### 测试
+
+- 45 个 rerank 单测全过 (含 3 个 patch 锚点测试 + 1 个 sanity test 验证当前 prompt 能被 CLI patch)
+- 全量 382 passed / 1 failed (`test_cleanup_expired` 是 pre-existing session TTL 日期边界问题, 跟 prompt 无关)
+
+### 关键文件改动
+
+5 个文件:
+- `prompts/rerank_system.md`: 整体重写, 工程注释隔离到顶部 HTML 注释, 结构重排, few-shot 修冲突
+- `prompts/rerank_user.md`: sample 用实际数据替代占位符, 字段格式对齐代码
+- `chisha/rerank.py`: 加 `_fmt_list_or_none` / `_fmt_counts_or_none` 两个 helper, 替换 `_profile_block` / `_context_block` 里的 Python repr
+- `docs/IMPLEMENTATION_LOG.md`: 本段
+
+### 教训 (跨场景适用)
+
+10. **prompt 文件里的 `# 注释` 不是注释**: markdown 文件没有真正的"不进 LLM 视野"机制. `# 标题` 是给 LLM 看的, `<!-- HTML -->` 虽然 LLM 看得见但会被理解为 dev note 而忽略。给开发者的工程元信息要么写到代码侧 docstring, 要么显式 HTML 注释明确"dev note", 不能写成 `# xxx` 当成自己看不到。
+11. **few-shot 必须自洽**: few-shot 是 LLM 学得最快的部分, 如果示例和硬约束冲突, LLM 会优先信示例而非规则。每次改硬约束后必须扫一遍 few-shot 看有没有反例, 反之亦然。
+12. **跨 AI review 比单 AI 自检高一个数量级**: D-048 已经验证过一次"Codex 抓到 Claude 漏的 BLOCKER", D-048.1 又验证一次 (Codex 独立抓到 few-shot 与硬约束直接冲突这种"自己写的自己看不出"的盲区)。教训: prompt / 关键系统改动前**默认开 Codex 第三方独立 review**, 不只是"觉得复杂时才开"。
+13. **重命名优化目标**: 一开始想着"删工程注释让 prompt 更干净", 但真正高价值的不是删字数 (-12% 收益小), 而是修 few-shot 冲突 + 修标签错配 (这才是会真实影响 LLM 输出的)。下次做 prompt 优化先按"会不会改变 LLM 输出"排序, 不按主观可读性排。
+
+依赖: D-046 (L3 prompt 拆 system/user), D-047 (tool_use forced schema), D-048 (CLI no-tool 分流 + patch 锚点)
