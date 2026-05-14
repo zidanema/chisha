@@ -14,18 +14,19 @@
 
 预计 V1 完成时间：本对话讨论后 4-6 周。
 
-**当前状态（2026-05-13）**：
+**当前状态（2026-05-14）**：
 
 - 打标：v3 全量重打两 zone 13,240 菜（D-032）；dual-model golden set 171 条（D-036, Opus+Codex 共创, 4 大字段一致率 99.27%）；6 模型横评后生产默认 `deepseek-v4-flash`（D-037, field acc 88.9%, 100万条 $100）。
-- 推荐 V2 链路端到端跑通：Context 注入 / score V2 ~12 维 / LLM 精排 top30→5（D-035） / refine + session（D-033 V2.1）/ LLM 抽象 Phase 1 provider auto-detect（D-038, 商家去重兜底）。
+- 推荐 V2 链路端到端跑通：Context 注入 / score V2 ~12 维 / LLM 精排 top60→5（D-035/D-046） / refine + session（D-033 V2.1）。
 - **推荐调试台已上线**（[D-039](DECISIONS.md#d-039)）：FastAPI on port 8765, instrumented V2 管道, L1/L2/L3/Final 四段折叠 + 16 维 score breakdown + LLM payload 全可见 + profile 临时覆盖 + combo 追溯 + mood 三栏对比。
 - **召回硬过滤升级**（[D-041](DECISIONS.md#d-041)）：双层架构 `hard_max_*` 召回 ban / `prefer_max_*` 打分扣；新增 ETA / combo 总价 / 餐厅/主蛋白/烹饪/菜系 6 类硬黑名单。
 - **combo 生成参数化**（[D-040](DECISIONS.md#d-040)）：多蛋白多蔬菜由 profile 注入；召回总 combos 454 → 2206。
 - **L2 cap + 重设计 + 反馈闭环**（[D-042](DECISIONS.md#d-042) / [D-043](DECISIONS.md#d-043)）：3 层 cap（restaurant/cuisine/food_form）防扎堆；砍 3 个死权重；改活 popularity/variety/taste/context；加 unforgivable penalty；反馈闭环 P3 落地（`chisha/long_term_prefs.py`）。**top30 score 跨度 0.34 → 4.997（15×）**。详见 [`RECOMMEND_PRINCIPLES.md`](RECOMMEND_PRINCIPLES.md)。
 - **profile.yaml 真实化**（[D-044](DECISIONS.md#d-044)，2026-05-13）：从用户口述 + 历史订单回顾重建 profile（goal/zones/min_protein_g/avoid_dishes/price/taste_description 全量校正）。沉淀两个普适方法论到 [RECOMMEND_PRINCIPLES](RECOMMEND_PRINCIPLES.md) §12 §13：**偏好层 ≠ 行为层** + **隐藏目标识别**。
 - **L3 精排 prompt + payload 重构**（[D-046](DECISIONS.md#d-046)，2026-05-13）：①top30 → top60（二审实测 shenzhen-bay top41-60 有 10 brand / 12 餐厅的真实多样性增量，top61+ 才同质化崩；不上 80/100 避开同分平台 + 输出漏号风险）；②prompt 拆 system / user, system 进 Anthropic prompt cache（~1.7k tokens 100% 命中）；③payload 紧凑符号化（每菜一行约 80-100 chars, 默认值省略）；④health_flags 从 LLM 输出移除, 改 rerank.py 规则后处理；⑤加观测埋点：每次记录 LLM 选中的 combo_index 分布（一周后用 P(idx ≥ 40) 量化"L3 是否看到了 L2 没识别的好货"）。实测 input tokens ~22k → ~6.2k（cache 命中时, 省 72%, N 还涨了一倍）。
+- **LLM Provider 抽象 + Claude Code CLI 路径**（[D-047](DECISIONS.md#d-047)，2026-05-14）：`chisha/llm_providers/` 拆三 provider（anthropic_api / openrouter / claude_code_cli），`llm_client.py` 成薄路由层。`profile.yaml.llm.provider` + 环境变量 `CHISHA_LLM_PROVIDER` 控制；auto-detect 优先级 ANTHROPIC_API_KEY > Claude Code 订阅 > OPENROUTER_API_KEY。自用本机走订阅省 ¥24-120/月，分发用户可改配置走 OpenRouter。10 个隔离 flag 防 Claude Code 默认 system / hooks / CLAUDE.md 污染；env 过滤 ANTHROPIC_*/OPENROUTER_* 防订阅路径被付费 API 劫持；Popen + start_new_session + PR_SET_PDEATHSIG 防 orphan。spec + plan + 真 Codex 三轮 review 闭环（[详见](superpowers/specs/2026-05-14-claude-code-cli-provider-design.md)）。
 - 架构重构推迟到 V1.5（[D-030](DECISIONS.md#d-030)）。
-- **测试**：311 全过（D-041 audit + D-042 cap + D-043 重设计/反馈闭环 + D-046 校验 + 之前老测试）。
+- **测试**：368 单测全过 + 5 个 integration e2e 全过（opt-in `requires_claude_cli` marker）。
 - **下一步**：用新真实化 profile 跑调试台验证推荐质量（关注是否从"反复几家舒适圈"跳出）→ OpenClaw + 飞书接入（D-022, integrations/openclaw/ 骨架已搭, cron 待装）。
 
 ---
@@ -70,7 +71,7 @@
 - ~~session 状态管理~~ ★（24h TTL + logs/sessions/，[fix f6e16d0](#) 已修路径）
 - 反馈系统 personal_offsets 写入 → V2.0 验收（chips/rating 字段骨架已在 chisha/feedback.py）
 - learned_profile 统计聚合 → V2.2（不再做 LLM 蒸馏 insights，[D-026](DECISIONS.md#d-026)）
-- LLM 抽象 Phase 2 callable 注入点 → 等 OpenClaw/Hermes 真接入触发（[D-038](DECISIONS.md#d-038)）
+- LLM 抽象 Phase 2 callable 注入点 → 等 OpenClaw/Hermes 真接入触发（[D-038](DECISIONS.md#d-038)；D-047 已落地多 provider 路由 + profile 配置, 仅剩"外部 agent 传自己的 LLM closure"未做）
 - MCP Server 包装 → V2.3
 - SKILL.md 完整化 → V2.3（D-022 推迟，integrations/openclaw/SKILL.md 已占位）
 - pip 包发布（按工区拆子包）→ V2.4
@@ -266,8 +267,8 @@
 | 反馈数据起来后"采纳但餐后差评"频繁 | D-028 北极星指标 |
 | V1 7 日采纳率 ≥ 50% 已达成 | D-030 启动 V1.5 数据链路重构 |
 | collector schema 变更打挂 shenzhen-bay ≥ 2 次 | D-030 提前启动 V1.5 |
-| OpenClaw / Hermes / Claude Code skill 真要接入 chisha 推荐 | D-038 Phase 2 启动（callable LLM 注入点） |
-| LLM 精排 sonnet-4.6 与 deepseek-flash 质量持平 | D-038 评估精排降本 |
+| OpenClaw / Hermes / Claude Code skill 真要接入 chisha 推荐 | D-038 Phase 2 启动（callable LLM 注入点；D-047 已把 provider 抽象做好, 仅剩 closure 注入接口） |
+| LLM 精排 sonnet-4.6 与 deepseek-flash 质量持平 | 改 `profile.yaml.llm.provider=openrouter` + `model.openrouter=deepseek/...` 即可降本 (D-047) |
 
 ---
 

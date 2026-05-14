@@ -164,7 +164,8 @@ chisha/
 │   ├── context.py             # ContextSnapshot 注入层 (D-034)
 │   ├── refine.py              # refine 二轮 (D-033)
 │   ├── reason.py              # LLM 写一句话理由（V1 路径用）
-│   ├── llm_client.py          # provider auto-detect (D-038)
+│   ├── llm_client.py          # provider 路由层 (D-047)
+│   ├── llm_providers/         # 三 provider: anthropic_api / openrouter / claude_code_cli (D-047)
 │   ├── debug_recommend.py     # 调试台用的 instrumented 管道 (D-039)
 │   ├── debug_server.py        # FastAPI 调试台 server (D-039)
 │   ├── long_term_prefs.py     # 反馈闭环 P3 (D-043): 反馈历史 → boost/penalty hints

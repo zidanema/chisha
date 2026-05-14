@@ -220,7 +220,11 @@ chisha/
 │   ├── recall.py                # 召回 + 多样性
 │   ├── score.py                 # 打分函数
 │   ├── reason.py                # LLM 写一句话理由（V1 LLM 只在这）
-│   └── llm_client.py            # LLM 抽象（D-038 Phase 1: Anthropic / OpenRouter auto-detect）
+│   ├── llm_client.py            # LLM 路由层 (D-047): provider 选择 + 模型解析
+│   └── llm_providers/           # 三 provider (D-047)
+│       ├── anthropic_api.py     # ANTHROPIC_API_KEY 直连
+│       ├── openrouter.py        # OPENROUTER_API_KEY → 第三方
+│       └── claude_code_cli.py   # claude -p subprocess (复用订阅额度)
 │
 ├── integrations/
 │   └── openclaw/                # V1 接入 OpenClaw + 飞书
@@ -805,7 +809,7 @@ prompt 拆 system / user (D-046):
 
 5 个候选 = 3 exploit (fit_score 排) + 2 explore (打分中段、最近未吃过、未尝试菜系/做法)，命中 [D-015](docs/DECISIONS.md#d-015)。refine 时 explore_count=0 (D-015)。
 
-LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` ([D-038](docs/DECISIONS.md#d-038) Phase 1 provider auto-detect: ANTHROPIC_API_KEY → `claude-sonnet-4-6`; OPENROUTER_API_KEY → `anthropic/claude-sonnet-4.6`)。temperature=0.0。`cache_system=True` 让 Anthropic 直连走 prompt cache。失败兜底：退化到打分 top n + 规则 reason。
+LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由层 ([D-047](docs/DECISIONS.md#d-047))。三 provider 实现在 [`chisha/llm_providers/`](../chisha/llm_providers/)：`anthropic_api` (ANTHROPIC_API_KEY 直连) / `openrouter` (OPENROUTER_API_KEY) / `claude_code_cli` (subprocess 调 `claude -p` 复用本机订阅额度)。选择策略：`CHISHA_LLM_PROVIDER` env > `profile.yaml.llm.provider` 显式 > auto-detect (顺序: ANTHROPIC_API_KEY > Claude Code 订阅 > OPENROUTER_API_KEY)。失败兜底：退化到打分 top n + 规则 reason。
 
 兜底机制：LLM rerank 输出后 [`chisha/rerank.py:_enforce_brand_unique`](../chisha/rerank.py) 强制 brand 去重 (D-045: 与 L2 apply_caps brand 层语义对齐)。
 
