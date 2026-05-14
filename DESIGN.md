@@ -989,6 +989,7 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由
 | **45** | **L2 cap 增加 brand 层（连锁去重）** | **D-045** |
 | **46** | **L3 精排 prompt + payload 重构（top60 + system/user 拆分 + 紧凑化 + health_flags 规则后处理）** | **D-046** |
 | **47** | **L3 精排重构（tool_use forced schema + opus 默认 + cache_control + helper 抽出消灭双份代码）** | **D-047** |
+| **48** | **L3 双路径收口（CLI no-tool 分流 + provider 配置错 hard-fail + trace 结构化三态）** | **D-048** |
 
 ---
 

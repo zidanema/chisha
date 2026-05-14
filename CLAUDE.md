@@ -1,7 +1,7 @@
 # chisha · 项目级指令
 
 > 项目名:今天吃点啥 (chisha) · 个人 AI 餐饮推荐系统 (L1 数据 / L2 打分 / L3 LLM 精排)
-> 当前阶段:V1 in flight (V2 链路 + 4 层 cap + L3 tool_use 重构 D-047 已就绪;调试台 + OpenClaw 接入进行中)
+> 当前阶段:V1 in flight (V2 链路 + 4 层 cap + L3 tool_use 重构 D-047 + 双路径收口 D-048 已就绪;调试台 + OpenClaw 接入进行中)
 > 主语言:Python · 包管理:uv · 测试:pytest
 
 ## 必读(首次接触本项目)

@@ -648,32 +648,64 @@ function renderL2(l2, container) {
 
 function renderL3(l3, container) {
   const llm = l3.llm || {};
+  // D-048: status 三态 (ok / fallback / config_error); 老版本只有 ok/fallback,
+  // 这里同时兼容: 优先读 status, 否则按 used+parsed_candidates 推断.
+  let status = llm.status;
+  if (!status) {
+    if (!llm.used) status = 'skipped';
+    else if (llm.parsed_candidates) status = 'ok';
+    else status = 'fallback';
+  }
+  const badgeMap = {
+    ok:           {cls: 'badge-green',  text: '成功 (ok)'},
+    fallback:     {cls: 'badge-red',    text: '失败 / fallback'},
+    config_error: {cls: 'badge-orange', text: 'config_error · provider 配置错'},
+    skipped:      {cls: 'badge-grey',   text: '未调用'},
+  };
+  const b = badgeMap[status] || badgeMap.skipped;
+  const llmBadge = `<span class="badge ${b.cls}">${b.text}</span>`;
+
+  // D-047: prompt 拆成 system + user 两段, 不再有单一 prompt_chars
+  const sysChars = llm.system_prompt_chars || 0;
+  const userChars = llm.user_message_chars || 0;
+  // D-047 OpenRouter 路径 usage.cache_read_input_tokens / cache_creation_input_tokens
+  // 用来观测 prompt cache 命中.
+  const usage = llm.usage || {};
+  const cached = usage.cache_read_input_tokens ?? usage.cached_tokens ?? null;
+  const inTok = usage.input_tokens ?? usage.prompt_tokens ?? null;
+  const outTok = usage.output_tokens ?? usage.completion_tokens ?? null;
+  const latency = llm.latency_ms != null ? `${llm.latency_ms} ms` : '—';
+
   const stats = document.createElement('div');
   stats.className = 'stat-grid';
-  let llmBadge;
-  if (!llm.used) {
-    llmBadge = `<span class="badge badge-grey">未调用</span>`;
-  } else if (llm.parsed_candidates) {
-    llmBadge = `<span class="badge badge-green">成功</span>`;
-  } else {
-    llmBadge = `<span class="badge badge-red">失败/fallback</span>`;
-  }
   stats.innerHTML = `
-    <div class="stat"><div class="k">LLM 状态</div><div class="v" style="font-size: 14px;">${llmBadge}</div></div>
-    <div class="stat"><div class="k">model</div><div class="v" style="font-size: 14px;">${llm.model || 'default'}</div></div>
-    <div class="stat"><div class="k">prompt 字符</div><div class="v">${llm.prompt_chars || 0}</div></div>
-    <div class="stat"><div class="k">response 字符</div><div class="v">${llm.raw_response_chars || 0}</div></div>
+    <div class="stat"><div class="k">L3 状态</div><div class="v" style="font-size: 14px;">${llmBadge}</div></div>
+    <div class="stat"><div class="k">provider (D-047)</div><div class="v" style="font-size: 14px;">${escapeHtml(llm.resolved_provider || '—')}</div></div>
+    <div class="stat"><div class="k">model</div><div class="v" style="font-size: 14px;">${escapeHtml(llm.model || 'default')}</div></div>
+    <div class="stat"><div class="k">latency</div><div class="v" style="font-size: 14px;">${latency}</div></div>
+    <div class="stat"><div class="k">system 字符 (cached)</div><div class="v">${sysChars}</div></div>
+    <div class="stat"><div class="k">user 字符</div><div class="v">${userChars}</div></div>
+    <div class="stat"><div class="k">input / output tok</div><div class="v" style="font-size: 14px;">${inTok ?? '—'} / ${outTok ?? '—'}</div></div>
+    <div class="stat"><div class="k">cached tok</div><div class="v" style="font-size: 14px;">${cached ?? '—'}</div></div>
+    <div class="stat"><div class="k">stop_reason</div><div class="v" style="font-size: 14px;">${escapeHtml(llm.stop_reason || '—')}</div></div>
     <div class="stat"><div class="k">返回数</div><div class="v">${l3.n_returned}</div></div>
   `;
   container.appendChild(stats);
 
+  if (status === 'config_error') {
+    const div = document.createElement('div');
+    div.style.cssText = 'color: var(--orange); font-size: 12px; margin: 8px 0; padding: 8px 10px; border: 1px solid var(--orange); border-radius: 4px; background: rgba(255,180,84,0.08);';
+    div.innerHTML = '<strong>config_error (D-048):</strong> provider 路由配置错, L3 根本没跑 — 应当修配置 (CHISHA_LLM_PROVIDER / profile.llm.provider / ANTHROPIC_API_KEY) 而不是当 fallback 用<br><span style="color: var(--fg-dim); font-family: monospace;">'
+      + escapeHtml(llm.fallback_reason || '') + '</span>';
+    container.appendChild(div);
+  }
   if (llm.skipped_reason) {
     const div = document.createElement('div');
     div.style.cssText = 'color: var(--fg-dim); font-size: 12px; margin: 8px 0;';
     div.textContent = '跳过原因: ' + llm.skipped_reason;
     container.appendChild(div);
   }
-  if (llm.fallback_reason) {
+  if (status === 'fallback' && llm.fallback_reason) {
     const div = document.createElement('div');
     div.style.cssText = 'color: var(--orange); font-size: 12px; margin: 8px 0;';
     div.textContent = 'fallback 原因: ' + llm.fallback_reason;
@@ -682,10 +714,13 @@ function renderL3(l3, container) {
 
   const raw = document.createElement('div');
   raw.style.marginTop = '12px';
+  const userMsg = llm.user_message_full || llm.user_message_preview || '';
   raw.innerHTML = `
-    ${jsonBlock('LLM payload (送给模型的)', l3.payload_to_llm)}
+    ${userMsg ? `<details><summary>LLM user message (D-046 紧凑文本, ${userChars} 字符)</summary><pre>${escapeHtml(userMsg)}</pre></details>` : ''}
+    ${llm.tool_input ? jsonBlock('LLM tool_input (D-047 forced schema)', llm.tool_input) : ''}
     ${llm.raw_response ? `<details><summary>LLM 原始返回 (${llm.raw_response_chars} 字符)</summary><pre>${escapeHtml(llm.raw_response)}</pre></details>` : ''}
     ${llm.parsed_candidates ? jsonBlock(`LLM 解析后 candidates (${llm.parsed_candidates.length} 条)`, llm.parsed_candidates) : ''}
+    ${jsonBlock('legacy payload (旧 JSON 视图, 仅参考)', l3.payload_to_llm)}
   `;
   container.appendChild(raw);
 }
@@ -791,12 +826,20 @@ function renderResult(data) {
   renderL2(data.l2_score, b2);
   result.appendChild(s2);
 
-  // L3
+  // L3 — D-048 三态 + provider/latency 一行带出
   const l3 = data.l3_rerank;
   const llm = l3.llm || {};
-  const l3Summary = !llm.used
-    ? `跳过 LLM, 走规则 fallback`
-    : (llm.parsed_candidates ? `LLM 成功 → ${l3.n_returned} 条` : `LLM 失败 → fallback ${l3.n_returned} 条`);
+  const _status = llm.status
+    || (!llm.used ? 'skipped' : (llm.parsed_candidates ? 'ok' : 'fallback'));
+  const _provider = llm.resolved_provider ? `${llm.resolved_provider}/${llm.model || '?'}` : '';
+  const _lat = llm.latency_ms != null ? `${llm.latency_ms}ms` : '';
+  const _statusText = {
+    ok: `LLM 成功 → ${l3.n_returned} 条`,
+    fallback: `LLM 失败 → fallback ${l3.n_returned} 条`,
+    config_error: `config_error → fallback ${l3.n_returned} 条 (provider 配置错)`,
+    skipped: `跳过 LLM, 走规则 fallback`,
+  }[_status] || `${_status} → ${l3.n_returned} 条`;
+  const l3Summary = [_statusText, _provider, _lat].filter(Boolean).join(' · ');
   const {sec: s3, body: b3} = sectionEl('L3', '精排', l3Summary, false);
   renderL3(l3, b3);
   result.appendChild(s3);

@@ -404,27 +404,27 @@
     <text x="780" y="874" fill="#8b94a5" font-size="11" text-anchor="end">top60 → 3 exploit + 2 explore (D-046)</text>
 
     <rect x="60" y="892" width="370" height="140" rx="4" fill="#1c2230"/>
-    <text x="245" y="912" text-anchor="middle" fill="#ffb454" font-weight="600" font-size="12">payload (build_payload)</text>
+    <text x="245" y="912" text-anchor="middle" fill="#ffb454" font-weight="600" font-size="12">user_msg (build_user_message)</text>
     <text x="76" y="934" fill="#e6e9ef" font-size="11">• top 60 candidate (紧凑符号化, D-046)</text>
     <text x="76" y="952" fill="#e6e9ef" font-size="11">• profile.taste_description / liked / avoid</text>
     <text x="76" y="970" fill="#e6e9ef" font-size="11">• ContextSnapshot.to_llm_dict()</text>
     <text x="76" y="988" fill="#e6e9ef" font-size="11">• config: n=5 / n_explore=2</text>
-    <text x="76" y="1014" fill="#8b94a5" font-size="11">prompt: rerank_system.md (cached) + build_user_message</text>
+    <text x="76" y="1014" fill="#8b94a5" font-size="11">system: rerank_system.md (cached) · D-047 tool_use</text>
 
     <rect x="450" y="892" width="370" height="140" rx="4" fill="#1c2230"/>
-    <text x="635" y="912" text-anchor="middle" fill="#ffb454" font-weight="600" font-size="12">LLM 输出 (校验后)</text>
+    <text x="635" y="912" text-anchor="middle" fill="#ffb454" font-weight="600" font-size="12">tool_input (forced schema, D-047)</text>
     <text x="466" y="934" fill="#e6e9ef" font-size="11">{rank, combo_index, is_explore,</text>
     <text x="466" y="952" fill="#e6e9ef" font-size="11"> fit_score / taste_match 0~1,</text>
     <text x="466" y="970" fill="#e6e9ef" font-size="11"> risk_flags[], one_line_reason}</text>
     <text x="466" y="996" fill="#ff6b6b" font-size="11">校验失败 → fallback_rerank (规则版)</text>
-    <text x="466" y="1014" fill="#ff6b6b" font-size="11">不足 5 → _enforce_brand_unique 兜底</text>
+    <text x="466" y="1014" fill="#ff6b6b" font-size="11">config_error → hard-fail (D-048)</text>
 
     <line x1="430" y1="962" x2="450" y2="962" stroke="#ffb454" stroke-width="2" marker-end="url(#arrow)"/>
   </g>
 
   <!-- L2 → L3 -->
   <line x1="440" y1="810" x2="440" y2="850" stroke="#6ea8ff" stroke-width="2" marker-end="url(#arrow)"/>
-  <text x="450" y="836" fill="#8b94a5" font-size="11">top 30</text>
+  <text x="450" y="836" fill="#8b94a5" font-size="11">top 60 (D-046)</text>
 
   <!-- Context → L3 (虚线) -->
   <line x1="290" y1="148" x2="245" y2="892" stroke="#c397ff" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-soft)"/>
@@ -601,8 +601,34 @@
     </section>
 
     <section id="l3">
-      <h2>L3 LLM 精排 · top60 → 5 <span class="badge">D-046</span></h2>
+      <h2>L3 LLM 精排 · top60 → 5 <span class="badge">D-046</span> <span class="badge">D-047</span> <span class="badge">D-048</span></h2>
       <p>把 L2 的 top 60 + profile + context 拼成紧凑文本（每菜一行），让 LLM 选 5 个，强制 3 exploit + 2 explore。prompt 拆 system / user，system 走 Anthropic prompt cache 100% 命中。</p>
+
+      <div class="callout"><strong>D-047 重构（tool_use forced schema）</strong>：D-046.1 的 json_mode + regex 提取路径在 sonnet-4.6 / want_light 等复杂 mood 下会撞英文 CoT 占满 max_tokens 导致 fallback。D-047 改用 <strong>tool_use forced schema</strong>（Anthropic <code>tool_choice={"type":"tool","name":...}</code>，OpenRouter 走兼容协议），同时把 LLM 调用抽到共享 helper <code>chisha/rerank.py:_run_llm_rerank</code>，debug 与生产复用一份代码（消灭 D-046.1 双份漂移的根因）。默认 model 切到 <code>claude-opus-4-7</code>（V3+V4 实测 opus 比 sonnet 更尊重 taste）。</p></div>
+
+      <h3>Provider 路由 · D-047</h3>
+      <p>L3 走 <code>chisha.llm_providers</code> 抽象层，按下面的优先级解析 provider：</p>
+      <table>
+        <thead><tr><th>优先级</th><th>来源</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><code>CHISHA_LLM_PROVIDER</code> env</td><td>跑测试 / 临时切换用，覆盖一切</td></tr>
+          <tr><td>2</td><td><code>profile.llm.provider</code></td><td>持久化配置（推荐）</td></tr>
+          <tr><td>3</td><td>auto-detect</td><td>看 <code>ANTHROPIC_API_KEY</code> / <code>OPENROUTER_API_KEY</code> 谁存在</td></tr>
+        </tbody>
+      </table>
+      <p>支持三个 provider：<code>anthropic_api</code>（直连，能用 cache_control: ephemeral）/ <code>openrouter</code>（OR 中转，须显式标 cache_control 才生效）/ <code>claude_code_cli</code>（本地 CLI 子进程，无 API key 时的兜底；不走 tool_use，system prompt 自动 patch 成"直接输出 JSON"）。</p>
+
+      <h3>调用形态 · 三态收口 D-048</h3>
+      <p>L3 trace 现在有 <strong>三态 status</strong>，调试台 L3 section 头会直接给标签：</p>
+      <table>
+        <thead><tr><th>status</th><th>含义</th><th>调试台显示</th><th>处理</th></tr></thead>
+        <tbody>
+          <tr><td><code>ok</code></td><td>LLM 调通 + 校验过</td><td><span class="badge badge-pos">成功</span></td><td>正常使用 LLM 输出的 5 条</td></tr>
+          <tr><td><code>fallback</code></td><td>LLM 调了但失败（超时 / stop_reason 错 / 校验不过 / 网络等）</td><td><span class="badge badge-neg">失败 / fallback</span></td><td>走规则 fallback，<code>fallback_reason</code> 必填</td></tr>
+          <tr><td><code>config_error</code></td><td>provider 路由配置错（缺 key / provider 名错 / CLI 未装）</td><td>橙色高亮 + 醒目提示</td><td><strong>hard-fail，不假装 fallback</strong>。修配置（D-048 Codex blocker）</td></tr>
+        </tbody>
+      </table>
+      <p class="callout warn"><strong>config_error 不要当 fallback 用</strong>：D-048 之前，<code>except Exception</code> 会把 provider 配置错吞成静默 L2 fallback，用户看到 5 条结果以为 LLM 工作，实际没跑。现在 trace 会显式标 <code>config_error=true</code>，调试台用橙色框醒目提示。</p>
 
       <h3>送给 LLM 的 user message（build_user_message）</h3>
       <pre>[CONFIG] n=5 n_explore=2
@@ -635,8 +661,8 @@ refine 输入: (无)
 ...</pre>
       <p>System prompt：<code>prompts/rerank_system.md</code>（~2.8k chars, 1.7k tokens, 100% cached）。User message 由 <code>chisha.rerank.build_user_message()</code> 动态拼装。默认值省略（辣 0 / 甜 0-1 / 汤 1-2 / processed=false / role=配菜）。</p>
 
-      <h3>LLM 必须返回</h3>
-      <p>每条 candidate 必填以下字段，否则 <code>_validate_llm_candidates</code> 返回 None，整批 fallback。</p>
+      <h3>LLM 必须返回（tool_use schema · D-047）</h3>
+      <p>定义在 <code>chisha/rerank.py:_RERANK_TOOL_SCHEMA</code>，以 Anthropic <code>tools</code> + <code>tool_choice</code> 强制结构化输出。模型必须调 <code>submit_rerank</code> 工具回填 <code>candidates</code> 数组；每条 candidate 必填以下字段，否则 <code>_validate_llm_candidates</code> 返回 None，整批 fallback。</p>
       <table>
         <thead><tr><th>字段</th><th>类型</th><th>校验</th></tr></thead>
         <tbody>
@@ -663,12 +689,21 @@ refine 输入: (无)
         <strong>_enforce_brand_unique 兜底</strong>：LLM 选完后做一次品牌去重；若去重后不足 5 个，从 top60 里拿没用过品牌的补；<strong>这些补位条 fit_score 是原始 score（&gt;1）</strong>，one_line_reason 写"为多样性补位"。在调试台上看到 fit&gt;1 / 理由是 "为多样性补位" 就是它。
       </div>
 
-      <div class="callout"><strong>调试台看哪</strong>：<br>
-        L3 section → status badge：<span class="badge badge-pos">成功</span> / <span class="badge badge-neg">失败/fallback</span> / <span class="badge badge-grey">未调用</span><br>
-        「LLM user message」折叠 ~7K 字符（D-046 紧凑化, 旧版 ~38K）<br>
-        「LLM 原始返回」折叠 ~2K 字符（提取 JSON 之前的原始字符串）<br>
-        「parsed_candidates」校验后的 5 条<br>
-        status bar 的 <strong>fallback</strong> 橙色 badge = 走了 fallback；<strong>LLM</strong> 绿色 badge = LLM 接管。
+      <div class="callout"><strong>调试台看哪（D-047 / D-048 更新后）</strong>：<br>
+        L3 section header 一行同时带出 status / provider / model / latency。<br>
+        stat 卡片新增：<br>
+        &nbsp;&nbsp;• <strong>provider</strong> = <code>anthropic_api</code> / <code>openrouter</code> / <code>claude_code_cli</code>，看实际生效路由<br>
+        &nbsp;&nbsp;• <strong>latency</strong>：opus 正常 ~12s；超 30s 多半是 OR 路由抖动或撞 CoT<br>
+        &nbsp;&nbsp;• <strong>system 字符 / user 字符</strong>（D-047 拆开了；老版只有 prompt_chars）<br>
+        &nbsp;&nbsp;• <strong>cached tok</strong>：anthropic_api / OR 都填 cache_read_input_tokens；首次调用 0，第二次起应该 ≈ system 段 token 数（约 1700）。如果一直 0，说明 cache 没起作用<br>
+        &nbsp;&nbsp;• <strong>stop_reason</strong>：必须是 <code>tool_use</code>（Anthropic）或 <code>tool_calls</code>（OR），<code>stop</code> 一般代表 LLM 没调 tool 直接输出文本，会走 fallback<br>
+        折叠区：<br>
+        &nbsp;&nbsp;• 「LLM user message」~7K 字符（D-046 紧凑化, 旧版 ~38K）<br>
+        &nbsp;&nbsp;• 「LLM tool_input」= forced schema 解析后的 dict（D-047 新增）<br>
+        &nbsp;&nbsp;• 「LLM 原始返回」= provider 原始 raw_text<br>
+        &nbsp;&nbsp;• 「parsed_candidates」= 业务校验后的 5 条<br>
+        status badge：<span class="badge badge-pos">成功 (ok)</span> / <span class="badge badge-neg">失败 / fallback</span> / <span class="badge badge-warn">config_error</span> / <span class="badge badge-grey">未调用</span>。<br>
+        看到 <strong>config_error</strong> 橙框（D-048）：去修 <code>CHISHA_LLM_PROVIDER</code> / <code>profile.llm.provider</code> / <code>ANTHROPIC_API_KEY</code>，不要当 fallback 用。
       </div>
     </section>
 
