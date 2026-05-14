@@ -193,10 +193,13 @@ def call(
     max_tokens: int = 4096,    # 兼容签名, CLI 不直接支持
     temperature: float = 0.0,  # 同上
     cache_system: bool = False,  # 同上, CLI 自管 prompt cache
+    json_mode: bool = False,   # 兼容签名, CLI 不支持
+    tools: Optional[list] = None,
+    tool_choice: Optional[dict] = None,
     timeout_sec: int = _DEFAULT_TIMEOUT,
     effort: str = _DEFAULT_EFFORT,
-) -> str:
-    """通过 claude -p 子进程调 LLM, 返回纯文本输出.
+) -> dict:
+    """通过 claude -p 子进程调 LLM, 返回 dict (D-047 接口).
 
     Args:
         prompt: user message (走 stdin)
@@ -204,7 +207,19 @@ def call(
         model: 'sonnet' / 'opus' / 'claude-sonnet-4-6' 等
         timeout_sec: 子进程超时 (默认 180s)
         effort: extended thinking 强度, low/medium/high/xhigh/max
+        tools / tool_choice: CLI 不支持原生 tool_use, 传入会抛
+            NotImplementedError. 调用方应改走 anthropic / openrouter.
+        json_mode: CLI 不直接支持, 静默忽略.
+
+    Returns:
+        dict, 字段: type="text", content, stop_reason, usage, model, raw_text
     """
+    if tools or tool_choice:
+        raise NotImplementedError(
+            "claude_code_cli provider 不支持 tools/tool_choice 强制 schema. "
+            "调用方应切到 anthropic 或 openrouter provider (D-047)."
+        )
+    _ = json_mode  # 兼容签名, 静默忽略
     if not _check_cli():
         raise CCCLIError(
             "claude CLI 不可用或未登录订阅. "
@@ -296,7 +311,21 @@ def call(
             f"cost_equiv=${data.get('total_cost_usd', 0):.4f}"
         )
 
-        return data.get("result", "")
+        text = data.get("result", "") or ""
+        return {
+            "type": "text",
+            "content": text,
+            "stop_reason": "stop",
+            "usage": {
+                "prompt_tokens": usage.get("input_tokens", 0) or 0,
+                "completion_tokens": usage.get("output_tokens", 0) or 0,
+                "cached_tokens": usage.get("cache_read_input_tokens", 0) or 0,
+                "cache_write_tokens": usage.get("cache_creation_input_tokens", 0) or 0,
+                "cost": data.get("total_cost_usd", 0) or 0,
+            },
+            "model": model or _DEFAULT_MODEL,
+            "raw_text": text,
+        }
 
     finally:
         if sys_tmp_path:

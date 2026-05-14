@@ -141,26 +141,38 @@ def test_model_default_when_none():
 
 
 def test_call_text_routes_to_anthropic(_clean_env):
+    """D-047 接口: call_text 现在返回 dict, provider call 也返回 dict."""
     _clean_env.setenv("ANTHROPIC_API_KEY", "sk-fake")
     from chisha import llm_client
+    fake_dict = {"type": "text", "content": "ANTHROPIC_REPLY",
+                 "stop_reason": "end_turn", "usage": {},
+                 "model": "x", "raw_text": "ANTHROPIC_REPLY"}
     with patch("chisha.llm_providers.anthropic_api.call",
-                return_value="ANTHROPIC_REPLY") as m:
+                return_value=fake_dict) as m:
         out = llm_client.call_text("p", system="s")
-        assert out == "ANTHROPIC_REPLY"
+        assert out == fake_dict
         assert m.call_count == 1
 
 
 def test_call_text_routes_to_claude_code_cli(_clean_env):
+    """D-047: claude_code_cli 也返回 dict."""
     from chisha import llm_client
+    fake_dict = {"type": "text", "content": "CC_REPLY",
+                 "stop_reason": "stop", "usage": {},
+                 "model": "sonnet", "raw_text": "CC_REPLY"}
     with patch("chisha.llm_providers.claude_code_cli.is_available",
                 return_value=True), \
          patch("chisha.llm_providers.claude_code_cli.call",
-                return_value="CC_REPLY") as m:
+                return_value=fake_dict) as m:
         out = llm_client.call_text(
             "p", system="s", profile_llm={"provider": "auto"},
         )
-        assert out == "CC_REPLY"
+        assert out == fake_dict
         assert m.call_count == 1
+
+
+_STUB_DICT = {"type": "text", "content": "x", "stop_reason": "end_turn",
+              "usage": {}, "model": "x", "raw_text": "x"}
 
 
 def test_call_text_passes_model_kwarg(_clean_env):
@@ -168,7 +180,7 @@ def test_call_text_passes_model_kwarg(_clean_env):
     _clean_env.setenv("ANTHROPIC_API_KEY", "sk")
     from chisha import llm_client
     with patch("chisha.llm_providers.anthropic_api.call") as m:
-        m.return_value = "x"
+        m.return_value = _STUB_DICT
         llm_client.call_text(
             "p", model="claude-opus-4-7",
             profile_llm={"model": {"anthropic": "ignored"}},
@@ -181,7 +193,7 @@ def test_call_text_profile_model_used_when_no_explicit(_clean_env):
     _clean_env.setenv("ANTHROPIC_API_KEY", "sk")
     from chisha import llm_client
     with patch("chisha.llm_providers.anthropic_api.call") as m:
-        m.return_value = "x"
+        m.return_value = _STUB_DICT
         llm_client.call_text(
             "p",
             profile_llm={"model": {"anthropic": "claude-opus-4-7"}},

@@ -1668,6 +1668,45 @@ V1-V2 期间 profile.yaml 一直是 mock 数据 (goal=减脂增肌, 价格 35/50
 依赖: D-023 (弱约束三件套), D-029 (spicy_tolerance 整数), D-033 (V2 字段), D-041 (双层硬/软约束)
 
 
+## D-045: L2 cap 增加 brand 层 (连锁去重)
+
+**2026-05-13**
+
+### 背景
+
+D-042/D-043 在 L2 排序后做了 restaurant / cuisine / food_form 三层 cap, 防止同店/同菜系/同形态扎榜. 但调试台实测发现仍存在**同 brand 多分店霸榜**的漏洞: Super Model 超模厨房在科技园有 3 家分店 (深圳科技园店 / 海岸城店 / 后海店), 三家 restaurant_id 不同, 但 brand 同; D-042 三层 cap 都过得去, 三家同时进 top7, 推荐 5 条里 3 条都是同一连锁不同店, 多样性塌方.
+
+### 决策
+
+cap 从 3 层扩到 **4 层** (restaurant / **brand** / cuisine / food_form), brand 层默认 cap=2 (同 brand 至多 2 家分店进 topK).
+
+### 实现
+
+- `chisha/score.py:apply_caps` 新加 `_apply_caps_by_field(items, "brand", k=cap_per_brand)`, 单遍三计数器 (brand/cuisine/food_form) 同步推进 (D-043 P0 single-pass cap 模式)
+- `profile.yaml` 新加 `recall.per_brand_top_k=2`, 显式控制 brand cap (与 D-040 风格一致)
+- `chisha/rerank.py:_enforce_brand_unique` 从按 restaurant_id 去重改成按 brand 去重, brand 缺失才回退 rid (与 L2 apply_caps brand 层语义对齐)
+- `chisha/debug_recommend.py` 输出新增 brand 统计字段: `topk_unique_brands_before/after_cap`, `topk_max_per_brand_before/after_cap`
+- `tests/test_score_v2.py` 加 2 个 brand cap 测试 + 更新 `resolve_caps` helper
+
+### 副产物
+
+旧 dish-tagging eval 资产清理:
+- 删 `eval/dish_tagging_eval/data/golden_set.v1.jsonl` (旧 150 条 sonnet 单模型版本; D-036 后已被 171 条 dual-model 主产物取代, 留着易混淆)
+- 删 `eval/dish_tagging_eval/prompts/tag_dishes_v3_pre_dual.md` (D-036 之前的旧 prompt 备份)
+- 删 `eval/dish_tagging_eval/scripts/build_golden_set.py` (旧 golden 构建脚本, dual_pipeline 已替代)
+- `eval/dish_tagging_eval/scripts/dual_pipeline.py` 内联 `anchor_violations` 检查
+- README/CRITICAL_RULES/KNOWN_ISSUES 同步引用清理
+
+### 实测
+
+shenzhen-bay top30 brand cap 前/后:
+- 涉及 brand 数: 10 → 12 (+20%)
+- 单 brand 最高频次: 6 → 2 (cap 命中)
+- 涉及餐厅数: 19 (与 D-043 后持平, restaurant cap 已经压住单店)
+
+依赖: D-040 (combo 参数化), D-042 (cap 框架), D-043 (single-pass cap)
+
+
 ## D-046: L3 精排 prompt + payload 重构 (top60 + system/user 拆分 + 紧凑化)
 
 **2026-05-13**
@@ -1886,10 +1925,168 @@ LLM 读了这句话会以为输入已去重, **不会尝试同品牌内部择优
 
 ---
 
-## D-047 — LLM Provider 抽象 + Claude Code CLI 路径
+## D-046.1: L3 精排 max_tokens + json_mode 临时修 (废弃, 被 D-047 取代)
+
+**2026-05-14**
+
+### 背景
+
+D-046 上线后用户拉新代码本地起调试台跑 lunch/want_light, 发现 L3 LLM 精排 fallback. 排查: sonnet-4.6 进入英文 CoT 模式 ("I need to evaluate 40 candidates against..."), 8013 字符 CoT 占满 max_tokens=2048, JSON 没机会输出 → fallback 到 L2 兜底 (final 5 是按 L2 score 排序的伪 LLM 结果, fit_score=2.978 远超 LLM 应输出的 0-1 范围).
+
+### 临时修
+
+第一波尝试: max_tokens 2048→4096, 加 `json_mode=True` 通过 `response_format={"type":"json_object"}` (OR) 或 `output_config.format=json` (Anthropic 直连) 强制 JSON 输出. 又试了 assistant prefill `"{"` 想从结构上断 CoT.
+
+撞了 5 个坑:
+1. **prefill 弃用**: Anthropic 在 Sonnet 4.5 / Opus 4.6 后官方弃用 assistant prefill (forced tool_choice + extended thinking 不兼容是同一根因)
+2. **OR 协议丢 prefill 语义**: OpenRouter 的 `/v1/chat/completions` 强制 OpenAI 协议 "末尾必须 user", prefill 转发到 Anthropic 时被 strip
+3. **OR `response_format` 在 anthropic/* 上是 "accepted but not enforced"**: OR 转发到 Anthropic Messages API 时丢语义 (Anthropic 没有 OpenAI 风格 response_format), 三个 provider (Anthropic/Google/Bedrock) 实测都返回 markdown 包裹的 JSON 而非裸 JSON
+4. **debug 路径双份代码漏改**: `chisha/debug_recommend.py:_llm_rerank_traced` 是生产 `_llm_rerank` 的复刻, max_tokens / json_mode 改了一边没改另一边, 卡 1 小时
+5. **OR `require_parameters=True` 触发副作用**: 加上后让 sonnet 返回带 markdown 包裹的 JSON, 简单 case 反而变差
+
+撞完后退到 top30 暂稳, 但 want_light 在 top30 仍偶尔 CoT 失控 (3 次跑 1 次 fallback).
+
+### Codex review 第一次
+
+3 BLOCKER + 4 MAJOR + 3 MINOR. 关键洞察:
+- json_mode 在 OR 路径不可靠, 需要协议级强约束
+- `cache_system=True` 在 OR OpenAI 兼容路径根本失效 (OR 忽略该参数), 之前 D-046 报告的 cache 命中率是错的
+- debug/prod 双份代码必须抽 helper 否则永远漂移
+
+### 决策
+
+D-046.1 是过渡期妥协, 不是终态. 进入 D-047 完整重构.
+
+### 沉淀
+
+代码改动 (`chisha/llm_client.py` + `rerank.py` + `debug_recommend.py` + `feedback.py`) 在 D-047 实施时被进一步重构, 不单独保留 D-046.1 commit.
+
+依赖: D-046 (基础链路)
+
+
+## D-047 Part A — L3 精排重构: tool_use forced schema + opus 默认 + top60 + cache_control
+
+**2026-05-14**
+
+### 背景
+
+D-046.1 撞墙后, 用户提了关键反问: "为什么不直接放开 max_tokens 让 LLM CoT 完整跑完?" 回答中辨析出 inline CoT 泄漏 ≠ extended thinking, 决定**完整重构**而不是修补.
+
+四项前置实测 (V1-V4 + V5):
+
+#### V1 — Extended thinking 在 OR + Anthropic 路径可用性
+
+- ✅ `extra_body={"reasoning":{"max_tokens":N}}` 真路由到 thinking 端点
+- ✅ `usage.completion_tokens_details.reasoning_tokens` 单独计费
+- ⚠️ `tool_choice="required"` + `reasoning` **不兼容** (官方明确, V4 实测 opus+thinking 反而炸正是这个根因)
+
+#### V2 — tool_use forced schema 100% 稳定
+
+sonnet+tool_use no-thinking: 14-33s, $0.04, 100% 输出 5 candidates, 0 CoT 泄漏. 输出干净 JSON 没有任何 markdown 包裹.
+
+#### V3+V4 — top30/60/100 × sonnet/opus 矩阵 (lunch/want_light, 36 次调用 100% 全过)
+
+| Model | TopK | succ | avg_dt | avg_$ | picks 总集 (3 次跑) |
+|---|---|---|---|---|---|
+| sonnet | 30 | 6/6 | 18s | $0.040 | [0,8,11,13,16,22] |
+| sonnet | 60 | 6/6 | 17s | $0.055 | [8,16,22,31,35,55] (新增 [31,35,55]) |
+| sonnet | 100 | 6/6 | 21s | $0.078 | [8,16,22,31,35,55,83] (新增 [83]) |
+| opus | 30 | 6/6 | 14s | $0.067 | [13,16,18,20,22,24] |
+| **opus** | **60** | **6/6** | **15s** | **$0.091** | [2,13,16,18,20,31,55] (新增 [31,55]) |
+| opus | 100 | 6/6 | 13s | $0.129 | [13,16,20,31,55,92] (新增 [92]) |
+
+关键发现:
+- **top60 真带来多样性增量** (验证 D-046 二审假设): top31-60 段 picks 中 [31,35,55] 等都被 LLM 真实选中, 不是死代码
+- **top100 边际收益小**: 比 top60 只多 1 个新候选, 成本 +40% 不值
+- **opus 比 sonnet 一致性更高 + 更尊重 taste_description** ([16] 牛腩煲 = "牛肉首选蛋白" 命中, opus 三次跑都放 #1, sonnet 偶尔变)
+- opus reason 简洁 30-40 字, sonnet 偏长 54-60 字
+
+#### V5 — tool_use + Anthropic prompt cache 兼容
+
+显式标 `messages[].content[].cache_control: ephemeral` 时 OR 透传到 Anthropic, 二次调用 cached_tokens=3844, cost 省 23%. 之前 D-046.1 用 `cache_system=True` 在 OR 路径根本无效.
+
+### 决策
+
+**主路径**: opus-4.7 + tool_use forced schema + top60 + max_tokens=2048 + cache_control:ephemeral, no thinking.
+**Fallback**: opus 故障时降级 sonnet-4.6 + tool_use + top60. **绝不加 thinking** (forced tool_choice 与 extended thinking 不兼容).
+
+理由:
+- opus 比 sonnet 贵 65% ($0.091 vs $0.055/次), 但质量优势 (尊重 taste / 一致性 / reason 简洁) + 延迟优势 (14s vs 17s) 值得
+- 200 次/月 ≈ $14-18 (cache 命中后), 在用户 OR $30 月限内有 1.5x-2x 缓冲
+- chisha 北极星是 7 日采纳率 ≥ 50%, 模型质量直接影响采纳率, 比 token 成本重要
+
+### Codex review 第二次
+
+3 BLOCKER + 4 MAJOR + 3 MINOR, 全部修完:
+
+| 等级 | 项 | 处理 |
+|---|---|---|
+| BLOCKER | fallback 不能加 thinking | 文档明确禁止 + 实施时未启用 |
+| BLOCKER | 缺 stop_reason 断言 | `_run_llm_rerank` 强断言 stop_reason ∈ {tool_use, tool_calls} 否则走 fallback |
+| BLOCKER | OR 锁 Anthropic | `_OR_PROVIDER_LOCK = {"order":["Anthropic"], "allow_fallbacks":False}`. **去掉 require_parameters=True**: 实测在 opus-4.7 + tools 上触发 OR "No endpoints found" 404 (OR 路由元数据滞后误判) |
+| MAJOR | call_text 全部调用方迁移 | reason.py / feedback.py / debug_recommend.py / scripts/tag_dishes.py 都改取 dict.content; scripts/tag_via_api.py 走独立 client 不动 (D-048 候选) |
+| MAJOR | validate 全部保留 | `_validate_llm_candidates` 完整保留 D-046 二审加的 idx 越界 / explore 数量 / rank 连续 等校验; 加 `_validate_llm_candidates_v` 返回详细错误原因供 trace |
+| MAJOR | 抽共享 helper | `chisha/rerank.py:_run_llm_rerank` 同时给 `_llm_rerank` (prod) 和 `_llm_rerank_traced` (debug) 用, 消灭双份代码漂移 |
+| MAJOR | 6 case × 3 验证 | 见下方"实施实测" |
+
+### 实施改动
+
+8 个文件 +511/-127 行:
+- `chisha/llm_client.py` (+225/-29): `call_text` 加 tools/tool_choice 参数; 返回从 `str` 改 `dict` ({type, content/tool_input, stop_reason, usage, model, raw_text}); OR 路径锁 Anthropic provider; 加 OpenAI/Anthropic tool 格式自动适配 helper
+- `chisha/rerank.py` (+261/-37): 抽 `_run_llm_rerank()`; 定义 `_RERANK_TOOL` schema; `L3_INPUT_TOP_K` 30→60; 默认 model `anthropic/claude-opus-4.7`; max_tokens 4096→2048 (足够); 加 `_validate_llm_candidates_v` 返回详细原因
+- `chisha/debug_recommend.py` (-76 净减): `_llm_rerank_traced` 改调共享 helper, 删独立 LLM 调用代码
+- `chisha/feedback.py` / `chisha/reason.py` / `scripts/tag_dishes.py`: call_text 返回 dict 后取 `.content`
+- `prompts/rerank_system.md` (-22 行): 删 "输出格式 (严格)" 整段 (schema 由 tool 自带), 改成"输出方式: 通过 tool select_top_candidates"
+- `tests/test_tag_dishes.py`: mock 适配新 dict 返回
+
+### 实施实测 (lunch+dinner × 3 mood × 3 重复 = 18 case)
+
+**17/18 success rate (94.4%)** vs D-046.1 的 67% (want_light 必爆):
+
+| 指标 | D-046.1 | D-047 |
+|---|---|---|
+| 成功率 | 67% (want_light 必爆) | **94.4% (17/18)** |
+| 平均延迟 | 50-80s | **12s** |
+| 单次成本 | $0.06 | $0.085 |
+| Prompt cache 命中 | 0 (OR 路径失效) | **3748 tokens × 17 = 63k tokens 节省** |
+| 总成本 | n/a | **$1.53 / 18 次** |
+| 单测 | 317/317 | **316/317** (1 个 pre-existing test_session.py 失败与 D-047 无关) |
+
+唯一 1 次失败 (`dinner/want_soup/run2`): LLM 调了 tool 但 candidates 业务校验失败 (idx/explore/rank 之一). 是 LLM stochastic 输出概率事件, 不是链路 bug. 已加 `_validate_llm_candidates_v` 让下次失败能直接看到具体哪条规则触发.
+
+### 沉淀文档
+
+`docs/L3_RERANK_REDESIGN.md` — 完整方案 + 4 项实测数据 + Codex review BLOCKER/MAJOR 强制条件清单. 后续 L3 改动必读.
+
+### 教训 (跨场景适用)
+
+1. **prompt 软约束敌不过协议级强约束**: "system prompt 写不要 CoT" 在复杂任务下被 sonnet 忽略; tool_use forced schema 才能真阻断
+2. **OR ≠ Anthropic 直连**: `cache_system=True` 在 OR OpenAI 兼容路径根本失效, 须显式 `cache_control: ephemeral`. `response_format` 在 OR anthropic/* 路径是 "accepted but not enforced"
+3. **debug/prod 双份代码必抽 helper**: D-046.1 漏改 debug 卡 1 小时, D-047 直接抽掉
+4. **数据驱动选型**: opus vs sonnet 不要"觉得 opus 更强就选", 用 18 case 矩阵证明 opus 65% 溢价值
+5. **OR 路由 metadata 滞后**: `require_parameters=True` 在新模型 + tools 组合上可能误判 404, 要 bisect 出来
+6. **"放开 max_tokens 让 CoT 跑完"是错的**: 不是不让 CoT, 而是杀死 inline CoT (inline CoT 跟 output 抢预算 + 不可控), 改用 extended thinking (单独 reasoning channel) 或 tool_use (隐式禁 CoT 输出). 本次因 forced tool_choice + thinking 不兼容, 选 tool_use no-thinking 路径
+
+### 未做 / 推后
+
+- minor m2: 调试台加 fallback 率 / cache 命中率指标 (现在 trace 里有 usage 字段, UI 还没显示)
+- D-048 候选: `scripts/tag_via_api.py` 走独立 `llm_client_openrouter.py`, 没 tool_use 支持. 批量打标场景需要独立评估是否升级
+- pre-existing `test_session.py::test_cleanup_expired` 失败与 D-047 无关, 单独排查
+
+依赖: D-038 (LLM 抽象 Phase 1), D-046 (基础链路), D-046.1 (废弃临时修)
+
+
+---
+
+## D-047 Part B — LLM Provider 抽象 + Claude Code CLI 路径
 
 **日期**: 2026-05-14
 **状态**: 已实施
+
+> 同日并行轨道: Part A 是 L3 精排 tool_use 重构 (上文), Part B 是 LLM
+> provider 抽象 + Claude Code CLI subprocess 路径. 两条线在 merge 时
+> 合流到 `llm_client.py`: `call_text` 既走 provider 路由, 也支持
+> tools/tool_choice + dict 返回.
 
 **背景**: 自用阶段每天 1-2 次推荐, 用 ANTHROPIC_API_KEY 月成本 ¥20-100,
 而本机已有 Max 订阅. 让 chisha 复用订阅额度调 LLM, 同时保留 API key /
@@ -1899,10 +2096,13 @@ OpenRouter 路径供未来分发用户使用.
 `--tools ""` / `--disable-slash-commands` / `--setting-sources ""` /
 `--strict-mcp-config` / `--no-session-persistence` / `--system-prompt-file` /
 `--input-format text` 等), cwd 在 `~/.cache/chisha/llm_tmp/` 私有目录,
-env 过滤 `CLAUDE_*` 防干扰, Popen + start_new_session 防 orphan.
+env 过滤 `CLAUDE_*` / `ANTHROPIC_*` / `OPENROUTER_*` 防干扰 + 防订阅路径
+被付费 API 劫持, Popen + start_new_session + PR_SET_PDEATHSIG 防 orphan.
 
 **架构**: `chisha/llm_providers/` 子包, 三 provider (anthropic_api /
-openrouter / claude_code_cli) 统一签名; `chisha/llm_client.py` 成薄路由层;
+openrouter / claude_code_cli) 统一签名 (D-047 Part A 合流后都返回 dict +
+支持 tools/tool_choice; claude_code_cli 不支持 tool_use, 传 tools 抛
+`NotImplementedError`); `chisha/llm_client.py` 成薄路由层;
 profile.yaml `llm` 段控制 + 环境变量 `CHISHA_LLM_PROVIDER` 强制覆盖.
 
 **实测**: N=60 sonnet effort=low 端到端 60s, 输出结构正确;
@@ -1918,4 +2118,6 @@ profile.yaml `llm` 段控制 + 环境变量 `CHISHA_LLM_PROVIDER` 强制覆盖.
 5. `tempfile` SIGKILL 时残留 → 启动 sweep `chisha_sys_*.md` >1h 旧文件
 6. CHISHA_LLM_PROVIDER="" 空白要当 unset, 不能 raise
 7. 显式选 provider 但凭据缺失要 RuntimeError 给清晰错误, 不能 silent fallback
+
+依赖: D-038 (LLM 抽象 Phase 1), D-047 Part A (call_text dict 接口)
 

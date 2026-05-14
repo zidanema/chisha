@@ -5,6 +5,17 @@ provider 路由 + 选择策略:
 - auto 顺序: ANTHROPIC_API_KEY > claude_code_cli 订阅 > OPENROUTER_API_KEY
 - 显式选定 (env/profile) 时检查可用性, 不可用直接 RuntimeError 给清晰错误
 
+D-047 接口:
+- call_text 返回 dict (而非 str, 破坏性变更). 字段:
+  - type ∈ {"text", "tool_use"}
+  - text 时: content / stop_reason / usage / model / raw_text
+  - tool_use 时: tool_name / tool_input / stop_reason / usage / model / raw_text
+- 加 tools / tool_choice / json_mode 参数支持 forced schema. 仅 anthropic
+  / openrouter 两个 provider 真支持 tool_use; claude_code_cli 走 text 路径,
+  传 tools 会抛 NotImplementedError.
+- OR provider lock: order=Anthropic + allow_fallbacks=False 防 Bedrock 路由
+  (不加 require_parameters, opus+tools 会触发 404).
+
 具体 provider 实现见 chisha/llm_providers/.
 """
 from __future__ import annotations
@@ -112,14 +123,29 @@ def call_text(
     system: Optional[str] = None,
     cache_system: bool = False,
     profile_llm: Optional[dict] = None,
-) -> str:
-    """单次 LLM 调用入口.
+    json_mode: bool = False,
+    tools: Optional[list[dict]] = None,
+    tool_choice: Optional[dict] = None,
+) -> dict:
+    """单次 LLM 调用, 返回 dict (D-047 破坏性变更).
 
     Args:
         prompt: user 消息
         model: 显式 model 覆盖 (优先级最高)
         system / cache_system / max_tokens / temperature: 透传 provider
         profile_llm: 从 profile.yaml 读到的 'llm' 段
+        json_mode: True 时启用 response_format json_object (OR) — 实测 OR 上
+            "accepted but not enforced", 真正强制 JSON 输出请用 tools + tool_choice.
+        tools: tool schema 列表, 见 anthropic / OR 文档.
+        tool_choice: 强制特定 tool 调用, 例如 {"type":"tool","name":"X"}
+            (Anthropic 原生格式), provider 内部会自动转 OR 的 OpenAI 格式.
+            注意: forced tool_choice 与 extended thinking 不兼容.
+
+    Returns:
+        dict, 字段:
+        - type: "text" | "tool_use"
+        - text 时: content, stop_reason, usage, model, raw_text
+        - tool_use 时: tool_name, tool_input, stop_reason, usage, model, raw_text
     """
     provider = _resolve_provider(profile_llm)
     final_model = _resolve_model(provider, model, profile_llm)
@@ -133,6 +159,9 @@ def call_text(
         max_tokens=max_tokens,
         temperature=temperature,
         cache_system=cache_system,
+        json_mode=json_mode,
+        tools=tools,
+        tool_choice=tool_choice,
     )
 
 

@@ -148,12 +148,17 @@ def test_check_cli_invalid_json_returns_false():
 
 
 def test_call_success_returns_result_string():
+    """D-047: call() 现在返回 dict (统一 LLM 接口), content 字段是原 result 文本."""
     from chisha.llm_providers import claude_code_cli as cc
     with _patch_cli_available(), \
          patch("chisha.llm_providers.claude_code_cli.subprocess.Popen") as mp:
         mp.return_value = _make_popen(returncode=0, stdout=_GOOD_OUT)
         out = cc.call("ping", system="you are echo", model="sonnet")
-        assert out == '{"candidates":[{"rank":1}]}'
+        assert isinstance(out, dict)
+        assert out["type"] == "text"
+        assert out["content"] == '{"candidates":[{"rank":1}]}'
+        assert out["raw_text"] == '{"candidates":[{"rank":1}]}'
+        assert out["model"] == "sonnet"
 
 
 def test_call_includes_all_required_flags():

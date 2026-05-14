@@ -15,7 +15,6 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
-import os
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -36,12 +35,9 @@ from chisha.recall import (
 )
 from chisha.rerank import (
     L3_INPUT_TOP_K,
-    SYSTEM_PROMPT_PATH,
     _compute_health_flags,
     _enforce_brand_unique,
-    _validate_llm_candidates,
     build_payload,
-    build_user_message,
     fallback_rerank,
 )
 from chisha.score import (
@@ -50,8 +46,6 @@ from chisha.score import (
 
 
 ROOT = Path(__file__).resolve().parent.parent
-# D-046: prompt 拆 system / user, 不再单文件
-# SYSTEM_PROMPT_PATH 从 chisha.rerank 复用
 
 
 # ---------- profile 工具 ----------
@@ -410,58 +404,40 @@ def _llm_rerank_traced(
     top_combos: list[dict], profile: dict, context, n: int, n_explore: int,
     model: str | None, n_max: int,
 ) -> dict:
-    """调 LLM, 返回 trace dict (含 system/user prompt / raw / parsed / used_fallback).
+    """调 LLM, 返回 trace dict (含 system/user prompt / tool_input / fallback).
 
     D-046: system/user 拆分; system 走 Anthropic prompt cache.
-    trace 把两段 prompt 都打回去, 便于 debug 看实际给 LLM 的输入.
+    D-047: 走 chisha.rerank._run_llm_rerank 共享 helper, 不再复刻 LLM 调用.
+           helper 用 tool_use forced schema, 完全替代 D-046.1 的 json_mode +
+           regex 路径.
+
+    本函数只做 trace 字段适配 (返回 debug_server / debug.html 期望的 schema).
     """
-    out: dict[str, Any] = {
-        "used": False,
-        "model": model,
-        "system_prompt_chars": 0,
-        "user_message_chars": 0,
-        "raw_response": None,
-        "raw_response_chars": 0,
-        "parsed_candidates": None,
-        "fallback_reason": None,
+    from chisha.rerank import _run_llm_rerank
+    res = _run_llm_rerank(
+        top_combos, profile, context,
+        n=n, n_explore=n_explore, n_max=n_max, model=model,
+        profile_llm=profile.get("llm"),  # D-047: provider 路由
+    )
+    llm_resp = res.get("llm_response") or {}
+    # 兼容旧字段命名: raw_response / parsed_candidates / used / fallback_reason
+    raw_text = (llm_resp.get("raw_text") or "") if isinstance(llm_resp, dict) else ""
+    return {
+        "used": res["status"] == "ok" or llm_resp != {},
+        "model": res.get("model"),
+        "system_prompt_chars": res["system_prompt_chars"],
+        "user_message_chars": res["user_message_chars"],
+        "user_message_preview": res["user_message_full"][:2000],
+        "user_message_full": res["user_message_full"],  # D-047 实验用, 后续可去
+        "raw_response": raw_text,
+        "raw_response_chars": len(raw_text),
+        "tool_input": llm_resp.get("tool_input") if isinstance(llm_resp, dict) else None,
+        "stop_reason": llm_resp.get("stop_reason") if isinstance(llm_resp, dict) else None,
+        "parsed_candidates": res.get("candidates"),
+        "fallback_reason": res.get("fallback_reason"),
+        "latency_ms": res.get("latency_ms"),
+        "usage": llm_resp.get("usage") if isinstance(llm_resp, dict) else None,
     }
-    try:
-        from chisha.llm_client import call_text
-        system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
-        user_msg = build_user_message(top_combos, profile, context,
-                                       n=n, n_explore=n_explore)
-        out["system_prompt_chars"] = len(system_prompt)
-        out["user_message_chars"] = len(user_msg)
-        out["user_message_preview"] = user_msg[:2000]
-        kwargs: dict[str, Any] = {
-            "max_tokens": 2048, "temperature": 0.0,
-            "system": system_prompt, "cache_system": True,
-            "profile_llm": profile.get("llm"),  # D-047: provider 路由
-        }
-        if model:
-            kwargs["model"] = model
-        raw = call_text(user_msg, **kwargs)
-        out["used"] = True
-        out["raw_response"] = raw
-        out["raw_response_chars"] = len(raw)
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if not m:
-            out["fallback_reason"] = "LLM 输出无 JSON"
-            return out
-        data = json.loads(m.group(0))
-        cands = data.get("candidates")
-        validated = _validate_llm_candidates(
-            cands, n_max=n_max,
-            input_size=len(top_combos),
-            n_explore_expected=n_explore,
-        )
-        if validated is None:
-            out["fallback_reason"] = "candidates 校验失败 (字段缺失/越界/数量)"
-            return out
-        out["parsed_candidates"] = validated
-    except Exception as e:
-        out["fallback_reason"] = f"{type(e).__name__}: {str(e)[:120]}"
-    return out
 
 
 # ---------- 主入口 ----------

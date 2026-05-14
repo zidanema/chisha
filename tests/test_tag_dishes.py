@@ -119,7 +119,20 @@ def test_build_input_payload_includes_price_and_restaurant():
 # ---------- tag_batch (mock LLM) ----------
 
 def _llm_response(records):
-    return json.dumps(records, ensure_ascii=False)
+    """D-047: call_text 改返回 dict."""
+    return _llm_response_text(json.dumps(records, ensure_ascii=False))
+
+
+def _llm_response_text(text: str) -> dict:
+    return {
+        "type": "text",
+        "content": text,
+        "stop_reason": "end_turn",
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0,
+                  "cached_tokens": 0, "cache_write_tokens": 0},
+        "model": "test",
+        "raw_text": text,
+    }
 
 
 def test_tag_batch_first_attempt_ok(monkeypatch):
@@ -186,7 +199,7 @@ def test_tag_batch_recovers_on_second_attempt(monkeypatch):
               "price": 10, "monthly_sales": 0, "category_raw": ""}]
 
     responses = iter([
-        "garbage no json",
+        _llm_response_text("garbage no json"),
         _llm_response([_good_record(dish_id="d1")]),
     ])
     monkeypatch.setattr(tag_dishes, "call_text",

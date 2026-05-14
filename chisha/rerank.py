@@ -21,9 +21,6 @@ refine=True 时 n_explore=0 (D-015).
 """
 from __future__ import annotations
 
-import json
-import os
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -34,16 +31,82 @@ ROOT = Path(__file__).resolve().parent.parent
 SYSTEM_PROMPT_PATH = ROOT / "prompts" / "rerank_system.md"
 
 
-# L3 LLM rerank 的输入候选数 (D-046 一审: 40 → 二审: 60).
-# 二审依据 (Codex 实测两 zone 分布):
+# L3 LLM rerank 的输入候选数 (D-046 一审: 40 → 二审: 60 → D-047 终: 60).
+# D-046 二审依据 (Codex 实测两 zone 分布):
 #   shenzhen-bay top41-60 score 跨度 1.997, 10 brand / 12 个新餐厅 / 5 cuisine,
-#     这一段是被 L2 4 层 cap 挤出 head 的真高分 tail, 不是低分尾巴.
-#   shenzhen-bay top61+ 急剧坍缩到 4 brand 同质化 (粥店 / 点都德灌榜).
-#   home 40 后已进入平台区, 60 仍稳但无新增.
-# 选 60 = 大 zone 拿到真实多样性增量, 小 zone 无害; 不上 80/100 避开同质 tail
-# 引入噪声 + LLM 输出漏号风险. 现代 Sonnet 4.6 NIAH/mid-context 能力足够撑 ~6.5k
-# tokens 的 listwise rerank (Anthropic Claude 4 model card).
+#     这一段是被 L2 4 层 cap 挤出 head 的真高分 tail.
+# D-047 (2026-05-14) 矩阵实测 (lunch/want_light, sonnet+opus × top30/60/100 × 3
+# 重复 = 18 调用, 100% tool_use 稳定):
+#   - sonnet picks 跨 K: top30 [0,8,11,13,16,22] → top60 新增 [31,35,55] →
+#     top100 新增 [83]. 验证 top31-60 真有多样性增量.
+#   - opus picks 跨 K: top30 [13,16,18,20,22,24] → top60 新增 [2,31,55] →
+#     top100 新增 [92].
+#   - top100 边际增量小 (只多 1 个新候选), 成本 +40% 不值.
+# K=60 是稳定 + 多样性 + 成本的最优平衡. tool_use 强制 schema (D-047) 完全
+# 解决 D-046.1 的 CoT 泄漏问题, 不再需要 D-047 之前临时退回到 30.
 L3_INPUT_TOP_K = 60
+
+
+# D-047 tool schema: forced JSON schema 比 prompt 约束 + json_mode 强得多.
+# Anthropic 原生 input_schema 格式; llm_client 自动适配 OR 的 OpenAI 格式.
+_RERANK_TOOL = {
+    "name": "select_top_candidates",
+    "description": (
+        "Select 5 candidates (3 exploit + 2 explore) from the input candidate "
+        "list, in rank order. exploit 段在前, explore 段在后."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "candidates": {
+                "type": "array",
+                "minItems": 1, "maxItems": 5,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "rank": {"type": "integer", "minimum": 1, "maximum": 5},
+                        "is_explore": {"type": "boolean"},
+                        "combo_index": {"type": "integer", "minimum": 0},
+                        "fit_score": {"type": "number", "minimum": 0, "maximum": 1},
+                        "taste_match": {"type": "number", "minimum": 0, "maximum": 1},
+                        "risk_flags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "one_line_reason": {
+                            "type": "string", "maxLength": 60,
+                        },
+                    },
+                    "required": [
+                        "rank", "is_explore", "combo_index",
+                        "fit_score", "taste_match",
+                        "risk_flags", "one_line_reason",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["candidates"],
+        "additionalProperties": False,
+    },
+}
+_RERANK_TOOL_CHOICE = {"type": "tool", "name": "select_top_candidates"}
+
+# D-047 默认走 opus (V3+V4 实测质量略胜 sonnet 65% 成本溢价但更尊重 taste).
+# 故障时调用方传 model="anthropic/claude-sonnet-4.6" 降级 (绝不加 thinking,
+# Anthropic 官方明确 forced tool_choice + extended thinking 不兼容).
+#
+# Provider 命名空间不同 (D-047 merge 修复):
+# - anthropic 直连: claude-opus-4-7 (短名, '-')
+# - openrouter: anthropic/claude-opus-4.7 (前缀+'.')
+# - claude_code_cli: opus (CLI 短别名)
+_RERANK_MODEL_BY_PROVIDER = {
+    "anthropic": "claude-opus-4-7",
+    "openrouter": "anthropic/claude-opus-4.7",
+    "claude_code_cli": "opus",
+}
+# 兼容旧入参 (model="anthropic/claude-opus-4.7" 已用作显式降级符号), 兜底取 OR 命名空间
+_DEFAULT_RERANK_MODEL = _RERANK_MODEL_BY_PROVIDER["openrouter"]
 
 
 # LLM 输出的必填字段 (D-046: 删了 health_flags, 由规则后处理算)
@@ -428,6 +491,75 @@ def _rule_reason(combo: dict, has_wet: bool, avg_oil: float, total_p: float) -> 
     return "，".join(bits)[:30]
 
 
+def _validate_llm_candidates_v(
+    cands: list, n_max: int,
+    input_size: int | None = None,
+    n_explore_expected: int | None = None,
+) -> tuple[list[dict] | None, str | None]:
+    """D-047: 同 _validate_llm_candidates 但返回 (cands, error_detail) 元组,
+    error_detail 在校验失败时给出具体原因供 trace, 而不是只 print."""
+    res = _validate_llm_candidates(cands, n_max=n_max,
+                                    input_size=input_size,
+                                    n_explore_expected=n_explore_expected)
+    if res is None:
+        # 重跑一次拿具体原因. 不重复实现是为了让单一 source-of-truth.
+        # 简易方案: 记录 stdout 的 print, 但太复杂; 直接重做关键检查的字符串描述.
+        return None, _diagnose_candidates(cands, n_max, input_size, n_explore_expected)
+    return res, None
+
+
+def _diagnose_candidates(
+    cands: list, n_max: int,
+    input_size: int | None,
+    n_explore_expected: int | None,
+) -> str:
+    """重做 _validate_llm_candidates 的关键检查, 返回首个失败的具体描述."""
+    if not isinstance(cands, list):
+        return f"cands 非 list ({type(cands).__name__})"
+    if not cands:
+        return "cands 为空"
+    if len(cands) > n_max:
+        return f"返回 {len(cands)} > n_max={n_max}"
+    seen_idx: set[int] = set()
+    for i, c in enumerate(cands):
+        if not isinstance(c, dict):
+            return f"#{i} 非 dict"
+        missing = _REQUIRED_FIELDS - set(c)
+        if missing:
+            return f"#{i} 缺字段 {sorted(missing)}"
+        idx = c.get("combo_index")
+        if not isinstance(idx, int) or idx < 0:
+            return f"#{i} combo_index 非法 {idx!r}"
+        if input_size is not None and idx >= input_size:
+            return f"#{i} combo_index 越界 {idx} >= {input_size}"
+        if idx in seen_idx:
+            return f"#{i} combo_index 重复 {idx}"
+        seen_idx.add(idx)
+        fs = c.get("fit_score")
+        if not isinstance(fs, (int, float)) or not (0.0 <= float(fs) <= 1.0):
+            return f"#{i} fit_score 越界 {fs!r}"
+        tm = c.get("taste_match")
+        if tm is not None and (not isinstance(tm, (int, float))
+                               or not (0.0 <= float(tm) <= 1.0)):
+            return f"#{i} taste_match 越界 {tm!r}"
+        if not isinstance(c.get("is_explore"), bool):
+            return f"#{i} is_explore 非 bool"
+        if not isinstance(c.get("risk_flags"), list):
+            return f"#{i} risk_flags 非 list"
+    ranks = sorted(c["rank"] for c in cands if isinstance(c.get("rank"), int))
+    if ranks != list(range(1, len(cands) + 1)):
+        return f"rank 不连续 {ranks}"
+    if n_explore_expected is not None:
+        n_e = sum(1 for c in cands if c.get("is_explore"))
+        if n_e != n_explore_expected:
+            return f"explore 数量 {n_e} != 期望 {n_explore_expected}"
+        for i, c in enumerate(cands):
+            expected_e = i >= (len(cands) - n_explore_expected)
+            if bool(c.get("is_explore")) != expected_e:
+                return f"#{i} is_explore={c.get('is_explore')} 应为 {expected_e}"
+    return "未知 (validate 拒绝但 diagnose 通过, 检查代码漂移)"
+
+
 def _validate_llm_candidates(
     cands: list, n_max: int,
     input_size: int | None = None,
@@ -511,40 +643,155 @@ def _validate_llm_candidates(
     return cands
 
 
+def _run_llm_rerank(
+    top_combos: list[dict],
+    profile: dict,
+    context: "ContextSnapshot | None",
+    *,
+    n: int,
+    n_explore: int,
+    n_max: int = 5,
+    model: str | None = None,
+    profile_llm: dict | None = None,
+) -> dict:
+    """共享 LLM rerank 调用 helper (D-047 抽出, 同时给 prod _llm_rerank +
+    debug _llm_rerank_traced 用, 解决双份代码漂移问题).
+
+    返回 trace dict, 字段:
+      - status: "ok" | "fallback"
+      - fallback_reason: 仅 fallback 时填, 描述具体原因
+      - candidates: 仅 ok 时填, 校验后的 list[dict]
+      - llm_response: 完整 call_text 返回 (debug 用)
+      - system_prompt_chars / user_message_chars / user_message_full
+      - model: 实际使用的 model
+      - latency_ms: 测量值
+
+    D-047: 用 tool_use forced schema 强制结构化输出, 完全替代 D-046.1 的
+    json_mode + regex 提取路径. 必断言 stop_reason in {"tool_use","tool_calls"}
+    防止 LLM 不调 tool 直接 stop.
+    """
+    import time
+    # D-047 merge 修复: 按 resolved provider 选默认 rerank model, 保留
+    # profile.llm.model.<provider> 覆盖能力. 见 docs/DECISIONS.md D-047 Part B.
+    from chisha.llm_client import _resolve_provider, call_text
+    try:
+        resolved_provider = _resolve_provider(profile_llm)
+    except (RuntimeError, ValueError):
+        # 无可用 provider — 让下方 try/except 接住 call_text 报错统一走 fallback
+        resolved_provider = None
+
+    if model:
+        # 显式 model 入参最高优先级
+        final_model: str | None = model
+    elif (
+        profile_llm
+        and resolved_provider
+        and (profile_llm.get("model") or {}).get(resolved_provider)
+    ):
+        # profile.llm.model.<provider> 显式配置时, 透传 None 让 call_text 用 profile
+        final_model = None
+    elif resolved_provider:
+        final_model = _RERANK_MODEL_BY_PROVIDER.get(
+            resolved_provider, _DEFAULT_RERANK_MODEL
+        )
+    else:
+        final_model = _DEFAULT_RERANK_MODEL
+
+    out: dict[str, Any] = {
+        "status": "fallback",
+        "fallback_reason": None,
+        "candidates": None,
+        "llm_response": None,
+        "system_prompt_chars": 0,
+        "user_message_chars": 0,
+        "user_message_full": "",
+        # trace 里记 final_model (None 表示 "走 profile/provider 默认"),
+        # 实际值在 llm_response.model 里; 兜底显示推测的 rerank default.
+        "model": final_model or _RERANK_MODEL_BY_PROVIDER.get(
+            resolved_provider or "", _DEFAULT_RERANK_MODEL
+        ),
+        "latency_ms": None,
+    }
+    try:
+        system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        user_msg = build_user_message(top_combos, profile, context,
+                                       n=n, n_explore=n_explore)
+        out["system_prompt_chars"] = len(system_prompt)
+        out["user_message_chars"] = len(user_msg)
+        out["user_message_full"] = user_msg
+        kwargs: dict[str, Any] = {
+            "model": final_model,
+            "max_tokens": 2048,
+            "temperature": 0.0,
+            "system": system_prompt,
+            "cache_system": True,
+            "tools": [_RERANK_TOOL],
+            "tool_choice": _RERANK_TOOL_CHOICE,
+            "profile_llm": profile_llm,  # D-047: provider 路由
+        }
+        t0 = time.time()
+        resp = call_text(user_msg, **kwargs)
+        out["latency_ms"] = int((time.time() - t0) * 1000)
+        out["llm_response"] = resp
+
+        # B2: 强制断言 stop_reason 是 tool_use, 否则 LLM 没调 tool, 走 fallback.
+        # Anthropic 直连 stop_reason 是 "tool_use", OR 是 "tool_calls".
+        stop = resp.get("stop_reason")
+        if resp.get("type") != "tool_use" or stop not in ("tool_use", "tool_calls"):
+            out["fallback_reason"] = (
+                f"LLM 未调 tool (type={resp.get('type')}, stop={stop})"
+            )
+            return out
+
+        if resp.get("tool_name") != _RERANK_TOOL["name"]:
+            out["fallback_reason"] = (
+                f"LLM 调了错的 tool: {resp.get('tool_name')!r}"
+            )
+            return out
+
+        tool_input = resp.get("tool_input")
+        if not isinstance(tool_input, dict):
+            out["fallback_reason"] = (
+                f"tool_input 非 dict: {type(tool_input).__name__}"
+            )
+            return out
+
+        cands = tool_input.get("candidates")
+        validated, detail = _validate_llm_candidates_v(
+            cands, n_max=n_max,
+            input_size=len(top_combos),
+            n_explore_expected=n_explore,
+        )
+        if validated is None:
+            out["fallback_reason"] = f"candidates 业务校验失败: {detail}"
+            return out
+
+        out["status"] = "ok"
+        out["candidates"] = validated
+        return out
+    except Exception as e:
+        out["fallback_reason"] = f"{type(e).__name__}: {str(e)[:120]}"
+        return out
+
+
 def _llm_rerank(top_combos: list[dict], profile: dict,
                 context: "ContextSnapshot | None", n: int, n_explore: int,
                 model: str | None = None,
                 n_max: int = 5) -> list[dict] | None:
     """调 LLM 返回 list of candidate dict, 失败返回 None (上游 fallback).
 
-    D-046: system / user 拆分; system 进 Anthropic prompt cache.
+    D-047: 走 _run_llm_rerank 共享 helper + tool_use 强制 schema.
+    profile.llm 透传到 call_text 控制 provider 路由.
     """
-    try:
-        from chisha.llm_client import call_text
-        system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
-        user_msg = build_user_message(top_combos, profile, context,
-                                       n=n, n_explore=n_explore)
-        kwargs: dict[str, Any] = {
-            "max_tokens": 2048, "temperature": 0.0,
-            "system": system_prompt, "cache_system": True,
-            "profile_llm": profile.get("llm"),  # D-047: provider 路由
-        }
-        if model:
-            kwargs["model"] = model
-        out = call_text(user_msg, **kwargs)
-        m = re.search(r"\{.*\}", out, re.DOTALL)
-        if not m:
-            return None
-        data = json.loads(m.group(0))
-        cands = data.get("candidates")
-        return _validate_llm_candidates(
-            cands, n_max=n_max,
-            input_size=len(top_combos),
-            n_explore_expected=n_explore,
-        )
-    except Exception as e:
-        print(f"  [rerank fallback] LLM 失败 ({type(e).__name__}: {str(e)[:80]})")
+    res = _run_llm_rerank(
+        top_combos, profile, context,
+        n=n, n_explore=n_explore, n_max=n_max, model=model,
+        profile_llm=profile.get("llm"),
+    )
+    if res["status"] != "ok":
+        print(f"  [rerank fallback] {res['fallback_reason']}")
         return None
+    return res["candidates"]
 
 
 def rerank(

@@ -795,25 +795,31 @@ combo_score (V2.2+) =
 
 #### V2.x 精排：LLM rerank top 60 → 5 (3 exploit + 2 explore)
 
-V2 启用 LLM 精排（[D-035](docs/DECISIONS.md#d-035) 初版 / [D-046](docs/DECISIONS.md#d-046) prompt+payload 重构）。输入：
+V2 启用 LLM 精排（[D-035](docs/DECISIONS.md#d-035) 初版 / [D-046](docs/DECISIONS.md#d-046) prompt+payload 重构 / [D-047](docs/DECISIONS.md#d-047) tool_use forced schema 重构）。输入：
 - ContextSnapshot (D-034: 餐期 / zone / last_meal / recent_3d / last_feedback / daily_mood / refine_input)
 - profile.taste_description 自然语言
-- 打分后 top 60 candidates (D-046: 30 → 60, 二审实测后修订, 紧凑符号化形态)
+- 打分后 top 60 candidates (D-046: 30 → 60, D-047 矩阵实测验证 top31-60 真带来多样性增量)
 - 最近 3 天 meal_log 摘要
 
 prompt 拆 system / user (D-046):
-- `prompts/rerank_system.md`: 角色 + 任务原则 + 硬约束 + 输出 schema + reason few-shot. ~1.7k tokens, 走 Anthropic prompt cache 100% 命中.
+- `prompts/rerank_system.md`: 角色 + 任务原则 + 硬约束 + reason few-shot. D-047 删了输出格式段 (~22 行), 因为 schema 由 tool 自带.
 - user message: 由 `chisha.rerank.build_user_message()` 拼成紧凑文本, 每菜一行 `菜名｜main·烹·油N[·辣N·甜N·汤N·processed]｜role=X[·grain=Y]｜价`, 默认值省略.
 
-输出：强制 JSON, 每条 candidate 含 `rank / is_explore / combo_index / fit_score / taste_match / risk_flags / one_line_reason`。`health_flags` 由 [`rerank.py:_compute_health_flags`](../chisha/rerank.py) 在拿到 LLM 输出后**规则后处理**补齐 (D-046, LLM 不算确定性可计算的字段).
+输出 (D-047): **tool_use forced schema** 替代 D-046 的 prompt 约束 + json_mode + regex 提取. tool name `select_top_candidates`, schema 严格定义 5 个 candidate 字段类型/上下界. 每条 candidate 含 `rank / is_explore / combo_index / fit_score / taste_match / risk_flags / one_line_reason`. `health_flags` 由 [`rerank.py:_compute_health_flags`](../chisha/rerank.py) 在拿到 LLM 输出后**规则后处理**补齐 (D-046, LLM 不算确定性可计算的字段).
 
 5 个候选 = 3 exploit (fit_score 排) + 2 explore (打分中段、最近未吃过、未尝试菜系/做法)，命中 [D-015](docs/DECISIONS.md#d-015)。refine 时 explore_count=0 (D-015)。
 
-LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由层 ([D-047](docs/DECISIONS.md#d-047))。三 provider 实现在 [`chisha/llm_providers/`](../chisha/llm_providers/)：`anthropic_api` (ANTHROPIC_API_KEY 直连) / `openrouter` (OPENROUTER_API_KEY) / `claude_code_cli` (subprocess 调 `claude -p` 复用本机订阅额度)。选择策略：`CHISHA_LLM_PROVIDER` env > `profile.yaml.llm.provider` 显式 > auto-detect (顺序: ANTHROPIC_API_KEY > Claude Code 订阅 > OPENROUTER_API_KEY)。失败兜底：退化到打分 top n + 规则 reason。
+LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由层 ([D-047](docs/DECISIONS.md#d-047))。三 provider 实现在 [`chisha/llm_providers/`](../chisha/llm_providers/)：`anthropic_api` (ANTHROPIC_API_KEY 直连, 默认 `claude-sonnet-4-6`) / `openrouter` (OPENROUTER_API_KEY, 默认 `anthropic/claude-opus-4.7`) / `claude_code_cli` (subprocess 调 `claude -p` 复用本机订阅额度, 不支持 tool_use 强制 schema)。选择策略：`CHISHA_LLM_PROVIDER` env > `profile.yaml.llm.provider` 显式 > auto-detect (顺序: ANTHROPIC_API_KEY > Claude Code 订阅 > OPENROUTER_API_KEY)。
+
+温度 0.0, max_tokens 2048. `cache_system=True` 在 OR 路径也真生效 (D-047 V5 实测 cached=3748 tokens, 省 23%). OR provider 锁 `Anthropic` (allow_fallbacks=False, **不加 require_parameters** 避免触发新模型 + tools 组合的 OR 路由 404). 失败兜底: 走 `_run_llm_rerank` 共享 helper 的 fallback 分支, 退化到打分 top n + 规则 reason.
+
+调用层强约束 (D-047 Codex BLOCKER): `_run_llm_rerank` 必断言 `stop_reason ∈ {tool_use, tool_calls}` 且 `tool_name == "select_top_candidates"` 才认为成功, 否则视作 fallback. **绝不启用 extended thinking** — 官方明确 forced tool_choice + thinking 不兼容.
 
 兜底机制：LLM rerank 输出后 [`chisha/rerank.py:_enforce_brand_unique`](../chisha/rerank.py) 强制 brand 去重 (D-045: 与 L2 apply_caps brand 层语义对齐)。
 
-成本估算：单次推荐 1 次 LLM 调用 ≈ 6.2k input tokens (cache 命中时, top60) + ≤ 800 output tokens; 旧版 ~22k input。约 ¥0.02-0.04/次。`chisha.rerank.L3_INPUT_TOP_K` 单一常量控制 N，调整无需散改多处。
+成本估算 (D-047 实测): opus-4.7 单次 ~$0.085 (cache 命中后 ~$0.07), 200 次/月 ≈ $14-18. `chisha.rerank.L3_INPUT_TOP_K` 单一常量控制 N, `_DEFAULT_RERANK_MODEL` 控制默认模型, 调整无需散改多处.
+
+> **后续 L3 精排改动必读**: [docs/L3_RERANK_REDESIGN.md](docs/L3_RERANK_REDESIGN.md) — 完整方案 + V1-V5 实测数据 + Codex review 强制条件清单.
 
 ### 5.7 输出 JSON schema
 
@@ -980,6 +986,7 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由
 | **44** | **profile.yaml 真实化 + 口味偏好层与健康目标层分离** | **D-044** |
 | **45** | **L2 cap 增加 brand 层（连锁去重）** | **D-045** |
 | **46** | **L3 精排 prompt + payload 重构（top60 + system/user 拆分 + 紧凑化 + health_flags 规则后处理）** | **D-046** |
+| **47** | **L3 精排重构（tool_use forced schema + opus 默认 + cache_control + helper 抽出消灭双份代码）** | **D-047** |
 
 ---
 

@@ -180,7 +180,9 @@ def test_provider_via_call_text_route(_skip_if_no_cli):
             system="Echo verbatim. If asked to say PONG, output exactly PONG.",
             profile_llm={"provider": "claude_code_cli"},
         )
-        assert "PONG" in out.upper()
+        # D-047 merge: call_text 返回 dict, text 模式取 .content
+        assert isinstance(out, dict) and out.get("type") == "text"
+        assert "PONG" in out.get("content", "").upper()
     finally:
         os.environ.pop("CHISHA_LLM_PROVIDER", None)
         if saved_anth: os.environ["ANTHROPIC_API_KEY"] = saved_anth

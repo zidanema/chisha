@@ -9,7 +9,6 @@ LLM 角色: 反馈解析员 — 仅做"自然语言 → 结构化 chip"映射, �
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -127,9 +126,12 @@ def _llm_parse(text: str,
         ).replace(
             "{CHIP_VOCAB}", ", ".join(sorted(CHIP_VOCAB))
         )
-        out = call_text(prompt, max_tokens=512, temperature=0.0,
-                         profile_llm=profile_llm)
-        # 提取 JSON (LLM 偶尔包 ```json ... ```)
+        # D-047: call_text 返回 dict, text 模式取 .content; json_mode 在 OR
+        # 路径 "accepted but not enforced", regex 仍兜底 markdown 包裹 (```json
+        # ... ```) 形态. profile_llm 透传给 provider 路由器.
+        resp = call_text(prompt, max_tokens=512, temperature=0.0,
+                         json_mode=True, profile_llm=profile_llm)
+        out = resp.get("content", "")
         m = re.search(r"\{.*\}", out, re.DOTALL)
         if not m:
             return None
