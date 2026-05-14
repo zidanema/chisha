@@ -21,9 +21,6 @@ refine=True 时 n_explore=0 (D-015).
 """
 from __future__ import annotations
 
-import json
-import os
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -98,7 +95,18 @@ _RERANK_TOOL_CHOICE = {"type": "tool", "name": "select_top_candidates"}
 # D-047 默认走 opus (V3+V4 实测质量略胜 sonnet 65% 成本溢价但更尊重 taste).
 # 故障时调用方传 model="anthropic/claude-sonnet-4.6" 降级 (绝不加 thinking,
 # Anthropic 官方明确 forced tool_choice + extended thinking 不兼容).
-_DEFAULT_RERANK_MODEL = "anthropic/claude-opus-4.7"
+#
+# Provider 命名空间不同 (D-047 merge 修复):
+# - anthropic 直连: claude-opus-4-7 (短名, '-')
+# - openrouter: anthropic/claude-opus-4.7 (前缀+'.')
+# - claude_code_cli: opus (CLI 短别名)
+_RERANK_MODEL_BY_PROVIDER = {
+    "anthropic": "claude-opus-4-7",
+    "openrouter": "anthropic/claude-opus-4.7",
+    "claude_code_cli": "opus",
+}
+# 兼容旧入参 (model="anthropic/claude-opus-4.7" 已用作显式降级符号), 兜底取 OR 命名空间
+_DEFAULT_RERANK_MODEL = _RERANK_MODEL_BY_PROVIDER["openrouter"]
 
 
 # LLM 输出的必填字段 (D-046: 删了 health_flags, 由规则后处理算)
@@ -644,6 +652,7 @@ def _run_llm_rerank(
     n_explore: int,
     n_max: int = 5,
     model: str | None = None,
+    profile_llm: dict | None = None,
 ) -> dict:
     """共享 LLM rerank 调用 helper (D-047 抽出, 同时给 prod _llm_rerank +
     debug _llm_rerank_traced 用, 解决双份代码漂移问题).
@@ -662,6 +671,32 @@ def _run_llm_rerank(
     防止 LLM 不调 tool 直接 stop.
     """
     import time
+    # D-047 merge 修复: 按 resolved provider 选默认 rerank model, 保留
+    # profile.llm.model.<provider> 覆盖能力. 见 docs/DECISIONS.md D-047 Part B.
+    from chisha.llm_client import _resolve_provider, call_text
+    try:
+        resolved_provider = _resolve_provider(profile_llm)
+    except (RuntimeError, ValueError):
+        # 无可用 provider — 让下方 try/except 接住 call_text 报错统一走 fallback
+        resolved_provider = None
+
+    if model:
+        # 显式 model 入参最高优先级
+        final_model: str | None = model
+    elif (
+        profile_llm
+        and resolved_provider
+        and (profile_llm.get("model") or {}).get(resolved_provider)
+    ):
+        # profile.llm.model.<provider> 显式配置时, 透传 None 让 call_text 用 profile
+        final_model = None
+    elif resolved_provider:
+        final_model = _RERANK_MODEL_BY_PROVIDER.get(
+            resolved_provider, _DEFAULT_RERANK_MODEL
+        )
+    else:
+        final_model = _DEFAULT_RERANK_MODEL
+
     out: dict[str, Any] = {
         "status": "fallback",
         "fallback_reason": None,
@@ -670,11 +705,14 @@ def _run_llm_rerank(
         "system_prompt_chars": 0,
         "user_message_chars": 0,
         "user_message_full": "",
-        "model": model or _DEFAULT_RERANK_MODEL,
+        # trace 里记 final_model (None 表示 "走 profile/provider 默认"),
+        # 实际值在 llm_response.model 里; 兜底显示推测的 rerank default.
+        "model": final_model or _RERANK_MODEL_BY_PROVIDER.get(
+            resolved_provider or "", _DEFAULT_RERANK_MODEL
+        ),
         "latency_ms": None,
     }
     try:
-        from chisha.llm_client import call_text
         system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
         user_msg = build_user_message(top_combos, profile, context,
                                        n=n, n_explore=n_explore)
@@ -682,13 +720,14 @@ def _run_llm_rerank(
         out["user_message_chars"] = len(user_msg)
         out["user_message_full"] = user_msg
         kwargs: dict[str, Any] = {
-            "model": model or _DEFAULT_RERANK_MODEL,
+            "model": final_model,
             "max_tokens": 2048,
             "temperature": 0.0,
             "system": system_prompt,
             "cache_system": True,
             "tools": [_RERANK_TOOL],
             "tool_choice": _RERANK_TOOL_CHOICE,
+            "profile_llm": profile_llm,  # D-047: provider 路由
         }
         t0 = time.time()
         resp = call_text(user_msg, **kwargs)
@@ -742,10 +781,12 @@ def _llm_rerank(top_combos: list[dict], profile: dict,
     """调 LLM 返回 list of candidate dict, 失败返回 None (上游 fallback).
 
     D-047: 走 _run_llm_rerank 共享 helper + tool_use 强制 schema.
+    profile.llm 透传到 call_text 控制 provider 路由.
     """
     res = _run_llm_rerank(
         top_combos, profile, context,
         n=n, n_explore=n_explore, n_max=n_max, model=model,
+        profile_llm=profile.get("llm"),
     )
     if res["status"] != "ok":
         print(f"  [rerank fallback] {res['fallback_reason']}")
@@ -772,7 +813,7 @@ def rerank(
         n: 输出候选数, 默认 5.
         n_explore: explore 候选数, 默认 2 (D-015).
         refine: True 时 n_explore=0 (D-015).
-        use_llm: 强制开关. None=auto (看 ANTHROPIC_API_KEY).
+        use_llm: 强制开关. None=auto (看任何 provider 是否可用, D-047).
     """
     if not top_combos:
         return []

@@ -1648,7 +1648,7 @@ V1-V2 期间 profile.yaml 一直是 mock 数据 (goal=减脂增肌, 价格 35/50
 
 ---
 
-## D-047: L3 精排重构 — tool_use forced schema + opus 默认 + top60 + cache_control
+## D-047 Part A — L3 精排重构: tool_use forced schema + opus 默认 + top60 + cache_control
 
 **2026-05-14** · 工程实施 → 完整内容见 [IMPLEMENTATION_LOG.md#D-047](IMPLEMENTATION_LOG.md#d-047-l3-精排重构--tool_use-forced-schema--opus-默认--top60--cache_control)
 
@@ -1659,3 +1659,32 @@ V1-V2 期间 profile.yaml 一直是 mock 数据 (goal=减脂增肌, 价格 35/50
 方法论已沉淀到 [docs/L3_RERANK_REDESIGN.md](L3_RERANK_REDESIGN.md) (L3 改动必读)。
 
 依赖: D-038, D-046, D-046.1
+
+---
+
+## D-047 Part B — LLM Provider 抽象 + Claude Code CLI 路径
+
+**2026-05-14** · 架构决策 + 工程实施 → 完整实施细节待迁 [IMPLEMENTATION_LOG.md#D-047-Part-B](IMPLEMENTATION_LOG.md#d-047-part-b)(下次 sync 时迁入)
+
+> 同日并行轨道: Part A 是 L3 精排 tool_use 重构 (上文), Part B 是 LLM provider 抽象 + Claude Code CLI subprocess 路径。两条线在 merge 时合流到 `llm_client.py`: `call_text` 既走 provider 路由, 也支持 tools/tool_choice + dict 返回。
+
+**背景**: 自用阶段每天 1-2 次推荐, 用 ANTHROPIC_API_KEY 月成本 ¥20-100, 而本机已有 Max 订阅。让 chisha 复用订阅额度调 LLM, 同时保留 API key / OpenRouter 路径供未来分发用户使用。
+
+**方案**: subprocess 调 `claude -p`, 10 个隔离 flag (`--effort low` / `--tools ""` / `--disable-slash-commands` / `--setting-sources ""` / `--strict-mcp-config` / `--no-session-persistence` / `--system-prompt-file` / `--input-format text` 等), cwd 在 `~/.cache/chisha/llm_tmp/` 私有目录, env 过滤 `CLAUDE_*` / `ANTHROPIC_*` / `OPENROUTER_*` 防干扰 + 防订阅路径被付费 API 劫持, Popen + start_new_session + PR_SET_PDEATHSIG 防 orphan。
+
+**架构**: `chisha/llm_providers/` 子包, 三 provider (anthropic_api / openrouter / claude_code_cli) 统一签名 (Part A 合流后都返回 dict + 支持 tools/tool_choice; claude_code_cli 不支持 tool_use, 传 tools 抛 `NotImplementedError`); `chisha/llm_client.py` 成薄路由层; profile.yaml `llm` 段控制 + 环境变量 `CHISHA_LLM_PROVIDER` 强制覆盖。
+
+**实测**: N=60 sonnet effort=low 端到端 60s, 输出结构正确; 订阅消耗 1 message 配额/次。详见:
+- spec: `docs/superpowers/specs/2026-05-14-claude-code-cli-provider-design.md`
+- plan: `docs/superpowers/plans/2026-05-14-claude-code-cli-provider.md`
+
+**关键陷阱 (实测发现 + Codex review 补强)**:
+1. Claude Code 默认 system prompt 注入 ~10k tokens → `--tools ""` 砍到 ~1.8k
+2. 默认 effort 触发 extended thinking 让 N=60 跑 200s+ → `--effort low` 降到 60s
+3. argv 超 ~8k chars 异常 → system 用 `--system-prompt-file`, user 用 stdin
+4. `--bare` 跳过 CLAUDE.md 但和 OAuth 互斥 → 用 cwd + env 过滤代替
+5. `tempfile` SIGKILL 时残留 → 启动 sweep `chisha_sys_*.md` >1h 旧文件
+6. CHISHA_LLM_PROVIDER="" 空白要当 unset, 不能 raise
+7. 显式选 provider 但凭据缺失要 RuntimeError 给清晰错误, 不能 silent fallback
+
+依赖: D-038 (LLM 抽象 Phase 1), D-047 Part A (call_text dict 接口)

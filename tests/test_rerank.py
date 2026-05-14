@@ -309,3 +309,108 @@ def test_llm_validate_is_explore_must_be_bool():
     bad = _good_cand(0, 1)
     bad["is_explore"] = "yes"
     assert _validate_llm_candidates([bad], n_max=5) is None
+
+
+# ─────────────────────── D-047 merge: provider routing + tool_use fallback
+
+
+def test_run_llm_rerank_falls_back_when_provider_raises_not_implemented(
+    top_30_combos, basic_profile_v2, monkeypatch,
+):
+    """profile.llm.provider=claude_code_cli + rerank 调 tool_use 时 provider
+    抛 NotImplementedError, _run_llm_rerank 必须捕获并走 fallback,
+    不让异常冒到顶层 (D-047 merge MINOR 3, Codex review)."""
+    from unittest.mock import patch
+
+    from chisha.rerank import _run_llm_rerank
+
+    # 清掉真 key 让 _resolve_provider 不会因为 ANTHROPIC_API_KEY 抢答
+    for k in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "CHISHA_LLM_PROVIDER"):
+        monkeypatch.delenv(k, raising=False)
+
+    profile = {**basic_profile_v2, "llm": {"provider": "claude_code_cli"}}
+
+    with patch("chisha.llm_providers.claude_code_cli.is_available",
+                return_value=True), \
+         patch("chisha.llm_providers.claude_code_cli.call",
+                side_effect=NotImplementedError("cc-cli 不支持 tools")):
+        res = _run_llm_rerank(
+            top_30_combos, profile, context=None,
+            n=5, n_explore=2, n_max=5,
+            profile_llm=profile["llm"],
+        )
+
+    assert res["status"] == "fallback"
+    assert "NotImplementedError" in (res["fallback_reason"] or "")
+
+
+def test_run_llm_rerank_picks_per_provider_default_model(
+    top_30_combos, basic_profile_v2, monkeypatch,
+):
+    """没显式 model + profile_llm.model 也没给该 provider 时,
+    rerank 应按 _RERANK_MODEL_BY_PROVIDER 选默认 (D-047 merge MAJOR 修复)."""
+    from unittest.mock import patch
+
+    from chisha.rerank import _RERANK_MODEL_BY_PROVIDER, _run_llm_rerank
+
+    for k in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "CHISHA_LLM_PROVIDER"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+
+    profile = {**basic_profile_v2, "llm": {"provider": "anthropic"}}
+
+    captured: dict = {}
+
+    def fake_call(prompt, **kwargs):
+        captured.update(kwargs)
+        # 返回非 tool_use 让 rerank 走 fallback (不影响本测试关心的 model 透传)
+        return {"type": "text", "content": "", "stop_reason": "end_turn",
+                "usage": {}, "model": kwargs.get("model"), "raw_text": ""}
+
+    with patch("chisha.llm_providers.anthropic_api.call", side_effect=fake_call):
+        _run_llm_rerank(
+            top_30_combos, profile, context=None,
+            n=5, n_explore=2, n_max=5,
+            profile_llm=profile["llm"],
+        )
+
+    # provider=anthropic → 应该是短名 "claude-opus-4-7", 不是 OR 命名空间
+    assert captured.get("model") == _RERANK_MODEL_BY_PROVIDER["anthropic"]
+    assert captured["model"] == "claude-opus-4-7"
+
+
+def test_run_llm_rerank_respects_profile_model_override(
+    top_30_combos, basic_profile_v2, monkeypatch,
+):
+    """profile.llm.model.<provider> 显式配置时, rerank 应让它生效
+    (D-047 merge MAJOR 修复: 不再被 _DEFAULT_RERANK_MODEL 屏蔽)."""
+    from unittest.mock import patch
+
+    from chisha.rerank import _run_llm_rerank
+
+    for k in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "CHISHA_LLM_PROVIDER"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+
+    profile_llm = {
+        "provider": "anthropic",
+        "model": {"anthropic": "claude-sonnet-4-6"},  # 强制降级 sonnet
+    }
+    profile = {**basic_profile_v2, "llm": profile_llm}
+
+    captured: dict = {}
+
+    def fake_call(prompt, **kwargs):
+        captured.update(kwargs)
+        return {"type": "text", "content": "", "stop_reason": "end_turn",
+                "usage": {}, "model": kwargs.get("model"), "raw_text": ""}
+
+    with patch("chisha.llm_providers.anthropic_api.call", side_effect=fake_call):
+        _run_llm_rerank(
+            top_30_combos, profile, context=None,
+            n=5, n_explore=2, n_max=5,
+            profile_llm=profile_llm,
+        )
+
+    # call_text 内部 _resolve_model 透传 profile model → provider 收到 sonnet
+    assert captured.get("model") == "claude-sonnet-4-6"

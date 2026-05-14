@@ -101,7 +101,10 @@ def refine(
     today = today or dt.date.today()
 
     # 1. parse_feedback: user_input → chips + note
-    fb: FeedbackParsed = parse_feedback(text=user_input, use_llm=use_llm)
+    fb: FeedbackParsed = parse_feedback(
+        text=user_input, use_llm=use_llm,
+        profile_llm=profile.get("llm"),  # D-047: provider 路由
+    )
 
     # D-043 P3: 反馈写入 long_term_prefs (闭环数据采集)
     # 失败不阻断 refine, 反馈学习是 best-effort

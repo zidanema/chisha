@@ -220,7 +220,11 @@ chisha/
 │   ├── recall.py                # 召回 + 多样性
 │   ├── score.py                 # 打分函数
 │   ├── reason.py                # LLM 写一句话理由（V1 LLM 只在这）
-│   └── llm_client.py            # LLM 抽象（D-038 Phase 1: Anthropic / OpenRouter auto-detect）
+│   ├── llm_client.py            # LLM 路由层 (D-047): provider 选择 + 模型解析
+│   └── llm_providers/           # 三 provider (D-047)
+│       ├── anthropic_api.py     # ANTHROPIC_API_KEY 直连
+│       ├── openrouter.py        # OPENROUTER_API_KEY → 第三方
+│       └── claude_code_cli.py   # claude -p subprocess (复用订阅额度)
 │
 ├── integrations/
 │   └── openclaw/                # V1 接入 OpenClaw + 飞书
@@ -805,7 +809,9 @@ prompt 拆 system / user (D-046):
 
 5 个候选 = 3 exploit (fit_score 排) + 2 explore (打分中段、最近未吃过、未尝试菜系/做法)，命中 [D-015](docs/DECISIONS.md#d-015)。refine 时 explore_count=0 (D-015)。
 
-LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` ([D-038](docs/DECISIONS.md#d-038) Phase 1 provider auto-detect: ANTHROPIC_API_KEY → `claude-sonnet-4-6`; OPENROUTER_API_KEY → `anthropic/claude-opus-4.7` 默认, D-047)。温度 0.0, max_tokens 2048. `cache_system=True` 在 OR 路径也真生效 (D-047 V5 实测 cached=3748 tokens, 省 23%). OR provider 锁 `Anthropic` (allow_fallbacks=False, **不加 require_parameters** 避免触发新模型 + tools 组合的 OR 路由 404). 失败兜底: 走 `_run_llm_rerank` 共享 helper 的 fallback 分支, 退化到打分 top n + 规则 reason.
+LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由层 ([D-047](docs/DECISIONS.md#d-047))。三 provider 实现在 [`chisha/llm_providers/`](../chisha/llm_providers/)：`anthropic_api` (ANTHROPIC_API_KEY 直连, 默认 `claude-sonnet-4-6`) / `openrouter` (OPENROUTER_API_KEY, 默认 `anthropic/claude-opus-4.7`) / `claude_code_cli` (subprocess 调 `claude -p` 复用本机订阅额度, 不支持 tool_use 强制 schema)。选择策略：`CHISHA_LLM_PROVIDER` env > `profile.yaml.llm.provider` 显式 > auto-detect (顺序: ANTHROPIC_API_KEY > Claude Code 订阅 > OPENROUTER_API_KEY)。
+
+温度 0.0, max_tokens 2048. `cache_system=True` 在 OR 路径也真生效 (D-047 V5 实测 cached=3748 tokens, 省 23%). OR provider 锁 `Anthropic` (allow_fallbacks=False, **不加 require_parameters** 避免触发新模型 + tools 组合的 OR 路由 404). 失败兜底: 走 `_run_llm_rerank` 共享 helper 的 fallback 分支, 退化到打分 top n + 规则 reason.
 
 调用层强约束 (D-047 Codex BLOCKER): `_run_llm_rerank` 必断言 `stop_reason ∈ {tool_use, tool_calls}` 且 `tool_name == "select_top_candidates"` 才认为成功, 否则视作 fallback. **绝不启用 extended thinking** — 官方明确 forced tool_choice + thinking 不兼容.
 

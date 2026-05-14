@@ -107,7 +107,7 @@ def recommend_meal(
         version: "v1" (D-024 取打分 top 3 + LLM 写 reason) 或
                  "v2" (D-033 LLM 精排 top30→5 + Context + session).
         daily_mood: V2 才用. ContextSnapshot.daily_mood, 见 chisha/context.DAILY_MOODS.
-        use_llm_rerank: V2 才用. None=auto (按 ANTHROPIC_API_KEY).
+        use_llm_rerank: V2 才用. None=auto (任意 LLM provider 可用即开, D-047).
         root: 仓库根目录 (测试可注入), 默认 chisha/__file__.parent.parent.
     """
     if version == "v2":

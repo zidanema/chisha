@@ -15,7 +15,6 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
-import os
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -36,12 +35,9 @@ from chisha.recall import (
 )
 from chisha.rerank import (
     L3_INPUT_TOP_K,
-    SYSTEM_PROMPT_PATH,
     _compute_health_flags,
     _enforce_brand_unique,
-    _validate_llm_candidates,
     build_payload,
-    build_user_message,
     fallback_rerank,
 )
 from chisha.score import (
@@ -50,8 +46,6 @@ from chisha.score import (
 
 
 ROOT = Path(__file__).resolve().parent.parent
-# D-046: prompt 拆 system / user, 不再单文件
-# SYSTEM_PROMPT_PATH 从 chisha.rerank 复用
 
 
 # ---------- profile 工具 ----------
@@ -423,6 +417,7 @@ def _llm_rerank_traced(
     res = _run_llm_rerank(
         top_combos, profile, context,
         n=n, n_explore=n_explore, n_max=n_max, model=model,
+        profile_llm=profile.get("llm"),  # D-047: provider 路由
     )
     llm_resp = res.get("llm_response") or {}
     # 兼容旧字段命名: raw_response / parsed_candidates / used / fallback_reason
