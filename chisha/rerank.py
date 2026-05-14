@@ -566,7 +566,7 @@ def rerank(
         n: 输出候选数, 默认 5.
         n_explore: explore 候选数, 默认 2 (D-015).
         refine: True 时 n_explore=0 (D-015).
-        use_llm: 强制开关. None=auto (看 ANTHROPIC_API_KEY).
+        use_llm: 强制开关. None=auto (看任何 provider 是否可用, D-047).
     """
     if not top_combos:
         return []

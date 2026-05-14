@@ -4,7 +4,7 @@
 输出: FeedbackParsed (规范化 chip + rating + want_again + note).
 
 LLM 角色: 反馈解析员 — 仅做"自然语言 → 结构化 chip"映射, 不做学习决策.
-无 ANTHROPIC_API_KEY 时退化到 rule-based 关键词匹配, 保证管道不断.
+无 LLM provider 可用时退化到 rule-based 关键词匹配, 保证管道不断 (D-047).
 """
 from __future__ import annotations
 
