@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>菜品打标评测集设计说明 | Eval Design Explained</title>
+<style>
+  :root {
+    --c-text: #1a202c;
+    --c-text-muted: #4a5568;
+    --c-text-light: #718096;
+    --c-border: #e2e8f0;
+    --c-border-strong: #cbd5e0;
+    --c-bg: #ffffff;
+    --c-bg-soft: #f7fafc;
+    --c-bg-card: #fafafa;
+    --c-primary: #1a365d;
+    --c-primary-soft: #ebf4ff;
+    --c-accent: #2c7a7b;
+    --c-accent-soft: #e6fffa;
+    --c-warn: #c05621;
+    --c-warn-soft: #fffaf0;
+    --c-success: #276749;
+    --c-success-soft: #f0fff4;
+    --c-danger: #9b2c2c;
+    --c-danger-soft: #fff5f5;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.75;
+    color: var(--c-text);
+    background: var(--c-bg-soft);
+  }
+
+  .page {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 48px 24px 96px;
+  }
+
+  /* ============ Hero ============ */
+  .hero {
+    background: linear-gradient(135deg, #1a365d 0%, #2c5282 100%);
+    color: #fff;
+    padding: 56px 48px;
+    border-radius: 12px;
+    margin-bottom: 48px;
+    box-shadow: 0 4px 20px rgba(26, 54, 93, 0.15);
+  }
+  .hero .badge {
+    display: inline-block;
+    padding: 4px 12px;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 4px;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+    margin-bottom: 16px;
+  }
+  .hero h1 {
+    margin: 0 0 16px;
+    font-size: 32px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  .hero .subtitle {
+    font-size: 16px;
+    color: rgba(255,255,255,0.85);
+    margin: 0 0 24px;
+    max-width: 720px;
+  }
+  .hero .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.7);
+    padding-top: 20px;
+    border-top: 1px solid rgba(255,255,255,0.15);
+  }
+  .hero .meta strong { color: #fff; font-weight: 500; }
+
+  /* ============ TL;DR Box ============ */
+  .tldr {
+    background: var(--c-bg);
+    border-left: 4px solid var(--c-accent);
+    padding: 28px 32px;
+    border-radius: 0 8px 8px 0;
+    margin-bottom: 56px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  }
+  .tldr .tldr-label {
+    display: inline-block;
+    font-size: 12px;
+    letter-spacing: 2px;
+    color: var(--c-accent);
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .tldr p { margin: 0 0 12px; }
+  .tldr p:last-child { margin-bottom: 0; }
+  .tldr .highlight {
+    background: #fff3cd;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: 500;
+  }
+
+  /* ============ Section ============ */
+  section {
+    background: var(--c-bg);
+    border: 1px solid var(--c-border);
+    border-radius: 10px;
+    padding: 40px 48px;
+    margin-bottom: 32px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+  }
+  section h2 {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--c-primary);
+    margin: 0 0 8px;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  section h2 .num {
+    font-size: 14px;
+    color: var(--c-text-light);
+    font-weight: 500;
+    letter-spacing: 1px;
+  }
+  section .section-lead {
+    color: var(--c-text-muted);
+    font-size: 15px;
+    margin: 0 0 28px;
+  }
+  section h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--c-text);
+    margin: 32px 0 12px;
+  }
+  section h3:first-of-type { margin-top: 0; }
+  section h4 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 24px 0 8px;
+    color: var(--c-text);
+  }
+  section p { margin: 0 0 14px; color: var(--c-text); }
+  section ul, section ol { padding-left: 24px; margin: 0 0 14px; }
+  section li { margin-bottom: 6px; }
+  section strong { font-weight: 600; color: var(--c-text); }
+  section code {
+    background: var(--c-bg-soft);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    color: var(--c-primary);
+  }
+
+  /* ============ Tables ============ */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0 20px;
+    font-size: 14px;
+  }
+  th, td {
+    padding: 12px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--c-border);
+    vertical-align: top;
+  }
+  th {
+    background: var(--c-bg-soft);
+    font-weight: 600;
+    color: var(--c-primary);
+    border-bottom: 2px solid var(--c-border-strong);
+    font-size: 13px;
+  }
+  tr:hover { background: var(--c-bg-soft); }
+  td .num-cell { font-variant-numeric: tabular-nums; font-weight: 500; }
+
+  /* ============ Callout Cards ============ */
+  .callout {
+    padding: 20px 24px;
+    border-radius: 8px;
+    margin: 20px 0;
+  }
+  .callout.warn { background: var(--c-warn-soft); border-left: 4px solid var(--c-warn); }
+  .callout.success { background: var(--c-success-soft); border-left: 4px solid var(--c-success); }
+  .callout.info { background: var(--c-primary-soft); border-left: 4px solid var(--c-primary); }
+  .callout.danger { background: var(--c-danger-soft); border-left: 4px solid var(--c-danger); }
+  .callout .callout-title {
+    font-weight: 600;
+    margin-bottom: 8px;
+    font-size: 14px;
+    letter-spacing: 0.5px;
+  }
+  .callout.warn .callout-title { color: var(--c-warn); }
+  .callout.success .callout-title { color: var(--c-success); }
+  .callout.info .callout-title { color: var(--c-primary); }
+  .callout.danger .callout-title { color: var(--c-danger); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  /* ============ Compare cards (能 / 不能) ============ */
+  .compare-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin: 24px 0;
+  }
+  .compare-card {
+    padding: 24px;
+    border-radius: 8px;
+    border: 1px solid var(--c-border);
+  }
+  .compare-card.yes {
+    background: var(--c-success-soft);
+    border-color: #c6f6d5;
+  }
+  .compare-card.no {
+    background: var(--c-danger-soft);
+    border-color: #fed7d7;
+  }
+  .compare-card h4 {
+    margin: 0 0 16px;
+    font-size: 15px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .compare-card.yes h4 { color: var(--c-success); }
+  .compare-card.no h4 { color: var(--c-danger); }
+  .compare-card .q {
+    font-weight: 600;
+    margin: 12px 0 4px;
+    color: var(--c-text);
+    font-size: 14px;
+  }
+  .compare-card .a {
+    color: var(--c-text-muted);
+    font-size: 13px;
+    margin: 0;
+  }
+
+  /* ============ Analogy block ============ */
+  .analogy {
+    background: linear-gradient(135deg, #fef5e7 0%, #fffaf0 100%);
+    border: 1px solid #fbd38d;
+    border-radius: 10px;
+    padding: 32px;
+    margin: 28px 0;
+    position: relative;
+  }
+  .analogy-label {
+    position: absolute;
+    top: -10px;
+    left: 24px;
+    background: var(--c-warn);
+    color: #fff;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    letter-spacing: 1px;
+    font-weight: 600;
+  }
+  .analogy p { margin: 8px 0; font-size: 15px; }
+  .analogy .punchline {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px dashed #fbd38d;
+    font-weight: 500;
+    color: var(--c-warn);
+  }
+
+  /* ============ Example anchor card ============ */
+  .anchor-example {
+    background: var(--c-bg-soft);
+    border: 1px solid var(--c-border);
+    border-radius: 8px;
+    padding: 24px;
+    margin: 20px 0;
+  }
+  .anchor-example .dish-name {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--c-primary);
+    margin-bottom: 16px;
+  }
+  .anchor-table {
+    margin: 0;
+    background: #fff;
+  }
+  .anchor-table th { background: #fff; border-bottom-width: 2px; }
+  .col-instinct { color: var(--c-danger); }
+  .col-rule { color: var(--c-success); }
+  .anchor-table td:nth-child(2) {
+    background: var(--c-danger-soft);
+    font-weight: 500;
+  }
+  .anchor-table td:nth-child(3) {
+    background: var(--c-success-soft);
+    font-weight: 500;
+  }
+
+  /* ============ Number comparison ============ */
+  .scoreboard {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin: 24px 0;
+  }
+  .scoreboard-side {
+    border: 1px solid var(--c-border);
+    border-radius: 8px;
+    padding: 20px;
+    background: #fff;
+  }
+  .scoreboard-side h4 {
+    margin: 0 0 4px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .scoreboard-side .case {
+    font-size: 12px;
+    color: var(--c-text-light);
+    margin-bottom: 12px;
+  }
+  .scoreboard-side.bad { border-color: #fed7d7; background: var(--c-danger-soft); }
+  .scoreboard-side.good { border-color: #c6f6d5; background: var(--c-success-soft); }
+  .scoreboard-side table { margin: 0; font-size: 13px; }
+  .scoreboard-side table th { background: transparent; }
+  .scoreboard-side .verdict {
+    margin-top: 12px;
+    font-size: 13px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(0,0,0,0.08);
+    font-weight: 500;
+  }
+  .scoreboard-side.bad .verdict { color: var(--c-danger); }
+  .scoreboard-side.good .verdict { color: var(--c-success); }
+
+  /* ============ Stat block ============ */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin: 20px 0;
+  }
+  .stat {
+    background: var(--c-bg-soft);
+    border: 1px solid var(--c-border);
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+  }
+  .stat .stat-num {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--c-primary);
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+  .stat .stat-label {
+    font-size: 12px;
+    color: var(--c-text-light);
+  }
+
+  /* ============ Final summary ============ */
+  .final-summary {
+    background: linear-gradient(135deg, #1a365d 0%, #2c5282 100%);
+    color: #fff;
+    padding: 40px 48px;
+    border-radius: 12px;
+    margin-top: 32px;
+    text-align: center;
+  }
+  .final-summary h2 {
+    color: #fff;
+    margin: 0 0 20px;
+    font-size: 20px;
+  }
+  .final-summary .summary-quote {
+    font-size: 18px;
+    line-height: 1.7;
+    max-width: 680px;
+    margin: 0 auto;
+  }
+  .final-summary .summary-quote strong {
+    color: #fbd38d;
+    font-weight: 600;
+  }
+
+  /* ============ Glossary ============ */
+  .glossary {
+    display: grid;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  .glossary-row {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 16px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--c-border);
+  }
+  .glossary-term {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    color: var(--c-primary);
+    font-weight: 500;
+  }
+  .glossary-def {
+    color: var(--c-text-muted);
+    font-size: 14px;
+  }
+
+  /* ============ Footer ============ */
+  footer {
+    margin-top: 48px;
+    padding: 24px;
+    text-align: center;
+    color: var(--c-text-light);
+    font-size: 13px;
+  }
+
+  /* ============ Responsive ============ */
+  @media (max-width: 768px) {
+    .page { padding: 24px 16px 64px; }
+    .hero { padding: 32px 24px; }
+    .hero h1 { font-size: 24px; }
+    section { padding: 28px 24px; }
+    .compare-grid { grid-template-columns: 1fr; }
+    .scoreboard { grid-template-columns: 1fr; }
+    .glossary-row { grid-template-columns: 1fr; gap: 4px; }
+    table { font-size: 13px; }
+    th, td { padding: 8px 10px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ========= HERO ========= -->
+  <header class="hero">
+    <span class="badge">EVAL DESIGN · 评测集设计说明</span>
+    <h1>菜品打标评测集是怎么构建的？</h1>
+    <p class="subtitle">这份文档讲清楚一件事：我们为菜品打标做的这份 171 条评测集，<strong>评测的是什么、为什么这么设计、它能告诉我们什么、不能告诉我们什么。</strong></p>
+    <div class="meta">
+      <span><strong>受众</strong>　产品经理 / 业务方 / 评测使用者</span>
+      <span><strong>篇幅</strong>　约 15 分钟阅读</span>
+      <span><strong>配套</strong>　README.md / CRITICAL_RULES.md</span>
+    </div>
+  </header>
+
+  <!-- ========= TL;DR ========= -->
+  <div class="tldr">
+    <div class="tldr-label">TL;DR — 一句话讲清楚</div>
+    <p>我们做的不是「考模型对菜品理解准不准」的评测集，而是「<strong>当我们的规则和大模型的常识不一样时，模型能不能按我们的规则来打标</strong>」的评测集。</p>
+    <p>报告里 deepseek-flash 字段准确率 <span class="highlight">88.9%</span> 这个数字，<strong>不代表生产环境里 88.9% 的菜会被打对</strong>，而是「在我们刻意挑出来的难题上，它能拿 88.9%」。</p>
+    <p>这个数字的用途是 <strong>选模型</strong>（哪个更听话），不是 <strong>预估生产质量</strong>（生产真实准确率多少）。</p>
+  </div>
+
+  <!-- ========= SECTION 1 ========= -->
+  <section>
+    <h2><span class="num">01</span>这件事的业务背景</h2>
+
+    <h3>1.1 菜品打标在做什么</h3>
+    <p>我们的推荐链路需要对每一道菜（如「蒜蓉空心菜」「蜜汁叉烧饭」）打 <strong>15 个结构化字段</strong>：</p>
+    <ul>
+      <li>菜系 / 主料类型 / 烹饪方式</li>
+      <li>蛋白克数 / 蔬菜比例 / 含油等级</li>
+      <li>是否完整一餐 / 辣度 / 角色（主菜/主食/配菜/...）</li>
+      <li>是否含加工肉 / 甜酱等级 / 含水量 / 主食类型 / 标签</li>
+    </ul>
+    <p>这些字段直接喂给下游推荐和健康评估算法。<strong>字段打错 = 推荐错 = 用户看到不合适的菜</strong>。</p>
+
+    <h3>1.2 为什么需要一份评测集</h3>
+    <p>我们要在多个候选模型里选一个跑生产，这些模型的价格差 10-30 倍：</p>
+
+    <table>
+      <thead>
+        <tr><th>模型</th><th>100 万条菜品打标成本</th><th>角色</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Claude Sonnet 4.6</td><td class="num-cell">~$2,000</td><td>baseline / 上限参考</td></tr>
+        <tr><td>Claude Haiku 4.5</td><td class="num-cell">~$600</td><td>Claude 性价比档</td></tr>
+        <tr><td>DeepSeek V4 Pro</td><td class="num-cell">~$120</td><td>DeepSeek 旗舰</td></tr>
+        <tr><td><strong>DeepSeek V4 Flash</strong></td><td class="num-cell"><strong>~$100</strong></td><td><strong>DeepSeek 性价比天花板</strong></td></tr>
+        <tr><td>Kimi K2.6</td><td class="num-cell">~$500</td><td>中文优势候选</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout info">
+      <div class="callout-title">为什么不能拍脑袋</div>
+      <p>如果便宜的模型够用，一年能省几十万。但「够用」这件事不能靠主观判断——<strong>需要一份标准答案，对每个模型跑同一批菜，看谁打得最准</strong>。这份标准答案就是评测集（Golden Set）。</p>
+    </div>
+  </section>
+
+  <!-- ========= SECTION 2 ========= -->
+  <section>
+    <h2><span class="num">02</span>核心概念：什么是「Anchor」（锚点）</h2>
+    <p class="section-lead">理解评测集设计，必须先理解 anchor 是什么。它不是"重要案例"的意思，而是"反直觉的规则"。</p>
+
+    <h3>2.1 一个具体的例子</h3>
+    <p>看这道菜：</p>
+
+    <div class="anchor-example">
+      <div class="dish-name">「蜜汁叉烧饭」</div>
+      <table class="anchor-table">
+        <thead>
+          <tr>
+            <th>字段</th>
+            <th class="col-instinct">大模型的"本能"答案</th>
+            <th class="col-rule">我们规则要求的答案</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>processed_meat_flag<br><span style="font-size:12px;color:var(--c-text-light)">是否加工肉</span></td>
+            <td>true —— 叉烧听起来像加工肉</td>
+            <td>false —— 中式烧腊是整块鲜肉熟制，营养上不算加工肉</td>
+          </tr>
+          <tr>
+            <td>sweet_sauce_level<br><span style="font-size:12px;color:var(--c-text-light)">甜酱等级 0-3</span></td>
+            <td>0 —— 没看到「糖」字</td>
+            <td>3 —— 看到"蜜汁"必须打 3</td>
+          </tr>
+          <tr>
+            <td>grain_type<br><span style="font-size:12px;color:var(--c-text-light)">主食类型</span></td>
+            <td>可能选「精制面」</td>
+            <td>白米 —— 米饭就是白米</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin: 16px 0 0; font-size: 14px; color: var(--c-text-muted);"><strong>红色那栏（模型本能）和绿色那栏（我们规则）冲突的地方，就是 anchor。</strong></p>
+    </div>
+
+    <h3>2.2 为什么会有这种冲突</h3>
+    <p>我们做的是 <strong>营养健康评估</strong> 业务，不是大众美食推荐。从营养学角度看：</p>
+    <ul>
+      <li>「叉烧不是加工肉」—— 因为它是整块鲜肉烤的，不像培根那种重组乳化工艺</li>
+      <li>「红烧菜默认含糖」—— 红烧工艺普遍加冰糖/老抽（含糖色），15-30g 糖/份很常见</li>
+      <li>「关东煮汤底不喝」—— 钠含量超标，含水量算 2 不算 3</li>
+    </ul>
+    <p>这些专业判断<strong>和大众语义不一样</strong>。大模型训练数据里 99% 是大众语义，所以它有强烈的"本能错误倾向"。</p>
+
+    <h3>2.3 四个最容易冲突的字段</h3>
+    <p>我们项目里发现这 4 个字段是 anchor 密度最高的：</p>
+
+    <table>
+      <thead>
+        <tr><th>字段</th><th>模型本能</th><th>规则要求</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>sweet_sauce_level</code></td>
+          <td>把"非显式甜"打 0</td>
+          <td>看到「烧/红/酱/糖/蜜/照」字眼就打 ≥ 2</td>
+        </tr>
+        <tr>
+          <td><code>processed_meat_flag</code></td>
+          <td>把"听起来工业化的肉"打 true</td>
+          <td>只有"腊/培根/午餐肉/丸料"才打 true</td>
+        </tr>
+        <tr>
+          <td><code>dish_role</code></td>
+          <td>按字面理解</td>
+          <td>7 项优先级 + 触发词清单（套餐 &gt; 饮品 &gt; 汤 &gt; 主食 &gt; 主菜 &gt; 配菜 &gt; 小食）</td>
+        </tr>
+        <tr>
+          <td><code>grain_type</code></td>
+          <td>按形状归类</td>
+          <td>"米粉/河粉/肠粉/红薯粉"都归白米（精制淀粉）</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout success">
+      <div class="callout-title">关键结论</div>
+      <p><strong>anchor = 模型本能 vs 规则 冲突的判断点。</strong>评测集的核心目标，就是测模型能不能压住自己的本能，按规则来打。</p>
+    </div>
+  </section>
+
+  <!-- ========= SECTION 3 ========= -->
+  <section>
+    <h2><span class="num">03</span>设计思路：评测集是怎么挑菜的</h2>
+
+    <h3>3.1 反例：如果用「真实订单抽样」会怎样</h3>
+    <p>最直觉的做法是：从真实外卖订单里 <strong>随机抽 171 条菜</strong>，让人工标好正确答案，跑评测。听起来很合理，<strong>但实际跑出来的结果会是</strong>：</p>
+
+    <div class="scoreboard">
+      <div class="scoreboard-side bad">
+        <h4>真实抽样评测集（假想）</h4>
+        <div class="case">— 按真实出现频率抽 171 条 —</div>
+        <table>
+          <thead><tr><th>模型</th><th>字段准确率</th></tr></thead>
+          <tbody>
+            <tr><td>Sonnet 4.6</td><td class="num-cell">98.2%</td></tr>
+            <tr><td>Haiku 4.5</td><td class="num-cell">97.8%</td></tr>
+            <tr><td>DeepSeek Flash</td><td class="num-cell">97.5%</td></tr>
+            <tr><td>Kimi K2.6</td><td class="num-cell">97.0%</td></tr>
+          </tbody>
+        </table>
+        <div class="verdict">差异不到 1pp，决策不出来——到底选谁？</div>
+      </div>
+
+      <div class="scoreboard-side good">
+        <h4>Anchor 加权评测集（实际）</h4>
+        <div class="case">— 按"能踩多少 anchor"加权抽 171 条 —</div>
+        <table>
+          <thead><tr><th>模型</th><th>字段准确率</th></tr></thead>
+          <tbody>
+            <tr><td>Sonnet 4.6</td><td class="num-cell">89.4%</td></tr>
+            <tr><td><strong>DeepSeek Flash</strong></td><td class="num-cell"><strong>88.9%</strong></td></tr>
+            <tr><td>Haiku 4.5</td><td class="num-cell">85.3%</td></tr>
+            <tr><td>Kimi K2.6</td><td class="num-cell">82.1%</td></tr>
+          </tbody>
+        </table>
+        <div class="verdict">差异 7pp，决策成立：选 DeepSeek Flash</div>
+      </div>
+    </div>
+
+    <p>为什么真实抽样会"挤在一起"？因为真实订单里大部分菜是「白米饭、可乐、番茄炒蛋、葱花鸡蛋汤、青菜豆腐」这种<strong>简单 case，所有模型都能 99%+ 答对</strong>。简单 case 把模型差异稀释掉了。</p>
+
+    <h3>3.2 我们的做法：Anchor 加权选菜</h3>
+    <p><strong>核心原则</strong>：选菜的时候，按"这条菜能踩到多少个 anchor"来选，不按"真实出现频率"来选。</p>
+
+    <table>
+      <thead>
+        <tr><th>菜</th><th>真实外卖出现频率</th><th>选/不选</th><th>为什么</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>白米饭</td><td>极高</td><td style="color:var(--c-danger);">不选</td><td>0 个 anchor，区分不了模型</td></tr>
+        <tr><td>可乐</td><td>极高</td><td style="color:var(--c-danger);">不选</td><td>同上</td></tr>
+        <tr><td>番茄炒蛋</td><td>高</td><td style="color:var(--c-danger);">不选</td><td>字段太平凡</td></tr>
+        <tr><td>蜜汁叉烧饭</td><td>中</td><td style="color:var(--c-success);font-weight:600;">选</td><td>一条菜踩 3 个 anchor</td></tr>
+        <tr><td>麻辣香锅 单/双人份</td><td>中</td><td style="color:var(--c-success);font-weight:600;">选</td><td>测 processed_meat 边界 + 价格推理</td></tr>
+        <tr><td>一次性筷子套装</td><td>低</td><td style="color:var(--c-success);font-weight:600;">选</td><td>测非食物兜底（spicy=0 即使是调料）</td></tr>
+        <tr><td>恰巴塔三明治 4 件套</td><td>极低</td><td style="color:var(--c-success);font-weight:600;">选</td><td>测幻觉防御（历史上被瞎编成"烤鲜活鲍鱼"）</td></tr>
+      </tbody>
+    </table>
+
+    <h3>3.3 一个类比：驾照路考</h3>
+
+    <div class="analogy">
+      <span class="analogy-label">类比</span>
+      <p>驾照路考<strong>不会考你「在空旷停车场直行 10 米」</strong>—— 所有人都会。</p>
+      <p>它会考<strong>「侧方位停车」「坡道起步」「连续变道」</strong>—— 这些是司机能力的分水岭。</p>
+      <p>通过路考 ≠ 你能在所有路况下开好车，但代表你<strong>在有挑战的场景下也能应对</strong>。</p>
+      <p class="punchline">→ 我们的评测集就是这种"路考卷子"。它不测简单场景，专测有难度的场景。</p>
+    </div>
+  </section>
+
+  <!-- ========= SECTION 4 ========= -->
+  <section>
+    <h2><span class="num">04</span>评测集长什么样（171 条实际分布）</h2>
+
+    <div class="stat-grid">
+      <div class="stat"><div class="stat-num">171</div><div class="stat-label">总条数</div></div>
+      <div class="stat"><div class="stat-num">15</div><div class="stat-label">字段/条</div></div>
+      <div class="stat"><div class="stat-num">18%</div><div class="stat-label">明确难题占比</div></div>
+      <div class="stat"><div class="stat-num">10</div><div class="stat-label">类别切片</div></div>
+    </div>
+
+    <h3>4.1 按「测试目的」分类</h3>
+    <table>
+      <thead>
+        <tr><th>类别</th><th>数量</th><th>占比</th><th>主要测什么</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>川湘菜</td><td class="num-cell">25</td><td class="num-cell">14.6%</td><td>辣度 / 含油 / 含水量边界</td></tr>
+        <tr><td><strong>对抗样本</strong></td><td class="num-cell"><strong>21</strong></td><td class="num-cell"><strong>12.3%</strong></td><td>边界判定 + 幻觉防御 + 价格推理</td></tr>
+        <tr><td>粤菜潮汕</td><td class="num-cell">20</td><td class="num-cell">11.7%</td><td>烧腊"非加工肉"反直觉锚点</td></tr>
+        <tr><td>套餐组合</td><td class="num-cell">20</td><td class="num-cell">11.7%</td><td>dish_role 触发词（+饭/+饮料）</td></tr>
+        <tr><td>主食单点</td><td class="num-cell">15</td><td class="num-cell">8.8%</td><td>grain_type 全谱</td></tr>
+        <tr><td>江浙红烧糖醋</td><td class="num-cell">15</td><td class="num-cell">8.8%</td><td>sweet_sauce_level=2 锚点</td></tr>
+        <tr><td>日韩料理</td><td class="num-cell">15</td><td class="num-cell">8.8%</td><td>关东煮 wetness=2、寿司生食</td></tr>
+        <tr><td>西式快餐</td><td class="num-cell">15</td><td class="num-cell">8.8%</td><td>加工肉判定、蛋白碗（无谷物）</td></tr>
+        <tr><td>配菜/汤/饮品</td><td class="num-cell">15</td><td class="num-cell">8.8%</td><td>dish_role 分配</td></tr>
+        <tr><td>边界兜底</td><td class="num-cell">10</td><td class="num-cell">5.8%</td><td>非食物 / emoji / 隐式套餐</td></tr>
+        <tr style="background:var(--c-bg-soft);"><td><strong>合计</strong></td><td class="num-cell"><strong>171</strong></td><td class="num-cell"><strong>100%</strong></td><td></td></tr>
+      </tbody>
+    </table>
+
+    <p style="margin-top:16px;"><strong>重点</strong>：「对抗+边界」明确难题占 18%，剩下 82% 看着是普通菜，<strong>但菜系分布是有偏的</strong>——川湘 + 粤式烧腊 + 江浙红烧三类最容易踩 anchor 的菜系一共占 35%。</p>
+
+    <h3>4.2 评测集分布 vs 真实生产分布（关键偏离）</h3>
+    <table>
+      <thead>
+        <tr><th>字段</th><th>评测集分布</th><th>真实生产推测</th><th>是否刻意偏</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>sweet_sauce_level 非 0 占比</td><td class="num-cell"><strong>47%</strong></td><td class="num-cell">&lt;20%</td><td style="color:var(--c-warn);">故意偏向甜口菜（模型最易错）</td></tr>
+        <tr><td>cuisine = 快餐</td><td class="num-cell">2.3%</td><td class="num-cell">20%+</td><td style="color:var(--c-warn);">偏低（非核心 anchor 场景）</td></tr>
+        <tr><td>cuisine = 西式</td><td class="num-cell">16.4%</td><td class="num-cell">&lt;10%</td><td style="color:var(--c-warn);">偏高（蛋白碗 anchor 多）</td></tr>
+        <tr><td>dish_role = 套餐</td><td class="num-cell">16%</td><td class="num-cell">30%+</td><td style="color:var(--c-warn);">偏低</td></tr>
+        <tr><td>processed_meat_flag = true</td><td class="num-cell">8%</td><td class="num-cell">5-10%</td><td style="color:var(--c-success);">基本对齐</td></tr>
+        <tr><td>价格中位数</td><td class="num-cell">¥32</td><td class="num-cell">¥25-35</td><td style="color:var(--c-success);">基本对齐</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warn">
+      <div class="callout-title">看这张表你能感受到</div>
+      <p><strong>评测集不是"小一号的真实世界"，是"放大了模型易错点的考试卷"。</strong>它故意把容易触发 anchor 的菜抽样更多，把简单 case 抽样更少。</p>
+    </div>
+  </section>
+
+  <!-- ========= SECTION 5 ========= -->
+  <section>
+    <h2><span class="num">05</span>这份评测集能回答什么 / 不能回答什么</h2>
+    <p class="section-lead">这是最容易踩坑的地方。请仔细看下面的对比。</p>
+
+    <div class="compare-grid">
+      <div class="compare-card yes">
+        <h4>能回答</h4>
+        <p class="q">Q1：6 个候选模型里，哪个最适合跑生产？</p>
+        <p class="a">已得出结论：DeepSeek Flash（距冠军 0.5pp，便宜 20 倍）。</p>
+        <p class="q">Q2：模型在 4 大易错字段上的能力差距有多大？</p>
+        <p class="a">报告里有「关键字段分水岭」单独切片。</p>
+        <p class="q">Q3：哪些菜系/anchor 模型最容易错？</p>
+        <p class="a">报告里有「按类别切片」。</p>
+        <p class="q">Q4：换 prompt 版本后，新 prompt 是变好还是变差？</p>
+        <p class="a">能回答（前提：评测集本身的 anchor 集没变）。</p>
+      </div>
+
+      <div class="compare-card no">
+        <h4>不能回答</h4>
+        <p class="q">Q1：生产环境里，deepseek-flash 真实打标准确率是多少？</p>
+        <p class="a">不能直接回答。88.9% 是难题加权下的，生产真实应该更高，<strong>可能 95%+，但具体多少未知</strong>。需要另建"真实抽样校准集"。</p>
+        <p class="q">Q2：用户在前端会感知到多少打标错误？</p>
+        <p class="a">不能回答。要看下游推荐链路对各字段错误的敏感度，是另一个评测话题。</p>
+        <p class="q">Q3：模型对 prompt 里没写到的边界 case 推理能力如何？</p>
+        <p class="a">部分回答。当前评测集主要测「规则服从」，不专门测「规则泛化/类推」。</p>
+      </div>
+    </div>
+
+    <h3>5.1 用三个类比帮你理解定位</h3>
+    <table>
+      <thead>
+        <tr><th>这份评测集像</th><th>它不是</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>驾照路考</td><td>一年实际驾驶记录</td></tr>
+        <tr><td>公务员考试</td><td>工作绩效考核</td></tr>
+        <tr><td>体检报告里"压力测试"那一项</td><td>你日常生活的累计健康状况</td></tr>
+      </tbody>
+    </table>
+    <p style="margin-top:12px;"><strong>它评估「能力上限」和「关键弱点」，不评估「日常表现的平均值」。</strong></p>
+  </section>
+
+  <!-- ========= SECTION 6 ========= -->
+  <section>
+    <h2><span class="num">06</span>横评报告里的数字怎么读</h2>
+    <p class="section-lead">报告（report.md）里有这些数字，业务方读的时候请按这个理解。</p>
+
+    <h3>6.1 字段级准确率（如 deepseek-flash 88.9%）</h3>
+    <div class="callout success">
+      <div class="callout-title">正确理解</div>
+      <p>「在我们这套难题加权评测集上，该模型有 88.9% 的字段答对」。</p>
+    </div>
+    <div class="callout danger">
+      <div class="callout-title">错误理解（要避免）</div>
+      <ul style="margin:8px 0 0;">
+        <li><strong>×</strong> 「该模型生产环境会有 88.9% 准确率」—— 不对，生产真实会更高</li>
+        <li><strong>×</strong> 「11.1% 的菜会打错」—— 不对，是 11.1% 的"字段-菜"组合在难题集上打错</li>
+      </ul>
+    </div>
+
+    <h3>6.2 整条全对率</h3>
+    <p>171 条菜里，15 个字段全部打对的比例。<strong>这个数字会比字段级准确率低得多</strong>（如果字段级 88.9%，整条全对可能只有 30-50%），因为只要任一字段错就算全条错。</p>
+    <p>→ 整条全对率更接近"严格质量门"的概念，但<strong>也不是生产指标</strong>，仍然是难题加权下的数字。</p>
+
+    <h3>6.3 4 大字段单独切片（最重要！）</h3>
+    <p><code>sweet_sauce_level</code> / <code>processed_meat_flag</code> / <code>dish_role</code> / <code>grain_type</code> 单独看准确率。</p>
+    <div class="callout info">
+      <div class="callout-title">模型选型的关键决策点</div>
+      <p>这是模型选型最关键的一组数字。如果某模型<strong>整体 85%，但 4 大字段都 &lt; 70%</strong>，意味着它在最重要的判断点上很弱，<strong>不能用</strong>。</p>
+    </div>
+
+    <h3>6.4 JSON 合法率</h3>
+    <p>模型有没有按要求输出合法的 15 字段 JSON。这是<strong>及格门槛</strong>——&lt; 95% 直接淘汰，因为下游解析会大面积失败。</p>
+  </section>
+
+  <!-- ========= SECTION 7 ========= -->
+  <section>
+    <h2><span class="num">07</span>这份评测集怎么演进（待办）</h2>
+
+    <h3>7.1 短期：补一份真实抽样校准集 <span style="color:var(--c-danger);font-size:13px;">[P1]</span></h3>
+    <p><strong>目的</strong>：回答「生产真实准确率到底是多少」。</p>
+    <p><strong>方法</strong>：</p>
+    <ul>
+      <li>从生产真实菜品里随机抽 100-200 条</li>
+      <li>按真实频率分布（不加权 anchor）</li>
+      <li>人工标注 expected</li>
+      <li>跑 deepseek-flash 得到「生产真实准确率」</li>
+    </ul>
+    <p>这个数字会和当前 88.9% 形成<strong>配对</strong>：</p>
+    <ul>
+      <li>当前 88.9% 用于<strong>模型选型</strong>（拉开差距）</li>
+      <li>校准集 95%+（假设）用于<strong>对外汇报生产质量</strong></li>
+    </ul>
+
+    <h3>7.2 中期：用户反馈反哺 <span style="color:var(--c-warn);font-size:13px;">[P2]</span></h3>
+    <p>V1 推荐链路上线后，从 user feedback 里挑「模型打标错了的菜」补进评测集——从 anchor-driven 转向 feedback-driven。</p>
+    <p>KNOWN_ISSUES.md 里已经留了 16 条边界争议条目，等 user feedback 触发重审。</p>
+
+    <h3>7.3 长期：能力分项 <span style="color:var(--c-text-light);font-size:13px;">[P3]</span></h3>
+    <p>把当前混在一起的能力拆开评测：</p>
+    <ul>
+      <li><strong>规则服从能力</strong>（当前评测集主测）</li>
+      <li><strong>规则泛化/类推能力</strong>（prompt 没写到的近邻 case）</li>
+      <li><strong>幻觉防御能力</strong>（菜名怪/含 emoji/超长促销词）</li>
+      <li><strong>价格推理能力</strong>（同名不同价的 protein 估算）</li>
+    </ul>
+    <p>每项一个子评测集，目的是定位"这个模型在哪类能力上弱"，便于换模型或改 prompt 时精准调整。</p>
+  </section>
+
+  <!-- ========= FINAL SUMMARY ========= -->
+  <div class="final-summary">
+    <h2>给业务方的一句话总结</h2>
+    <p class="summary-quote">
+      这份评测集是<strong>「卷子」</strong>，不是<strong>「画像」</strong>。<br><br>
+      它告诉你"DeepSeek Flash 是 6 个候选里最适合的"——这是它的核心价值，已经为公司省了几十万的模型成本。<br><br>
+      它<strong>不告诉</strong>你"生产环境里打标质量好不好"——这是另一个问题，需要另一张卷子。<br><br>
+      看到 88.9% 这个数字，请理解为"<strong>它在我们设计的难题上的能力上限</strong>"，不要理解为"用户感知到的质量"。
+    </p>
+  </div>
+
+  <!-- ========= GLOSSARY ========= -->
+  <section style="margin-top:32px;">
+    <h2><span class="num">附录</span>术语对照（小白版）</h2>
+    <div class="glossary">
+      <div class="glossary-row"><div class="glossary-term">Golden Set</div><div class="glossary-def">标准答案集</div></div>
+      <div class="glossary-row"><div class="glossary-term">Anchor</div><div class="glossary-def">模型本能 vs 规则 冲突的判断点</div></div>
+      <div class="glossary-row"><div class="glossary-term">In-distribution 评测</div><div class="glossary-def">按真实使用频率抽样的评测（"画像"）</div></div>
+      <div class="glossary-row"><div class="glossary-term">Adversarial 评测</div><div class="glossary-def">难题加权评测（"卷子"）</div></div>
+      <div class="glossary-row"><div class="glossary-term">Prior Override</div><div class="glossary-def">模型压住自己的常识，按指令来</div></div>
+      <div class="glossary-row"><div class="glossary-term">Field-level Accuracy</div><div class="glossary-def">字段级准确率（15 字段一个个看）</div></div>
+      <div class="glossary-row"><div class="glossary-term">Holistic Accuracy</div><div class="glossary-def">整条全对率（15 字段全对才算对）</div></div>
+      <div class="glossary-row"><div class="glossary-term">Holdout 集</div><div class="glossary-def">校准用的另一份独立数据，不参与设计迭代</div></div>
+    </div>
+  </section>
+
+  <footer>
+    文档版本 v1.0 · 配套评测集：dish_tagging_eval · 配套决策记录：D-036 / D-037<br>
+    最后更新：2026-05-14（D-036 跑完 171 条后）
+  </footer>
+
+</div>
+</body>
+</html>
