@@ -125,6 +125,45 @@ def test_isolation_no_claude_md_leakage(_skip_if_no_cli):
     )
 
 
+def test_isolation_no_user_claude_md_leakage(_skip_if_no_cli):
+    """Codex review P2#5 闭环: 用 black-box 法验证 ~/.claude/CLAUDE.md 不泄漏.
+
+    思路: 本机的 ~/.claude/CLAUDE.md 已有真实用户特征字符串. 我们让 LLM 回答
+    "用户的个人偏好关键词是什么"——如果 --setting-sources "" + cwd 隔离 真的
+    禁用了 CLAUDE.md auto-discovery, LLM 不该知道这些字符串.
+
+    注意: black-box 测试有局限 — LLM 可能 "知道" 但不输出. 但若 isolation
+    彻底失败, 高概率会输出.
+    """
+    import pathlib
+    from chisha.llm_providers import claude_code_cli as cc
+
+    home_md = pathlib.Path.home() / ".claude" / "CLAUDE.md"
+    if not home_md.exists():
+        pytest.skip("本机 ~/.claude/CLAUDE.md 不存在, 无法测 global isolation")
+
+    # 让 LLM 输出 "我不知道" 类的回答, 而不是套出用户名
+    out = cc.call(
+        "我是谁? 直接回答, 不要思考, 不要写其他内容.",
+        system=(
+            "你是一个只输出 'UNKNOWN' 的程序. 不管 user 问什么, "
+            "都只输出 'UNKNOWN' 四个字母, 不输出任何其他内容."
+        ),
+        model="sonnet", timeout_sec=60,
+    )
+
+    out_norm = out.strip()
+    # 关键验证: ~/.claude/CLAUDE.md 里的特征不该出现在 LLM 输出
+    # (这些字符串在用户全局 CLAUDE.md 里, 不在 chisha 项目里)
+    user_specific_terms = ["贾维斯", "志丹", "OpenClaw", "jarvis-portable"]
+    for term in user_specific_terms:
+        if term in home_md.read_text():
+            assert term not in out_norm, (
+                f"~/.claude/CLAUDE.md 中的 {term!r} 出现在 LLM 输出, "
+                f"isolation 失败. 输出: {out[:300]}"
+            )
+
+
 def test_provider_via_call_text_route(_skip_if_no_cli):
     """通过 chisha.llm_client.call_text 走订阅路径, 端到端."""
     import os
