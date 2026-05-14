@@ -105,7 +105,9 @@ def llm_reason(combo: dict, profile: dict, meal_log: list[dict]) -> str:
         prompt = PROMPT_PATH.read_text(encoding="utf-8").replace(
             "{INPUT_PAYLOAD}", json.dumps(payload, ensure_ascii=False)
         )
-        text = call_text(prompt, max_tokens=128, temperature=0.0)
+        # D-047: call_text 返回 dict, text 模式取 .content
+        resp = call_text(prompt, max_tokens=128, temperature=0.0)
+        text = resp.get("content", "")
         # 清理可能的引号、前缀
         text = text.strip().strip('"\'').strip()
         # 截 30 字

@@ -112,7 +112,9 @@ def tag_batch(rest_by_id: dict, batch: list[dict], prompt_template: str,
     last_err = None
     for attempt in range(1, max_retries + 1):
         try:
-            text = call_text(prompt, max_tokens=8192, temperature=0.0)
+            # D-047: call_text 返回 dict, text 模式取 .content
+            resp = call_text(prompt, max_tokens=8192, temperature=0.0)
+            text = resp.get("content", "")
             recs = extract_json_array(text)
             if len(recs) != len(batch):
                 raise ValueError(

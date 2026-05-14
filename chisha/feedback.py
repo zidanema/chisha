@@ -126,8 +126,12 @@ def _llm_parse(text: str) -> dict[str, Any] | None:
         ).replace(
             "{CHIP_VOCAB}", ", ".join(sorted(CHIP_VOCAB))
         )
-        out = call_text(prompt, max_tokens=512, temperature=0.0)
-        # 提取 JSON (LLM 偶尔包 ```json ... ```)
+        # D-047: call_text 返回 dict, text 模式取 .content; json_mode 在 OR
+        # 路径 "accepted but not enforced", regex 仍兜底 markdown 包裹 (```json
+        # ... ```) 形态. (后续可升级到 tool_use 强制 schema, 见 D-048 候选)
+        resp = call_text(prompt, max_tokens=512, temperature=0.0,
+                         json_mode=True)
+        out = resp.get("content", "")
         m = re.search(r"\{.*\}", out, re.DOTALL)
         if not m:
             return None
