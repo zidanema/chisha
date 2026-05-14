@@ -930,9 +930,11 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` ([D-03
 
 ## 7. 设计决策速查
 
-> 这里只列**决策结论**。每条决策的背景、考虑的方案、判断标准、触发重审条件，
+> 这里只列**决策结论**一行式索引。每条决策的背景、考虑的方案、判断标准、触发重审条件，
 > 完整记录在 [docs/DECISIONS.md](docs/DECISIONS.md)。
 > 想推翻某个决策前，**必须先读 DECISIONS 里对应条目**。
+>
+> 工程实施类条目（D-042 / D-045 / D-046 / D-046.1 / D-047）的实现细节、batch 数、bug 排查、参数微调记录在 [docs/IMPLEMENTATION_LOG.md](docs/IMPLEMENTATION_LOG.md)；DECISIONS 仅保留 stub 指针。
 
 | # | 速查 | 完整条目 |
 |---|---|---|

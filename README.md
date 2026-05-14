@@ -44,12 +44,16 @@
 |---|---|---|
 | [docs/PRD.md](docs/PRD.md) | 产品需求 · 为什么做、做给谁、做成什么样 | 第一份读，建立产品定位 |
 | [DESIGN.md](DESIGN.md) | 设计与实现 · 架构、schema、API、prompt、避坑 | 实现时随时查 |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | 决策日志 · 关键决策为什么这样而不是那样 | 想推翻某个设计前先看 |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | 决策日志 · 产品/架构/方法论 决策为什么这样而不是那样 | 想推翻某个设计前先看 |
+| [docs/IMPLEMENTATION_LOG.md](docs/IMPLEMENTATION_LOG.md) | 工程实施日志 · prompt 改了几行、batch 数、bug 排查、参数微调 | 排查具体实现、复盘工程细节时 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 路线图 · V1/V2/V3 边界，已砍清单 | 想加新功能前先看 |
 | [docs/RECOMMEND_PRINCIPLES.md](docs/RECOMMEND_PRINCIPLES.md) | 推荐系统分层原则与方法论（D-043 沉淀）| 改打分/召回/重排前**必读** |
+| [docs/L3_RERANK_REDESIGN.md](docs/L3_RERANK_REDESIGN.md) | L3 精排重构方案（D-047）| 改 L3 精排前**必读** |
+| [eval/dish_tagging_eval/](eval/dish_tagging_eval/) | 菜品打标评测框架（dual-model golden set 171 条 + 评测脚本）| 复评打标质量、改 prompt 前 |
+| [eval/dish_tagging_model_eval_spec.md](eval/dish_tagging_model_eval_spec.md) | 评测说明（面向 PM）| 想理解评测口径与结论时 |
 
 **首次接触请按顺序读：PRD → ROADMAP → DESIGN → DECISIONS**。
-改推荐链路前请额外读 RECOMMEND_PRINCIPLES。
+改推荐链路前请额外读 RECOMMEND_PRINCIPLES；改 L3 精排前读 L3_RERANK_REDESIGN；复盘工程细节看 IMPLEMENTATION_LOG。
 
 ---
 
@@ -131,10 +135,13 @@ uv run python -m integrations.openclaw.skill dinner
 
 为保证上下文不漂移：
 
-1. **新增决策必须进 DECISIONS.md**，按模板格式记录
+1. **新增决策必须先分类**：产品方向/架构/方法论/schema → `DECISIONS.md`；prompt 改 N 行/参数微调/batch 数/bug 排查 → `IMPLEMENTATION_LOG.md`
+   - 判别准则：**半年后做下一次大重构时,会不会回头查这条?** 会 → DECISIONS；不会 → IMPLEMENTATION_LOG
 2. **路线变更必须更新 ROADMAP.md**，已砍的功能加进已砍清单
 3. **PRD 极少改动**，定位变化才改（每次改要在 DECISIONS 加一条说明）
 4. **DESIGN 每个大版本一份**，旧版归档到 docs/archive/，不删
+5. **每次 D-XXX 落地的 commit 后 3 项 checklist**:① 写到 DECISIONS 还是 IMPLEMENTATION_LOG?② 是否推翻了之前某条? 推翻就标 superseded 并加链接 ③ 是否需要更新 README 进度章节 / ROADMAP 当前状态?
+   - 见 [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md)
 
 ---
 
@@ -147,8 +154,12 @@ chisha/
 ├── profile.yaml               # 用户偏好（弱约束三件套 + taste + meal_trigger_time）
 ├── docs/
 │   ├── PRD.md                 # 产品需求
-│   ├── DECISIONS.md           # 决策日志（含 D-022 ~ D-029 V1 翻案）
+│   ├── DECISIONS.md           # 决策日志（产品/架构/方法论决策）
+│   ├── IMPLEMENTATION_LOG.md  # 工程实施日志（prompt / 参数 / batch / bug 细节）
 │   ├── ROADMAP.md             # 路线图
+│   ├── RECOMMEND_PRINCIPLES.md # 推荐分层原则（D-043 沉淀）
+│   ├── L3_RERANK_REDESIGN.md  # L3 精排重构方案（D-047）
+│   ├── CONTRIBUTING_DOCS.md   # 文档维护准则与每次决策 checklist
 │   └── archive/               # 旧版设计文档归档
 ├── data/
 │   └── shenzhen-bay/          # 按工区分目录（V2.4 拆 chisha-data-{zone} 子包）
