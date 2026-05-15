@@ -210,3 +210,17 @@ uv run python -m chisha.debug_server
 # → http://127.0.0.1:8765
 # 浏览器看 L1 召回 / L2 16 维打分 / L3 LLM 精排 payload / Final 5 卡片
 ```
+
+### L2 trace 严格回归（D-072.1）
+
+```bash
+# 1. 改 score.py / methodology / spec 之前先存 baseline
+uv run python -m scripts.baseline_l2_snapshot --out-dir tmp/baseline_traces
+
+# 2. 改完代码后重新跑一遍
+uv run python -m scripts.baseline_l2_snapshot --out-dir tmp/baseline_traces_after
+
+# 3. 严格对比 (top60 顺序 + 16 维 breakdown |delta| < 1e-6)
+uv run python -m scripts.compare_traces
+# → 任何 diff 都阻止 commit, 必须找到漏的规则补 spec
+```

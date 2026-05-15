@@ -379,15 +379,27 @@ def _fmt_counts_or_none(d) -> str:
 
 
 def _profile_block(profile: dict) -> str:
+    """构造 [PROFILE] 段. D-072: 注入 methodology display_name + rationale 摘要,
+    替代之前 L3 prompt 隐式靠 taste_description 传方法论, 防 L2/L3 描述漂移.
+
+    spec 缺失 (老 profile 没 load_profile 一致路径) 时回退老格式 (向后兼容).
+    """
     prefs = profile.get("preferences", {}) or {}
-    lines = [
-        "[PROFILE]",
+    lines = ["[PROFILE]"]
+    spec = profile.get("_methodology_spec")
+    if isinstance(spec, dict):
+        display = spec.get("display_name") or spec.get("name") or "(未命名)"
+        # rationale 第一行段作为摘要 (节省 token)
+        rationale = (spec.get("rationale") or "").strip()
+        summary = rationale.split("\n", 1)[0].strip() if rationale else "(无)"
+        lines.append(f"方法论: {display} — {summary}")
+    lines.extend([
         f"口味描述: {profile.get('taste_description','') or '(空)'}",
         f"喜欢: {_fmt_list_or_none(prefs.get('liked_cuisines'))}",
         f"不喜欢: {_fmt_list_or_none(prefs.get('disliked_cuisines'))}",
         f"avoid: {_fmt_list_or_none(prefs.get('avoid_dishes'))}",
         f"辣度耐受: {prefs.get('spicy_tolerance', 2)}",
-    ]
+    ])
     return "\n".join(lines)
 
 

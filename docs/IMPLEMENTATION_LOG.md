@@ -1259,3 +1259,100 @@ GET    /api/history?days=999                HTTP 400
 - 推翻: D-043 季节默认 mood 兜底 + want_light/low_carb/want_clean/want_indulgent 4 条 context_boost 规则
 - 保留: D-034 ContextSnapshot / D-043 want_soup wetness 通道 / D-048 trace 字段精神 (mood_inference 与 D-048 L3 trace 同级共存)
 - 下一步 (D-072): methodology spec 抽象, context_boost 函数实质会被 spec.soft_rules 接管 (现在保留接口位)
+
+---
+
+## D-072 / D-072.1 执行记录 · methodology spec 抽象 + score.py 重构
+
+**2026-05-15** · D-070 三层信号模型 L0 工程化, Phase 0 Step 3 收尾
+
+### 改了什么
+
+**新增 spec 文件**:
+- `profiles/methodologies/harvard_plate.yaml` 79 行: 7 必备字段 (name / display_name / version / rationale / plate_rule / score_weights × 16 / cap_rules × 4) + 3 可选 (unforgivable_discount / soft_rules / extra_rules). 数值与 score.py `V2_DEFAULT_WEIGHTS` / `resolve_caps` / `plate_rule defaults` 完全一致, 不调权重
+
+**新增加载层 `chisha/methodology.py` (244 行)**:
+- `MethodologyValidationError(ValueError)`: hard fail 异常
+- `_validate_spec()`: 顶层 7 必备 + plate_rule × 5 + score_weights × 16 + cap_rules × 4 严格 keyset 校验 (拼写错也 hard fail, Codex BLOCKER B-1)
+- `load_methodology(name, root)`: 加载 + 校验 + 文件名一致性检查; LRU cache key 含 yaml mtime_ns (Codex Round 3 M-3, yaml 改后自动失效)
+- `resolve_methodology(profile, root)`: profile.methodology 字段 → spec; 缺字段时 fallback `harvard_plate` + `logger.info` (Codex M-1, 非 silent)
+- `merge_into_profile(profile, spec)`: 三段 merge — plate_rule / scoring_weights / recall.per_*_top_k 都是 spec 默认 + profile override; unforgivable_discount 路径必须 `profile.scoring.*` 不是顶层 (Codex B-2); 不就地改 profile
+- `apply_methodology(profile, root)`: convenience wrapper
+
+**改造 `chisha/recall.py:load_profile`**:
+- 加载 yaml 后自动调 `apply_methodology` merge spec defaults
+- 新增可选 `root` 参数, 临时路径场景显式传 (Codex Round 3 M-1)
+- 所有调用方 (api/web_api/debug_recommend/dry_run/scripts) 自动受益, 不需改
+
+**改造 `chisha/rerank.py:_profile_block`**:
+- `[PROFILE]` 段顶部注入 `方法论: {display_name} — {rationale 第一行}`
+- profile 缺 `_methodology_spec` 时 fallback 老格式 (向后兼容)
+- 改动严格限制 1 行新增, 单测断言
+
+**profile.yaml 加字段**:
+- 顶部加 `methodology: harvard_plate` (向后兼容: 缺字段会 logger.info fallback)
+
+**新增工具脚本**:
+- `scripts/baseline_l2_snapshot.py`: L2 capped top60 + score + 16 维 breakdown 全展开签名 (deterministic, 不打 LLM)
+- `scripts/compare_traces.py`: 严格 diff, top60 顺序 100% 一致 + 16 维 |delta| < 1e-6
+- `scripts/baseline_l3_prompt_ab.py`: L3 prompt with vs without methodology 行 A/B 对照 (Codex M-2 sanity)
+
+**新增测试 `tests/test_methodology.py` 23 case**:
+- 校验类 7: missing top key / unknown top typo / score_weights missing / score_weights typo / plate_rule typo / cap_rules extra / name mismatch
+- resolve 类 2: 显式 field / fallback + INFO log
+- merge 类 6: 不就地改 / 显式 override spec / unforgivable B-2 路径 / unforgivable profile override / recall cap key 局部 / 附加 spec name
+- apply 类 1: tmp_path 默认 fallback
+- 缓存类 2: deep copy / mtime invalidation
+- rerank A/B 类 3: with methodology / without fallback / 单行 diff 守门
+
+### Codex 三轮 review 与闭环
+
+| 轮 | 发现 | 修复 |
+|---|------|------|
+| **Round 2** (设计前) | BLOCKER B-1 内部 key 拼写错 silently 落 V2_DEFAULT 违反"只搬运" | 严格 keyset 校验 plate_rule / score_weights / cap_rules 全维 |
+| Round 2 | BLOCKER B-2 unforgivable_discount 字段路径错 (顶层 vs profile.scoring.*) | merge 时显式映射到 profile.scoring.unforgivable_discount + 单测锁路径 |
+| Round 2 | MAJOR M-1 Q5 silent default 与 D-048 hard-fail 冲突 | resolve_methodology fallback 时 logger.info 留可观测痕迹 |
+| Round 2 | MAJOR M-2 rerank 注入会让 L3 输出不可比无 A/B 基线 | baseline_l3_prompt_ab.py 捕获 with/without 双版本 prompt |
+| Round 2 | MAJOR M-3 schema 字段命名未冻结 | D-072 末尾追加 "最终 schema 字段表" + 落 D-072.1 修订条目 |
+| Round 2 | blindspot-1 比较粒度未定义 | compare_traces.py 明确断言层级 (顺序 100% + delta < eps) |
+| Round 2 | blindspot-2 merge 覆盖 profile 显式值风险 | test_merge_profile_explicit_value_overrides_spec 单测锁 |
+| Round 2 | blindspot-3 重构前先自比 0 diff | baseline 两次同输出 → compare 0 diff 验证工具正确 |
+| **Round 3** (diff 后) | BLOCKER B-1 baseline 存 round(6) 浮点会吞 <5e-7 真实差 | 去掉 round, 存原始 float, EPSILON 在 compare 阶段控 |
+| Round 3 | MAJOR M-1 load_profile path.parent 推断 root 临时路径错 | 加可选 root 参数, 向后兼容 |
+| Round 3 | MAJOR M-2 缺 rerank fallback 测试 | 新增 3 个 test_rerank_profile_block_* case |
+| Round 3 | MAJOR M-3 cache 无失效机制 | cache key 加 mtime_ns + test_cache_invalidates_on_yaml_mtime_change |
+| Round 3 | MINOR ×3 注释/文档错字 | 全修 (注释 "8 个" → "4 个" / 文档 "6 字段" → "7 字段" / yaml "12+维" → "16 维") |
+
+### 回归验证 (D-072.1 严格协议)
+
+1. **重构前自比** (blindspot-3): 同代码跑 baseline 两次 → `compare_traces` 0 diff (工具正确性)
+2. **重构后 L2 严格回归**:
+   - top60 combo 顺序 100% 一致 (餐厅 + dish_ids 签名)
+   - 16 维 breakdown 每维 |delta| < 1e-6
+   - 总 score |delta| < 1e-6
+   - 实测: 4 个 snapshot (lunch/dinner × neutral/want_soup) 全 0 diff
+3. **三路径行为一致**: `load_profile` 被 api / web_api / debug_recommend / dry_run / scripts 共用, 自动 merge spec; 无需每条路径单独测
+4. **L3 prompt A/B**: with_methodology 比 without 多 1 行 "方法论: ..." (`tmp/baseline_traces/l3_prompt_lunch_*.txt`); 字符差 +68
+5. **pytest**: 435 passed, 1 failed (pre-existing test_cleanup_expired, 与本次无关)
+
+### 踩到的坑
+
+1. **"round 到 6 位破坏严格回归"** (Codex Round 3 BLOCKER B-1) — 直觉以为 round(6) 是给可读性, 实际把 < 5e-7 真实回归差异量化吞掉. 教训: trace baseline 永远存原始 float, 格式化只在打印层做
+2. **unforgivable_discount 路径** (Codex Round 2 BLOCKER B-2) — schema 字段名 (顶层 `unforgivable_discount`) vs 实际读路径 (`profile.scoring.unforgivable_discount`) 不一致, 不靠 review 抓不到. 教训: 写 spec 字段时一定要看 score.py 实际从哪条路径读, 不能凭直觉
+3. **cap_rules merge 用 setdefault 而非字典展开** — recall 字段除了 per_*_top_k 还有 per_restaurant_max / min_monthly_sales 等非 cap 字段, 直接 `{**spec, **profile}` 会用 spec 的空字段覆盖 profile 的实际值. 用 `setdefault` 只填缺失 key, 行为正确; 但单测必须 cover 这场景 (test_merge_recall_cap_keys_only)
+4. **lru_cache 失效**: yaml 改后 cache 不刷新, 调试时一直读旧值. 加 mtime_ns 到 cache key 解决, 不重新设计 cache 机制
+5. **rerank 注入 L3 行为变化**: L2 严格回归 0 diff 不代表 L3 一致 — 新增"方法论:"行会改 LLM 输入, 但用户在 D-072 设计阶段已认可这是 enhancement 而非回归. baseline_l3_prompt_ab 留对照, 未来 L3 行为漂移可对照排查
+
+### 反 anti-pattern (这次没踩)
+
+- **没顺手改打分逻辑**: D-072 警告"spec 抽象只搬运, 不改逻辑". score.py 函数全部不动, 只是常量来源从硬编码改成 spec 默认. baseline 0 diff 是最强证据
+- **没扩 schema 字段**: 16 维 score_weights / 4 层 cap / 5 字段 plate_rule 严格对齐 V2_DEFAULT_WEIGHTS, 没加新维度
+- **没 silent fallback**: profile 缺 methodology 字段 → logger.info; spec 文件不存在 → FileNotFoundError; 校验失败 → MethodologyValidationError. 所有失败路径都可观测
+- **没把 profile 个人化字段塞进 spec**: profile.scoring_weights.wetness=0.0 (D-044.1 砍 baseline) 是个人 override, 不该进 harvard_plate.yaml; merge 时 profile 显式 override 处理
+
+### 依赖与影响
+
+- 推翻 (软): D-043 部分内容 (打分逻辑硬编码 → spec 化)
+- 修订: D-072 触发条件 (走 D-072.1, L2 trace baseline 替代采纳率门)
+- 关联: D-070 三层信号模型 L0 工程化; D-071 context_boost 接口位预留生效
+- 下一步 (Phase 1): 第二份 spec (减脂 / 增肌 / 糖控) 走 `profiles/methodologies/{name}.yaml` 接入; 若需要新字段类型 → 走 `extra_rules: []` 逃逸口先临时, 再走 D-072.M 修订把字段升正

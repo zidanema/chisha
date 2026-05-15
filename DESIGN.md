@@ -465,8 +465,15 @@ v3 新增 5 字段（D-032，2026-05-11）：
 > 以下 yaml 仅为 schema 示例。**实际生产 profile.yaml 见仓库根目录**，已按
 > [D-044](docs/DECISIONS.md#d-044) 真实化重建（goal/zones/min_protein_g/avoid_dishes/price/taste_description 全量校正），
 > 且引入"偏好层 vs 健康目标层分离"四段式 taste_description 结构（详见 [RECOMMEND_PRINCIPLES §12](docs/RECOMMEND_PRINCIPLES.md)）。
+>
+> **D-072 起新增 `methodology:` 字段**，引用 `profiles/methodologies/{name}.yaml` 的 L0 方法论 spec
+> （`plate_rule` / `scoring_weights` / cap 默认值都从 spec 读，profile 显式字段 override；
+> 缺 `methodology:` 字段时 fallback `harvard_plate` 并 `logger.info`，详见 [D-072 schema 字段表](docs/DECISIONS.md#d-072)）。
 
 ```yaml
+# D-072: L0 方法论引用 (profiles/methodologies/{name}.yaml)
+methodology: harvard_plate
+
 basics:
   name: <YOUR_NAME>
   city: 深圳

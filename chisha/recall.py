@@ -21,8 +21,29 @@ def _safe_int(v: Any, default: int = 0) -> int:
         return default
 
 
-def load_profile(path: str | Path = "profile.yaml") -> dict:
-    return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+def load_profile(
+    path: str | Path = "profile.yaml",
+    root: Path | None = None,
+) -> dict:
+    """加载 profile.yaml + D-072 merge methodology spec defaults.
+
+    流程: 读 yaml → 调 chisha.methodology.apply_methodology(profile, root) merge
+    spec 默认值. profile 显式值 override spec. 缺 `methodology:` 字段时 fallback
+    `harvard_plate` 并 logger.info 留可观测痕迹 (D-072 schema 表 + Codex M-1).
+
+    Args:
+      path: profile.yaml 路径.
+      root: 项目根目录 (含 profiles/methodologies/ 子目录). 缺省时推断为
+            path.parent (向后兼容). 临时 profile 路径 (如测试用 tmp_path) 必须
+            显式传 root, 否则会去 path.parent/profiles/methodologies 找 spec
+            而 FileNotFoundError (Codex Round 3 M-1).
+    """
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    # 延迟导入避免循环 (methodology 不依赖 recall, 但保险)
+    from chisha.methodology import apply_methodology
+    if root is None:
+        root = Path(path).resolve().parent
+    return apply_methodology(raw, root)
 
 
 def load_zone_data(zone: str, root: Path) -> tuple[list[dict], list[dict]]:

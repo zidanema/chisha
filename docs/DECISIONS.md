@@ -2739,3 +2739,83 @@ Step 3 执行触发条件 (Phase 0 验收门):
 - 触发条件: 自用一周采纳率 ≥ 50% + Step 1 稳定 + Codex review 通过 spec schema
 - 推翻: D-043 部分内容 (打分逻辑硬编码 → spec 化), score.py 重构后视为 D-072 的实现
 - 关联: D-070 三层信号模型 L0 的工程化
+
+---
+
+### 最终 schema 字段表 (Codex Round 2 M-3 要求冻结, 2026-05-15 落地版)
+
+用户决策: Phase B 不等 Step 2 自用数据, 用 `tmp/baseline_traces/` L2 capped top60 + score breakdown 做严格回归基线 (允许 < 1e-6 浮点差), 重构前后 0 diff 即通过. 详见 D-072.1.
+
+**顶层必备字段** (共 7, 缺失 → MethodologyValidationError hard fail):
+- `name` (str, 与文件名一致)
+- `display_name` (str, UI 用)
+- `version` (int, 1 起)
+- `rationale` (str, L3 system 段用)
+- `plate_rule` (dict, 召回硬约束默认)
+- `score_weights` (dict, L2 16 维权重默认)
+- `cap_rules` (dict, 4 层 cap 默认)
+
+**顶层可选字段**:
+- `unforgivable_discount` (float, 缺失走 score.py 硬 fallback 0.5)
+- `soft_rules` (list[dict], V1 declarative 占位不执行; 非空时 logger.warning 提醒)
+- `extra_rules` (list, Phase 1 逃逸口, V1 不解释; 非空时 warn)
+
+**`plate_rule` 内部 key** (严格 keyset 校验, Codex B-1):
+- `must_have_vegetable` (bool)
+- `min_vegetable_dishes` (int)
+- `min_protein_g` (int)
+- `prefer_oil_level_at_most` (int)
+- `hard_max_oil_level` (int)
+
+**`score_weights` 内部 key** (严格 keyset 与 V2_DEFAULT_WEIGHTS 一致):
+`vegetable_floor_pass / protein_floor_pass / distance / low_oil / popularity / cuisine_preference / variety_bonus / carb_quality / processed_meat / sweet_sauce / wetness / dish_role_match / eta / price / taste_match / context_boost` (共 16 维)
+
+**`cap_rules` 内部 key** (严格 keyset):
+- `per_restaurant_top_k` (int)
+- `per_brand_top_k` (int)
+- `per_cuisine_top_k` (int)
+- `per_food_form_top_k` (int)
+
+**merge 行为** (`chisha.methodology.merge_into_profile`):
+- `profile.plate_rule = {**spec.plate_rule, **profile.plate_rule}` (profile 显式 override)
+- `profile.scoring_weights = {**spec.score_weights, **profile.scoring_weights}` (注意 spec 字段 key 名 `score_weights`, profile 用 `scoring_weights` — 命名漂移记账, V1 不改)
+- `profile.recall = {**spec.cap_rules, **profile.recall}` (per_*_top_k cap key 同名)
+- `profile.scoring.unforgivable_discount = profile.scoring.unforgivable_discount or spec.unforgivable_discount` (Codex B-2: 字段路径必须 profile.scoring.* 不是 profile.* 顶层)
+- 其他字段 (zones / price_range / taste_description / preferences / delivery_constraints / diversity / meal_trigger_time) 一律不动
+
+**profile.methodology 字段语义**:
+- 缺失 → fallback `harvard_plate` + `logger.info` 显式打 "methodology field missing, using default" (M-1: 非 silent fallback, 留可观测痕迹)
+- 显式设值 → load_methodology 加载该 spec, 不存在 raise FileNotFoundError
+
+---
+
+## D-072.1: Phase B 不等 Step 2 自用数据 (用 L2 trace baseline 替代)
+
+日期: 2026-05-15
+状态: active · D-072 触发条件修订
+
+背景: D-072 原约定 "Step 2 自用一周采纳率 ≥ 50% + 累计 ≥ 30 反馈样本" 才启动重构. 但实操中 Step 2 走 OpenClaw 闭环, 用户行为不在 Claude Code 工作范围内. 等数据会无限期延后 Phase 0 收尾.
+
+决定: Phase B 启动条件改为 **L2 trace baseline 严格回归通过**.
+
+具体回归协议:
+1. 重构前跑 `scripts/baseline_l2_snapshot.py` 生成 4 个 snapshot (lunch/dinner × neutral/want_soup), 每个含 L3_INPUT_TOP_K=60 个 combo 的 score + 16 维 breakdown + 餐厅/菜品签名
+2. 重构后跑同样脚本 → `tmp/baseline_traces_after/`, 跑 `scripts/compare_traces.py` 严格断言:
+   - top60 combo 顺序完全一致 (按 score 排序后餐厅+dish_ids 签名 100% 一致)
+   - 每个 combo 的 16 维 breakdown 每个值 |delta| < 1e-6
+   - 总 score |delta| < 1e-6
+3. 任何 diff → 重构有 bug, 必须找到漏的规则补 spec; 不允许 commit
+4. L3 LLM rerank 输出 stochastic, 不在严格回归内 (Codex M-2 要求另存 with_methodology_line A/B trace 留作未来 sanity check, 不阻断 commit)
+
+理由:
+- Step 2 是用户行为闭环, 不应卡 Phase 0 工程收尾
+- L2 是 deterministic, 用 trace 严格对比比"采纳率 ≥ 50%" 更直接也更可验证
+- score breakdown 16 维对比能精确指认 spec 化漏了哪条规则 (比黑盒 top5 对比强)
+
+风险:
+- L2 一致不代表 L3 一致 — L3 改 rationale prompt 后输出会变. 但用户已认可这是 enhancement 而非回归 (D-072 明确要求 prompt 摘要从 spec 取)
+- 自用数据缺失 ≠ Spec 设计无误 — Phase 1 时若发现 spec 不适用第二个 methodology, 走 extra_rules 逃逸口 + D-072.2 修订条目
+
+依赖 / 影响:
+- 推翻: D-072 Step 3 触发条件 "采纳率 ≥ 50% + 30 样本"
+- 关联: `scripts/baseline_l2_snapshot.py` / `scripts/compare_traces.py` 为本决策落地工具

@@ -245,3 +245,31 @@ if has_unforgivable_penalty(combo):  # 如 sweet_sauce ≥ 3 且 processed_meat 
 4. 不要新建字段，先看现有字段能不能联合表达——隐藏目标通常不需要新维度，需要的是**重新校准已有字段的阈值**
 
 **通用模式**：当用户描述的目标看起来很合理但实际推不出好结果，先怀疑是否在优化错的目标函数。
+
+---
+
+## 14 · L0 方法论 spec 是工程化产物（D-072）
+
+> 来源：D-070 三层信号模型 + D-072 spec 抽象。
+
+**L0 方法论层** (`profiles/methodologies/*.yaml`) 不是"产品策略"，是**工程化产物** — 把原本散在 `score.py` 里的硬编码方法论参数（plate_rule / score_weights 16 维 / 4 层 cap / unforgivable_discount）搬到 yaml，让一个方法论的参数集变成**可复用、可校验、可比对**的资产。
+
+**为什么不是简单 yaml**：
+- 严格 keyset 校验（`chisha.methodology.MethodologyValidationError`）：拼写错的 weight key 必 hard fail，不许 silently 落 `V2_DEFAULT_WEIGHTS` 兜底（D-072 边界："spec 抽象只搬运，不改逻辑"）
+- 顶层 7 必备字段 + 3 可选字段（`unforgivable_discount` / `soft_rules` / `extra_rules`），其中 `soft_rules` / `extra_rules` 是 V1 declarative 占位**不解释执行**（非空时 `logger.warning` 提醒）
+- profile 显式字段始终 override spec defaults（`merge_into_profile` 用 `{**spec, **profile}` 双层合并），允许用户在方法论内做个人化微调（如志丹 `min_protein_g: 40` override 哈佛默认 25）
+
+**与 L1/L2/L3 的关系**：
+- L0 = 方法论参数 → 决定 L1 硬约束阈值（`plate_rule`）+ L2 权重（`scoring_weights`）+ cap 配置（`recall.per_*_top_k`）
+- spec 不参与 L3 LLM 决策的"内容"，但 `_profile_block` 把 `display_name + rationale 首行` 注入 `[PROFILE]` 段，让 L3 显式知道用户的方法论 baseline（防 L2/L3 描述漂移）
+
+**Phase 1 第二份 spec**（减脂 / 增肌 / 糖控）的接入路径：
+1. 写 `profiles/methodologies/{name}.yaml`（7 必备字段全填）
+2. profile.yaml 改 `methodology: {name}`
+3. 跑 `scripts/baseline_l2_snapshot.py` 验证新 spec L2 输出符合预期
+4. 若现有 schema 不够装新方法论（如减脂需要 "总热量上限" 字段），走 `extra_rules: []` 逃逸口先临时塞，等 D-072.M 修订条目把字段升正
+
+**反 anti-pattern**：
+- 不要把"个人化微调" 写进 spec（如 `min_protein_g: 40` 是志丹个人 override，不该写进 `harvard_plate.yaml`）
+- 不要扩 spec 字段来"调"打分行为；调权重就改 profile.scoring_weights，不要绕道改 spec
+- spec 必须能用 `baseline_l2_snapshot + compare_traces` 严格回归（重构前后 L2 trace |delta| < 1e-6, D-072.1）

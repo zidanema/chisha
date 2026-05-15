@@ -1,0 +1,80 @@
+# profiles/methodologies/harvard_plate.yaml
+# D-072 第一份 methodology spec.
+#
+# 设计原则:
+#   1. spec 只搬运 score.py 现有硬编码默认, 不顺手改打分逻辑 (D-072 边界).
+#   2. profile.yaml 显式 override spec 默认值 (merge_into_profile 在 load_profile
+#      时合并, profile 显式值优先).
+#   3. soft_rules / extra_rules 是 declarative 占位, V1 加载但不解释; 非空时
+#      logger.warning 提醒未来贡献者这是死字段.
+#   4. 顶层 6 必备字段 + 内部 key 严格 keyset 校验 (Codex Round 2 B-1):
+#      拼写错误必 raise MethodologyValidationError, 不允许 silent fallback.
+
+name: harvard_plate
+display_name: 哈佛餐盘 (控油 + 有蔬菜 + 有蛋白)
+version: 1
+
+rationale: |
+  哈佛餐盘法则 (Harvard Healthy Eating Plate):
+  - 半盘蔬菜 (优先非淀粉类)
+  - 1/4 优质蛋白 (鱼/禽/豆/蛋, 少加工肉/红肉)
+  - 1/4 全谷物 (糙米/全麦优先, 少精制白米白面)
+  - 健康脂肪为主, 控油控糖
+  弹性: 加工肉 / 重甜调味是软扣分 (越少越好, 不是零容忍).
+  目标人群: 已认定这套吃法、想低成本执行的"原则派".
+
+# 召回硬约束默认 (combo_passes_plate_rule 用). profile.plate_rule 可 override.
+plate_rule:
+  must_have_vegetable: true
+  min_vegetable_dishes: 1
+  min_protein_g: 25
+  prefer_oil_level_at_most: 3
+  hard_max_oil_level: 4
+
+# L2 16 维打分权重默认 (与 chisha.score.V2_DEFAULT_WEIGHTS keyset 一致).
+# profile.scoring_weights 可 override.
+# 命名注意 (D-072 schema 表): spec 用 `score_weights`, profile 用 `scoring_weights`,
+# merge 时桥接. V1 不重命名 profile (向后兼容).
+score_weights:
+  vegetable_floor_pass: 0.0
+  protein_floor_pass: 0.0
+  distance: 0.0
+  low_oil: 0.5
+  popularity: 0.4
+  cuisine_preference: 0.3
+  variety_bonus: 0.5
+  carb_quality: 0.6
+  processed_meat: 1.0
+  sweet_sauce: 0.7
+  wetness: 0.5
+  dish_role_match: 0.3
+  eta: 0.4
+  price: 0.5
+  taste_match: 0.4
+  context_boost: 0.25
+
+# 4 层 cap 默认 (D-042 + D-045). profile.recall 可 override.
+cap_rules:
+  per_restaurant_top_k: 3
+  per_brand_top_k: 2
+  per_cuisine_top_k: 6
+  per_food_form_top_k: 8
+
+# apply_unforgivable_penalty 的折扣系数. profile.scoring.unforgivable_discount
+# 优先. 缺失时 spec 提供, 都缺走 score.py 硬 fallback 0.5.
+unforgivable_discount: 0.5
+
+# soft_rules: V1 declarative 占位, 不真正解释执行. 当前 want_soup wetness
+# 通道仍由 score.py:context_boost 硬编码. 此字段非空时 methodology.py 打 warn.
+soft_rules:
+  - id: want_soup_wetness
+    description: 用户当下想喝汤 → combo 含 wetness>=2 的菜 +0.5
+    trigger:
+      daily_mood: want_soup
+    apply:
+      type: bonus
+      value: 0.5
+      condition: combo_has_wetness_ge_2
+
+# extra_rules: Phase 1 逃逸口. V1 不解释; 非空时 methodology.py 打 warn.
+extra_rules: []
