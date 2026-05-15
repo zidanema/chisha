@@ -114,14 +114,19 @@ uv run python -m scripts.inspect_candidates --meal dinner --limit 100
 uv run python -m scripts.dry_run --n 5 --meal both
 ```
 
-#### 4. 起 Web 服务（D-051，V1 主交互）
+#### 4. 起 Web 服务（D-051 / D-069，V1 主交互）
 
 ```bash
-# 调试台已可用（D-039）
-uv run python -m chisha.debug_server  # http://127.0.0.1:8765/debug
+# apps/web SPA 用户视图 + 老调试台合一 (IMPL_LOG D-069, 2026-05-15)
+cd apps/web && npm install && npm run build   # 首次或前端改动后
+cd ~/chisha
+uv run python -m chisha.debug_server
+# → http://127.0.0.1:8765/         (apps/web SPA, 真后端模式)
+# → http://127.0.0.1:8765/debug    (老调试台 D-039)
+# → http://127.0.0.1:8765/swagger  (FastAPI OpenAPI UI)
 
-# 用户视图 + 调试台合一 Web 服务（D-051 实施中，待 claude.ai/design 出稿后实装）
-# uv run python -m chisha.web  # → / (用户) + /debug (调试)
+# 前端 dev hot-reload (vite proxy → 8765)
+cd apps/web && npm run dev                    # http://localhost:5173
 ```
 
 #### 5. ~~接 OpenClaw + 飞书~~ → 推迟到 V1.5

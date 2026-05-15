@@ -1060,6 +1060,130 @@ curl localhost:5173/feedback/test_sid → 200
 
 ### 已知风险 (待后续 PR)
 
-- 后端 FastAPI 还没装 7 个新 endpoint — 默认 mock 模式可用 (VITE_USE_MOCK=1)
+- 后端 FastAPI 还没装 7 个新 endpoint — 默认 mock 模式可用 (VITE_USE_MOCK=1)  → **已装, 见 D-069 (2026-05-15)**
 - `chisha-user (1)/` 设计交付物文件夹本次提交时一起删, 已沉淀到 D-056~D-068 + IMPL_LOG 这条 + style-guide
 - `reason_match` 的下游消化 (LLM reason generator reverse-loss) 还没实施 — 后端接入后, 推荐链路要把 comments[] inject 给 prompt
+
+---
+
+## D-069 执行记录 · FastAPI V1 + V1.1 后端 13 端点联调 + Codex review 修复
+
+日期: 2026-05-15
+类型: 工程实施 (兑现 D-051~D-068 + api.md §5 契约)
+范围: `chisha/web_api.py` (新增) / `chisha/feedback_store.py` (新增) / `chisha/debug_server.py` (扩展) / `chisha/api.py` (微调) / `apps/web/.env.production` (新增)
+
+### 背景
+
+D-051~D-068 + mockApi.ts 把前端打到 mock-feature-complete, `docs/api.md` §5 把契约钉死了, 但后端 FastAPI 那侧 13 个端点一直没装 (api.md 标 `✅ mock`)。本次一次性接上, 跑通自用单机的真后端模式。
+
+### 改动结构
+
+**新增 `chisha/web_api.py`** — V1 + V1.1 用户视图 API, 用 `APIRouter(prefix="/api")` 挂到 debug_server。共 14 个路由 (含 `/profile` GET / PUT / POST 兼容):
+
+| 端点 | Phase | wrap 的现成实现 |
+|---|---|---|
+| `GET /api/recommend` | A | `chisha.api.recommend_meal` |
+| `POST /api/refine` | A | `chisha.refine.refine` |
+| `POST /api/accept` | A | `feedback_store.record_accept` + urllib quote 拼 deeplink |
+| `POST /api/skip` | A | `feedback_store.record_skip` (D-054 reason 白名单校验) |
+| `GET /api/feedback/inbox?include_snoozed=` | B | `feedback_store.inbox_items` |
+| `POST /api/feedback/snooze` | B | `feedback_store.set_snooze` (24h) |
+| `POST /api/feedback/stop` | B | `feedback_store.set_stop` |
+| `GET /api/feedback/recent?limit=` | B | `feedback_store.recent_feedback_items` |
+| `GET /api/feedback/<sid>` | B | 联表 sessions + accepted |
+| `GET /api/feedback/<sid>/record` | B | `feedback_store.get_feedback_record` (null pre-submit) |
+| `POST /api/feedback` | B | `feedback_store.record_feedback` (D-066 + D-067 comments preserve) |
+| `POST /api/feedback/<sid>/comments` | B | `feedback_store.append_comment` (D-067 append-only) |
+| `GET / PUT / POST /api/profile` | A + C | ruamel.yaml 写入保头部注释 |
+| `GET /api/history?days=` | C | 读 `logs/recommend_log.jsonl` + 联 `feedback_store.accepted` 拿 `accepted_rank` |
+
+**新增 `chisha/feedback_store.py`** — V1.1 单文件落盘 `logs/feedback/store.json`:
+- 结构 `{ accepted, feedbacks, sessions }` 镜像 mockApi.ts 的 STORE
+- 用户决策走单 JSON (问询 2 选 1, 拒绝 per-session 文件 / SQLite, V1 单用户够用, 后期再换)
+- 写路径全部走 tmp + rename 原子替换 + module-level `threading.Lock` (FastAPI sync handler 串行, 锁是防御)
+- 派生读: `inbox_items()` / `recent_feedback_items()` 现算, 不冗余存
+
+**改 `chisha/debug_server.py`** — `app.include_router(web_router)` + 挂 `apps/web/dist`:
+- `/` 路径让给 SPA index.html, 老调试台挪到 `/debug`, 逻辑页挪 `/logic` (兼容 `/docs` 旧路径)
+- `/assets/*` 用 `StaticFiles` 直挂; SPA fallback `/{full_path:path}` 兜底 React Router (`/feedback` `/history` `/profile` 等), `/api/*` 未匹配的视为 404 不被 swallow
+- 没装时 (dist 不存在) `/` 返回带 build 提示的 JSON, 老调试台仍可用
+
+**改 `chisha/api.py:170-178`** — `_format_v2_candidate` 加 `id` 字段 (`c_{combo_index}_{rest_id}`), 别名 `format_v2_candidate` 暴露给 web_api 复用; refine 的 candidates 在 web_api 里走同一 formatter 让前后端两条路径返回形状完全对齐 (`RecommendResponse`)。
+
+**新增 `apps/web/.env.production`** — `VITE_USE_MOCK=0`, 让 `cd apps/web && npm run build` 出的 bundle 走真 fetch (dev 时 vite proxy 已经存在, 不动)。
+
+### 验证 (curl 矩阵)
+
+13 端点 + SPA 托管全跑通:
+
+```
+GET    /api/recommend                       HTTP 200, 13s, 5 候选, candidate 含 id 字段
+POST   /api/refine                          HTTP 200, 17s, round++, refine_input 入 context
+POST   /api/accept                          HTTP 200, < 50ms, store.json accepted[] 入条
+POST   /api/skip (cafeteria)                HTTP 200, skipped=true, stopped=true
+POST   /api/skip (hahaha)                   HTTP 400, reason 白名单拦截
+GET    /api/feedback/inbox                  HTTP 200, accept 后立即出现
+POST   /api/feedback/snooze                 HTTP 200, snoozed_until +24h
+GET    /api/feedback/inbox?include_snoozed=0  HTTP 200, 过滤 snoozed
+POST   /api/feedback/stop                   HTTP 200, 任何模式 inbox 都不含
+GET    /api/feedback/<sid>                  HTTP 200, 5 候选 + accepted_rank 回放
+GET    /api/feedback/<sid>/record           HTTP 200, 提交前 null, 提交后 FeedbackRecord
+GET    /api/feedback/missing_sid            HTTP 404
+POST   /api/feedback                        HTTP 200, comments[] 保留 (D-067)
+POST   /api/feedback/<sid>/comments         HTTP 200, append-only push
+POST   /api/feedback/missing_sid/comments   HTTP 404
+GET    /api/feedback/recent?limit=6         HTTP 200, 按 submitted_at 倒序
+GET    /api/profile                         HTTP 200
+PUT/POST /api/profile                       HTTP 200, 文件头部 22 行注释保留
+GET    /api/history?days=7                  HTTP 200, 10 条, accepted_rank 联表
+GET    /api/history?days=999                HTTP 400
+/                                           HTTP 200, SPA index, mock pool tree-shake 掉
+/feedback                                   HTTP 200, SPA fallback
+/api/foo (未注册)                          HTTP 404
+```
+
+### Codex review (dual-model audit, D-036 pattern) + 修复
+
+**4 个 MED, 全修**:
+
+| 编号 | 文件 | 问题 | 修法 |
+|---|---|---|---|
+| MED-1 | web_api.py accept/skip | 写盘失败被 try/except 吞 → 返回 200 + 假 deeplink, acceptedQueue 静默丢条 | 改 `raise HTTPException(500, ...)`, 让前端能看见后端炸了 |
+| MED-2 | debug_server.py spa_fallback | URL 解码后的 `../` 拼 `WEB_DIST / full_path` 可能逃逸 dist 目录读 profile.yaml | `candidate.resolve().relative_to(_WEB_DIST_RESOLVED)` 守卫, 越界回 SPA shell |
+| MED-3 | feedback_store.load_store | corrupt JSON → 空 store → 下次写盘把所有历史反馈覆盖掉 | 抛 `StoreCorruptError`, rename 损坏文件为 `.corrupt.{ts}.bak`, 上游 500 |
+| MED-4 | web_api.FeedbackPayloadReq | `rating: int / variant: str` 接受任意值, `not-eaten` 无跨字段不变量 | `Literal[-1,0,1] / Literal[0,1,2] / Literal["progressive","not-eaten"]` + `@model_validator(mode="after")` 强制 not-eaten ⇒ accepted_rank+5 维度全 null |
+
+**6 个 LOW, 全修**:
+
+| 编号 | 文件 | 问题 | 修法 |
+|---|---|---|---|
+| LOW-1 | debug_server.py DebugRecommendReq/CompareMoodsReq | n_return/n_explore 无上界, moods 列表无 cap, 误传 n=999 会放大 LLM 调用 | `Field(ge=1, le=20)` / `Field(ge=0, le=10)` / `min_length=1, max_length=8` |
+| LOW-2 | debug_server._parse_today | 非法 YYYY-MM-DD raise 未捕获 ValueError → 500 | catch + `HTTPException(400, ...)` |
+| LOW-3 | feedback_store.append_comment | comment id = `cmt_{ms}` 同毫秒撞 → 前端 key 冲突 | `cmt_{ms}_{secrets.token_hex(2)}` 4-hex 后缀 |
+| LOW-4 | feedback_store._is_snoozed_now | `datetime.fromisoformat(naive)` vs `datetime.now(UTC)` 比较 raise TypeError | naive 视为 UTC, aware 转 UTC, 再比较 |
+| LOW-5 | web_api.api_feedback_recent | `limit=-1` → list[:-1] 返回全部 - 1 | `Query(ge=1, le=100)` |
+| LOW-6 | (合并入 MED-4) | `quick?: boolean` 默认应是 false, 当前 `quick: bool \| None = None` 入库 null | `quick: bool = False` |
+
+**验证**:
+- MED-1: `chmod 555 logs/feedback` → accept → `HTTP 500 PermissionError`
+- MED-2: `/..%2f..%2fprofile.yaml` → 返回 SPA index 而非 profile.yaml
+- MED-3: 注入 `[` / `corrupt-junk` 到 store.json → inbox 调用 500, 备份生成 `store.json.corrupt.{ts}.bak`
+- MED-4: `rating=5 → 422` / `variant=random → 422` / `variant=not-eaten + rating=1 → 422 with offenders=['rating']`
+- LOW-1: `n_return=999 → 422` / `moods 9 个 → 422`
+- LOW-2: `today=hahaha → 400`
+- LOW-3: 同 1ms 3 次 append → ID 全不同 (`cmt_..._b254 / _190e / _a5f7`)
+- LOW-4: 注入 naive `snoozed_until` → inbox 200 不爆 TypeError
+- LOW-5: `limit ∈ {-1, 0, 200} → 422`
+
+### 反 anti-pattern (这次没踩)
+
+- **没改 chisha/api.py 的 recommend_meal 内部**: 它已经是 V2 单一链路 (D-049), web_api 只在外围加 candidate `id` 字段 + 落 session 副作用, 推荐链路不动
+- **没在 chisha/feedback.py 加 V1.1 schema**: 旧的 `FeedbackParsed` / `parse_feedback` 是 D-035 的 chip 解析员 (refine 二轮用), 与 V1.1 直接反馈 schema 是两条线, 各跑各的不合并 (V2 反馈学习管道连起来再 review)
+- **没用 sqlite**: 走单 JSON 文件用户决策, V1 单用户场景够用; 后续多用户 / 并发写需求触发再迁
+- **没自评通过就交付**: Codex review 找到 4 MED + 5 LOW + 1 已修, 全修后才认为 ready (D-036 dual-model audit 模式守住)
+
+### 已知遗留 (推 V1.5+)
+
+- ruamel.yaml deep-merge 写 profile.yaml: 长 multi-line block (如 `taste_description: |`) 在覆盖时 `|` 可能变 `|-`, 不影响语义但形态有微调
+- `_remember_session_safe` (web_api) 还是 best-effort 吞错: 设计意图是 session replay 仅为反馈页便利, 推荐主链路不能因落盘失败断; 但极端情况下用户提交反馈时 5 候选 dump 可能丢, 反馈页会 404 — 实测后再决定是否提级
+- 历史 `recommend_log.jsonl` 没去重 / 没分割; 自用一周后做 logrotate

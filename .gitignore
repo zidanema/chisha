@@ -25,7 +25,12 @@ logs/
 .env
 .env.*
 !.env.example
+# apps/web/.env.production 入库 (只声明 VITE_USE_MOCK=0, 无敏感信息, D-069)
+!apps/web/.env.production
 eval/dish_tagging_eval/.cache/
+
+# D-043 P3 反馈历史 (用户运行时状态, 同 logs/, 不进版本库)
+data/feedback_history.jsonl
 
 # Web 前端 (apps/web)
 apps/web/node_modules/

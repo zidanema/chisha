@@ -1,15 +1,17 @@
-"""推荐调试 Web 服务.
+"""推荐调试 Web 服务 + apps/web SPA 托管.
 
 启动:
     uv run python -m chisha.debug_server
-    → 浏览器开 http://127.0.0.1:8765
+    → 浏览器开 http://127.0.0.1:8765        (apps/web SPA, D-051 用户视图)
+    → http://127.0.0.1:8765/debug             (老调试台 HTML)
+    → http://127.0.0.1:8765/logic             (逻辑说明页)
 
 Endpoints:
-    GET  /                      调试台 HTML
-    POST /api/debug_recommend   跑一次 V2 instrumented 推荐
-    POST /api/trace_combo       同上 + 追溯指定 combo
-    POST /api/compare_moods     同一输入跑多个 daily_mood 横向对比
-    GET  /api/profile           读当前 profile.yaml (供前端展示默认值)
+    /                          apps/web/dist SPA (404 fallback → index.html)
+    /api/recommend etc.        见 chisha.web_api (V1 + V1.1)
+    /api/debug_recommend       老调试台用 (V2 instrumented)
+    /api/compare_moods         同上, 横向对比
+    /swagger                   FastAPI OpenAPI UI
 """
 from __future__ import annotations
 
@@ -18,15 +20,18 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from chisha.debug_recommend import compare_moods, debug_recommend
+from chisha.web_api import router as web_router
 
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+WEB_DIST = ROOT / "apps" / "web" / "dist"
 PROFILE_PATH = ROOT / "profile.yaml"
 
 
@@ -36,6 +41,9 @@ app = FastAPI(
     docs_url="/swagger",   # 让出 /docs 给逻辑说明页
     redoc_url=None,
 )
+
+# 用户视图 API (apps/web 用)
+app.include_router(web_router)
 
 
 # ---------- Pydantic models ----------
@@ -47,12 +55,17 @@ class DebugRecommendReq(BaseModel):
     profile_overrides: dict[str, Any] | None = None
     today: str | None = None              # YYYY-MM-DD
     trace_target: dict[str, Any] | None = None
-    n_return: int = 5
-    n_explore: int = 2
+    # 边界 (Codex review LOW): 防止误传巨大值放大 LLM 调用成本
+    n_return: int = Field(default=5, ge=1, le=20)
+    n_explore: int = Field(default=2, ge=0, le=10)
 
 
 class CompareMoodsReq(BaseModel):
-    moods: list[str] = ["want_light", "want_soup", "want_indulgent"]
+    # moods 最多 8 个 (DAILY_MOODS 全集), 防止误传成 100 个跑死服务器
+    moods: list[str] = Field(
+        default_factory=lambda: ["want_light", "want_soup", "want_indulgent"],
+        min_length=1, max_length=8,
+    )
     meal_type: str = "lunch"
     profile_overrides: dict[str, Any] | None = None
     use_llm_rerank: bool | None = None
@@ -60,18 +73,17 @@ class CompareMoodsReq(BaseModel):
 
 
 def _parse_today(today: str | None) -> dt.date | None:
+    """非法 YYYY-MM-DD → 400 而不是 500 (Codex review LOW)."""
     if not today:
         return None
-    return dt.date.fromisoformat(today)
+    try:
+        return dt.date.fromisoformat(today)
+    except ValueError:
+        raise HTTPException(400, f"today must be YYYY-MM-DD, got {today!r}")
 
 
 # ---------- API ----------
-
-@app.get("/api/profile")
-def get_profile() -> dict:
-    """供前端显示当前 profile 默认值."""
-    return yaml.safe_load(PROFILE_PATH.read_text(encoding="utf-8"))
-
+# NOTE: GET /api/profile 已挪到 chisha.web_api (V1 用户视图也要用), 这里不再重复挂.
 
 @app.post("/api/debug_recommend")
 def api_debug_recommend(req: DebugRecommendReq) -> dict:
@@ -100,14 +112,62 @@ def api_compare_moods(req: CompareMoodsReq) -> dict:
 
 # ---------- Static ----------
 
-@app.get("/")
-def index() -> FileResponse:
+@app.get("/debug")
+def debug_page() -> FileResponse:
+    """老调试台 (D-039) — / 让给 apps/web SPA."""
     return FileResponse(STATIC_DIR / "debug.html")
 
 
+@app.get("/logic")
+def logic_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "logic.html")
+
+
+# 兼容旧路径 (老书签): /docs → /logic
 @app.get("/docs")
 def docs() -> FileResponse:
     return FileResponse(STATIC_DIR / "logic.html")
+
+
+# ---------- SPA 托管 ----------
+# apps/web/dist 挂在 /; 不存在 (未 build) 时仅老调试台可用。
+if WEB_DIST.exists() and (WEB_DIST / "index.html").exists():
+    # /assets/* 走 StaticFiles
+    app.mount("/assets", StaticFiles(directory=WEB_DIST / "assets"), name="web-assets")
+
+    @app.get("/")
+    def web_index() -> FileResponse:
+        return FileResponse(WEB_DIST / "index.html")
+
+    _WEB_DIST_RESOLVED = WEB_DIST.resolve()
+
+    # SPA fallback: 任何非 /api 非 /assets 非已注册路由的 GET 都回 index.html
+    # React Router 用 (/feedback /history /profile etc.)
+    @app.get("/{full_path:path}")
+    def spa_fallback(full_path: str) -> FileResponse:
+        # /api/* 真没匹配上的视为 404, 不要 swallow 成 SPA
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail=f"unknown api {full_path!r}")
+        # path traversal 守卫 (Codex review MED-2):
+        # full_path 由 URL 解码后传入, '../' 可能逃逸 WEB_DIST.
+        # 一律 resolve + 断言 startswith, 不安全就退回 SPA shell.
+        candidate = (WEB_DIST / full_path).resolve()
+        try:
+            candidate.relative_to(_WEB_DIST_RESOLVED)
+        except ValueError:
+            return FileResponse(WEB_DIST / "index.html")
+        if candidate.is_file():
+            return FileResponse(candidate)
+        # 其它一律回 SPA shell, React Router 接管
+        return FileResponse(WEB_DIST / "index.html")
+else:
+    @app.get("/")
+    def web_index_missing() -> dict:
+        return {
+            "ok": False,
+            "error": "apps/web/dist not built — run `cd apps/web && npm run build` first",
+            "debug_url": "/debug",
+        }
 
 
 def main():

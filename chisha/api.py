@@ -171,7 +171,15 @@ def _format_v2_candidate(rank: int, c: dict) -> dict:
     base["taste_match"] = c.get("taste_match")
     base["risk_flags"] = c.get("risk_flags") or []
     base["reason_one_line"] = c.get("one_line_reason") or c.get("reason_one_line", "")
+    # 前端 (apps/web) 的 Candidate.id: 用 combo_index + restaurant.id 合成稳定 key
+    rest_id = (c.get("restaurant") or {}).get("id", "?")
+    combo_idx = c.get("combo_index", rank)
+    base["id"] = f"c_{combo_idx}_{rest_id}"
     return base
+
+
+# 暴露给 web_api / 外部调用方:
+format_v2_candidate = _format_v2_candidate
 
 
 def _minimize_candidate(c: dict) -> dict:

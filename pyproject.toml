@@ -13,6 +13,7 @@ dependencies = [
     "pandas>=3.0.2",
     "fastapi>=0.115.0",
     "uvicorn>=0.32.0",
+    "ruamel-yaml>=0.19.1",
 ]
 
 [project.optional-dependencies]
