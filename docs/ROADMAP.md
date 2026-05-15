@@ -35,6 +35,34 @@
 - **V1.1 反馈系统落地**（[D-056~D-068](DECISIONS.md#d-056-navbar-加反馈-tab--角标-v11)，2026-05-15）：第二轮设计迭代，反馈链路从 placeholder 改成完整 7 步 user journey。13 条新决策分三组：①入口架构（D-056 NavBar tab + 角标 / D-057 banner 升级 stack + 多条堆叠 / D-058 `/feedback` 反馈中心三段 / D-059 history 行可点 / D-060 snooze vs stop 两态语义），②表单内容（D-061 5 变体方法论 → D-062 选 E 渐进披露 + 借 D 复盘卡 / D-063 calibration·behavior·gut 三类信号框架 / D-064 头部 gut 跟 behavior 分离 / D-065 展开 4 维 + 每行对齐 prediction），③生命周期（D-066 一次提交永久 readonly / D-067 append-only timeline / D-068 V2 砍单清）。schema 全量改写：砍 `rating_taste`/`rating_satisfaction`/`feedbackChips`，加 `rating: -1\|0\|1` + 4 维 calibration/behavior + comments[] timeline。新增 5 文件 / 改写 10 文件 / 删 FeedbackPlaceholder。mockApi 7 个端点全实现。详见 [IMPL_LOG D-056~D-068](IMPLEMENTATION_LOG.md#d-056d-068-执行记录--v11-反馈系统落地-appsweb)。
 - **FastAPI 后端 13 端点联调完成**（[IMPL_LOG D-069](IMPLEMENTATION_LOG.md#d-069-执行记录--fastapi-v1--v11-后端-13-端点联调--codex-review-修复)，2026-05-15）：兑现 D-051~D-068 + `docs/api.md` §5 契约，V1 推荐链路 6 个（recommend/refine/accept/skip/profile/history）+ V1.1 反馈链路 7 个全部装上，单 JSON 文件 `logs/feedback/store.json` 落盘（用户决策走单文件 v.s. SQLite，V1 单用户够用），apps/web SPA 静态托管在 `/`，老调试台挪 `/debug`。Codex review（D-036 dual-model audit 模式）发现 4 MED（写盘失败静默 / SPA path traversal / corrupt store 静默清空 / feedback schema 未约束）+ 6 LOW（debug 边界 / today 4xx / comment ID 碰撞 / naive datetime / limit 边界 / quick default），全修后验证通过。前后端真接口全链路 ready。
 - **下一步**：① 用真实化 profile 在 Web 上自用一周采集采纳率 + 反馈数据；② 反馈数据回灌推荐推理（`reason_match` reverse-loss / `repurchase_intent` ranking / `comments[]` LLM context inject）。飞书接入推到 V1.5（integrations/openclaw/ 骨架保留，cron 待装）。
+- **产品定位收敛 + 砍 mood picker**（[D-070](DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1) / [D-071](DECISIONS.md#d-071-砍-mood-picker--want_soup-关键词识别-v1) / [D-072](DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)，2026-05-15）：D-069 后端联调后，对首屏 mood picker 做产品复盘 → 定位明确为「原则派点餐助手」（已有饮食方法论但落地费力的用户），明确不服务目标缺失型。砍掉前端 4 chip mood picker，保留 `want_soup` 一条 L2 规则改由 refine 文本关键词识别触发（10 正向词 + 6 否定词，落在 `chisha/refine.py`），删 score.py 中 want_clean/want_light/want_indulgent 3 条 mood 规则 + `infer_default_mood` 季节兜底。三层信号模型沉淀：L0 方法论层 (profile) / L1 长期反馈层 (V1.1 已建) / L2 当下 session 层 (refine 文本)。Phase 路线改三段线性 (Phase 0 自用 → Phase 1 同事推广 → Phase 2 双向扩展)。两轮 Codex review 收敛，Step 1 ~90min 工程清单见 D-071 末尾。methodology spec 抽象 (D-072) 推到 Step 3 (采完一周数据后做)，防 bug 污染采数据窗口。
+
+---
+
+## Phase 路线（[D-070](DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1) 沉淀，取代旧 V1/V2/V3 笛卡尔积）
+
+```
+Phase 0 · 自用跑通 (当前)
+  范围: 1 方法论 (harvard_plate) × 1 用户 × 2 zone
+  步骤:
+    Step 1 (本周 ~90min): 砍 mood picker + want_soup 关键词识别 (D-071)
+    Step 2 (1 周): 自用采数据, 工作日 7 日采纳率 ≥ 50% (北极星)
+    Step 3 (1-2 周): methodology spec 抽象 + score.py 重构 (D-072), 用 Step 2 数据做回归基线
+  门槛: 自己愿意每天用
+        ↓ 验证: 自己用得住
+Phase 1 · 同方法论同事推广
+  范围: 1 方法论 × N 同事 × M zone
+  准入条件: 任意一套饮食原则 (不限定 harvard_plate, Codex Q4 修正), 进前先发 screener 探同事原则派密度, 阈值 30%
+  关键工程: profile 解耦个人化 / data zone 拆包 / 本地数据闭环 / 接入 OpenClaw 飞书 / 必要时扩 methodology spec
+  目标: ≥ 3 同事自发持续使用
+        ↓ 验证: 别人也用得住
+Phase 2 · 双向扩展 (顺序后议)
+  方向 A: 更多方法论 (增肌 / 糖控 / 孕期 / 高血压)
+  方向 B: 更多区域 / 更多用户 / 开源
+  真实需求拉动哪个就做哪个
+```
+
+> 旧 V1/V2/V3 段（下方）仍保留作工程节点参考，但产品节奏以本 Phase 路线为准。Phase 0 ≈ V1 后半 + 砍 mood + spec 化；Phase 1 ≈ V2 反馈闭环成熟期 + 同事接入；Phase 2 ≈ V2.4+/V3 多区域 + 多方法论。
 
 ---
 
@@ -70,7 +98,9 @@
 - [x] **FastAPI 后端扩展为 Web 服务**（D-051 + D-056~D-068 + [IMPL_LOG D-069](IMPLEMENTATION_LOG.md#d-069-执行记录--fastapi-v1--v11-后端-13-端点联调--codex-review-修复)，2026-05-15）：沿用 8765 端口，推荐链路 6 个（`/api/recommend` `/api/refine` `/api/accept` `/api/skip` `/api/profile` `/api/history`）+ V1.1 反馈链路 7 个（`/api/feedback/inbox` `/api/feedback/snooze` `/api/feedback/stop` `/api/feedback/recent` `/api/feedback/<sid>` `/api/feedback/<sid>/record` `/api/feedback` + `/api/feedback/<sid>/comments`）全部装上；apps/web SPA 托管在 `/`，老调试台 `/debug`，保留 `/api/debug_recommend` `/api/compare_moods`。落盘走单 JSON `logs/feedback/store.json`。Codex review (D-036) 修了 4 MED + 6 LOW (写盘失败暴露 / SPA path traversal 守卫 / corrupt store fail-closed / feedback schema Literal+cross-field validator / debug 边界 / today 4xx / comment ID 碰撞 / naive datetime / limit 边界 / quick default)。
 - [ ] **macOS 本机定时拉起服务**（D-051）：launchd / cron 工作日 11:00 / 17:30 自动启动 chisha.web，自用周期内零摩擦
 - [ ] ~~接入 OpenClaw + 飞书卡片~~ → 推迟到 V1.5（[D-051](DECISIONS.md#d-051) 翻案 D-022）
-- [ ] 工作日 Web 自用一周，纸笔 + 内置 accept/reject 埋点记录每次推荐质量
+- [ ] **Step 1（[D-071](DECISIONS.md#d-071-砍-mood-picker--want_soup-关键词识别-v1)）：砍 mood picker + want_soup 关键词识别**（~90 min，另机器/session 落地）：①前端 `StatusBar` 隐藏 mood chip 区块 + `HomePage` 始终传 `mood='neutral'`；②`chisha/refine.py` 新增 `infer_refine_mood()` (10 正向词 + 6 否定词，否定优先)；③埋点 5 字段 (refine_text / matched_keyword / negated / injected_daily_mood / before_daily_mood)；④删 `chisha/score.py:438-445` 中 want_clean / want_light / want_indulgent 3 条规则；⑤删 `chisha/score.py:498-512` `infer_default_mood` 季节兜底；⑥新增 `tests/test_refine_mood_inference.py` 8+ case。**边界警告**：`infer_refine_mood` 只服务 want_soup，不得扩展为通用 mood parser。
+- [ ] **Step 2：工作日 Web 自用一周**，纸笔 + 内置 accept/reject 埋点记录每次推荐质量，目标 7 日采纳率 ≥ 50% + 累计 ≥ 30 次推荐 + 反馈样本
+- [ ] **Step 3（[D-072](DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)）：methodology spec 抽象 + score.py 重构**（Step 2 验收门通过后触发）：抽 `profiles/methodologies/harvard_plate.yaml` + `chisha/methodology.py` 加载层；score.py 权重 / 阈值 / cap 从 spec 读，不再硬编码；用 Step 2 数据做重构前后回归比对（top5 一致性 ≤ 1 个差异）
 
 ### 不做（明确推迟）
 

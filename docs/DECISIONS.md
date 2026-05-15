@@ -2493,3 +2493,249 @@ const shownUnfed = sameSession ? null : unfed;
 依赖 / 影响:
 - ROADMAP V2.0 待办里加: "反馈系统 V2 增量 (删除 / 撤销 / Comment 结构化 / banner 一键打分 / A/B 框架)"
 - 不影响 V1.1 schema 设计 — `quick: true` 字段已在 schema 预留 (D-063), banner 一键打分上线只是前端补 UI
+
+---
+
+## D-070: 产品定位收敛到「原则派点餐助手」+ 三层信号模型 (V1)
+
+日期: 2026-05-15
+状态: active · 产品定位决策 · 修订 PRD §1 / §3
+
+背景: D-069 后端联调完, 准备进入"自用一周采数据"。Web 首屏 mood picker (随便/清淡/解馋/轻食 4 chip) 实施细节复盘时, 用户挑战这套交互是否合适, 引发产品定位重审。
+
+发现的根因:
+1. mood picker 违反产品本意 — "今天吃点啥"的用户**已经不知道吃啥**, 让他先选 mood 是反向加 cognitive load
+2. **stated preference ≠ revealed preference** (餐饮经典坑) — 用户说想清淡然后点红烧肉是常态; 让用户主动声明 mood 采集的是最不可靠的那种信号
+3. mood 4 个选项**维度杂糅** — 清淡 (口味) / 轻食 (餐型) / 解馋 (情绪) / 随便 (无信号), 根本不在一个语义层
+4. PRD §2.2 已写过真实用户痛点: "**认了哈佛餐盘方法论, 但每次点餐还得自己想这家有蔬菜吗、这道菜油重不重**" — 这是**执行摩擦**, 不是**目标缺失**, 两种问题解法完全不同
+
+定位收敛:
+- **「原则派点餐助手」** — 给已经认定一套吃法、但懒得每天选店的原则派, 30 秒搞定外卖决策
+- 服务: 已经有自己饮食方法论 + 控制目标的人 (减脂 / 增肌 / 糖控 / 孕期 / 高血压 / 纯味道讲究...), 痛点是**执行成本**
+- **明确不服务**: 目标缺失型用户 ("什么都行又什么都不想吃" / 完全不在乎吃啥) — 这是目标推导问题, 同一产品很难同时服务好执行摩擦与目标缺失
+
+三层信号模型 (统一架构概念):
+
+| 层 | 时间尺度 | 归属 | 内容 |
+|---|---------|------|------|
+| **L0 方法论层** | 几乎不变 | profile-level | 饮食方法论 spec + 个人口味 + zone/价格 → 决定 L2 baseline 权重 + L1 召回硬过滤 |
+| **L1 长期反馈层** | 慢变 | V1.1 已建 | 历史采纳/拒绝/评分聚合 → boost/penalty hints, 调权不改 baseline |
+| **L2 当下 session 层** | 低频偶尔 | session | refine 文本 + 上一顿摘要, 仅本 session 影响 L3 |
+
+关键设计推论:
+- mood picker 试图捕捉 L2 信号, 但在方法论用户视角下: clean/light = baseline (L0 已固化), indulgent = 偏离 baseline (低频, refine 文本兜底), soup = 唯一真痛点 — 详见 D-071
+- 大维度差异 (减脂 vs 增肌 vs 糖控) = L0, 通过 methodology spec 表达 (D-072), 不是 session 级 mood
+- "数据缺失就按季节兜底"(D-043 `infer_default_mood`) 在方法论用户视角下是错的 — baseline 已固化, 不需要兜底
+
+Phase 路线 (取代旧 V1/V2/V3 笛卡尔积):
+
+```
+Phase 0 · 自用跑通 (当前)
+  范围: 1 方法论 (harvard_plate) × 1 用户 × 2 zone
+  目标: 链路跑通 + 自用一周 + 采纳率 ≥ 50%
+  门槛: 我自己愿意每天用
+        ↓ 验证: 自己用得住
+Phase 1 · 同方法论同事推广
+  范围: 1 方法论 × N 同事 × M zone
+  目标: 公司内推广跑通, ≥ 3 人自发持续使用
+  准入: 任意一套饮食原则 (不限定 harvard_plate, Codex Q4 修正), 进前先发 screener 探密度
+  门槛: ≥ 3 同事自发持续用
+        ↓ 验证: 别人也用得住
+Phase 2 · 双向扩展 (顺序后议)
+  方向 A: 更多方法论 (增肌 / 糖控 / 孕期 / 高血压)
+  方向 B: 更多区域 / 开源
+  真实需求拉动哪个就做哪个
+```
+
+依赖 / 影响:
+- PRD §1 一句话定位重写 (从"控油+蔬菜+蛋白健康结构"改为"原则派的点餐执行外包")
+- PRD §3.4 不服务的人加: 目标缺失型 ("什么都行又什么都不想吃")
+- ROADMAP 顶部当前状态加 Phase 路线 + Step 1/2/3 节奏
+- D-071 (砍 mood picker 落地 + want_soup 关键词识别) 是本决策的工程子项
+- D-072 (methodology spec 抽象) 是本决策的 L0 工程化, 放 Phase 0 收尾 (Step 3)
+
+讨论存档:
+- 共两轮 Codex review, 第一轮 Codex 反对"砍 mood 全靠 refine" 提 post-rec chip, 第二轮经讨论达成一致: 关键词识别替代 chip, 见 D-071 决策过程
+- N=1 定位风险: Codex 评 68/100 置信度, 最大风险 = Phase 1 时同事原则派密度未知 → 用 screener 缓解, 不阻塞 Phase 0
+
+---
+
+## D-071: 砍 mood picker + want_soup 关键词识别 (V1)
+
+日期: 2026-05-15
+状态: active · 工程决策 · 推翻 D-043 部分内容
+
+背景: D-070 定位收敛后, 4 个 mood (随便/清淡/解馋/轻食) 中 3 个变成 baseline 冗余或低频 refine 场景, 但**砍掉后 want_soup 的 L2 确定性加分通道也丢了** — Codex Q2 指出: 在汤羹供给不足的 zone, 把"想喝汤"压给 L3 软偏置推不稳。
+
+讨论过程:
+- Codex 第一轮: 提"卡片下方加 post-rec chip"保留 L2 通道
+- 我方反驳: post-rec chip 是 pre-rec picker 的位移版, 增加而非减少 cognitive load, 违反"30 秒搞定"纯粹性, 且 4 个 mood 中只有 want_soup 是真痛点
+- Codex 第二轮: 接受关键词识别替代 chip, 补 P1 必做条件 (否定识别) + 实现位置修正 (refine.py 而非 web_api.py)
+
+决定:
+
+**A. 前端**
+- 隐藏 `StatusBar` 里的 4 颗 mood chip (`apps/web/src/components/StatusBar.tsx:53-66`)
+- 不删 `LABELS.mood` / `LABELS.moodList` / `Mood` 类型 (保留类型安全 + 调试台保留对比能力)
+- `HomePage` 始终传 `mood='neutral'`, 不再让用户选
+
+**B. 后端 - want_soup 关键词识别**
+
+实现位置: `chisha/refine.py` 构建 context 前 (不是 `web_api.py`, 否则只有 web 路径生效, 调试台 / CLI / API 三路径漂移)
+
+函数签名:
+```python
+def infer_refine_mood(user_input: str) -> str | None:
+    """关键词扫描: 命中正向词 & 未被否定词拦截 → 返回 'want_soup', 否则 None.
+
+    边界: 此函数只为 want_soup 服务, 不得扩展为通用 mood parser (见 D-071 边界警告).
+    """
+```
+
+调用方式:
+```python
+effective_daily_mood = state.daily_mood or infer_refine_mood(user_input)
+```
+
+正向词典 (10):
+- `想喝汤` / `喝汤` / `有汤` / `带汤` / `汤水` / `汤羹` / `羹` / `粥` / `砂锅粥` / `热汤`
+
+否定词典 (6, 必须做):
+- `不想喝汤` / `不要汤` / `别来汤` / `不喝汤` / `不想吃粥` / `不要粥`
+
+否定优先: 命中否定词时直接返回 `None`, 不再检查正向词。
+
+不收: 单字"喝"(会误召奶茶/饮料), 单字"汤"(模糊), "想暖暖肚子"等隐式表达(退 L3 OK)。
+
+**C. 后端 - 清理 score.py**
+
+删 `context_boost` 里的 3 条 mood 规则 (`chisha/score.py:438-445`):
+- want_light → 删 (方法论 baseline, 不该 session 级)
+- want_clean → 删 (同上)
+- want_indulgent → 删 (低频, L3 + refine 文本 cover)
+
+保留 `want_soup` 一条 (`score.py:436-437`): `+0.5 if has_wet` 通道不动。
+
+删 `infer_default_mood` 整个函数 (`chisha/score.py:498-512`) 及其在 `context_boost` 里的调用 — D-043 季节兜底在 D-070 定位下不适用 (方法论用户 baseline 已固化, 不需季节猜测)。
+
+**D. 埋点 5 字段** (必加, 一周后回看效果)
+
+每次 refine 调用记录:
+| 字段 | 含义 |
+|------|------|
+| `refine_text` | 用户原文 |
+| `matched_keyword` | 命中的正向词 (None 表示未命中) |
+| `negated` | 是否被否定词拦掉 (bool) |
+| `injected_daily_mood` | 实际注入的 daily_mood 值 |
+| `before_daily_mood` | 注入前 state 里的原值 |
+
+落点: session trace 现有结构里加段 (与 D-048 trace 字段同级)
+
+**E. 边界警告 (强制)** ⚠️
+
+`infer_refine_mood` 只服务 want_soup / wetness 偏好。**不得**:
+- 加 want_clean / want_light / want_indulgent 等其他 mood 关键词
+- 加任意非 wetness 维度的关键词识别
+- 扩展为通用 mood parser
+
+理由: D-070 把通用 mood 信号归到 L3 + refine 文本, 这套关键词扫描是单点补救 (L2 确定性 + 汤羹供给不足下 L3 推不稳), 不是通用机制。扩展会让 mood picker 以更隐蔽形式复活。
+
+新增 mood 需求若出现, 走 L3 prompt 调整, 不走关键词。
+
+理由汇总:
+- 砍 picker 符合 D-070 定位 (零 upfront ask)
+- 保留 want_soup 因汤羹偏好有 wetness 结构化字段 + 供给不足 zone 下 L3 推不稳 (Codex Q2.1 论据)
+- 关键词识别比 post-rec chip 零新增 UI, 用户用一致的 refine 文本框, 系统自动接住
+- 实现在 `refine.py` 而非 `web_api.py` 保证三路径 (调试 / API / CLI) 信号一致
+
+依赖 / 影响:
+- 前端: `apps/web/src/components/StatusBar.tsx` / `apps/web/src/pages/HomePage.tsx`
+- 后端: `chisha/refine.py` (新增函数) / `chisha/score.py` (删 3 条规则 + infer_default_mood)
+- 不动: `chisha/web_api.py` mood 入参 (后端 backward compat, neutral 行为不变)
+- 不动: `chisha/rerank.py` build_context_block (daily_mood 仍传 L3 作为 [CONTEXT] 一行)
+- 测试: 新增 `infer_refine_mood` 单测 (正向命中 / 否定拦截 / 边界 case 至少 8 个)
+- 推翻: D-043 的 `infer_default_mood` 季节兜底 (本决策删)
+- 推翻: D-043 `context_boost` 中 want_clean / want_light / want_indulgent 三条规则 (本决策删, want_soup 保留)
+
+Step 1 执行清单 (供另一台机器 session 落地):
+
+| # | 任务 | 文件 | 预估 |
+|---|------|------|------|
+| 1 | 隐藏 StatusBar mood chip 区块 | `apps/web/src/components/StatusBar.tsx:53-66` | 10 min |
+| 2 | HomePage 始终传 `mood='neutral'` | `apps/web/src/pages/HomePage.tsx` | 5 min |
+| 3 | `infer_refine_mood` 实现 + 否定优先 | `chisha/refine.py` 新增 | 20 min |
+| 4 | 在 refine 主入口注入 effective_daily_mood | `chisha/refine.py:refine()` | 5 min |
+| 5 | 埋点 5 字段进 trace | `chisha/refine.py` + 现有 trace 结构 | 10 min |
+| 6 | 删 want_clean / want_light / want_indulgent 3 条 | `chisha/score.py:438-445` | 5 min |
+| 7 | 删 `infer_default_mood` 函数 + 调用点 | `chisha/score.py:498-512` + 调用方 | 5 min |
+| 8 | 单测 `test_refine_mood_inference.py` 8+ case | `tests/` | 15 min |
+| 9 | 跑全量 pytest 确保不回归 | `uv run pytest tests/ -q` | 5 min |
+| 10 | IMPLEMENTATION_LOG.md 加执行记录 | `docs/IMPLEMENTATION_LOG.md` | 10 min |
+
+合计 ~90 分钟。完成验收:
+- 前端 11:30 打开 / 不再看到 mood chip
+- refine 输入"今天想喝汤" → trace `matched_keyword='想喝汤'` + `injected_daily_mood='want_soup'`, 推荐结果 wetness 分布上移
+- refine 输入"不想喝汤" → trace `negated=true` + `injected_daily_mood=None`
+- 全量单测过
+
+---
+
+## D-072: methodology spec 抽象 (放 Phase 0 收尾, V1)
+
+日期: 2026-05-15
+状态: planned · 待 Step 2 数据回归后启动 · D-070 的 L0 工程化
+
+背景: D-070 三层信号模型把方法论归到 L0 (profile-level). 当前 `chisha/score.py` 把哈佛餐盘方法论 (控油 -0.4 / 加工肉 penalty / 蔬菜 floor / 蛋白 floor / 4 层 cap 阈值...) 硬编码在 Python 里, Phase 1 接同事时若需要第二份方法论 (减脂 / 增肌 / 糖控) 会被迫重写 score.py。
+
+讨论 (Codex Q3):
+- 我方原议: "现在抽 spec 接口, 早抽不会回头重写"
+- Codex 修正: 同意抽, 但**真正理由不是为 Phase 1, 是降低当前 score.py 耦合度** — 把权重 / 阈值从代码提到 yaml, score.py 变纯逻辑层, 参数调优不再需要改 Python (自用采数据阶段直接受益)
+- Codex 补 schema 设计要点: 加 `extra_rules: []` 逃逸口 (防 Phase 1 第二个方法论 schema 不兼容) + 每条规则配 `rationale` 字段 (人类可读, 防权重映射 gap)
+
+决定: 抽 spec 接口, 但**延后到 Step 3 (Phase 0 收尾, 采完一周数据后)** — Codex Q5 论据: 重构带 bug 风险, 不应在采数据窗口期做; Step 2 数据可作 Step 3 重构的回归基线。
+
+设计要点 (落地时再细化):
+
+1. **位置**:
+   - `profiles/methodologies/harvard_plate.yaml` — 第一份 spec, 装下当前所有规则
+   - `chisha/methodology.py` — 加载 spec → 注入 score.py 的薄接口层
+
+2. **spec 字段** (含 Codex 补的逃逸口):
+```yaml
+name: harvard_plate
+display_name: 哈佛餐盘 (控油 + 有蔬菜 + 有蛋白)
+rationale: |
+  人类可读的方法论摘要 — 给 L3 LLM 当 system 段, 也给用户 onboarding 看
+hard_filters: ...  # 召回硬过滤 (D-041 双层架构)
+score_weights: ... # L2 12 维权重
+cap_rules: ...     # 4 层 cap 阈值 (D-042)
+soft_rules:
+  - id: want_soup_wetness
+    trigger: daily_mood == want_soup
+    apply: +0.5 if has_wet
+    rationale: 用户当下想喝汤, 汤水类菜直接加分
+extra_rules: []    # 逃逸口: Phase 1 第二个方法论 schema 不兼容时, 临时塞自定义规则
+```
+
+3. **profile.yaml** 改成:
+```yaml
+methodology: harvard_plate   # 引用 spec
+# ...其他个人字段 (zones / price / taste_description) 不变
+```
+
+4. **score.py 重构**: 删所有硬编码权重 / 规则 / cap 阈值, 改成从 spec 读
+
+Step 3 执行触发条件 (Phase 0 验收门):
+- Step 1 (D-071) 已落地
+- Step 2 (自用一周) 采纳率 ≥ 50%, 累计 ≥ 30 次推荐 + 反馈样本
+- 数据回归: 重构前后跑相同 session 看 top5 是否一致 (允许 ≤ 1 个差异)
+
+风险:
+- spec schema 第一版若设计不周, Phase 1 时仍需改 schema (不是改 score.py, 但是改 yaml + 加载逻辑) — `extra_rules: []` 是缓冲, 但不是万能
+- 权重映射 gap: 把"蔬菜 50%"翻译成 `veg_tag weight +0.3` 时语义不直观 — `rationale` 字段缓解
+
+依赖 / 影响:
+- 不在 Step 1 范围 (推后, 防采数据窗口被 bug 污染)
+- 触发条件: 自用一周采纳率 ≥ 50% + Step 1 稳定 + Codex review 通过 spec schema
+- 推翻: D-043 部分内容 (打分逻辑硬编码 → spec 化), score.py 重构后视为 D-072 的实现
+- 关联: D-070 三层信号模型 L0 的工程化
