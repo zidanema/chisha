@@ -1790,3 +1790,62 @@ D-044 改 profile 真实化时, 把 taste_description / avoid_dishes / spicy_tol
 - 用户反馈"想喝汤" chip 后 wetness 没生效 → 检查 long_term_prefs 路径
 
 依赖: D-032 (引入 wetness 字段), D-043 (taste_match / 关键词扫描), D-044 (profile 真实化)
+
+
+---
+
+## D-050 — CLI 精排运行时纠错: validator 结构化 error code + 一次性 retry-with-feedback
+
+**2026-05-15** · 架构决策
+
+**背景**: D-048 把 L3 拆成主路径 (anthropic/openrouter tool_use forced schema, 17/18) 和 CLI 自用降级路径 (claude_code_cli, 不支持 tool_use 只能 prompt 软约束). 本次把 CLI 默认 model 从 sonnet 切到 opus 求质量提升后, dry_run 暴露新失败模式: **opus 质量贪心覆盖 prompt 计数指令** —— 从 top-band 挑 4 条 exploit + 1 条 mid-band 当 explore, 主动放弃第二个 explore 槽 (它判断"硬塞次优 explore 不如多给一个 exploit"). 实测 ~20-40% session 触发 `explore 数量 1 != 期望 2` fallback, 商家分布退化到 5 家。
+
+sonnet 没这问题 (倾向无脑遵守计数), 但 sonnet 选菜质量明显弱于 opus (D-047 V4 矩阵已验证).
+
+试过把"计数硬约束"写到 CLI patch 后的 prompt 段 (`_CLI_OUTPUT_SECTION`), 反而让 opus 开始返回 6 条, 失败率从 20% 升到 100%. 加重 prompt 不是答案 —— opus 的"全局质量优化"倾向需要机械纠错, 不是更严厉的指令。
+
+**决策三件套**:
+
+1. **validator 返回结构化 error code** (`chisha/rerank.py:RerankValidationCode`)
+   - `_validate_llm_candidates_v` / `_diagnose_candidates` 返回 `(cands, code, detail)` 三元组
+   - code 是稳定枚举: `EXPLORE_COUNT_MISMATCH` / `OVER_N_MAX` / `EXPLORE_POSITION_WRONG` / `INDEX_OUT_OF_RANGE` 等
+   - detail 仍是中文人类可读供 trace / fallback_reason 显示, 但 retry 路由不再依赖文案
+   - Codex review Q2 反馈: 之前用 `("explore 数量", "n_max", "数量") in detail` 字符串匹配, validator 文案改一下就静默漏触发
+
+2. **retry trigger 按 code allowlist 路由** (`_RETRY_TRIGGER_CODES`)
+   - 仅 `{OVER_N_MAX, EXPLORE_COUNT_MISMATCH, EXPLORE_POSITION_WRONG}` 三类触发 retry
+   - 不 retry 的: 解析失败 / 缺字段 / index 越界 / fit_score 越界 等 —— opus 重答也不会变好, 直接 fallback 省 12s + $0.03
+
+3. **retry 限定 CLI 路径 + 一次性 + 显式纠错 prefix** (`_run_llm_rerank`)
+   - 仅 `is_cli=True` 时启用 (主路径 tool_use 不需要)
+   - 最多 retry 一次, 失败即正常 fallback
+   - prefix append 到 user_msg 末尾 (不改 system prompt, 防 prompt cache 失效并保留 user-turn correction 语义)
+   - prefix 内容: ①告知"上次你给了 X exploit + Y explore"; ②要求"正好 N-K + K, 不多不少"; ③明确"其余硬过滤/口味/健康/同品牌择优规则全部仍然生效, 基于原 [CANDIDATES] 重新挑, 不是改标签" (Codex Q3 防 retry 时质量退化)
+   - **不**贴上次错误 JSON: 会锁死模型在错误选择, 增加 minimal-edit 倾向而非真正重选
+
+**边界与适用范围**:
+
+- 仅 CLI 自用降级路径, 主路径 tool_use forced schema 无此问题, 也不走 retry
+- 仅 count/position 类失败, 不扩展到所有 fallback 场景
+- CLI 路径仍属 D-048 边界内的"自用 best-effort", 生产场景应配 `provider=anthropic/openrouter`
+
+**Codex 闭环要点 (D-048.1 教训延续)**:
+
+- Q1 拒绝"代码确定性 demote"方案: 把高分 exploit 改成 `is_explore=true` 会破坏 `one_line_reason` 语义 + 违反"explore 来自 idx≥10"规则, retry 保证语义自洽
+- Q2 结构化 error code (落地)
+- Q3 correction prefix 明确"其余规则仍生效" (落地)
+- Q4 opus 默认在 CLI 自用边界内 OK, 但生产应强走 tool_use (无新动作, 仍属 D-048 定位)
+- Q5 根本避坑思路: 不要把硬结构约束交给纯 prompt; CLI = best-effort, 不作为唯一可靠路径 (D-048 已定位, 注释强化)
+
+**trace 字段新增** (调试台 / log 可观测): `retry_attempted` (bool) / `retry_succeeded` (bool) / `retry_first_failure_code` (str) / `retry_latency_ms` (int) / `llm_response_retry` (raw resp). `latency_ms` 保留原始首次调用值不累加, 区分"首次 12s + retry 12s" vs "单次慢 24s"。
+
+`fallback_reason` 格式调整: `candidates 业务校验失败 [<CODE>]: <detail>`, 方便 grep / 调试台 badge。
+
+**dry_run 实测**:
+- 修前 opus 无 retry: 2-4/10 fallback, 多样性退化到 5 家店
+- 修后 opus + retry: 第一轮 10/10 成功 (其中 1 次走 retry), 第二轮 10/10 成功 (0 retry), 商家分布 12+ 家
+- retry 延迟 ~12s + 单次成本 ~$0.03 (合计 ~24s / ~$0.06), 大多数 session 不触发
+
+**变更点**: `chisha/rerank.py` (RerankValidationCode 类 + _RETRY_TRIGGER_CODES + _validate/_diagnose 三元组返回 + _run_llm_rerank retry 块), `chisha/llm_providers/claude_code_cli.py` (`_DEFAULT_MODEL` sonnet → opus), `profile.yaml` (`llm.model.claude_code_cli` sonnet → opus), `prompts/rerank_system.md` (主路径 tool_use 段加计数硬约束 + 边界小节澄清, CLI patch 路径不生效但留着以备未来切回)
+
+依赖: D-047 (provider 抽象 + opus 默认主路径), D-048 (CLI 分流 + status 三态), D-048.1 (prompt 清理 + Codex 跨 AI review 流程)

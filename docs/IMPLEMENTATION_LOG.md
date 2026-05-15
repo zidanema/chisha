@@ -761,3 +761,136 @@ def _fmt_counts_or_none(d) -> str:
 13. **重命名优化目标**: 一开始想着"删工程注释让 prompt 更干净", 但真正高价值的不是删字数 (-12% 收益小), 而是修 few-shot 冲突 + 修标签错配 (这才是会真实影响 LLM 输出的)。下次做 prompt 优化先按"会不会改变 LLM 输出"排序, 不按主观可读性排。
 
 依赖: D-046 (L3 prompt 拆 system/user), D-047 (tool_use forced schema), D-048 (CLI no-tool 分流 + patch 锚点)
+
+
+## D-050 — CLI 精排 opus 默认切换 + retry-with-feedback 落地
+
+**2026-05-15** · 工程实施 (D-050 决策对应执行记录)
+
+### 触发
+
+用户主观要求"CLI 路径默认 model 升 opus 4.7" (D-047 V4 矩阵已证 opus 选菜质量明显优于 sonnet). 切换两行:
+- `chisha/llm_providers/claude_code_cli.py:25` `_DEFAULT_MODEL = "sonnet"` → `"opus"`
+- `profile.yaml` `llm.model.claude_code_cli: sonnet` → `opus`
+
+### 失败模式发现
+
+切换后第一次 `dry_run --n 5 --meal both` (10 session) 出现 2/10 fallback:
+
+```
+[rerank] explore 数量错误: 期望 2, 实际 1
+[rerank fallback] candidates 业务校验失败: explore 数量 1 != 期望 2
+```
+
+加临时 debug 打印 `out["llm_response"]["content"]` 后 root cause 清楚: **opus 主动放弃第二个 explore 槽**。两次失败 raw 都是相同 pattern:
+
+```json
+{"candidates":[
+  {"rank":1, "is_explore":false, "combo_index":3,  ...},   // 0-9 band
+  {"rank":2, "is_explore":false, "combo_index":14, ...},   // 10-19 band
+  {"rank":3, "is_explore":false, "combo_index":2,  ...},   // 0-9 band
+  {"rank":4, "is_explore":false, "combo_index":1,  ...},   // 0-9 band ← 应该是 explore 但 opus 给了 exploit
+  {"rank":5, "is_explore":true,  "combo_index":31, ...}    // 30-39 band
+]}
+```
+
+opus 判断"4 高质量 exploit + 1 explore 比 3 高质量 + 2 次优 mid-band explore 体验更好"。sonnet 没这倾向是因为 sonnet 倾向无脑遵守 prompt 字面计数。
+
+### 第一轮修法尝试 (失败, 撤回)
+
+加强 prompt 计数约束: 在 `# 输出方式` 段顶部加"计数硬约束(最高优先级)"小节, 同步改边界两条软指令. 同时把硬约束塞进 CLI patch 后的 `_CLI_OUTPUT_SECTION`。
+
+**第二次 dry_run: 10/10 fallback** (vs 修前 2/10), 商家分布 5 家 × 10 sessions = 全部规则 fallback. 还出现新错: `[rerank] LLM 返回 6 > n_max=5, 截断`。
+
+opus 看到更严厉的计数指令后, 行为反而更乱 —— 既不愿减少高分 exploit, 又被迫满足"explore=2", 结果给 6 条。**加重 prompt 反向恶化**。
+
+撤掉 CLI patch 段的硬约束 (`_CLI_OUTPUT_SECTION` 恢复精简版), 主路径 tool_use 段的硬约束保留 (那条路径走 forced schema 不会出现这个问题, 但留着对未来调试有价值)。
+
+### 第二轮修法 (落地)
+
+改思路: prompt 软约束打不过 opus 的全局优化倾向, 改用**机械纠错**.
+
+在 `_run_llm_rerank` 里 CLI 路径校验失败时, 用关键字 (`"explore 数量"` / `"n_max"` / `"数量"` / `"返回"`) 匹配 detail 决定是否 retry, 构造 correction prefix append 到 user_msg 再调一次 LLM。
+
+**初版 dry_run 实测 10/10 成功** (其中 1 session 走 retry), retry 延迟 ~12s + 单次成本 ~$0.03 (合计 ~24s / ~$0.06)。
+
+### 联合 Codex review
+
+按 D-048 / D-048.1 流程发起跨 AI review (`Agent(codex-rescue)`). Codex 用 gpt-5.3-codex 独立读 diff + 现存 docs/DECISIONS.md D-047 / D-048 背景, 输出五问 (Q1 retry 是否合适 / Q2 关键字匹配是否 robust / Q3 correction prefix 设计 / Q4 opus 默认是否好决定 / Q5 根本避坑思路)。
+
+#### 共识 / 接受的反馈
+
+| Q | Codex 意见 | 落地 |
+|---|---|---|
+| Q1 | retry 是合适方案, 但**(c) 代码确定性 demote 不可取** —— 把高分 exploit 改成 is_explore=true 会破坏 `one_line_reason` 语义 + 违反"explore 来自 idx≥10"规则 | 不动这块 |
+| Q2 | 关键字匹配脆弱, 文案改动会静默漏触发. **validator 应返回结构化 error_code** | 落地: `RerankValidationCode` 类 + `_validate_llm_candidates_v` / `_diagnose_candidates` 改三元组返回 + `_RETRY_TRIGGER_CODES` allowlist |
+| Q3 | correction prefix 没说"其余规则仍生效", retry 时可能让 opus 降为"只满足计数, 忽略 taste/health/avoid". **不要贴上次错误 JSON** (会锁死在错误选择) | 落地: prefix 加一句"**系统 prompt 里所有其余规则全部仍然生效, 基于原 CANDIDATES 重新挑, 不是改标签**"; 不贴 JSON |
+| Q4 | opus 默认在自用边界内 OK, 但生产应强走 tool_use 主路径 | 无新动作 (D-048 已定位 CLI = 自用); 注释强化 |
+| Q5 | CLI = best-effort 自用通道, 不该承载生产级精排. 结构化任务永远走 tool_use | 落地: retry 块开头加注释强化 D-048 边界 |
+
+#### 我自己发现 Codex 没提的小问题
+
+- `out["latency_ms"]` 累加 retry 延迟会让 trace 字段含义漂移 (原本是单次, 累加后变成总时长). 改成 `retry_latency_ms` 独立字段, `latency_ms` 保留首次调用原值。
+
+### 结构化 error code 落地细节
+
+```python
+class RerankValidationCode:
+    OK = "OK"
+    NOT_LIST = "NOT_LIST"
+    EMPTY = "EMPTY"
+    OVER_N_MAX = "OVER_N_MAX"               # retry-trigger
+    ITEM_NOT_DICT = "ITEM_NOT_DICT"
+    MISSING_FIELDS = "MISSING_FIELDS"
+    INVALID_INDEX = "INVALID_INDEX"
+    INDEX_OUT_OF_RANGE = "INDEX_OUT_OF_RANGE"
+    INDEX_DUPLICATE = "INDEX_DUPLICATE"
+    INVALID_FIT_SCORE = "INVALID_FIT_SCORE"
+    INVALID_TASTE_MATCH = "INVALID_TASTE_MATCH"
+    INVALID_IS_EXPLORE = "INVALID_IS_EXPLORE"
+    INVALID_RISK_FLAGS = "INVALID_RISK_FLAGS"
+    RANK_NOT_SEQUENTIAL = "RANK_NOT_SEQUENTIAL"
+    EXPLORE_COUNT_MISMATCH = "EXPLORE_COUNT_MISMATCH"  # retry-trigger
+    EXPLORE_POSITION_WRONG = "EXPLORE_POSITION_WRONG"  # retry-trigger
+    UNKNOWN = "UNKNOWN"
+
+_RETRY_TRIGGER_CODES = frozenset({
+    RerankValidationCode.OVER_N_MAX,
+    RerankValidationCode.EXPLORE_COUNT_MISMATCH,
+    RerankValidationCode.EXPLORE_POSITION_WRONG,
+})
+```
+
+不 retry 的 case (format / index / value 错): opus 重答也不会变好, 直接 fallback 省 12s + $0.03。
+
+### dry_run 最终实测 (Codex 推荐方案全量落地后)
+
+- `dry_run --n 5 --meal both` (10 session): 10/10 成功, 0 retry, band 分布健康 (`[0-9, 10-19, 30-39, 20-29, 40-59]` 等)
+- `dry_run --n 10 --meal both` (20 session): 20/20 成功, 0 retry
+- 商家分布 12+ 家 (vs 修前规则 fallback 退化到 5 家)
+- 单次 12-15s / $0.03; retry 触发时 ~24s / $0.06
+- 测试: `tests/test_rerank.py` 45 全过 + 全量 381 passed (1 pre-existing flaky `test_cleanup_expired` 跟改动无关)
+
+### 关键文件改动
+
+- `chisha/rerank.py`:
+  - 加 `RerankValidationCode` 类 + `_RETRY_TRIGGER_CODES` allowlist
+  - `_validate_llm_candidates_v` / `_diagnose_candidates` 改三元组 `(cands, code, detail)` 返回
+  - `_run_llm_rerank` 加 CLI retry 块 (~50 行): code 路由 + correction prefix 构造 + 第二次调用 + 二次校验
+  - `out["fallback_reason"]` 格式改 `candidates 业务校验失败 [<CODE>]: <detail>`
+  - trace 加 `retry_attempted` / `retry_succeeded` / `retry_first_failure_code` / `retry_latency_ms` / `llm_response_retry`
+- `chisha/llm_providers/claude_code_cli.py`: `_DEFAULT_MODEL` sonnet → opus
+- `profile.yaml`: `llm.model.claude_code_cli` sonnet → opus + 注释更新理由
+- `prompts/rerank_system.md`: `# 输出方式` 段顶部加"计数硬约束"小节; 边界小节澄清"候选不足"语义 (主路径 tool_use 用; CLI patch 路径整段替换故不生效, 留着对未来切回主路径或调试有价值)
+
+### 教训 (跨场景适用)
+
+14. **opus vs sonnet 失败模式截然不同, model 切换不是无成本**: opus 在多目标权衡上更"全局优化", 会主动违反字面 prompt 指令换更好的整体结果; sonnet 倾向字面遵守 prompt. 切 model 必须重新跑 dry_run 覆盖关键失败维度, 不能假定"更贵的模型一定不坏"。
+
+15. **prompt 软约束打不过 LLM 全局优化倾向时, 改机械纠错 (validate→retry→fallback) 而非加重 prompt**: 第一轮"加硬约束"反向恶化是这次最有教育意义的踩坑 —— 当 opus 已经看见计数指令但仍主动违反, 再加严厉只会让它行为更不稳。这种情况只能在代码层做闭环。
+
+16. **validator 错误描述要给"机器路由用的 code" + "人看的 detail" 两份**: 字符串匹配 fallback_reason 决定 retry 触发条件是典型 anti-pattern (Codex Q2 抓出来的). 任何"上层根据下层错误信息做决策"的场景都该用稳定 enum, 不该解析人类可读文案。
+
+17. **跨 AI review 的 ROI 再次验证**: 这次 Codex Q2 抓的 "validator 应返回 error_code" 是 Claude 自己写完测试通过后没看出的 robustness 问题. D-048.1 教训 12 (默认开 Codex review) 在 D-050 又生效一次。
+
+依赖: D-047 (provider 抽象 + tool_use forced schema 17/18), D-048 (CLI 分流 + status 三态 + Codex review 流程), D-048.1 (prompt 清理 + 跨 AI review 教训), D-050 (本条对应的架构决策)

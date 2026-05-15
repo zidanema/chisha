@@ -32,9 +32,10 @@
 
 ## 项目状态
 
-**V1 in flight** —— 数据接入 + 推荐（召回 + L2 打分 + L3 LLM 精排, D-033/D-035/D-046/D-047）+ OpenClaw 飞书卡片接入 + 自用一周。
+**V1 in flight** —— 数据接入 + 推荐（召回 + L2 打分 + L3 LLM 精排, D-033/D-035/D-046/D-047/D-048）+ OpenClaw 飞书卡片接入 + 自用一周。
 
 > 注: D-049 (2026-05-14) 砍掉了 D-024 的"V1 简化路径 (打分 top 3 + LLM 写 reason)", 现在唯一链路是 L3 LLM 精排 top60→5。
+> 注: D-050 (2026-05-15) CLI 路径 (claude_code_cli, 自用降级) opus 默认 + validate→retry→fallback 闭环, 修 opus 质量贪心覆盖 prompt 计数指令的失败模式。
 
 详细路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
@@ -173,7 +174,7 @@ chisha/
 │   ├── api.py                 # recommend_meal 主入口 (D-033 单一 V2 路径, D-049 后)
 │   ├── recall.py              # 召回 + 硬过滤双层 + combo 灵活组合 (D-040/041)
 │   ├── score.py               # 打分 V2 ~12 维
-│   ├── rerank.py              # L3 LLM 精排 top60→5 (D-035/D-046/D-047)
+│   ├── rerank.py              # L3 LLM 精排 top60→5 (D-035/D-046/D-047/D-048/D-050)
 │   ├── context.py             # ContextSnapshot 注入层 (D-034)
 │   ├── refine.py              # refine 二轮 (D-033)
 │   ├── llm_client.py          # provider 路由层 (D-047)

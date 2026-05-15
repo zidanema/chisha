@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 
-_DEFAULT_MODEL = "sonnet"
+_DEFAULT_MODEL = "opus"
 _DEFAULT_TIMEOUT = 180       # N=60 实测 60s, 留 3x buffer
 _DEFAULT_EFFORT = "low"
 
