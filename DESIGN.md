@@ -165,9 +165,11 @@
 - 不做反馈处理
 - 不做 session 管理
 
-#### 里程碑 3：接入 OpenClaw + 飞书卡片（约 1-2 周）
+#### 里程碑 3：~~接入 OpenClaw + 飞书卡片~~ → V1 改 Web SPA · 飞书延后到 V1.5（约 1-2 周）
 
-**目标**：OpenClaw 在 11:25 / 18:00 主动推飞书卡片，自己用一周。
+> **2026-05-15 翻案**（[D-049](docs/DECISIONS.md#d-049)）：V1 主交互改本机 localhost Web SPA（`apps/web/`），飞书"主动推 + 卡片交互"降级到 V1.5 做"推送 + deeplink 跳 Web"。**下面这段原飞书卡片方案保留作历史**，prefer 走 Web SPA 路径。Web 用户视图设计与文案规范见 [`docs/style-guide.md`](docs/style-guide.md)，前后端契约见 [`docs/api.md`](docs/api.md)。
+
+**目标**（旧版本，已 partial superseded）：OpenClaw 在 11:25 / 18:00 主动推飞书卡片，自己用一周。
 
 **步骤**：
 1. 把 `recommend_meal` 包成 OpenClaw skill（Python 函数 + skill 描述）
@@ -990,6 +992,11 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由
 | **46** | **L3 精排 prompt + payload 重构（top60 + system/user 拆分 + 紧凑化 + health_flags 规则后处理）** | **D-046** |
 | **47** | **L3 精排重构（tool_use forced schema + opus 默认 + cache_control + helper 抽出消灭双份代码）** | **D-047** |
 | **48** | **L3 双路径收口（CLI no-tool 分流 + provider 配置错 hard-fail + trace 结构化三态）** | **D-048** |
+| **49** | **V1 主交互改本机 Web SPA，飞书降级为 V1.5 推送通道**（partial supersedes D-022） | **D-049** |
+| **50** | **Accept 信号去 deeplink，改持久 inline 锁定 + 复制店名** | **D-050** |
+| **51** | **Refine 历史从底部列表升级为顶部面包屑 + smooth-scroll；输入框置顶、chip-fallback** | **D-051** |
+| **52** | **Skip-meal escape hatch（6 reason chip + 兜底跳过，新增 `POST /api/skip`）** | **D-052** |
+| **53** | **同 session 抑制 unfed banner（避免"还没吃完"被催反馈）** | **D-053** |
 
 ---
 
@@ -1007,8 +1014,10 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由
 8. **实现打分** `chisha/score.py`（V1 无个性化项）
 9. **实现"取 top 3 + 写 reason"** `chisha/api.py` + `chisha/reason.py`（V1 不做 LLM 精排）
 10. **空跑 5 次推荐**，看输出质量
-11. **接入 OpenClaw**：写 `integrations/openclaw/skill.py` + `feishu_card.py`
-12. **配 cron** 工作日 11:25 / 18:00 触发，自用一周，纸笔记录每次推荐质量
+11. ~~接入 OpenClaw + 飞书卡片~~ → **改装 Web SPA 用户视图**：[`apps/web/`](apps/web/) 已就绪（D-049~D-053），下一步 FastAPI 后端装 V1 `/api/*` 端点跟 SPA 拉通（契约见 [`docs/api.md`](docs/api.md)）
+12. ~~配 cron~~ → macOS launchd 本机定时拉起 web 服务（工作日 11:00 / 17:30），自用一周，UI 内的 accept/skip 埋点替代纸笔
+
+V1.5 再回头接飞书做"推送 + deeplink 跳 Web"轻量入口。
 
 跑通后回来看 §6，规划 V2.0 反馈闭环。
 

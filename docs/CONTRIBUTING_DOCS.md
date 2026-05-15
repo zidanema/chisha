@@ -14,6 +14,8 @@
 | [DESIGN.md](../DESIGN.md) | 当前版本架构、schema、API、prompt 大纲、避坑要点 | 决策推演、历史推翻 |
 | [DECISIONS.md](DECISIONS.md) | **产品方向 / 架构原则 / 方法论 / schema 设计** 决策的推演、考虑过的方案、推翻历史 | 工程实施细节、prompt 修改 N 行、batch 数 |
 | [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md) | prompt 改了几行、参数微调、batch 数 / timestamp、bug 排查、回填脚本 | 战略决策推演、产品方向 |
+| [style-guide.md](style-guide.md) | `apps/web/` 用户视图的文案规范 + 视觉系统 + 反模式清单（D-050~D-053 锁定的交互） | 后端实现、推荐算法 |
+| [api.md](api.md) | 前后端 API 契约（V1 `/api/*` 端点表 + 字段细节 + 加载态约定） | 内部模块接口、Python SDK |
 | [ROADMAP.md](ROADMAP.md) | V1/V2/V3 边界、当前状态、已砍清单 | 历史决策推演 |
 | [RECOMMEND_PRINCIPLES.md](RECOMMEND_PRINCIPLES.md) | 推荐分层(L1/L2/L3) 职责铁律、打分维度原则 | 具体打分公式、参数值 |
 | [L3_RERANK_REDESIGN.md](L3_RERANK_REDESIGN.md) | L3 精排实施方案 (D-047) 与必读约束 | L1/L2 设计 |

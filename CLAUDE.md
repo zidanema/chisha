@@ -1,8 +1,8 @@
 # chisha · 项目级指令
 
 > 项目名:今天吃点啥 (chisha) · 个人 AI 餐饮推荐系统 (L1 数据 / L2 打分 / L3 LLM 精排)
-> 当前阶段:V1 in flight (V2 链路 + 4 层 cap + L3 tool_use 重构 D-047 + 双路径收口 D-048 已就绪;调试台 + OpenClaw 接入进行中)
-> 主语言:Python · 包管理:uv · 测试:pytest
+> 当前阶段:V1 in flight — 推荐链路 (V2 + 4 层 cap + L3 tool_use D-047 + 双路径收口 D-048) 已就绪; **Web SPA D-049~D-053 + V1.1 反馈系统 D-054~D-066 已落地 (2026-05-15, `apps/web/`)**; FastAPI V1 端点接入 + 自用一周采集采纳率是下一步。
+> 主语言:Python (后端) + TypeScript (前端) · 包管理:uv / npm · 测试:pytest
 
 ## 必读(首次接触本项目)
 
@@ -14,6 +14,7 @@
 5. [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md) — 文档纪律(改任何文档前必读)
 
 改推荐链路前额外读 [docs/RECOMMEND_PRINCIPLES.md](docs/RECOMMEND_PRINCIPLES.md);改 L3 精排前必读 [docs/L3_RERANK_REDESIGN.md](docs/L3_RERANK_REDESIGN.md)。
+改 `apps/web/` 用户视图前必读 [docs/style-guide.md](docs/style-guide.md) (D-050~D-053 + D-058/D-064/D-065 锁定的交互不可重设计);改 `/api/*` 前必读 [docs/api.md](docs/api.md);改反馈链路前必读 DECISIONS D-054~D-066 信号框架与生命周期约束。
 
 ## 文档纪律(强制)
 

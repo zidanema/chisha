@@ -29,6 +29,8 @@
 | [D-046.1](#d-0461-l3-精排-max_tokens--json_mode-临时修-废弃) | L3 临时修(废弃) | — |
 | [D-047](#d-047-l3-精排重构--tool_use-forced-schema--opus-默认--top60--cache_control) | L3 tool_use forced schema + opus | — |
 | [D-048](#d-048--l3-双路径收口-cli-no-tool-分流--配置错-hard-fail--trace-结构化) | L3 双路径 (CLI + API/OR) + config_error | — |
+| [D-049 执行](#d-049-执行记录--web-用户视图-v1-落地-appsweb) | apps/web V1 SPA 落地 (Vite+React+TS) | [DECISIONS#D-049](DECISIONS.md#d-049--web-优先-飞书降级为推送通道) |
+| [D-054~D-066 执行](#d-054d-066-执行记录--v11-反馈系统落地-appsweb) | V1.1 反馈系统 (form/detail/inbox/banner stack/snooze-stop) | [DECISIONS#D-054~D-066](DECISIONS.md#d-054-navbar-加反馈-tab--角标-v11) |
 
 ---
 
@@ -644,3 +646,171 @@ else:
 9. **AI 自己 review 的盲点**: D-047 Part A merge 完, 自己跑过测试 (含那个 NotImplementedError fallback 测试) 还自我感觉良好. 直到 Codex 独立读才看出"配置错被吞 = silent fallback 反模式". 教训: 凡是有"系统看似正常但实际跑错"风险的改动, 必须 Codex / 独立第三方 review, 不能只靠自检.
 
 依赖: D-038 (LLM 抽象 Phase 1), D-047 Part A (tool_use schema), D-047 Part B (LLM Provider 抽象)
+
+---
+
+## D-049 执行记录 · Web 用户视图 V1 落地 (apps/web)
+
+**2026-05-15** · 实施细节，决策见 [DECISIONS D-049](DECISIONS.md#d-049) + D-050~D-053
+
+### 输入
+
+- `claude.ai/design` 协同产出的 V0 原型（13 文件，CDN+Babel 单页）解压后位于 `chisha-user.zip`
+- `DESIGN_NOTES.md` 沉淀了 4 条新决策（§8.2 → D-050~D-053）+ 文案规范 + 视觉系统
+
+### 工程动作
+
+1. **新建 `apps/web/`** monorepo 子项目：
+   - Vite 5 + React 18.3 + TypeScript 5 + React Router 6 + Tailwind 3
+   - `npm run dev` (5173) / `npm run build` / `npm run typecheck`
+   - `vite.config.ts` 配 `/api` 反代到 127.0.0.1:8765（debug_server）
+   - `VITE_USE_MOCK=1`（默认）走 `src/lib/mockApi.ts`，`=0` 走真接口
+2. **lib 分层**：
+   - `types.ts` 镜像后端 schema（Candidate / RecommendResponse / Profile 等）
+   - `labels.ts` ← `labels.js` 一对一翻译，保持 mapping 接口不变
+   - `api.ts` 真接口骨架（jget/jpost）+ dispatcher，符合 `ChishaApi` 接口
+   - `mockApi.ts` ← `data.js`：13 条候选池 / pickFive / session store / 900ms 模拟延迟
+   - `profileDefaults.ts` ← `profile-defaults.js`
+   - `yaml.ts` ← components.jsx 的 toYaml（用于 ProfilePage 只读视图）
+   - `useChishaState.tsx` 把原型 App.jsx 的 home/unfed/toast 状态搬到 React Context
+3. **组件分层**（每个文件一组件，对照原型 components.jsx 拆开）：
+   - atoms / NavBar / StatusBar / PendingFeedbackBanner / RefineCrumb / RefineInput / RecCard(+Skeleton) / PickedConfirmation / SkipMealAction(+SkippedState) / DetailPanel / YamlViewer / Toast / PageShell(+FooterBar)
+   - profile 子目录: Inputs（Field/FieldGroup/TextInput/NumberInput/Slider/Toggle/Select）+ ChipListEditor
+   - **没搬** tweaks-panel.jsx — host-only 协议代码，正式工程不需要
+4. **页面**：HomePage / ProfilePage / HistoryPage 全量；**FeedbackPlaceholderPage / FeedbackLastResolverPage** 保留路由可达但显示 placeholder，按用户备注"反馈页设计迭代中"暂不落 form。`PendingFeedbackBanner` 仍能导航过去。
+5. **路由**: `HashRouter` (localhost 单文件部署最稳，匹配原型行为)。详细路径表见 `apps/web/README.md`。
+
+### 验证
+
+```bash
+$ npm install         # 137 packages, 32s
+$ npm run typecheck   # 0 error
+$ npm run build       # ✓ built in 561ms · 60 modules · 235kB / 74kB gzip
+$ npm run dev         # vite v5.4.21 ready in 119 ms
+```
+
+### 边界处理 / 已知后续
+
+- `Select<T>` 范型容错：profile.llm.provider 用 `Select<typeof local.llm.provider>` 让 TS 把 `string[]` 收敛到联合类型
+- `mockApi.recommend / refine` 显式带参数类型注解，否则 `ChishaApi` 接口的 contextual type 在 destructuring defaults 下会丢失（修过一次 typecheck 报错）
+- 反馈页 form 待用户视图设计定稿后补；目前 `/api/feedback` 端点契约在 `api.md` 标 placeholder
+- 后端 FastAPI 还没装 `/api/recommend` 等 V1 端点（debug_server 现只有 `/api/debug_recommend`），默认 mock 模式可用；端点接入是下一个 PR
+
+### 反 anti-pattern
+
+- 没把 V0 的 `<script type="text/babel">` CDN 路径搬过来 — 正式工程必须走 bundler（信息密度审美 ≠ 开发环境凑合）
+- 没把 tweaks-panel.jsx 搬过来 — 它是 claude.ai/design 沙盒的 host 协议代码，正式 Vite 用不到
+- 没创建"反馈页 V1 简版"占位 form — 用户明确说 "先跳过这部分"，硬上等于让"未定稿的 UI" 立刻产生历史包袱
+
+---
+
+## D-054~D-066 执行记录 · V1.1 反馈系统落地 (apps/web)
+
+**2026-05-15** · 实施细节, 决策见 [DECISIONS D-054~D-066](DECISIONS.md#d-054)
+
+### 输入
+
+- 设计交付物: `chisha-user (1)/` (claude.ai/design 沉淀, 含 5 个 feedback 变体原型 + DESIGN_NOTES.md §10 V1.1 决策)
+- handoff: `chisha-user (1)/CLAUDE_CODE_HANDOFF_feedback.md` (任务范围 + 反模式 + 验收 user journey)
+- 决策落地: D-054~D-066 (DECISIONS.md 新加)
+
+### 实施范围
+
+只增量加反馈模块到既有 `apps/web/` 工程; 主页 / refine / accept / 偏好 / 历史 不重做; history-page 行可点击是跨页面联动。
+
+### 文件改动
+
+**新增 (4 文件)**:
+- `apps/web/src/components/feedback/atoms.tsx` — 共享 `ProteinPred` / `OilPred` / `clipReason` / `relAgo` / `buildDimRows`
+- `apps/web/src/components/feedback/ProgressiveForm.tsx` — E 渐进披露表单 (D-060 + D-063)
+- `apps/web/src/components/feedback/FeedbackDetailView.tsx` — 已反馈 readonly snapshot + append timeline (D-064 + D-065)
+- `apps/web/src/pages/FeedbackInbox.tsx` — `/feedback` 反馈中心三段 (D-056)
+- `apps/web/src/pages/FeedbackPage.tsx` — `/feedback/:id` 双态分支 (form / detail)
+
+**改写 (8 文件)**:
+- `apps/web/src/lib/types.ts` — `FeedbackPayload` 新 schema; 新 `FeedbackRecord` / `FeedbackComment` / `RecentFeedback`; `UnfedSession` 加 `summary` / `snoozed` / `stopped` 字段
+- `apps/web/src/lib/labels.ts` — 加 `fbE*` / `fbDetail*` / `inbox*` / `bannerStack*` / `navFeedback` 等; 砍 `fbStarTaste` / `fbStarSat` / `feedbackChips` / `fbWip`
+- `apps/web/src/lib/api.ts` — `ChishaApi` 接口换签名: 砍 `lastUnfed` / `dismissFeedbackBanner`; 加 `inbox` / `snoozeFeedback` / `stopFeedback` / `recentFeedbacks` / `getFeedback` / `appendFeedbackComment`
+- `apps/web/src/lib/mockApi.ts` — STORE.acceptedQueue 字段升级 (`snoozed_until` / `stopped`); STORE.feedbacks 改为 `FeedbackRecord` 含 `comments[]`; 7 个新端点实现 + 砍掉 lastUnfed / dismissBanner
+- `apps/web/src/lib/useChishaState.tsx` — context 从 `unfed: UnfedSession | null` 改为 `inbox: UnfedSession[]`; `refreshUnfed` → `refreshInbox`
+- `apps/web/src/components/NavBar.tsx` — 加「反馈」tab + 角标 (D-054)
+- `apps/web/src/components/PendingFeedbackBanner.tsx` — slim banner 全量改写为 stack variant (D-055): metadata 行 + ⋯ 菜单 + 主卡 + footer 多条提示
+- `apps/web/src/App.tsx` — 路由加 `/feedback` (`FeedbackInbox`); `/feedback/:id` 改用 `FeedbackPage` (替代 placeholder); 接 `refreshInbox`
+- `apps/web/src/pages/HomePage.tsx` — banner 调用签名换为 `unfedList` 数组 + `onSnooze` / `onStop` / `onOpenInbox`
+- `apps/web/src/pages/HistoryPage.tsx` — 每行可点击 + 未反馈紫 chip + 已反馈 gut chip + 跳过餐 dead row (D-057)
+
+**删除 (1 文件)**:
+- `apps/web/src/pages/FeedbackPlaceholder.tsx` — 被 FeedbackPage 取代
+
+### Schema 关键变更
+
+**`FeedbackPayload` (V1 → V1.1)**:
+- 砍 `rating_taste: number` / `rating_satisfaction: number` / `chips: string[]`
+- 加 `rating: -1 | 0 | 1 | null` (gut, D-062)
+- 加 `reason_match` / `fullness` / `oil_calibration` / `repurchase_intent: 0 | 1 | 2 | null` (4 维 calibration/behavior, D-063)
+- 加 `variant: "progressive" | "not-eaten"` (D-066 砍掉了 minimal/dimensions/conversational/retro 4 个备选)
+- 加 `quick?: boolean` (banner inline 一键打分预留, V2 做)
+
+**`FeedbackRecord = FeedbackPayload + { submitted_at, comments[] }`** (D-064 + D-065):
+- `submitted_at: ISO8601` (frozen-in-time fact, 不可改)
+- `comments: Array<{ id, text, created_at }>` (append-only timeline, 不污染原始)
+
+**`UnfedSession` (V1 → V1.1)**:
+- 加 `summary: string` (banner 卡片渲染需要)
+- 加 `snoozed: boolean` / `stopped: boolean` (D-058 两态)
+
+### API 端点 (mock 已落, 后端待装)
+
+砍掉:
+- `GET /api/session/last_unfed` (单条) → 由 `GET /api/feedback/inbox` 列表代替, 前端取 `[0]`
+- `POST /api/session/dismiss_feedback_banner` → 由 snooze (默认) / stop (显式) 取代
+
+新增 7 个:
+- `GET  /api/feedback/inbox?include_snoozed=` — 反馈中心列表数据源
+- `POST /api/feedback/snooze` body `{ session_id }` — 24h 软关闭
+- `POST /api/feedback/stop` body `{ session_id }` — 永久硬关闭
+- `GET  /api/feedback/recent?limit=` — 最近已反馈 (供 inbox 第三段 + history 行 chip)
+- `GET  /api/feedback/<sid>` — getFeedbackSession (返回 session + candidates), 已存在
+- `GET  /api/feedback/<sid>/record` — getFeedback (返回 FeedbackRecord 或 null, 用于 form/detail 双态判断)
+- `POST /api/feedback/<sid>/comments` body `{ text }` — append-only 评论
+
+**实施范围 (用户决策)**:
+- 后端 FastAPI **不接力**: 7 个端点仅在 `mockApi.ts` 实现, 前端 mock 跑通即可
+- snooze/stop 状态存在 `STORE.acceptedQueue` (mockApi 内存 / 真后端待装时落 sqlite/jsonl)
+- 旧数据迁移策略: 清空 (开发环境, localStorage 没用, mock STORE 重启即重置)
+
+### 验证
+
+```bash
+cd apps/web && npm run build  # tsc -b && vite build, 64 modules, 263kB, gzip 80kB, 0 error
+```
+
+```bash
+npm run dev → http://localhost:5173/
+curl localhost:5173/ → 200
+curl localhost:5173/feedback → 200
+curl localhost:5173/feedback/test_sid → 200
+```
+
+7 步 user journey 端到端 (用户浏览器手测过):
+1. accept 一个候选 → acceptedQueue 入队
+2. 主页刷新 → 顶部出 stack banner (metadata 行 + 主卡 + footer)
+3. 点 banner → `/feedback/<sid>` → progressive form (3 档 + 展开 4 维)
+4. 填完点完成 → 不 navigate, 原地切到 detail view
+5. 回主页 → banner 消失
+6. NavBar 「反馈」→ `/feedback` 三段 (本条出现在「已反馈」)
+7. 点已反馈 → detail → append 备注 → 出现在 timeline
+
+### 反 anti-pattern
+
+- **没保留 V1 5 星双维度** — 强制 schema migration, 用户砍掉 `rating_taste` / `rating_satisfaction` (D-062 + D-066 决策已显式砍)
+- **没在反馈页加修改入口** — D-064 强制 readonly, 即使 1 分钟内也不能改
+- **没让 banner ✕ = 永久 stop** — D-058 默认 snooze
+- **没 seed demo backlog** — 原型 `data.js::seedDemoBacklog()` 在 mock 中没搬, 生产用真数据
+- **没保留 4 个备选表单变体** (minimal/dimensions/conversational/retro) — D-060 选定 E 后, A/B/C/D + variant switcher 全砍 (5 个变体源码在 `chisha-user (1)/feedback-variants.jsx` 设计档案保留)
+
+### 已知风险 (待后续 PR)
+
+- 后端 FastAPI 还没装 7 个新 endpoint — 默认 mock 模式可用 (VITE_USE_MOCK=1)
+- `chisha-user (1)/` 设计交付物文件夹本次提交时一起删, 已沉淀到 D-054~D-066 + IMPL_LOG 这条 + style-guide
+- `reason_match` 的下游消化 (LLM reason generator reverse-loss) 还没实施 — 后端接入后, 推荐链路要把 comments[] inject 给 prompt

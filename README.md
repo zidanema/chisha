@@ -11,7 +11,9 @@
 
 两件事合起来就是**点餐决策疲劳**。
 
-`chisha` 把它系统性地解决：每顿饭让你的长程 Agent 在 11:25 / 18:00 主动推飞书卡片，给 3 个组合，30 秒选一个就走。
+`chisha` 把它系统性地解决：每顿饭在 11:25 / 18:00 主动推送提醒，给 3 个组合，30 秒选一个就走。
+
+> **V1 当前形态**（[D-049](docs/DECISIONS.md#d-049)）：本机 localhost Web SPA（用户视图 + 调试台合一），自用打磨体验。V1.5 接入飞书做推送 + deeplink 跳转。
 
 > **餐盘策略说明**：不追求严格 1/2-1/4-1/4 比例（中式外卖现实下不可达），改弱约束三件套：控油 + 至少 1 道蔬菜 + 蛋白下限。详见 [DECISIONS D-023](docs/DECISIONS.md#d-023)。
 
@@ -32,7 +34,9 @@
 
 ## 项目状态
 
-**V1 in flight** —— 数据接入 + 推荐（召回+打分，不上 LLM 精排）+ OpenClaw 飞书卡片接入 + 自用一周。
+**V1 in flight** —— 数据接入 + 推荐三阶段（L1/L2/L3 已全跑通）+ **Web 用户视图 SPA 已落地**（`apps/web/`，[D-049~D-053](docs/DECISIONS.md#d-049) 入口架构 + [D-054~D-066](docs/DECISIONS.md#d-054-navbar-加反馈-tab--角标-v11) V1.1 反馈系统, 2026-05-15）+ 自用一周。
+
+> **V1 主交互**：本机 localhost Web SPA。`cd apps/web && npm install && npm run dev` → http://localhost:5173。详见 [`apps/web/README.md`](apps/web/README.md) + [`docs/style-guide.md`](docs/style-guide.md) + [`docs/api.md`](docs/api.md)。飞书延后到 V1.5 做推送通道。
 
 详细路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
@@ -44,6 +48,8 @@
 |---|---|---|
 | [docs/PRD.md](docs/PRD.md) | 产品需求 · 为什么做、做给谁、做成什么样 | 第一份读，建立产品定位 |
 | [DESIGN.md](DESIGN.md) | 设计与实现 · 架构、schema、API、prompt、避坑 | 实现时随时查 |
+| [docs/style-guide.md](docs/style-guide.md) | UI 文案规范 + 视觉系统 + 锁定反模式（D-050~D-053 + D-058/D-064/D-065） | 改 `apps/web/` 任何用户视图前必读 |
+| [docs/api.md](docs/api.md) | 前后端 API 契约（V1） | 调 `/api/*` 或后端装新端点前必读 |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | 决策日志 · 产品/架构/方法论 决策为什么这样而不是那样 | 想推翻某个设计前先看 |
 | [docs/IMPLEMENTATION_LOG.md](docs/IMPLEMENTATION_LOG.md) | 工程实施日志 · prompt 改了几行、batch 数、bug 排查、参数微调 | 排查具体实现、复盘工程细节时 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 路线图 · V1/V2/V3 边界，已砍清单 | 想加新功能前先看 |
@@ -103,23 +109,21 @@ uv run python -m scripts.inspect_candidates --meal dinner --limit 100
 uv run python -m scripts.dry_run --n 5 --meal both
 ```
 
-#### 4. 接 OpenClaw + 飞书
+#### 4. 起 Web 服务（D-049，V1 主交互）
 
 ```bash
-# 配 chat_id
-export OPENCLAW_PUSH_MODE=lark-cli
-export LARK_CHAT_ID=oc_xxx
+# 调试台已可用（D-039）
+uv run python -m chisha.debug_server  # http://127.0.0.1:8765/debug
 
-# 单次推送测试
-uv run python -m integrations.openclaw.skill lunch
-uv run python -m integrations.openclaw.skill dinner
-
-# 在 OpenClaw 配 cron (见 integrations/openclaw/SKILL.md)
-#   工作日 11:25 推 lunch
-#   工作日 18:00 推 dinner
+# 用户视图 + 调试台合一 Web 服务（D-049 实施中，待 claude.ai/design 出稿后实装）
+# uv run python -m chisha.web  # → / (用户) + /debug (调试)
 ```
 
-#### 5. 自用一周 + 纸笔记录
+#### 5. ~~接 OpenClaw + 飞书~~ → 推迟到 V1.5
+
+D-049 翻案：飞书降级为推送 + deeplink 通道，V1 不接入。integrations/openclaw/ 骨架保留。
+
+#### 6. 自用一周 + 纸笔记录
 
 按 [ROADMAP.md V1 抽查标准](docs/ROADMAP.md)，工作日 7 日采纳率 ≥ 50% 才算 V1 通过。
 

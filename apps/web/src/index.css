@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  background: oklch(0.99 0.003 260);
+}
+body {
+  font-family: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+::selection {
+  background: color-mix(in srgb, var(--accent, #4f46e5) 25%, transparent);
+}
+
+/* shared chip styles, theme-aware via CSS vars set in App */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  border: 1px solid transparent;
+  font-feature-settings: "tnum";
+  white-space: nowrap;
+}
+.chip-good {
+  color: var(--good);
+  border-color: color-mix(in srgb, var(--good) 35%, transparent);
+  background: color-mix(in srgb, var(--good) 10%, transparent);
+}
+.chip-bad {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 35%, transparent);
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
+}
+.chip-info {
+  color: var(--info);
+  border-color: color-mix(in srgb, var(--info) 35%, transparent);
+  background: color-mix(in srgb, var(--info) 10%, transparent);
+}
+.chip-accent {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: var(--accent-bg);
+}
+
+.rec-card {
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+.rec-card:hover {
+  box-shadow: 0 1px 0 var(--border),
+    0 8px 24px -12px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* Slim range — used by profile sliders */
+.chisha-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--surface-2);
+  border-radius: 999px;
+}
+.chisha-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 999px;
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--border);
+  cursor: pointer;
+}
+.chisha-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 999px;
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--border);
+  cursor: pointer;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
