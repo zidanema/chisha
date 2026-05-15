@@ -50,7 +50,7 @@
 - [x] 召回模块（规则 + 弱约束三件套校验 + 多样性过滤）
 - [x] **抽查 100 候选合理性**（2026-05-12, scripts/audit_recall.py）：lunch 84% / dinner 64% pass，0 硬约束违规
 - [x] 打分函数 V1 + **V2 ~12 维升级**（vegetable_floor / protein_floor / low_oil / popularity / cuisine_pref / variety_bonus + carb_quality / processed_meat / sweet_sauce / wetness / dish_role / 履约 / taste_match / context_boost）
-- [x] V1 路径：打分 top 3 + LLM 写 reason（D-024，作为 V2 baseline 保留可用）
+- [x] V1 简化路径：打分 top 3 + LLM 写 reason（D-024 历史完成；D-049 已删代码 — V2 单一路径替代）
 - [x] **V2 路径：LLM 精排 top30→5 + Context + session**（[D-033](DECISIONS.md#d-033) / [D-034](DECISIONS.md#d-034) / [D-035](DECISIONS.md#d-035)）
 - [x] **LLM 抽象 Phase 1**（[D-038](DECISIONS.md#d-038)）：provider auto-detect + 商家去重兜底
 - [x] 5 次空跑测试（mood × meal_type 对照, 真 LLM Sonnet-4.6, 0 同商家重复）

@@ -489,6 +489,8 @@ def fallback_rerank(
         return []
     from chisha.score import diversify_top
     n_exploit = max(1, n - n_explore)
+    # D-049: max_per_brand=1 — fallback 路径不走 _enforce_brand_unique,
+    # 输出口径与 LLM 主路径 enforce 后保持一致 (同品牌至多 1 条).
     exploit = diversify_top(top_combos, n=n_exploit, max_per_brand=1,
                              max_per_cuisine=2)
     used_ids = {id(c) for c in exploit}

@@ -308,15 +308,19 @@ home (餐厅稀疏, 431 combos):
 
 二审用 general-purpose subagent 模拟"Codex 视角"做的, 不是真 Codex. 用户安装 codex-cli 0.130.0 后, 用真 Codex 重审, 发现 4 个 Claude 一审 + 假二审都漏掉的真 bug:
 
-#### 1. System prompt 事实错误 (严重)
+#### 1. System prompt 事实错误 (严重) — **部分 superseded by D-049**
+
+> ⚠️ D-049 (2026-05-14) 后: `apply_caps()` 改 head-only, top60 不再含 tail 段同品牌变体, 实际同品牌至多 2 条. 下文"6-8 次"的实测背景作废; prompt 已同步改成"至多 2 条变体, 在这 2 条里挑菜品组合". 但 #2 ~ #5 仍然有效.
 
 之前 prompt 写: "L2 已做品牌/餐厅/菜系/形态多层 cap, 输入里不会有同店重复 combo (同一 brand 至多 1 条). 你不必再做去重."
 
-**实测核对**: shenzhen-bay top60 里 Super Model 出现 **8 次**, 21 个 brand 重复 ≥2 次. 真实 brand cap=2 (D-045), 但 `apply_caps()` 返回 `head + tail`, top60 包含大量 tail 段同品牌变体.
+**实测核对** (D-049 前): shenzhen-bay top60 里 Super Model 出现 **8 次**, 21 个 brand 重复 ≥2 次. 真实 brand cap=2 (D-045), 但 `apply_caps()` 返回 `head + tail`, top60 包含大量 tail 段同品牌变体.
 
 LLM 读了这句话会以为输入已去重, **不会尝试同品牌内部择优**. 实际上输入有大量同 brand 候选, LLM 应该知道可以挑最贴情境的那条 (例如 Super Model 8 个变体里选蛋白最足 / 油最低 / 与 daily_mood 最对的那条).
 
-修复: prompt 改成 "**输入里仍可能含同品牌、同餐厅的多个变体**(例如 Super Model 可能出现 6-8 次). 你的工作之一就是在同品牌变体中选最贴合当下情境的那一条. 最终输出阶段系统会再做一次品牌去重兜底, 同 brand 最多保留 1 条, 所以你也不需要在 5 条输出里塞两个 Super Model."
+修复 (D-049 前): prompt 改成 "**输入里仍可能含同品牌、同餐厅的多个变体**(例如 Super Model 可能出现 6-8 次). 你的工作之一就是在同品牌变体中选最贴合当下情境的那一条. 最终输出阶段系统会再做一次品牌去重兜底, 同 brand 最多保留 1 条, 所以你也不需要在 5 条输出里塞两个 Super Model."
+
+D-049 后 prompt 进一步收紧: 既然 L2 输入已 brand cap=2 真生效, LLM 不需要在 6-8 个变体中择优, 只在 ≤2 个变体里挑菜品组合即可. 同品牌不同分店哪家更近由用户自决。
 
 #### 2. `_validate_llm_candidates()` 漏 idx 上界校验
 

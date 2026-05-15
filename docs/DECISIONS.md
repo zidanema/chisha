@@ -641,7 +641,7 @@
 
 ## D-024: V1 精排 = 打分 top 3 + LLM 只写 reason
 日期: 2026-05-11
-状态: active
+状态: **superseded by D-049 (2026-05-14)** — V1 简化路径代码已删, V2 (D-033 起) 是唯一推荐链路. 当时"LLM 在严格规则上不稳, 先用打分 top 3 起步"的决策本身仍然合理 (V2 在 tool_use forced schema 和 enforce_brand_unique 兜底后才稳到 17/18). 但 V1 baseline 保留的初衷 (V2 翻车时降级) 已不需要 — V2 自身有 fallback_rerank 规则路径兜底, 不依赖 V1 入口.
 
 背景: D-005 决定"召回 + 打分 + 精排（LLM）"三阶段，但 V1 阶段：
 - LLM 在"严格执行规则"和"挑哪 3 个"上不稳，引入随机性
@@ -1726,3 +1726,36 @@ V1-V2 期间 profile.yaml 一直是 mock 数据 (goal=减脂增肌, 价格 35/50
 - CLI 路径下 `# 不要做的事` 段仍含 "select_top_candidates" 字样 (patch 函数只替换主指令段), 实测 LLM 输出未受影响, 不修
 
 依赖: D-047 Part A (tool_use schema), D-047 Part B (LLM Provider 抽象)
+
+
+## D-049 — L2 输出契约改 head-only: apply_caps 不再保留 tail 段
+
+**2026-05-14** · 架构决策
+
+**背景**: D-045 引入 brand 层 cap(默认 per_brand_top_k=2)本意是同品牌进 L3 最多 2 条。但 `apply_caps()` 历史上返回 `head + tail`——head 段严格执行 cap, tail 段是被 cap demote 的同品牌副本仍然挂在序列尾部。L3 输入 `topK=60` 直接切前 60 条, head 装满后开始切 tail, **实测 Super Model 在 shenzhen-bay top60 出现 8 次**(IMPL_LOG.md D-047 三审 #1 "实测核对" 段, 当前约 line 317)。
+
+D-047 三审的应对是改 prompt: 告诉 LLM"输入里仍可能含同品牌多变体, 你的工作之一就是同品牌内部择优", 用 `_enforce_brand_unique` 在 L3 出口兜底成 1 条。这等于把 brand cap 的实际收口从 L2 推到 L3 prompt, 多承担一层不确定性 (LLM 是否真的会择优)。
+
+**决策**: `apply_caps()` 只返回 head (砍掉 tail 段), brand cap=2 真正生效在 L2:
+- L3 输入侧: 同品牌至多 2 个变体, LLM 仅在菜品组合维度做择优 (不再需要在 6-8 个变体里挑)
+- L3 出口侧: `_enforce_brand_unique` 仍保留 1 条/品牌兜底, 同品牌不同分店不会同时出现在最终 5 条
+- 用户口径: 同品牌不同分店挑哪家更近由用户自决, 不是 LLM 职责 (用户原话: "对用户来说比较简单, 也不会是瓶颈")
+
+`diversify_top()` 默认 `max_per_brand` 保持 1 (口径回正记录见下方"实施过程修正"): 它仅在 fallback 出口使用, 必须与 LLM 主路径 `_enforce_brand_unique` 出口 brand=1 保持一致, 否则用户看到 5 条里有 2 条 Super Model. **L2 → L3 输入侧** 的 brand cap=2 完全由 `apply_caps()` 在 head 段控制, 与 fallback 出口口径解耦。
+
+**Codex BLOCKER 防护**: D-043 时 Codex 已 catch 过"cap 串联让 demote 的条复活"bug, 该 catch 现在以 head-only 形式重写 (test_apply_caps_regression_against_naive_chain): 正确单遍实现下 head 长度 = 2 且全是粥; 朴素串联 head-only 会变 4 且含汤 — 区分点仍有效。
+
+**推翻 / 影响**:
+- D-047 三审修复 #1 的部分论证 (prompt 写"输入里可能含 6-8 个变体") superseded — 改成"至多 2 条变体, 在这 2 条里挑菜品组合"
+- IMPL_LOG.md:315"top60 Super Model 出现 8 次"实测条件作废, 改后理论上限 = brand cap = 2
+- **D-024 (V1 简化路径) superseded**: 顺手砍掉 `recommend_meal(version="v1")` 分支、`chisha/reason.py`、`prompts/reason_one_line.md` 和 `scripts/eval_recommend.py` (V1 vs V2 离线评估脚本, V2 17/18 稳定后对比意义没了). V2 自带 `fallback_rerank` 规则路径兜底, V1 baseline 不再需要. 详见 D-024 superseded 注脚
+
+**实施过程修正 (踩坑记录)**:
+初版方案把 `diversify_top()` 默认 `max_per_brand` 1 → 2, 同步改了 api.py + rerank.py fallback 路径. dry_run 立刻暴露问题: V1 simple 路径 (当时 dry_run 默认走 V1) 输出 30/30 里有 20 个 Super Model — 同分店 2 个 combo 都进 top 3. 此次踩坑揭示两层认知错位:
+1. **混淆了"L2 → L3 输入侧 cap"和"最终输出口径"** — 用户原意是前者, 不动后者
+2. **V1 路径还在生产代码里** — dry_run 实际跑的不是用户日常用的 V2 主路径
+修正: 回滚 diversify_top 默认到 1, 同时彻底砍掉 V1 路径让 dry_run 默认走 V2.
+
+**变更点**: `chisha/score.py` (apply_caps head-only), `chisha/api.py` (V1 分支删, version 参数删), `chisha/rerank.py` (fallback brand=1 不变), `prompts/rerank_system.md`, `chisha/debug_recommend.py` (清理 import), `tests/test_score_v2.py` (4 个 cap 测试), `tests/test_api_v2.py` (删 V1 测试), `chisha/reason.py` + `prompts/reason_one_line.md` + `scripts/eval_recommend.py` (整文件删), README.md / DESIGN.md / ROADMAP.md (V1 路径引用更新)
+
+依赖: D-043 (L2 重设计), D-045 (brand 层 cap), D-024 (V1 路径, superseded), D-047 三审 #1 (部分推翻)

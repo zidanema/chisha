@@ -219,7 +219,7 @@ chisha/
 │   ├── api.py                   # recommend_meal 主入口
 │   ├── recall.py                # 召回 + 多样性
 │   ├── score.py                 # 打分函数
-│   ├── reason.py                # LLM 写一句话理由（V1 LLM 只在这）
+│   ├── rerank.py                # L3 LLM 精排 (D-033/D-046/D-047)
 │   ├── llm_client.py            # LLM 路由层 (D-047): provider 选择 + 模型解析
 │   └── llm_providers/           # 三 provider (D-047)
 │       ├── anthropic_api.py     # ANTHROPIC_API_KEY 直连
@@ -237,8 +237,10 @@ chisha/
 │   └── inspect_candidates.py    # 抽查工具
 │
 ├── prompts/
-│   ├── tag_dishes.md            # 打标 prompt
-│   └── reason_one_line.md       # 写理由 prompt（V1 唯一精排 LLM 用途）
+│   ├── tag_dishes.md            # 菜品打标 prompt (D-037, V3 dual-model)
+│   ├── rerank_system.md         # L3 精排 system prompt (D-046/D-047)
+│   ├── rerank_user.md           # L3 精排 user 模板 (D-046)
+│   └── parse_feedback.md        # 反馈解析 prompt
 │
 ├── tests/
 │
@@ -256,7 +258,9 @@ chisha/
 3. **每批 30-50 条**：太大准确率掉
 4. **JSON 输出做兜底解析**：try/except + 重试
 
-### 3.6 V1 精排：打分 top 3 + LLM 写理由（不做 LLM 精排）
+### 3.6 V1 精排：打分 top 3 + LLM 写理由（**已删除 — D-049**）
+
+> ⚠️ V1 简化路径 (D-024) 已被 D-049 砍除, 代码不再存在 (`chisha/reason.py` / `prompts/reason_one_line.md` 整文件删, `scripts/eval_recommend.py` 离线对比脚本也删). 现在唯一推荐链路是 V2 (D-033 起): build_context → recall → score V2 → L3 LLM rerank top60→5. 下文章节保留作历史决策叙述。
 
 V1 不让 LLM "选 3 个"。流程是：
 
@@ -264,7 +268,7 @@ V1 不让 LLM "选 3 个"。流程是：
 召回 100 → 打分排序 → 取 top 3 → LLM 为每条单独写 reason_one_line
 ```
 
-**V1 LLM 唯一用途**：写理由 prompt（`prompts/reason_one_line.md`）：
+**V1 LLM 唯一用途**：写理由 prompt（`prompts/reason_one_line.md`，已删）：
 
 ```
 你给一个外卖组合写一句推荐理由（≤ 30 字），帮用户快速判断要不要选。
@@ -904,7 +908,7 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由
 - LLM 自行判断重精排 vs 重召回
 
 **G. 验收**：
-- 8-12 个黄金 case（[tests/golden_cases.yaml](../tests/golden_cases.yaml)） + `scripts/eval_recommend.py` 离线对比 V1 vs V2
+- ~~8-12 个黄金 case + `scripts/eval_recommend.py` 离线对比 V1 vs V2~~ — D-049 后 V1 砍除, 脚本一并删, golden case 仍保留作未来调试 case 库
 - 自用 1-2 周采集反馈到 30+ 条触发 V2.2
 
 **本轮明确不做**：personal_offsets 实时写入 / learned_profile 聚合（V2.2）/ combo planner 重写 / profile.yaml 大改 schema / 跨店 combo / 健康疲劳"cheat 配额"机制 / Post-meal 主动推送（改成下次饭点被动）.
@@ -1005,7 +1009,7 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由
 6. **实现召回** `chisha/recall.py`（含弱约束三件套校验、组合策略）
 7. **抽查 100 个候选**，看是否合理
 8. **实现打分** `chisha/score.py`（V1 无个性化项）
-9. **实现"取 top 3 + 写 reason"** `chisha/api.py` + `chisha/reason.py`（V1 不做 LLM 精排）
+9. ~~**实现"取 top 3 + 写 reason"** `chisha/api.py` + `chisha/reason.py`（V1 不做 LLM 精排）~~ — D-049 后实际走 V2 主路径 (L3 LLM 精排 top60→5), `chisha/reason.py` 已删
 10. **空跑 5 次推荐**，看输出质量
 11. **接入 OpenClaw**：写 `integrations/openclaw/skill.py` + `feishu_card.py`
 12. **配 cron** 工作日 11:25 / 18:00 触发，自用一周，纸笔记录每次推荐质量

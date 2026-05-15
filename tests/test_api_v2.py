@@ -79,20 +79,10 @@ def patched_v2_env(monkeypatch, tmp_path):
     return tmp_path
 
 
-def test_v1_path_unchanged(patched_v2_env):
-    """V1 调用不应触发 V2 (向后兼容)."""
-    out = recommend_meal("lunch", today=dt.date(2026, 5, 13),
-                         log_to_file=False, version="v1",
-                         root=patched_v2_env)
-    assert out["version"] == "v1"
-    assert "context" not in out
-    assert len(out["candidates"]) <= 3
-
-
 def test_v2_path_basic(patched_v2_env):
-    """V2 调用应走 build_context + rerank, 输出 5 候选 + version=v2."""
+    """主路径走 build_context + rerank, 输出 ≤5 候选 + version=v2 (D-049 后唯一路径)."""
     out = recommend_meal("lunch", today=dt.date(2026, 5, 13),
-                         log_to_file=False, version="v2",
+                         log_to_file=False,
                          daily_mood="want_soup", use_llm_rerank=False,
                          root=patched_v2_env)
     assert out["version"] == "v2"
@@ -105,7 +95,7 @@ def test_v2_path_basic(patched_v2_env):
 def test_v2_candidates_have_v2_fields(patched_v2_env):
     """V2 candidate 应含 fit_score / health_flags / risk_flags."""
     out = recommend_meal("lunch", today=dt.date(2026, 5, 13),
-                         log_to_file=False, version="v2",
+                         log_to_file=False,
                          use_llm_rerank=False, root=patched_v2_env)
     for c in out["candidates"]:
         assert "fit_score" in c
@@ -117,7 +107,7 @@ def test_v2_candidates_have_v2_fields(patched_v2_env):
 def test_v2_creates_session(patched_v2_env):
     """V2 应创建 session 文件供 refine 用."""
     out = recommend_meal("lunch", today=dt.date(2026, 5, 13),
-                         log_to_file=False, version="v2",
+                         log_to_file=False,
                          daily_mood="want_light", use_llm_rerank=False,
                          root=patched_v2_env)
     sid = out["session_id"]
@@ -131,7 +121,7 @@ def test_v2_creates_session(patched_v2_env):
 def test_v2_explore_count(patched_v2_env):
     """V2 默认应有 explore (n_explore=2)."""
     out = recommend_meal("lunch", today=dt.date(2026, 5, 13),
-                         log_to_file=False, version="v2",
+                         log_to_file=False,
                          use_llm_rerank=False, root=patched_v2_env)
     explore = [c for c in out["candidates"] if c.get("is_explore")]
     assert len(explore) <= 2
@@ -139,7 +129,7 @@ def test_v2_explore_count(patched_v2_env):
 
 def test_v2_serializable(patched_v2_env):
     out = recommend_meal("lunch", today=dt.date(2026, 5, 13),
-                         log_to_file=False, version="v2",
+                         log_to_file=False,
                          use_llm_rerank=False, root=patched_v2_env)
     s = json.dumps(out, ensure_ascii=False)
     assert "v2" in s

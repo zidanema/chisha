@@ -539,7 +539,7 @@ def test_cap_per_food_form_basic():
 
 
 def test_apply_caps_chains_all_three():
-    """三层 cap 串联: restaurant + cuisine + food_form."""
+    """三层 cap 串联: restaurant + cuisine + food_form (D-049 后 head-only)."""
     ranked = []
     # 5 家潮汕粥店, 每家 4 个 combo
     for r in range(5):
@@ -553,12 +553,10 @@ def test_apply_caps_chains_all_three():
     profile = {"recall": {"per_restaurant_top_k": 2, "per_cuisine_top_k": 5,
                            "per_food_form_top_k": 4}}
     out = apply_caps(ranked, profile)
-    head = out[:4]  # 三层 cap 后 head 段
-    rids = [c["restaurant"]["id"] for c in head]
     # 每店 ≤ 2, 单菜系 ≤ 5, 单形态 ≤ 4 → 实际取最严的 food_form=4
-    assert len(head) <= 4
-    # 总数不变
-    assert len(out) == len(ranked)
+    assert len(out) <= 4
+    # D-049: 输出严格等于 head, 不再含 tail (验证有 demote 发生 → 输出 < 输入)
+    assert len(out) < len(ranked)
 
 
 # ─────────────────────── D-043/D-045: resolve_caps
@@ -604,12 +602,14 @@ def test_apply_caps_brand_cap_dedupes_chain_stores():
                           "per_cuisine_top_k": 10,
                           "per_food_form_top_k": 10}}
     out = apply_caps(ranked, profile)
-    # head = 前 3 条 (2 个 Super Model + 1 个 醉湘楼), tail = r_220
-    head_brands = [c["restaurant"]["brand"] for c in out[:3]]
-    assert head_brands.count("Super Model 超模厨房") == 2
-    assert "醉湘楼" in head_brands
-    # 第 4 条是被 demote 的 r_220
-    assert out[3]["restaurant"]["id"] == "r_220"
+    # D-049 head-only: 输出 3 条 (2 个 Super Model + 1 个 醉湘楼), r_220 被丢弃
+    assert len(out) == 3
+    out_brands = [c["restaurant"]["brand"] for c in out]
+    assert out_brands.count("Super Model 超模厨房") == 2
+    assert "醉湘楼" in out_brands
+    # r_220 (第 3 家 Super Model 分店) 被 brand cap=2 丢弃, 不再出现
+    out_rids = {c["restaurant"]["id"] for c in out}
+    assert "r_220" not in out_rids
 
 
 def test_apply_caps_brand_cap_falls_back_to_rid_when_brand_missing():
@@ -795,14 +795,10 @@ def test_rank_combos_attaches_popularity(basic_profile):
 
 # ─────────────────────── D-043 Codex review fix: apply_caps 三层同时约束
 def test_apply_caps_satisfies_all_three_simultaneously():
-    """Codex BLOCKER 修复 + 二审加强: 直接断言 head 段每条记录都同时满足三层约束.
+    """Codex BLOCKER 修复 + 二审加强 + D-049 head-only: 输出每条都同时满足三层约束.
 
-    设计: head 段定义为 apply_caps 输出的前 N 条 (N = 首次需要 demote 的位置之前).
-    本测试不在内部重扫"找 prefix", 而是断言 apply_caps 输出 list 的 [0:N] 满足:
-      - 任一 restaurant_id 出现次数 ≤ cap_r
-      - 任一 cuisine 出现次数 ≤ cap_c
-      - 任一 food_form 出现次数 ≤ cap_f
-    其中 N = 让任一计数刚好等于 cap 的最大位置.
+    D-049 前: apply_caps 返回 head + tail, 测试要"找 head 长度"再断言 head 段.
+    D-049 后: 输出 == head, 直接对整个 out 断言每层约束.
     """
     ranked = []
     for r in range(5):
@@ -825,33 +821,12 @@ def test_apply_caps_satisfies_all_three_simultaneously():
                            "per_cuisine_top_k": 5,
                            "per_food_form_top_k": 4}}
     out = apply_caps(ranked, profile)
-    assert len(out) == len(ranked)
 
-    # 关键断言: 找到 head 段长度后, 直接对该段全条扫描验证三层约束.
-    # head 段长度 = out 中第一个需要 demote 的位置之前的总数.
-    # 我们用另一种独立方式找 head: 重新走 ranked 模拟 apply_caps 的 head 段长度.
-    head_len = 0
-    cnt_r: dict[str, int] = {}
-    cnt_c: dict[str, int] = {}
-    cnt_f: dict[str, int] = {}
-    for c in ranked:
-        rid = c["restaurant"]["id"]
-        cui = c["dishes"][0]["cuisine"]
-        form = combo_food_form(c)
-        if (cnt_r.get(rid, 0) >= 2 or cnt_c.get(cui, 0) >= 5
-                or cnt_f.get(form, 0) >= 4):
-            continue
-        head_len += 1
-        cnt_r[rid] = cnt_r.get(rid, 0) + 1
-        cnt_c[cui] = cnt_c.get(cui, 0) + 1
-        cnt_f[form] = cnt_f.get(form, 0) + 1
-
-    # 现在直接对 out[:head_len] 做严格断言: 每个 id/cuisine/form 出现次数 ≤ cap
+    # D-049: 整个 out 严格满足三层 cap (无 tail 段需要分离)
     from collections import Counter
-    head_seg = out[:head_len]
-    rest_cnt = Counter(c["restaurant"]["id"] for c in head_seg)
-    cui_cnt = Counter(c["dishes"][0]["cuisine"] for c in head_seg)
-    form_cnt = Counter(combo_food_form(c) for c in head_seg)
+    rest_cnt = Counter(c["restaurant"]["id"] for c in out)
+    cui_cnt = Counter(c["dishes"][0]["cuisine"] for c in out)
+    form_cnt = Counter(combo_food_form(c) for c in out)
     assert all(v <= 2 for v in rest_cnt.values()), \
         f"restaurant cap=2 违反: {rest_cnt}"
     assert all(v <= 5 for v in cui_cnt.values()), \
@@ -859,39 +834,36 @@ def test_apply_caps_satisfies_all_three_simultaneously():
     assert all(v <= 4 for v in form_cnt.values()), \
         f"food_form cap=4 违反: {form_cnt}"
 
-    # tail 段必须含被 demote 的条 (说明 cap 真的起作用了, 不是空操作)
-    assert len(out) - head_len > 0, "apply_caps 没有任何 demote, cap 没生效"
+    # cap 真的生效: 必有 demote 发生 (输出比输入少)
+    assert len(out) < len(ranked), "apply_caps 没有任何 demote, cap 没生效"
 
 
 def test_apply_caps_regression_against_naive_chain():
-    """直接 catch 'cap 串联会让 demote 的条复活' 这个 BUG (Codex 四审重写).
+    """D-049 重写: 直接 catch 'cap 串联会让 demote 的条复活' 这个 BUG.
 
     构造: 5 条潮汕粥 + 5 条潮汕汤 (同 cuisine 但不同 food_form), 每条独立餐厅.
     cap: r=10 (松) / c=2 (严) / f=2 (严).
 
-    ## 单遍正确实现的输出顺序
+    ## 单遍正确实现 (head-only) 的输出
     走 ranked 顺序 [粥*5, 汤*5]:
       - 粥1: c=1 f=1 r=1 → head
       - 粥2: c=2 f=2 r=1 → head
-      - 粥3: c=3 已超 c cap=2 → tail
-      - 粥4, 粥5: → tail
-      - 汤1: c=3 (cuisine 累计) 已超 → tail!
-      - 汤2-5: → tail
-    head=[粥1, 粥2], tail=[粥3, 粥4, 粥5, 汤1, 汤2, 汤3, 汤4, 汤5]
-    输出: list 顺序 = head + tail = [粥1, 粥2, 粥3, 粥4, 粥5, 汤1, 汤2, ..., 汤5]
-    out[2] = "粥3", out[5] = "汤1"
+      - 粥3: c=3 已超 c cap=2 → 丢弃
+      - 粥4, 粥5: → 丢弃
+      - 汤1: c=3 (cuisine 累计) 已超 → 丢弃!
+      - 汤2-5: → 丢弃
+    输出: [粥1, 粥2], 长度 2, 全是粥.
 
-    ## 朴素串联 (cap_r → cap_c → cap_f) 的输出顺序
-      - cap_r=10: 全 head, list 顺序不变
-      - cap_c=2: 粥1,粥2 head; 粥3-5 tail; 汤1-5 (c 已满) 全 tail
-        → 输出 list = [粥1, 粥2, 粥3, 粥4, 粥5, 汤1, 汤2, 汤3, 汤4, 汤5]
-      - cap_f=2: 走完整 list, 粥1 head, 粥2 head, 粥3 tail, 粥4-5 tail,
-        汤1 head (汤 cap 重新计数!), 汤2 head, 汤3-5 tail
-        → 输出 list = [粥1, 粥2, 汤1, 汤2, 粥3, 粥4, 粥5, 汤3, 汤4, 汤5]
-    out[2] = "汤1"! out[3] = "汤2"!
+    ## 朴素串联 (cap_r → cap_c → cap_f) head-only 的输出
+      - cap_r=10: head=[粥1..5, 汤1..5]
+      - cap_c=2: 在上一步基础上 c cap → head=[粥1, 粥2]
+      - cap_f=2: 再走一遍 — 汤的 form 累计是空的, 汤1, 汤2 重新进 head!
+        → head = [粥1, 粥2, 汤1, 汤2] (head-only 模式下)
+    输出长度 4, 含汤.
 
-    ## 断言区分点
-    单遍 out[2] 必含"粥"; 串联 out[2] 必含"汤". 这是关键 catch.
+    ## 关键区分点
+    单遍正确: len(out)=2 且全是粥
+    朴素串联: len(out)=4 且含汤
     """
     ranked = []
     # 5 条潮汕粥
@@ -915,30 +887,23 @@ def test_apply_caps_regression_against_naive_chain():
                            "per_cuisine_top_k": 2,
                            "per_food_form_top_k": 2}}
     out = apply_caps(ranked, profile)
-    assert len(out) == len(ranked)
     # ---- 关键区分断言 ----
-    # 单遍正确实现下, out[2] 必须是粥 (粥3 被 c cap demote, 仍出现在 list 第 3 位)
-    # 朴素串联实现下, out[2] 会是汤 (cap_f 把汤1 复活到 head 第 3 位)
-    name_2 = out[2]["dishes"][0]["canonical_name"]
-    assert "粥" in name_2, (
-        f"out[2] 应为粥 (单遍实现下 c cap demote 的粥3 仍在 list 第 3 位), "
-        f"实际是 {name_2!r}. 如果含'汤', 说明串联 bug 把 cap_c demote 的汤"
+    # 单遍正确: 长度 2 (粥1, 粥2). 串联 bug: 长度 4 (粥1, 粥2, 汤1, 汤2).
+    assert len(out) == 2, (
+        f"head-only 单遍实现下应只剩 2 条 (粥1+粥2, cuisine cap=2 截止), "
+        f"实际 {len(out)} 条. 若 >2, 说明串联 bug 让 cap_c demote 的汤"
         f"在 cap_f 步骤又复活到 head."
     )
-    # 第 5 条 (out[4]) 也必须是粥 (粥5)
-    name_4 = out[4]["dishes"][0]["canonical_name"]
-    assert "粥" in name_4, f"out[4] 应为粥, 实际 {name_4!r}"
-    # 第 6 条 (out[5]) 是第一条汤
-    name_5 = out[5]["dishes"][0]["canonical_name"]
-    assert "汤" in name_5, f"out[5] 应为汤, 实际 {name_5!r}"
-
-    # 附加: head 段 (前 2 条) 严格满足 c cap=2 f cap=2
+    # 全是粥, 不含汤 (汤都被 cuisine cap 在累计阶段挡住)
+    names = [c["dishes"][0]["canonical_name"] for c in out]
+    assert all("粥" in n for n in names), \
+        f"head 段应全是粥, 实际 {names}"
+    # 附加: 严格满足 c cap=2 f cap=2
     from collections import Counter
-    head_seg = out[:2]
-    forms_in_head = Counter(combo_food_form(c) for c in head_seg)
-    cuis_in_head = Counter(c["dishes"][0]["cuisine"] for c in head_seg)
-    assert forms_in_head["粥"] == 2  # head 全是粥
-    assert cuis_in_head["潮汕"] == 2  # cuisine cap 严格满
+    forms = Counter(combo_food_form(c) for c in out)
+    cuis = Counter(c["dishes"][0]["cuisine"] for c in out)
+    assert forms["粥"] == 2  # head 全是粥
+    assert cuis["潮汕"] == 2  # cuisine cap 严格满
 
 
 def test_rank_combos_end_to_end_root_closes_feedback_loop(tmp_path, monkeypatch):

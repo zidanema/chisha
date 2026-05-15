@@ -32,7 +32,9 @@
 
 ## 项目状态
 
-**V1 in flight** —— 数据接入 + 推荐（召回+打分，不上 LLM 精排）+ OpenClaw 飞书卡片接入 + 自用一周。
+**V1 in flight** —— 数据接入 + 推荐（召回 + L2 打分 + L3 LLM 精排, D-033/D-035/D-046/D-047）+ OpenClaw 飞书卡片接入 + 自用一周。
+
+> 注: D-049 (2026-05-14) 砍掉了 D-024 的"V1 简化路径 (打分 top 3 + LLM 写 reason)", 现在唯一链路是 L3 LLM 精排 top60→5。
 
 详细路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
@@ -64,7 +66,7 @@
 - 数据层 loader: `chisha/loader.py` (raw → §5.2 schema, brand 后缀剥离)
 - 召回: `chisha/recall.py` (硬过滤 + 多样性 + 弱约束三件套校验 + 组合策略)
 - 打分: `chisha/score.py` (V1 公式 + 品牌/菜系多样性 top 3)
-- 精排: `chisha/api.py` + `chisha/reason.py` (D-024 不让 LLM 选 3 个)
+- 精排: `chisha/api.py` 主入口 + `chisha/rerank.py` L3 LLM 精排 (D-033/D-046/D-047)
 - 接入: `integrations/openclaw/` (skill + 飞书卡片渲染)
 - 工具: `scripts/tag_dishes.py` (LLM 打标), `mock_tagged.py` (规则 mock), `dry_run.py`, `inspect_candidates.py`
 - 数据: `data/shenzhen-bay/` (office, 139 家 7256 菜) + `data/home/` (home, 38 家 2117 菜)
@@ -168,13 +170,12 @@ chisha/
 │       └── dishes_tagged.json
 ├── chisha/                    # L2 推荐层代码（Python 包）
 │   ├── __init__.py
-│   ├── api.py                 # recommend_meal 主入口 (V1 + V2)
+│   ├── api.py                 # recommend_meal 主入口 (D-033 单一 V2 路径, D-049 后)
 │   ├── recall.py              # 召回 + 硬过滤双层 + combo 灵活组合 (D-040/041)
 │   ├── score.py               # 打分 V2 ~12 维
-│   ├── rerank.py              # V2 LLM 精排 top30→5 (D-035)
+│   ├── rerank.py              # L3 LLM 精排 top60→5 (D-035/D-046/D-047)
 │   ├── context.py             # ContextSnapshot 注入层 (D-034)
 │   ├── refine.py              # refine 二轮 (D-033)
-│   ├── reason.py              # LLM 写一句话理由（V1 路径用）
 │   ├── llm_client.py          # provider 路由层 (D-047)
 │   ├── llm_providers/         # 三 provider: anthropic_api / openrouter / claude_code_cli (D-047)
 │   ├── debug_recommend.py     # 调试台用的 instrumented 管道 (D-039)

@@ -41,7 +41,7 @@ from chisha.rerank import (
     fallback_rerank,
 )
 from chisha.score import (
-    apply_caps, combo_food_form, diversify_top, rank_combos, resolve_caps,
+    apply_caps, combo_food_form, rank_combos, resolve_caps,
 )
 
 

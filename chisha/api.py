@@ -1,10 +1,9 @@
 """recommend_meal 主入口 (DESIGN §5.7).
 
-V1 简化版: 召回 → 打分 → top 3 (带多样性) → LLM 写 reason → §5.7 JSON.
-V2 (D-033): build_context → 召回 → score V2 (~12维) → LLM rerank top30→5
-            (3 exploit + 2 explore) → 创建 session → §5.7 JSON.
+D-049 后单一实现: build_context → 召回 → score V2 (~12维) → LLM rerank top60→5
+(3 exploit + 2 explore) → 创建 session → §5.7 JSON.
 
-入口 recommend_meal(version="v1") 兼容 V1; recommend_meal(version="v2") 走 V2.
+旧 V1 路径 (D-024 简化版: 打分 → top 3 + LLM 写 reason) 已删除 (D-049).
 """
 from __future__ import annotations
 
@@ -14,7 +13,6 @@ import secrets
 from pathlib import Path
 
 from chisha.context import build_context
-from chisha.reason import annotate_reasons
 from chisha.recall import (
     load_meal_log,
     load_profile,
@@ -22,7 +20,7 @@ from chisha.recall import (
     recall,
 )
 from chisha.rerank import rerank as v2_rerank
-from chisha.score import apply_caps, diversify_top, rank_combos
+from chisha.score import apply_caps, rank_combos
 from chisha.session import create_session, save_session
 
 
@@ -61,7 +59,7 @@ def _format_candidate(rank: int, c: dict) -> dict:
     )
     return {
         "rank": rank,
-        "is_explore": False,           # V1 不做探索
+        "is_explore": False,
         "summary": " + ".join(d["canonical_name"] for d in dishes),
         "restaurant": {
             "id": rest["id"],
@@ -96,85 +94,17 @@ def recommend_meal(
     profile_path: str | Path = "profile.yaml",
     today: dt.date | None = None,
     log_to_file: bool = True,
-    version: str = "v1",
     daily_mood: str | None = None,
     use_llm_rerank: bool | None = None,
     root: Path | None = None,
 ) -> dict:
-    """主入口. 返回 §5.7 JSON dict.
+    """主入口 (D-033 + D-049): build_context → recall → score V2 → rerank → session.
 
     Args:
-        version: "v1" (D-024 取打分 top 3 + LLM 写 reason) 或
-                 "v2" (D-033 LLM 精排 top30→5 + Context + session).
-        daily_mood: V2 才用. ContextSnapshot.daily_mood, 见 chisha/context.DAILY_MOODS.
-        use_llm_rerank: V2 才用. None=auto (任意 LLM provider 可用即开, D-047).
+        daily_mood: ContextSnapshot.daily_mood, 见 chisha/context.DAILY_MOODS.
+        use_llm_rerank: None=auto (任意 LLM provider 可用即开, D-047).
         root: 仓库根目录 (测试可注入), 默认 chisha/__file__.parent.parent.
     """
-    if version == "v2":
-        return _recommend_meal_v2(
-            meal_type=meal_type,
-            profile_path=profile_path,
-            today=today,
-            log_to_file=log_to_file,
-            daily_mood=daily_mood,
-            use_llm_rerank=use_llm_rerank,
-            root=root,
-        )
-
-    root = root or _default_root()
-    profile = load_profile(Path(profile_path) if Path(profile_path).is_absolute()
-                           else root / profile_path)
-    zone = _resolve_zone(profile, meal_type)
-    rests, tagged = load_zone_data(zone, root)
-    meal_log = load_meal_log(root)
-
-    today = today or dt.date.today()
-    session_id = _gen_session_id(meal_type)
-
-    # 1. 召回
-    combos = recall(profile, rests, tagged, meal_log, today, meal_type=meal_type)
-    # 2. 打分排序 + 三层 cap (D-043: restaurant + cuisine + food_form)
-    ranked = rank_combos(combos, profile, meal_log, today, root=root)
-    ranked = apply_caps(ranked, profile)
-    # 3. 多样性 top 3 (按品牌+菜系去重，避免同连锁霸榜)
-    top = diversify_top(ranked, n=3, max_per_brand=1, max_per_cuisine=2)
-    # 4. LLM 写理由
-    top = annotate_reasons(top, profile, meal_log)
-
-    out = {
-        "session_id": session_id,
-        "meal_type": meal_type,
-        "zone": zone,
-        "round": 1,
-        "version": "v1",
-        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "stats": {
-            "n_dishes_total": len(tagged),
-            "n_combos_recalled": len(combos),
-            "n_combos_after_score": len(ranked),
-        },
-        "candidates": [_format_candidate(i + 1, c) for i, c in enumerate(top)],
-    }
-
-    if log_to_file:
-        log_dir = root / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / "recommend_log.jsonl"
-        with log_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(out, ensure_ascii=False) + "\n")
-    return out
-
-
-def _recommend_meal_v2(
-    meal_type: str,
-    profile_path: str | Path,
-    today: dt.date | None,
-    log_to_file: bool,
-    daily_mood: str | None,
-    use_llm_rerank: bool | None,
-    root: Path | None = None,
-) -> dict:
-    """V2 主路径 (D-033): build_context → recall → score V2 → rerank → session."""
     root = root or _default_root()
     profile = load_profile(Path(profile_path) if Path(profile_path).is_absolute()
                            else root / profile_path)
@@ -232,7 +162,7 @@ def _recommend_meal_v2(
 
 
 def _format_v2_candidate(rank: int, c: dict) -> dict:
-    """V2 candidate 格式化: 复用 V1 _format_candidate 字段, 加上 rerank 的 V2 字段."""
+    """V2 candidate 格式化: 复用 _format_candidate 字段, 加上 rerank 字段."""
     base = _format_candidate(rank, c)
     base["rank"] = c.get("rank", rank)
     base["is_explore"] = bool(c.get("is_explore", False))
@@ -260,6 +190,5 @@ def _minimize_candidate(c: dict) -> dict:
 if __name__ == "__main__":
     import sys
     meal = sys.argv[1] if len(sys.argv) > 1 else "lunch"
-    version = sys.argv[2] if len(sys.argv) > 2 else "v1"
-    out = recommend_meal(meal, version=version)
+    out = recommend_meal(meal)
     print(json.dumps(out, ensure_ascii=False, indent=2))
