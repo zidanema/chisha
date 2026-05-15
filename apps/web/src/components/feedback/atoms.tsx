@@ -1,4 +1,4 @@
-// Shared atoms for feedback form + detail view (D-061~063 alignment renderers).
+// Shared atoms for feedback form + detail view (D-063~063 alignment renderers).
 import type { Candidate } from "@/lib/types";
 import { LABELS } from "@/lib/labels";
 

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { LABELS } from "@/lib/labels";
 import type { SkipReason } from "@/lib/types";
 
-// D-052: escape hatch — 不是所有打开都以"点外卖"结束。
+// D-054: escape hatch — 不是所有打开都以"点外卖"结束。
 // Default collapsed (一行小灰字), 点开 6 chip + 不说原因兜底。
 export function SkipMealAction({
   onSkip,

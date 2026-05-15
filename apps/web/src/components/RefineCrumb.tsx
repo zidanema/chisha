@@ -6,7 +6,7 @@ export interface RefineHistoryEntry {
   text: string;
 }
 
-// D-051: 横向面包屑放在卡片正上方，让因果链空间紧邻。
+// D-053: 横向面包屑放在卡片正上方，让因果链空间紧邻。
 // chain = [{round:1, text:"原推荐"}, ...history]。点 chip 回滚到那一轮。
 export function RefineCrumb({
   history,

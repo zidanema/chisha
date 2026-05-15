@@ -2,7 +2,7 @@
 
 > 用法：把这整份文件粘进 [claude.ai/design](https://claude.ai/design)，让它出 React + TypeScript + Tailwind 组件源码。**两份 brief 不要合并**：本 brief 仅覆盖**用户视图**（路由 `/`），调试台（路由 `/debug`）见 [v1_debug_view.md](v1_debug_view.md)（待写）。
 >
-> 本 brief 锁定决策见 [DECISIONS D-049](../DECISIONS.md#d-049)（2026-05-15）。
+> 本 brief 锁定决策见 [DECISIONS D-051](../DECISIONS.md#d-051)（2026-05-15）。
 >
 > ---
 >
@@ -10,14 +10,14 @@
 >
 > claude.ai/design 协同迭代后追加了 4 条用户视图决策（**改 home 主页前必读**）：
 >
-> - **D-050** Accept 信号去 deeplink，改持久 inline 锁定 + 复制店名
-> - **D-051** Refine 历史从底部列表升级为顶部面包屑 + smooth-scroll；输入框置顶、chip-fallback
-> - **D-052** Skip-meal escape hatch（6 reason chip + "不说原因" 兜底，新增 `POST /api/skip`）
-> - **D-053** 同 session 抑制 unfed banner（`unfed.session_id === current.session_id` 时不渲染）
+> - **D-052** Accept 信号去 deeplink，改持久 inline 锁定 + 复制店名
+> - **D-053** Refine 历史从底部列表升级为顶部面包屑 + smooth-scroll；输入框置顶、chip-fallback
+> - **D-054** Skip-meal escape hatch（6 reason chip + "不说原因" 兜底，新增 `POST /api/skip`）
+> - **D-055** 同 session 抑制 unfed banner（`unfed.session_id === current.session_id` 时不渲染）
 >
 > 文案规范 + 视觉系统抽到 [`docs/style-guide.md`](../style-guide.md)；前后端契约见 [`docs/api.md`](../api.md)；落地代码在 [`apps/web/`](../../apps/web/)。
 >
-> 本 brief 下面 §5/§6 的旧版本"3 卡片 + 备选折叠 + 底部 refine 历史"已被 D-050~D-051 推翻，**以 DECISIONS 为准**。
+> 本 brief 下面 §5/§6 的旧版本"3 卡片 + 备选折叠 + 底部 refine 历史"已被 D-052~D-053 推翻，**以 DECISIONS 为准**。
 >
 > ---
 
@@ -262,7 +262,7 @@
 ### 5.5 主页底部
 
 **极简 footer，几乎看不见**：
-- 仅在屏幕底部留一个 4-5px 的小灰色文字 `v0.1` （**不要写完整版本号、不要写决策号 D-049、不要写 "chisha" 项目代码名、不要写 "localhost"**——这些是工程内部信息，不应给 C 端用户看到）
+- 仅在屏幕底部留一个 4-5px 的小灰色文字 `v0.1` （**不要写完整版本号、不要写决策号 D-051、不要写 "chisha" 项目代码名、不要写 "localhost"**——这些是工程内部信息，不应给 C 端用户看到）
 - hover 后再展开 tooltip 显示完整调试信息（可选）
 - 偏好 / 历史 入口已经在 §5.1 顶栏右上角，**不要重复**
 
@@ -828,7 +828,7 @@ llm:
 
 #### 文案禁用词清单（**绝对不要在任何 UI 元素出现**）
 
-`profile` · `mood` · `refine` · `session` · `lunch` · `dinner` · `explore` · `accept` · `feedback` · `YAML` · `localhost` · `D-049` · `chisha` · `v1` · 任何后端 enum 字面值（如 `want_clean`、`shenzhen-bay`）
+`profile` · `mood` · `refine` · `session` · `lunch` · `dinner` · `explore` · `accept` · `feedback` · `YAML` · `localhost` · `D-051` · `chisha` · `v1` · 任何后端 enum 字面值（如 `want_clean`、`shenzhen-bay`）
 
 #### 保留英文不动的（允许）
 
@@ -920,14 +920,14 @@ llm:
 - [ ] 没有"分享到朋友圈" / "营养图表" / "排行榜" 这类范围外功能
 
 ### 文案纯中文（§13.2 必读）
-- [ ] **全屏扫一遍**：任何 UI 标签 / 按钮 / 提示文案中**找不到** profile / mood / refine / session / lunch / dinner / explore / accept / feedback / YAML / localhost / D-049 / chisha / v1 / want_clean / shenzhen-bay 等英文/枚举字面值
+- [ ] **全屏扫一遍**：任何 UI 标签 / 按钮 / 提示文案中**找不到** profile / mood / refine / session / lunch / dinner / explore / accept / feedback / YAML / localhost / D-051 / chisha / v1 / want_clean / shenzhen-bay 等英文/枚举字面值
 - [ ] 餐次徽章显示"午餐 / 晚餐"，不是 "lunch / dinner"
 - [ ] 心情选项显示"清淡 / 解馋 / 轻食 / 想喝汤 / 低碳水 / 随便"，不是 `want_clean` 等
 - [ ] 顶栏右上角是「⚙️ 偏好」「🕐 历史」，不是 "profile" "history"
 - [ ] 区域名显示"深圳湾科技园"，不是 "shenzhen-bay"
 - [ ] Loading 状态是「正在为你挑选...」，不是 "Loading..."
 - [ ] 错误兜底是「出问题了，再试一次 →」，不是 "Error" / "Failed"
-- [ ] 主页 footer 不出现 "chisha v1 · localhost · D-049"
+- [ ] 主页 footer 不出现 "chisha v1 · localhost · D-051"
 - [ ] 所有这些通过 `lib/labels.ts` 一处管理，组件层只用 mapping 后的字符串
 
 ### 换口味标签（§5.4.1）

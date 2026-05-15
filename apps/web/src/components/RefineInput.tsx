@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { LABELS } from "@/lib/labels";
 import { SectionHeader } from "./atoms";
 
-// D-051 / DESIGN_NOTES §2.6: 输入框是主角，chip 是 fallback (chip 在下，前缀"或者直接点 ›")。
+// D-053 / DESIGN_NOTES §2.6: 输入框是主角，chip 是 fallback (chip 在下，前缀"或者直接点 ›")。
 export function RefineInput({
   disabled,
   onSubmit,

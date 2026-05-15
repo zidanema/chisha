@@ -1,6 +1,6 @@
 # chisha web · 用户视图 V1 + V1.1
 
-> 本机 localhost SPA。来源于 [`docs/design_briefs/v1_user_view.md`](../../docs/design_briefs/v1_user_view.md) + claude.ai/design 原型两轮迭代沉淀（[`docs/style-guide.md`](../../docs/style-guide.md)、D-050~D-053 入口架构、D-054~D-066 反馈系统）。
+> 本机 localhost SPA。来源于 [`docs/design_briefs/v1_user_view.md`](../../docs/design_briefs/v1_user_view.md) + claude.ai/design 原型两轮迭代沉淀（[`docs/style-guide.md`](../../docs/style-guide.md)、D-052~D-055 入口架构、D-056~D-068 反馈系统）。
 
 ## 启动
 
@@ -19,10 +19,10 @@ npm run dev          # http://localhost:5173 (Mock API)
 |---|---|---|
 | `/` | 推荐主页（5 卡片 + refine + pick + skip + stack banner） | ✅ |
 | `/profile` | 偏好页（YAML 只读 / 7 区表单编辑） | ✅ |
-| `/history` | 最近 7 天历史（行可点进反馈, D-057） | ✅ |
-| `/feedback` | 反馈中心三段（待反馈 / 暂缓 / 已反馈, D-056） | ✅ V1.1 |
+| `/history` | 最近 7 天历史（行可点进反馈, D-059） | ✅ |
+| `/feedback` | 反馈中心三段（待反馈 / 暂缓 / 已反馈, D-058） | ✅ V1.1 |
 | `/feedback/last` | 解析到第一条 active unfed | ✅ V1.1 |
-| `/feedback/:id` | 反馈页双态: 未反馈→progressive form / 已反馈→readonly snapshot + append timeline (D-064 + D-065) | ✅ V1.1 |
+| `/feedback/:id` | 反馈页双态: 未反馈→progressive form / 已反馈→readonly snapshot + append timeline (D-066 + D-067) | ✅ V1.1 |
 
 ## 数据层
 
@@ -30,8 +30,8 @@ npm run dev          # http://localhost:5173 (Mock API)
 - `src/lib/mockApi.ts` — mock 数据，端口 §5 契约（[docs/api.md](../../docs/api.md)）
 - `VITE_USE_MOCK=1`（默认）走 mock；`VITE_USE_MOCK=0` 走真接口
 
-V1.1 反馈链路 7 个端点在 mockApi 全量实现, 后端 FastAPI 待装 — 详见 [docs/api.md §5](../../docs/api.md) + [IMPL_LOG D-054~D-066](../../docs/IMPLEMENTATION_LOG.md#d-054d-066-执行记录--v11-反馈系统落地-appsweb)。
+V1.1 反馈链路 7 个端点在 mockApi 全量实现, 后端 FastAPI 待装 — 详见 [docs/api.md §5](../../docs/api.md) + [IMPL_LOG D-056~D-068](../../docs/IMPLEMENTATION_LOG.md#d-056d-068-执行记录--v11-反馈系统落地-appsweb)。
 
 ## 设计原则
 
-详见 [`docs/style-guide.md`](../../docs/style-guide.md) §文案规范 + §视觉系统 + §反模式。锁定的交互（pick / refine 面包屑 / skip / 同 session 抑制 banner / YAML 只读默认 / banner ✕ = snooze / 反馈提交即 readonly / append-only timeline）已写入 D-050~D-053 + D-054~D-066，**不要重新设计**。
+详见 [`docs/style-guide.md`](../../docs/style-guide.md) §文案规范 + §视觉系统 + §反模式。锁定的交互（pick / refine 面包屑 / skip / 同 session 抑制 banner / YAML 只读默认 / banner ✕ = snooze / 反馈提交即 readonly / append-only timeline）已写入 D-052~D-055 + D-056~D-068，**不要重新设计**。

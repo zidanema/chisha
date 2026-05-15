@@ -1,4 +1,4 @@
-// api.ts — production HTTP client (D-049 backend on port 8765).
+// api.ts — production HTTP client (D-051 backend on port 8765).
 // Shape MUST match docs/api.md §5. The mock implementation in mockApi.ts
 // satisfies the same `ChishaApi` interface so swaps are transparent.
 

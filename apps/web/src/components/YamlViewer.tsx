@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 
-// D-053: 偏好页默认 = 只读 YAML 视图（行号 + 语法着色）。
+// D-055: 偏好页默认 = 只读 YAML 视图（行号 + 语法着色）。
 // 编辑只在用户主动点 "编辑" 时进入表单态。
 
 function YamlLine({ text }: { text: string }) {

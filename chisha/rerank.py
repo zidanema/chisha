@@ -264,6 +264,38 @@ _REQUIRED_FIELDS = {
 }
 
 
+# D-049 (Codex review 反馈): validator 给结构化 error code, 让 retry 路由 +
+# 测试 fixture 不再依赖人类可读中文字符串. 文案改一下不会静默漏触发 retry.
+class RerankValidationCode:
+    """Stable validator error codes. retry policy + tests depend on these."""
+    OK = "OK"
+    NOT_LIST = "NOT_LIST"
+    EMPTY = "EMPTY"
+    OVER_N_MAX = "OVER_N_MAX"
+    ITEM_NOT_DICT = "ITEM_NOT_DICT"
+    MISSING_FIELDS = "MISSING_FIELDS"
+    INVALID_INDEX = "INVALID_INDEX"
+    INDEX_OUT_OF_RANGE = "INDEX_OUT_OF_RANGE"
+    INDEX_DUPLICATE = "INDEX_DUPLICATE"
+    INVALID_FIT_SCORE = "INVALID_FIT_SCORE"
+    INVALID_TASTE_MATCH = "INVALID_TASTE_MATCH"
+    INVALID_IS_EXPLORE = "INVALID_IS_EXPLORE"
+    INVALID_RISK_FLAGS = "INVALID_RISK_FLAGS"
+    RANK_NOT_SEQUENTIAL = "RANK_NOT_SEQUENTIAL"
+    EXPLORE_COUNT_MISMATCH = "EXPLORE_COUNT_MISMATCH"
+    EXPLORE_POSITION_WRONG = "EXPLORE_POSITION_WRONG"
+    UNKNOWN = "UNKNOWN"
+
+
+# retry 只对 "opus 懂 schema 但数错/位置错" 类失败有效. 解析失败 / 缺字段 /
+# index 越界等格式问题 retry 也修不好, 直接 fallback 省 12s + $0.03.
+_RETRY_TRIGGER_CODES = frozenset({
+    RerankValidationCode.OVER_N_MAX,
+    RerankValidationCode.EXPLORE_COUNT_MISMATCH,
+    RerankValidationCode.EXPLORE_POSITION_WRONG,
+})
+
+
 # ─────────────────────── payload 紧凑化 (D-046) ───────────────────────
 
 
@@ -330,14 +362,30 @@ def _fmt_combo_block(idx: int, c: dict) -> str:
     return "\n".join(lines)
 
 
+def _fmt_list_or_none(xs) -> str:
+    """空 → '(无)', 否则空格分隔 (跟 system prompt '(无)/(空)' 风格统一,
+    不输出 Python repr '[]')."""
+    if not xs:
+        return "(无)"
+    return " ".join(str(x) for x in xs)
+
+
+def _fmt_counts_or_none(d) -> str:
+    """空 → '(空)', 否则 'key×N key×N' 紧凑形式 (替代 Python dict repr,
+    更可读且 token 略省)."""
+    if not d:
+        return "(空)"
+    return " ".join(f"{k}×{v}" for k, v in list(d.items())[:8])
+
+
 def _profile_block(profile: dict) -> str:
     prefs = profile.get("preferences", {}) or {}
     lines = [
         "[PROFILE]",
         f"口味描述: {profile.get('taste_description','') or '(空)'}",
-        f"喜欢: {prefs.get('liked_cuisines') or []}",
-        f"不喜欢: {prefs.get('disliked_cuisines') or []}",
-        f"avoid: {prefs.get('avoid_dishes') or []}",
+        f"喜欢: {_fmt_list_or_none(prefs.get('liked_cuisines'))}",
+        f"不喜欢: {_fmt_list_or_none(prefs.get('disliked_cuisines'))}",
+        f"avoid: {_fmt_list_or_none(prefs.get('avoid_dishes'))}",
         f"辣度耐受: {prefs.get('spicy_tolerance', 2)}",
     ]
     return "\n".join(lines)
@@ -366,8 +414,8 @@ def _context_block(context: "ContextSnapshot | None") -> str:
         f"饭期: {cd.get('meal_type')}",
         f"心情: {cd.get('daily_mood') or '(无)'}",
         f"上顿: {last_meal_brief}",
-        f"最近 3 天 cuisine: {dict(list(recent.items())[:8]) if recent else '(空)'}",
-        f"最近 3 天 cooking: {dict(list(methods_3d.items())[:8]) if methods_3d else '(空)'}",
+        f"最近 3 天 cuisine: {_fmt_counts_or_none(recent)}",
+        f"最近 3 天 cooking: {_fmt_counts_or_none(methods_3d)}",
         f"上次反馈 chips: {chips or '(无)'}",
         f"refine 输入: {cd.get('refine_input') or '(无)'}",
     ]
@@ -473,6 +521,8 @@ def fallback_rerank(
         return []
     from chisha.score import diversify_top
     n_exploit = max(1, n - n_explore)
+    # D-049: max_per_brand=1 — fallback 路径不走 _enforce_brand_unique,
+    # 输出口径与 LLM 主路径 enforce 后保持一致 (同品牌至多 1 条).
     exploit = diversify_top(top_combos, n=n_exploit, max_per_brand=1,
                              max_per_cuisine=2)
     used_ids = {id(c) for c in exploit}
@@ -642,69 +692,87 @@ def _validate_llm_candidates_v(
     cands: list, n_max: int,
     input_size: int | None = None,
     n_explore_expected: int | None = None,
-) -> tuple[list[dict] | None, str | None]:
-    """D-047: 同 _validate_llm_candidates 但返回 (cands, error_detail) 元组,
-    error_detail 在校验失败时给出具体原因供 trace, 而不是只 print."""
+) -> tuple[list[dict] | None, str, str | None]:
+    """D-047: 同 _validate_llm_candidates 但返回 (cands, code, detail) 三元组.
+
+    D-049 (Codex review): 加 code (RerankValidationCode), retry 路由按 code 走,
+    detail 保留人类可读中文供 trace / fallback_reason 显示. 文案改动不会静默
+    漏触发 retry.
+
+    返回:
+      - 成功: (validated_cands, RerankValidationCode.OK, None)
+      - 失败: (None, RerankValidationCode.<具体码>, "具体描述")
+    """
     res = _validate_llm_candidates(cands, n_max=n_max,
                                     input_size=input_size,
                                     n_explore_expected=n_explore_expected)
     if res is None:
         # 重跑一次拿具体原因. 不重复实现是为了让单一 source-of-truth.
         # 简易方案: 记录 stdout 的 print, 但太复杂; 直接重做关键检查的字符串描述.
-        return None, _diagnose_candidates(cands, n_max, input_size, n_explore_expected)
-    return res, None
+        code, detail = _diagnose_candidates(cands, n_max, input_size, n_explore_expected)
+        return None, code, detail
+    return res, RerankValidationCode.OK, None
 
 
 def _diagnose_candidates(
     cands: list, n_max: int,
     input_size: int | None,
     n_explore_expected: int | None,
-) -> str:
-    """重做 _validate_llm_candidates 的关键检查, 返回首个失败的具体描述."""
+) -> tuple[str, str]:
+    """重做 _validate_llm_candidates 的关键检查, 返回 (code, detail) 元组.
+
+    D-049: 改返回 (code, detail). code 是 RerankValidationCode 之一 (稳定标识符),
+    detail 仍是中文人类可读描述 (trace / fallback_reason 显示用).
+    """
+    V = RerankValidationCode
     if not isinstance(cands, list):
-        return f"cands 非 list ({type(cands).__name__})"
+        return V.NOT_LIST, f"cands 非 list ({type(cands).__name__})"
     if not cands:
-        return "cands 为空"
+        return V.EMPTY, "cands 为空"
     if len(cands) > n_max:
-        return f"返回 {len(cands)} > n_max={n_max}"
+        return V.OVER_N_MAX, f"返回 {len(cands)} > n_max={n_max}"
     seen_idx: set[int] = set()
     for i, c in enumerate(cands):
         if not isinstance(c, dict):
-            return f"#{i} 非 dict"
+            return V.ITEM_NOT_DICT, f"#{i} 非 dict"
         missing = _REQUIRED_FIELDS - set(c)
         if missing:
-            return f"#{i} 缺字段 {sorted(missing)}"
+            return V.MISSING_FIELDS, f"#{i} 缺字段 {sorted(missing)}"
         idx = c.get("combo_index")
         if not isinstance(idx, int) or idx < 0:
-            return f"#{i} combo_index 非法 {idx!r}"
+            return V.INVALID_INDEX, f"#{i} combo_index 非法 {idx!r}"
         if input_size is not None and idx >= input_size:
-            return f"#{i} combo_index 越界 {idx} >= {input_size}"
+            return V.INDEX_OUT_OF_RANGE, f"#{i} combo_index 越界 {idx} >= {input_size}"
         if idx in seen_idx:
-            return f"#{i} combo_index 重复 {idx}"
+            return V.INDEX_DUPLICATE, f"#{i} combo_index 重复 {idx}"
         seen_idx.add(idx)
         fs = c.get("fit_score")
         if not isinstance(fs, (int, float)) or not (0.0 <= float(fs) <= 1.0):
-            return f"#{i} fit_score 越界 {fs!r}"
+            return V.INVALID_FIT_SCORE, f"#{i} fit_score 越界 {fs!r}"
         tm = c.get("taste_match")
         if tm is not None and (not isinstance(tm, (int, float))
                                or not (0.0 <= float(tm) <= 1.0)):
-            return f"#{i} taste_match 越界 {tm!r}"
+            return V.INVALID_TASTE_MATCH, f"#{i} taste_match 越界 {tm!r}"
         if not isinstance(c.get("is_explore"), bool):
-            return f"#{i} is_explore 非 bool"
+            return V.INVALID_IS_EXPLORE, f"#{i} is_explore 非 bool"
         if not isinstance(c.get("risk_flags"), list):
-            return f"#{i} risk_flags 非 list"
+            return V.INVALID_RISK_FLAGS, f"#{i} risk_flags 非 list"
     ranks = sorted(c["rank"] for c in cands if isinstance(c.get("rank"), int))
     if ranks != list(range(1, len(cands) + 1)):
-        return f"rank 不连续 {ranks}"
+        return V.RANK_NOT_SEQUENTIAL, f"rank 不连续 {ranks}"
     if n_explore_expected is not None:
         n_e = sum(1 for c in cands if c.get("is_explore"))
         if n_e != n_explore_expected:
-            return f"explore 数量 {n_e} != 期望 {n_explore_expected}"
+            return V.EXPLORE_COUNT_MISMATCH, (
+                f"explore 数量 {n_e} != 期望 {n_explore_expected}"
+            )
         for i, c in enumerate(cands):
             expected_e = i >= (len(cands) - n_explore_expected)
             if bool(c.get("is_explore")) != expected_e:
-                return f"#{i} is_explore={c.get('is_explore')} 应为 {expected_e}"
-    return "未知 (validate 拒绝但 diagnose 通过, 检查代码漂移)"
+                return V.EXPLORE_POSITION_WRONG, (
+                    f"#{i} is_explore={c.get('is_explore')} 应为 {expected_e}"
+                )
+    return V.UNKNOWN, "未知 (validate 拒绝但 diagnose 通过, 检查代码漂移)"
 
 
 def _validate_llm_candidates(
@@ -961,13 +1029,80 @@ def _run_llm_rerank(
 
             cands = tool_input.get("candidates")
 
-        validated, detail = _validate_llm_candidates_v(
+        validated, code, detail = _validate_llm_candidates_v(
             cands, n_max=n_max,
             input_size=len(top_combos),
             n_explore_expected=n_explore,
         )
+        # D-049 retry: 仅 CLI no-tool 路径 + 计数/位置类失败时一次性纠错.
+        # CLI 是自用降级路径 (D-048 边界), 生产应走 anthropic/openrouter tool_use
+        # 主路径 (forced schema 94% 成功率, 无需 retry).
+        # 不 retry 的 case (按 RerankValidationCode): 解析失败 / 缺字段 / index
+        # 越界等 -- opus 重答也不会变好, 直接 fallback 省 12s + $0.03.
+        if validated is None and is_cli and code in _RETRY_TRIGGER_CODES:
+            n_exploit_expected = n - n_explore
+            cands_list = cands if isinstance(cands, list) else []
+            n_e_actual = sum(
+                1 for c in cands_list
+                if isinstance(c, dict) and c.get("is_explore") is True
+            )
+            n_x_actual = sum(
+                1 for c in cands_list
+                if isinstance(c, dict) and c.get("is_explore") is False
+            )
+            # Codex review (Q3): correction prefix 显式要求"其余规则仍生效",
+            # 防 retry 时 opus 降级为"只满足计数, 忽略 taste/health/avoid".
+            # 不贴上次错误 JSON: 会把模型锁死在错误选择, 增加 minimal-edit 倾向.
+            correction = (
+                "\n\n# 上次输出校验失败 (一次性纠错, 严格按本节执行)\n\n"
+                f"你刚才返回 {n_x_actual} 条 exploit (is_explore=false) + "
+                f"{n_e_actual} 条 explore (is_explore=true), 共 "
+                f"{len(cands_list)} 条.\n"
+                f"要求: **正好** {n_exploit_expected} 条 exploit + "
+                f"{n_explore} 条 explore = {n} 条, 不多不少.\n"
+                f"重新挑: 前 {n_exploit_expected} 条 is_explore=false "
+                "(从打分前段挑), 后 "
+                f"{n_explore} 条 is_explore=true (从输入 [CANDIDATES] 中段 "
+                "idx>=10 挑, 找不到漂亮中段就挑次优中段填满槽位, **不许减少 "
+                "explore 数量**).\n"
+                "**重要: 系统 prompt 里所有其余规则 (硬过滤 avoid/spicy/processed, "
+                "口味命中, 健康结构, 同品牌择优, refine_input/mood 优先级等) "
+                "全部仍然生效. 请基于原 [CANDIDATES] 重新挑 5 条, 不是改标签.**\n"
+                "直接重新输出 JSON 对象, 不要任何前后说明文字.\n"
+            )
+            retry_user_msg = user_msg + correction
+            t1 = time.time()
+            resp2 = call_text(retry_user_msg, **kwargs)
+            # latency 分两字段: 原始单次 + retry 单次, 不再累加. 调试台 / trace
+            # 据此区分"首次 12s + retry 12s" vs "单次 24s 慢调用".
+            out["retry_latency_ms"] = int((time.time() - t1) * 1000)
+            out["llm_response_retry"] = resp2
+            out["retry_attempted"] = True
+            out["retry_first_failure_code"] = code
+            raw2 = resp2.get("content") or resp2.get("raw_text") or ""
+            obj2 = _parse_json_object_from_text(raw2)
+            cands2 = obj2.get("candidates") if isinstance(obj2, dict) else None
+            if isinstance(cands2, list):
+                validated2, code2, detail2 = _validate_llm_candidates_v(
+                    cands2, n_max=n_max,
+                    input_size=len(top_combos),
+                    n_explore_expected=n_explore,
+                )
+                if validated2 is not None:
+                    out["status"] = "ok"
+                    out["candidates"] = validated2
+                    out["retry_succeeded"] = True
+                    print(
+                        f"  [rerank] retry 成功 (首次失败 code={code} detail={detail})"
+                    )
+                    return out
+                detail = f"{detail} | retry 后仍失败 code={code2}: {detail2}"
+            else:
+                detail = f"{detail} | retry 解析失败"
         if validated is None:
-            out["fallback_reason"] = f"candidates 业务校验失败: {detail}"
+            out["fallback_reason"] = (
+                f"candidates 业务校验失败 [{code}]: {detail}"
+            )
             return out
 
         out["status"] = "ok"

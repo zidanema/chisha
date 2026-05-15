@@ -27,11 +27,12 @@
 - **L3 tool_use 重构**（[D-047](DECISIONS.md#d-047) L3 部分，2026-05-14）：D-046 上线后 sonnet-4.6 在 want_light 等复杂 mood 撞英文 CoT 占满 max_tokens 致 fallback。①**tool_use forced schema** 替代 json_mode（V2 实测 100% 稳定输出）；②**opus-4.7 默认**（V3+V4 矩阵实测 opus 比 sonnet 更尊重 taste、一致性更高）；③top60 保留（V3 验证多样性增量）；④`cache_control: ephemeral` 在 OR 路径真生效（V5 实测 cached=3748t 省 23%）；⑤抽 `_run_llm_rerank()` 共享 helper 消灭 debug/prod 双份代码漂移；⑥强断言 stop_reason + tool_name. 实测 6 case × 3 重复 = **17/18 成功率（vs D-046.1 的 67%）**, 平均延迟 12s（vs 50-80s）。后续 L3 改动必读 [`docs/L3_RERANK_REDESIGN.md`](L3_RERANK_REDESIGN.md)。
 - **LLM Provider 抽象 + Claude Code CLI 路径**（[D-047](DECISIONS.md#d-047) provider 部分，2026-05-14）：`chisha/llm_providers/` 拆三 provider（anthropic_api / openrouter / claude_code_cli），`llm_client.py` 成薄路由层。`profile.yaml.llm.provider` + 环境变量 `CHISHA_LLM_PROVIDER` 控制；auto-detect 优先级 ANTHROPIC_API_KEY > Claude Code 订阅 > OPENROUTER_API_KEY。自用本机走订阅省 ¥24-120/月，分发用户可改配置走 OpenRouter。10 个隔离 flag 防 Claude Code 默认 system / hooks / CLAUDE.md 污染；env 过滤 ANTHROPIC_*/OPENROUTER_* 防订阅路径被付费 API 劫持；Popen + start_new_session + PR_SET_PDEATHSIG 防 orphan。spec + plan + 真 Codex 三轮 review 闭环（[详见](superpowers/specs/2026-05-14-claude-code-cli-provider-design.md)）。
 - **L3 双路径收口**（[D-048](DECISIONS.md#d-048)，2026-05-14）：D-047 Part A (tool_use 主路径) 与 Part B (CLI provider) 同日 merge 协同 gap — CLI 不支持 tool_use 但 rerank 硬编码 tools 致 NotImplementedError 静默 fallback。修法：①rerank 层做 provider 分流，CLI 走 prompt 软约束 + 三层 JSON 解析（含 `JSONDecoder.raw_decode`），主路径保留 tool_use；②**配置错 hard-fail**：`_resolve_provider` 抛错时返回 `status="config_error"` 不再被外层 except 吞，区分"L3 真跑通 / fallback / 配置错根本没跑"三态；③trace 加 `status` / `resolved_provider` / `config_error` 结构化字段，调试台 L3 section 直接给三态 badge + provider/latency 一行带出；④Codex 独立 review 闭 1 BLOCKER + 5 MAJOR + 2 MINOR。新增 13 个测试。
+- **CLI 精排运行时纠错**（[D-050](DECISIONS.md#d-050)，2026-05-15）：CLI 路径默认 model sonnet → opus 后, dry_run 暴露 ~20% session 触发 `explore 数量错误` fallback —— opus 质量贪心(挑 4 高分 exploit + 1 mid-band explore, 主动放弃第二个 explore 槽). 加重 prompt 反向恶化(100% fallback). 改用 **validate→retry→fallback** 闭环: ①validator 返回 `(cands, code, detail)` 结构化三元组, `RerankValidationCode` 稳定 enum; ②retry 触发按 code allowlist (`OVER_N_MAX` / `EXPLORE_COUNT_MISMATCH` / `EXPLORE_POSITION_WRONG`), 不再用字符串匹配; ③CLI 路径限定一次 retry, 显式纠错 prefix 含"其余 system prompt 规则全部仍生效"(Codex Q3 防质量退化); ④trace 加 `retry_attempted/succeeded/first_failure_code/retry_latency_ms`. 实测 20/20 session 成功(0-10% retry), 商家分布 12+ 家。
 - 架构重构推迟到 V1.5（[D-030](DECISIONS.md#d-030)）。
 - **测试**：381 单测全过（D-048 新增 13 个：CLI 分流 / config_error / prompt patch / parser 边界）+ 5 个 integration e2e 全过（opt-in `requires_claude_cli` marker）。
-- **产品形态翻案**（[D-049](DECISIONS.md#d-049)，2026-05-15）：V1 主交互改 Web localhost SPA（用户视图 `/` + 调试台 `/debug` 双路由），飞书降级为 V1.5 推送 + deeplink 通道。D-022 标 partial superseded。理由：飞书卡片放不下 refine 多轮 / profile 编辑 / 高密度反馈；Web + claude.ai/design 协同体验迭代速度远超飞书卡片定制；调试台和用户视图共享 API / 组件 / 状态，改一次推荐链路两边同步。
-- **Web SPA V1 落地**（[D-050~D-053](DECISIONS.md#d-050)，2026-05-15）：`apps/web/` 子项目（Vite + React 18 + TS + React Router + Tailwind）从 claude.ai/design 原型搬迁完成。HomePage / ProfilePage / HistoryPage 全量；mock + 真接口双模式（`VITE_USE_MOCK`）。新决策：①D-050 Accept 改 inline 持久锁定 + 复制店名（不假装 deeplink），②D-051 refine 顶部面包屑 + 输入框置顶 + smooth-scroll，③D-052 skip-meal escape hatch（新增 `POST /api/skip`），④D-053 同 session 抑制 unfed banner。文案规范 + 视觉系统沉淀到 [`docs/style-guide.md`](style-guide.md)；前后端契约见 [`docs/api.md`](api.md)。
-- **V1.1 反馈系统落地**（[D-054~D-066](DECISIONS.md#d-054-navbar-加反馈-tab--角标-v11)，2026-05-15）：第二轮设计迭代，反馈链路从 placeholder 改成完整 7 步 user journey。13 条新决策分三组：①入口架构（D-054 NavBar tab + 角标 / D-055 banner 升级 stack + 多条堆叠 / D-056 `/feedback` 反馈中心三段 / D-057 history 行可点 / D-058 snooze vs stop 两态语义），②表单内容（D-059 5 变体方法论 → D-060 选 E 渐进披露 + 借 D 复盘卡 / D-061 calibration·behavior·gut 三类信号框架 / D-062 头部 gut 跟 behavior 分离 / D-063 展开 4 维 + 每行对齐 prediction），③生命周期（D-064 一次提交永久 readonly / D-065 append-only timeline / D-066 V2 砍单清）。schema 全量改写：砍 `rating_taste`/`rating_satisfaction`/`feedbackChips`，加 `rating: -1\|0\|1` + 4 维 calibration/behavior + comments[] timeline。新增 5 文件 / 改写 10 文件 / 删 FeedbackPlaceholder。mockApi 7 个端点全实现, 后端 FastAPI 待接入。详见 [IMPL_LOG D-054~D-066](IMPLEMENTATION_LOG.md#d-054d-066-执行记录--v11-反馈系统落地-appsweb)。
+- **产品形态翻案**（[D-051](DECISIONS.md#d-051)，2026-05-15）：V1 主交互改 Web localhost SPA（用户视图 `/` + 调试台 `/debug` 双路由），飞书降级为 V1.5 推送 + deeplink 通道。D-022 标 partial superseded。理由：飞书卡片放不下 refine 多轮 / profile 编辑 / 高密度反馈；Web + claude.ai/design 协同体验迭代速度远超飞书卡片定制；调试台和用户视图共享 API / 组件 / 状态，改一次推荐链路两边同步。
+- **Web SPA V1 落地**（[D-052~D-055](DECISIONS.md#d-052)，2026-05-15）：`apps/web/` 子项目（Vite + React 18 + TS + React Router + Tailwind）从 claude.ai/design 原型搬迁完成。HomePage / ProfilePage / HistoryPage 全量；mock + 真接口双模式（`VITE_USE_MOCK`）。新决策：①D-052 Accept 改 inline 持久锁定 + 复制店名（不假装 deeplink），②D-053 refine 顶部面包屑 + 输入框置顶 + smooth-scroll，③D-054 skip-meal escape hatch（新增 `POST /api/skip`），④D-055 同 session 抑制 unfed banner。文案规范 + 视觉系统沉淀到 [`docs/style-guide.md`](style-guide.md)；前后端契约见 [`docs/api.md`](api.md)。
+- **V1.1 反馈系统落地**（[D-056~D-068](DECISIONS.md#d-056-navbar-加反馈-tab--角标-v11)，2026-05-15）：第二轮设计迭代，反馈链路从 placeholder 改成完整 7 步 user journey。13 条新决策分三组：①入口架构（D-056 NavBar tab + 角标 / D-057 banner 升级 stack + 多条堆叠 / D-058 `/feedback` 反馈中心三段 / D-059 history 行可点 / D-060 snooze vs stop 两态语义），②表单内容（D-061 5 变体方法论 → D-062 选 E 渐进披露 + 借 D 复盘卡 / D-063 calibration·behavior·gut 三类信号框架 / D-064 头部 gut 跟 behavior 分离 / D-065 展开 4 维 + 每行对齐 prediction），③生命周期（D-066 一次提交永久 readonly / D-067 append-only timeline / D-068 V2 砍单清）。schema 全量改写：砍 `rating_taste`/`rating_satisfaction`/`feedbackChips`，加 `rating: -1\|0\|1` + 4 维 calibration/behavior + comments[] timeline。新增 5 文件 / 改写 10 文件 / 删 FeedbackPlaceholder。mockApi 7 个端点全实现, 后端 FastAPI 待接入。详见 [IMPL_LOG D-056~D-068](IMPLEMENTATION_LOG.md#d-056d-068-执行记录--v11-反馈系统落地-appsweb)。
 - **下一步**：① 后端 FastAPI 装 V1 端点（推荐链路 6 个 + V1.1 反馈链路 7 个）拉通真接口；② 用真实化 profile 在 Web 上自用一周采集采纳率 + 反馈数据；③ 反馈数据回灌推荐推理（`reason_match` reverse-loss / `repurchase_intent` ranking / `comments[]` LLM context inject）。飞书接入推到 V1.5（integrations/openclaw/ 骨架保留，cron 待装）。
 
 ---
@@ -53,7 +54,7 @@
 - [x] 召回模块（规则 + 弱约束三件套校验 + 多样性过滤）
 - [x] **抽查 100 候选合理性**（2026-05-12, scripts/audit_recall.py）：lunch 84% / dinner 64% pass，0 硬约束违规
 - [x] 打分函数 V1 + **V2 ~12 维升级**（vegetable_floor / protein_floor / low_oil / popularity / cuisine_pref / variety_bonus + carb_quality / processed_meat / sweet_sauce / wetness / dish_role / 履约 / taste_match / context_boost）
-- [x] V1 路径：打分 top 3 + LLM 写 reason（D-024，作为 V2 baseline 保留可用）
+- [x] V1 简化路径：打分 top 3 + LLM 写 reason（D-024 历史完成；D-049 已删代码 — V2 单一路径替代）
 - [x] **V2 路径：LLM 精排 top30→5 + Context + session**（[D-033](DECISIONS.md#d-033) / [D-034](DECISIONS.md#d-034) / [D-035](DECISIONS.md#d-035)）
 - [x] **LLM 抽象 Phase 1**（[D-038](DECISIONS.md#d-038)）：provider auto-detect + 商家去重兜底
 - [x] 5 次空跑测试（mood × meal_type 对照, 真 LLM Sonnet-4.6, 0 同商家重复）
@@ -63,11 +64,11 @@
 - [x] **L2 cap_per_restaurant + 三层 cap（restaurant/cuisine/food_form）**（[D-042](DECISIONS.md#d-042) / [D-043](DECISIONS.md#d-043)）：防潮汕粥/同店扎堆
 - [x] **L2 打分体系重设计**（[D-043](DECISIONS.md#d-043)）：删死权重 + 改活 popularity/variety/taste/context + unforgivable penalty
 - [x] **反馈闭环 P3 最小实现**（[D-043](DECISIONS.md#d-043)）：`long_term_prefs.py` 反馈历史 → boost/penalty hints（取代旧 V2.0 计划，留 V2.0 待真采集数据补完）
-- [x] **Web 用户视图 SPA**（[D-049](DECISIONS.md#d-049) + [D-050~D-053](DECISIONS.md#d-050) + [D-054~D-066](DECISIONS.md#d-054-navbar-加反馈-tab--角标-v11)，2026-05-15）：`apps/web/`（Vite + React 18 + TS + React Router + Tailwind），HomePage/ProfilePage/HistoryPage/FeedbackPage/FeedbackInbox 全量；mock + 真接口双模式（`VITE_USE_MOCK`）。V1.1 反馈系统（progressive form + readonly snapshot + append-only timeline + inbox 三段 + banner stack + snooze/stop）已落地。文案规范 + 视觉系统沉淀到 [`docs/style-guide.md`](style-guide.md)；前后端契约见 [`docs/api.md`](api.md)。
-- [ ] **调试台 V1 整合到 apps/web `/debug` 路由**（D-049）：把 `chisha/static/debug.html` 改写成 React 子页面，与用户视图共享组件
-- [ ] **FastAPI 后端扩展为 Web 服务**（D-049 + D-054~D-066）：沿用 8765 端口，新增推荐链路 6 个（`/api/recommend` `/api/refine` `/api/accept` `/api/skip` `/api/profile` `/api/history`）+ V1.1 反馈链路 7 个（`/api/feedback/inbox` `/api/feedback/snooze` `/api/feedback/stop` `/api/feedback/recent` `/api/feedback/<sid>` `/api/feedback/<sid>/record` `/api/feedback` + `/api/feedback/<sid>/comments`），契约见 [`docs/api.md`](api.md)，保留现有 `/api/debug_recommend`
-- [ ] **macOS 本机定时拉起服务**（D-049）：launchd / cron 工作日 11:00 / 17:30 自动启动 chisha.web，自用周期内零摩擦
-- [ ] ~~接入 OpenClaw + 飞书卡片~~ → 推迟到 V1.5（[D-049](DECISIONS.md#d-049) 翻案 D-022）
+- [x] **Web 用户视图 SPA**（[D-051](DECISIONS.md#d-051) + [D-052~D-055](DECISIONS.md#d-052) + [D-056~D-068](DECISIONS.md#d-056-navbar-加反馈-tab--角标-v11)，2026-05-15）：`apps/web/`（Vite + React 18 + TS + React Router + Tailwind），HomePage/ProfilePage/HistoryPage/FeedbackPage/FeedbackInbox 全量；mock + 真接口双模式（`VITE_USE_MOCK`）。V1.1 反馈系统（progressive form + readonly snapshot + append-only timeline + inbox 三段 + banner stack + snooze/stop）已落地。文案规范 + 视觉系统沉淀到 [`docs/style-guide.md`](style-guide.md)；前后端契约见 [`docs/api.md`](api.md)。
+- [ ] **调试台 V1 整合到 apps/web `/debug` 路由**（D-051）：把 `chisha/static/debug.html` 改写成 React 子页面，与用户视图共享组件
+- [ ] **FastAPI 后端扩展为 Web 服务**（D-051 + D-056~D-068）：沿用 8765 端口，新增推荐链路 6 个（`/api/recommend` `/api/refine` `/api/accept` `/api/skip` `/api/profile` `/api/history`）+ V1.1 反馈链路 7 个（`/api/feedback/inbox` `/api/feedback/snooze` `/api/feedback/stop` `/api/feedback/recent` `/api/feedback/<sid>` `/api/feedback/<sid>/record` `/api/feedback` + `/api/feedback/<sid>/comments`），契约见 [`docs/api.md`](api.md)，保留现有 `/api/debug_recommend`
+- [ ] **macOS 本机定时拉起服务**（D-051）：launchd / cron 工作日 11:00 / 17:30 自动启动 chisha.web，自用周期内零摩擦
+- [ ] ~~接入 OpenClaw + 飞书卡片~~ → 推迟到 V1.5（[D-051](DECISIONS.md#d-051) 翻案 D-022）
 - [ ] 工作日 Web 自用一周，纸笔 + 内置 accept/reject 埋点记录每次推荐质量
 
 ### 不做（明确推迟）
@@ -95,9 +96,9 @@
 | 打标准确率 | 50 条抽查 ≥ 80% | ✅ 171 条 dual-audit golden 89% (D-036 / D-037) |
 | 召回合理性 | 100 个候选无明显该排除项；每个候选满足弱约束三件套 | ✅ scripts/audit_recall.py lunch 84% / dinner 64% pass, 0 硬约束违规 |
 | 推荐质量 | 5 次空跑 top 3 都满足"控油+有菜+有蛋白"，商家不集中，reason 具体不空话 | ✅ V1+V2 5 次空跑通过, 0 同商家重复 |
-| Web 用户视图可用性 | 本机 localhost 起服务后，5 推荐卡片渲染 / accept lock-in / refine 面包屑 / skip 逃生口 / profile YAML 编辑 / 反馈 progressive form + detail + inbox 全可交互（D-049 + D-054~D-066） | ✅ 前端 mock 全跑通，后端 API 接入是下一步 |
+| Web 用户视图可用性 | 本机 localhost 起服务后，5 推荐卡片渲染 / accept lock-in / refine 面包屑 / skip 逃生口 / profile YAML 编辑 / 反馈 progressive form + detail + inbox 全可交互（D-051 + D-056~D-068） | ✅ 前端 mock 全跑通，后端 API 接入是下一步 |
 | 自用稳定性 | 一周连续可用，**工作日 7 日采纳率 ≥ 50%**（D-028 北极星 V1 目标）| ❌ 待 Web 上线后采集 |
-| ~~飞书卡片接入~~ | 推迟到 V1.5（D-049 翻案 D-022） | — |
+| ~~飞书卡片接入~~ | 推迟到 V1.5（D-051 翻案 D-022） | — |
 
 ---
 
@@ -144,7 +145,7 @@
 - [ ] 5 个候选 + 1-2 个 explore 标记
 - [ ] session 状态管理（24h TTL）
 - [ ] update_taste API（自然语言更新偏好）
-- [ ] **个性化 refine 快捷标签**（来自 [D-049](DECISIONS.md#d-049) Web 用户视图设计 review）：当前 V1 用 6 个静态标签（想吃辣的 / 换日料 / 来份烧烤 / 想吃牛肉 / 来盖饭 / 换粤菜，见 `docs/design_briefs/v1_user_view.md` §5.4.1）；V2.1 改为根据"最近 3 天没吃过的菜系/食材 + learned_profile bottom_preferences 反向 + 当前 mood"动态生成 4-6 个标签。新增 API: `GET /api/recommend` 响应里加 `suggested_refine_tags: string[]` 字段
+- [ ] **个性化 refine 快捷标签**（来自 [D-051](DECISIONS.md#d-051) Web 用户视图设计 review）：当前 V1 用 6 个静态标签（想吃辣的 / 换日料 / 来份烧烤 / 想吃牛肉 / 来盖饭 / 换粤菜，见 `docs/design_briefs/v1_user_view.md` §5.4.1）；V2.1 改为根据"最近 3 天没吃过的菜系/食材 + learned_profile bottom_preferences 反向 + 当前 mood"动态生成 4-6 个标签。新增 API: `GET /api/recommend` 响应里加 `suggested_refine_tags: string[]` 字段
 
 成功标准：能用自然语言追加约束，推荐能根据 explore 接受度调整新店发现频率，refine 快捷标签每天都不一样且至少 50% 被点击过。
 
@@ -207,9 +208,9 @@
 |---|---|---|
 | SaaS 平台形态 | 运营成本高、隐私顾虑、单用户协同无意义 | D-001 |
 | 用户系统 / 登录 / 计费 | 不做 SaaS 自然不用 | D-001 |
-| Web URL 渲染层（Skill 内嵌输出格式）| 渲染是 Agent 的事，Skill 不绑死 | D-017（注：跟 D-049 的"独立 Web 客户端"不冲突，两件事） |
-| ~~Web/小程序/独立 APP 形态~~ | ~~定位是 Skill 不是产品~~ → **D-049 翻案：V1 主交互改 localhost Web SPA** | **D-049（推翻 PRD §7 此项 + 部分推翻 D-022）** |
-| **V1 接 Claude Code 而不接 OpenClaw** | **CLI 不能主动推送，与 PRD 故事 1 承诺不匹配** | **D-022（取代 D-018），D-049 后再次降级到 V1.5** |
+| Web URL 渲染层（Skill 内嵌输出格式）| 渲染是 Agent 的事，Skill 不绑死 | D-017（注：跟 D-051 的"独立 Web 客户端"不冲突，两件事） |
+| ~~Web/小程序/独立 APP 形态~~ | ~~定位是 Skill 不是产品~~ → **D-051 翻案：V1 主交互改 localhost Web SPA** | **D-051（推翻 PRD §7 此项 + 部分推翻 D-022）** |
+| **V1 接 Claude Code 而不接 OpenClaw** | **CLI 不能主动推送，与 PRD 故事 1 承诺不匹配** | **D-022（取代 D-018），D-051 后再次降级到 V1.5** |
 
 ### 功能边界类
 
@@ -280,8 +281,8 @@
 | collector schema 变更打挂 shenzhen-bay ≥ 2 次 | D-030 提前启动 V1.5 |
 | OpenClaw / Hermes / Claude Code skill 真要接入 chisha 推荐 | D-038 Phase 2 启动（callable LLM 注入点；D-047 已把 provider 抽象做好, 仅剩 closure 注入接口） |
 | LLM 精排 sonnet-4.6 与 deepseek-flash 质量持平 | 改 `profile.yaml.llm.provider=openrouter` + `model.openrouter=deepseek/...` 即可降本 (D-047) |
-| Web 自用一周采纳率 < 50% 且飞书推送能独立证明补回触达缺口 | D-049 重审，考虑把 D-022 飞书提前到 V1.5 主交互 |
-| claude.ai/design 产出与 FastAPI 集成成本 > 3 天 | D-049 重审，考虑改 lark card + 简化 Web 双轨 |
+| Web 自用一周采纳率 < 50% 且飞书推送能独立证明补回触达缺口 | D-051 重审，考虑把 D-022 飞书提前到 V1.5 主交互 |
+| claude.ai/design 产出与 FastAPI 集成成本 > 3 天 | D-051 重审，考虑改 lark card + 简化 Web 双轨 |
 
 ---
 

@@ -1,4 +1,4 @@
-// mockApi.ts — pure browser mock for /api/* (D-049 dev/preview).
+// mockApi.ts — pure browser mock for /api/* (D-051 dev/preview).
 // Ports the v0 prototype data.js exactly, including pool, scoring, session
 // store, and the simulated 900ms latency for recommend/refine (real backend
 // is 15-60s — UI must still use skeleton, see DESIGN_NOTES §4 加载态).
@@ -255,7 +255,7 @@ interface AcceptedItem {
   session_id: string;
   accepted_rank: number;
   accepted_at: string;
-  // V1.1 (D-058): snooze = 软关闭 24h (banner 不催, inbox 仍在);
+  // V1.1 (D-060): snooze = 软关闭 24h (banner 不催, inbox 仍在);
   // stop = 永久 (banner + inbox 都隐藏, history 仍在)
   snoozed_until: number | null;
   stopped: boolean;

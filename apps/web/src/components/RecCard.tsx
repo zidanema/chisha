@@ -24,7 +24,7 @@ export interface RecCardProps {
   onSelect?: (rank: number) => void;
 }
 
-// D-050: pick = inline 持久锁定（边框 + ✓ 已选 + 改主意），不是 toast。
+// D-052: pick = inline 持久锁定（边框 + ✓ 已选 + 改主意），不是 toast。
 // 非 picked 卡片淡化（opacity 0.55），按钮转次级"选这个"。
 export function RecCard({
   candidate,

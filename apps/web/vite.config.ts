@@ -4,7 +4,7 @@ import path from "node:path";
 
 // chisha web - Vite config
 // - 5173 dev / build into dist/
-// - /api proxied to FastAPI debug_server (8765) for real-API mode (D-049 backend)
+// - /api proxied to FastAPI debug_server (8765) for real-API mode (D-051 backend)
 // - Use VITE_USE_MOCK=1 to bypass network and use src/lib/mockApi.ts
 export default defineConfig({
   plugins: [react()],

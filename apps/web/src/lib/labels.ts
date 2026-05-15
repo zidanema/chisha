@@ -132,7 +132,7 @@ export const LABELS = {
     fbEmptyAction: "回主页 →",
     fbSubmit: "完成",
 
-    // ── 表单 · 渐进披露 E (D-060~063) ──────────────────────────
+    // ── 表单 · 渐进披露 E (D-062~063) ──────────────────────────
     fbAQuestion: "这顿怎么样？",
     fbARatingBad: "难吃",
     fbARatingOk: "普通",
@@ -149,7 +149,7 @@ export const LABELS = {
       repeat:   { label: "下次还点", opts: ["不会", "偶尔", "会"] },
     },
 
-    // ── Detail view (D-064/065) ─────────────────────────────────
+    // ── Detail view (D-066/065) ─────────────────────────────────
     fbDetailTitle: "反馈已记录",
     fbDetailSubmittedAt: (ago: string) => `${ago}提交`,
     fbDetailLocked: "已封存 · 不可修改，但可以追加备注",
@@ -164,7 +164,7 @@ export const LABELS = {
     fbDetailNotEaten: "标记为「没吃这几个」",
     fbDetailJumpHome: "回主页 →",
 
-    // ── Inbox /feedback (D-056) ─────────────────────────────────
+    // ── Inbox /feedback (D-058) ─────────────────────────────────
     inboxTitle: "反馈",
     inboxSubtitle: "饭后回来打个分，下次推得更准",
     inboxPending: "待反馈",
@@ -209,7 +209,7 @@ export const LABELS = {
     skippedToast: "已记录，本餐不再提醒",
 
     version: "v0.1",
-    versionTip: "chisha v1 · localhost · D-049 build",
+    versionTip: "chisha v1 · localhost · D-051 build",
 
     unknownRoute: "未知路由",
     backHome: "回主页",

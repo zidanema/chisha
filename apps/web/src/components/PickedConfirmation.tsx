@@ -2,7 +2,7 @@ import { useState } from "react";
 import { LABELS } from "@/lib/labels";
 import type { Candidate } from "@/lib/types";
 
-// D-050: 持久 inline 状态 — 用户点 pick 后的"你选了 X · 去搜店名下单"面板。
+// D-052: 持久 inline 状态 — 用户点 pick 后的"你选了 X · 去搜店名下单"面板。
 // 替代 toast-and-disappear。Deeplink iOS/Android 不可靠 → 提供复制店名 + 文案指引。
 export function PickedConfirmation({
   candidate,

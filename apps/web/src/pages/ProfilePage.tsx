@@ -19,7 +19,7 @@ import {
 } from "@/components/profile/Inputs";
 import { ChipListEditor } from "@/components/profile/ChipListEditor";
 
-// D-053: 默认 = 只读 YAML。点编辑切表单；保存后回只读视图。
+// D-055: 默认 = 只读 YAML。点编辑切表单；保存后回只读视图。
 
 export function ProfilePage() {
   const { showToast } = useChisha();

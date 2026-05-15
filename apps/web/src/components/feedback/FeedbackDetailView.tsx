@@ -1,4 +1,4 @@
-// FeedbackDetailView — V1.1 已反馈只读 snapshot + append-only timeline (D-064/065).
+// FeedbackDetailView — V1.1 已反馈只读 snapshot + append-only timeline (D-066/065).
 // 注意: snapshot 永久 readonly, 即使提交 1 分钟内也不能改; 改 → 撤销重提 (V2 才做)。
 // 备注只能 append, 每条独立 timestamped 单元。
 

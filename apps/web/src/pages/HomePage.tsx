@@ -146,7 +146,7 @@ export function HomePage() {
     scrollToRecs();
   }
 
-  // ── Pick / unpick (D-050) ────────────────────────────────────────────────────
+  // ── Pick / unpick (D-052) ────────────────────────────────────────────────────
   async function onPick(c: Candidate) {
     setHome({ pickedRank: c.rank });
     if (!home.session) return;
@@ -161,7 +161,7 @@ export function HomePage() {
     setHome({ pickedRank: null });
   }
 
-  // ── Skip (D-052) ─────────────────────────────────────────────────────────────
+  // ── Skip (D-054) ─────────────────────────────────────────────────────────────
   async function onSkipMeal(reason: import("@/lib/types").SkipReason) {
     if (!home.session) return;
     await api.skipMeal({ session_id: home.session.session_id, reason });
@@ -174,7 +174,7 @@ export function HomePage() {
     scrollToRecs();
   }
 
-  // ── Banner (D-053): hide current session from banner so accept→banner 不闪 ───
+  // ── Banner (D-055): hide current session from banner so accept→banner 不闪 ───
   const shownInbox = home.session
     ? inbox.filter((x) => x.session_id !== home.session!.session_id)
     : inbox;

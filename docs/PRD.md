@@ -120,7 +120,7 @@
 >
 > 我扫一眼，第二个看着不错，点选 2。OpenClaw 给我跳到点评 APP 对应商家页。
 
-**关键体验点**：从看到卡片到下单跳转，不超过 1 分钟。**V1 主动推承诺不变**，但形态分两段：[D-049](DECISIONS.md#d-049) 后 V1 详细交互在本机 Web，飞书"推送 + deeplink 跳 Web"延后到 V1.5 接入。原 [D-022](DECISIONS.md#d-022) 标 partial superseded。
+**关键体验点**：从看到卡片到下单跳转，不超过 1 分钟。**V1 主动推承诺不变**，但形态分两段：[D-051](DECISIONS.md#d-051) 后 V1 详细交互在本机 Web，飞书"推送 + deeplink 跳 Web"延后到 V1.5 接入。原 [D-022](DECISIONS.md#d-022) 标 partial superseded。
 
 ### 故事 2：饭后反馈 —— V2.0
 
@@ -207,8 +207,8 @@ V1 跑通后看两件事：
 | 训练计划生成 | 是另一个产品，可以未来独立做 |
 | 商家平台对接（直接下单） | 各 APP 接口封闭，靠跳转就行 |
 | 社交分享（"晒午餐"） | 偏离工具属性 |
-| ~~Web/小程序 APP 形态~~ | ~~定位是 Agent Skill~~ → **[D-049](DECISIONS.md#d-049) 翻案**：V1 主交互改本机 localhost Web SPA，飞书降级为 V1.5 推送通道 |
-| 独立公网 APP / SaaS 多租户 | 见 [D-001](DECISIONS.md#d-001)（D-049 的 localhost 单用户不属于此项） |
+| ~~Web/小程序 APP 形态~~ | ~~定位是 Agent Skill~~ → **[D-051](DECISIONS.md#d-051) 翻案**：V1 主交互改本机 localhost Web SPA，飞书降级为 V1.5 推送通道 |
+| 独立公网 APP / SaaS 多租户 | 见 [D-001](DECISIONS.md#d-001)（D-051 的 localhost 单用户不属于此项） |
 | 数据采集（爬取/清洗/打标） | 由 sister project `chisha-collector` 负责，本仓只消费数据（[D-027](DECISIONS.md#d-027)） |
 | LLM 蒸馏 learned_insights | N=1 数据下容易过拟合假规律，改统计聚合（[D-026](DECISIONS.md#d-026)） |
 

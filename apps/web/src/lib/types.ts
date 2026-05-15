@@ -100,7 +100,7 @@ export interface RecommendResponse {
   candidates: Candidate[];
 }
 
-// ── Banner / accept queue (V1.1 D-058) ──────────────────────────────────────
+// ── Banner / accept queue (V1.1 D-060) ──────────────────────────────────────
 // Inbox-style entry; the prototype's "single last_unfed" shape is gone.
 // `snoozed`/`stopped` are derived in mock from per-item timestamps.
 export interface UnfedSession {
@@ -122,7 +122,7 @@ export interface FeedbackSession {
   candidates: Candidate[];
 }
 
-// V1.1 schema (D-061/062/063/064). Old `rating_taste/rating_satisfaction/chips`
+// V1.1 schema (D-063/062/063/064). Old `rating_taste/rating_satisfaction/chips`
 // removed — the legacy 5-star double-axis form is gone.
 export type DimVal = 0 | 1 | 2 | null;        // 0=low / 1=mid / 2=high
 export type GutVal = -1 | 0 | 1 | null;       // 难吃 / 普通 / 好吃
@@ -173,7 +173,7 @@ export interface HistoryItem {
   mood: Mood;
 }
 
-// ── Skip-meal (D-052) ────────────────────────────────────────────────────────
+// ── Skip-meal (D-054) ────────────────────────────────────────────────────────
 export type SkipReason =
   | "cafeteria"
   | "brought"

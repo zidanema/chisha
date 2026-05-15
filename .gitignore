@@ -33,5 +33,5 @@ apps/web/dist/
 apps/web/.vite/
 apps/web/tsconfig.tsbuildinfo
 
-# claude.ai/design 原型上传包 (D-049 输入材料, 不进版本库)
+# claude.ai/design 原型上传包 (D-051 输入材料, 不进版本库)
 chisha-user.zip

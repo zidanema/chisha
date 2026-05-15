@@ -2,7 +2,7 @@
 
 > 本文档约束 `apps/web` 用户视图的所有 UI 输出（文案 + 视觉系统）。LLM 产出的字段（reason_one_line / summary）也必须遵守 §1 文案规则。
 >
-> 原型沉淀于 `chisha-user.zip / DESIGN_NOTES.md` §3 §4；正式约束写入本文档 + [DECISIONS.md](DECISIONS.md) D-050~D-053。
+> 原型沉淀于 `chisha-user.zip / DESIGN_NOTES.md` §3 §4；正式约束写入本文档 + [DECISIONS.md](DECISIONS.md) D-052~D-055。
 
 ---
 
@@ -18,13 +18,13 @@
 | `profile` | 偏好 |
 | `shenzhen-bay` | 深圳湾科技园 |
 | `Loading...` | 正在为你挑选... |
-| `chisha v1 · localhost · D-049` | footer 仅显示 `v0.1`（hover 出 build 信息） |
+| `chisha v1 · localhost · D-051` | footer 仅显示 `v0.1`（hover 出 build 信息） |
 | `taste_match 偏低` / `want_indulgent 首选`（LLM CoT 漏出） | "口味契合偏低" / "'解馋'心情首选" |
 
 例外（允许英文不动）:
 - 商家名 / 菜名里的英文（`Super Model 超模厨房`、`Wagas`、`SaladPower`）
 - 路由 URL 路径（用户不直接看到）
-- 偏好页 YAML 源文件预览块（D-053 明确豁免 — 这是技术对象的字面预览）
+- 偏好页 YAML 源文件预览块（D-055 明确豁免 — 这是技术对象的字面预览）
 
 ### 1.2 实施约束
 
@@ -37,7 +37,7 @@
 - **写给开发者，工程师审美**：Linear / Vercel / Raycast 路线
 - **直接，不绕弯**：不写"小贴士:"/"你知道吗:"
 - **数据驱动**：具体数字（"3 道菜 ¥41.8 / 30min 送达"），少用"大概""可能"
-- **关键操作必须有 inline 持久反馈**，不靠 toast（D-050）
+- **关键操作必须有 inline 持久反馈**，不靠 toast（D-052）
 - **emoji 只用功能性**: reason 行的 `💬`，banner 的 `🍽`，其它一律不加
 
 ---
@@ -85,15 +85,15 @@
 - ❌ 中文 webfont 加载
 - ❌ Emoji 装饰（除了 §1.3 列的两个功能性 emoji）
 - ❌ 旋转 spinner（必须 skeleton）
-- ❌ 反馈区塞主页底部（独立路由，D-049）
+- ❌ 反馈区塞主页底部（独立路由，D-051）
 - ❌ 备选折叠（5 张直接展开 — §6 信息密度卖点）
-- ❌ 假装 deeplink 跳 APP（D-050: 改成"搜店名"+复制按钮）
-- ❌ Toast 闪一下消失就完事（D-050: 关键操作必须 inline 持久状态）
-- ❌ 反馈可修改（D-064: 提交即永久 readonly, 即使 1 分钟内也不能改; "事后回想"由 D-065 append-only timeline 承担）
-- ❌ 反馈双维度评分（V1 原"好吃度 + 整体满意"双 5 星, D-062 砍 — 维度模糊, gut 一个就够）
-- ❌ 反馈时让用户从 5 候选 review-radio 选一次（accept 已记 rank, D-066）
-- ❌ 反馈 banner 关掉就永久消失（D-058: ✕ 默认 = snooze 24h, 永久 stop 需 ⋯ 菜单显式选）
-- ❌ 反馈 4 个固定 chip 偏油/分量小/配送慢/想再来（V1 原版, D-061 砍 — 散乱无 calibration, 替换为 4 维 reason_match/fullness/oil_calibration/repurchase_intent）
+- ❌ 假装 deeplink 跳 APP（D-052: 改成"搜店名"+复制按钮）
+- ❌ Toast 闪一下消失就完事（D-052: 关键操作必须 inline 持久状态）
+- ❌ 反馈可修改（D-066: 提交即永久 readonly, 即使 1 分钟内也不能改; "事后回想"由 D-067 append-only timeline 承担）
+- ❌ 反馈双维度评分（V1 原"好吃度 + 整体满意"双 5 星, D-064 砍 — 维度模糊, gut 一个就够）
+- ❌ 反馈时让用户从 5 候选 review-radio 选一次（accept 已记 rank, D-068）
+- ❌ 反馈 banner 关掉就永久消失（D-060: ✕ 默认 = snooze 24h, 永久 stop 需 ⋯ 菜单显式选）
+- ❌ 反馈 4 个固定 chip 偏油/分量小/配送慢/想再来（V1 原版, D-063 砍 — 散乱无 calibration, 替换为 4 维 reason_match/fullness/oil_calibration/repurchase_intent）
 
 ---
 
@@ -104,6 +104,6 @@
 3. 一切 UI 文案纯中文
 4. 关键操作必须 inline 持久反馈，不靠 toast
 5. 给用户每条决策路径都留逃生口（pick / refine / skip / undo）
-6. 因果链空间紧邻（动作和结果在视觉上挨着，D-051 面包屑）
+6. 因果链空间紧邻（动作和结果在视觉上挨着，D-053 面包屑）
 7. 不假装做不到的事（deeplink、cron 通知）
 8. 一千个 no 换一个 yes（不要给推荐页加任何 §3 列表里的功能）

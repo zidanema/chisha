@@ -1,10 +1,10 @@
-// ProgressiveForm — V1.1 反馈表单 (D-060 选定 E 渐进披露 + 借 D 复盘卡形态)
-// 头部: 整体好吃度 (gut 1 个) — 难吃 / 普通 / 好吃 (D-062)
-// 展开: 4 维 calibration/behavior, 每行对齐当时 prediction (D-063)
+// ProgressiveForm — V1.1 反馈表单 (D-062 选定 E 渐进披露 + 借 D 复盘卡形态)
+// 头部: 整体好吃度 (gut 1 个) — 难吃 / 普通 / 好吃 (D-064)
+// 展开: 4 维 calibration/behavior, 每行对齐当时 prediction (D-065)
 // 备注: optional textarea
 // 都没吃这几个: 逃生口 (variant="not-eaten" 走专用 payload)
 //
-// 提交后由父组件就地切到 FeedbackDetailView, 不 navigate 走 (D-064 "完成感")。
+// 提交后由父组件就地切到 FeedbackDetailView, 不 navigate 走 (D-066 "完成感")。
 
 import { useMemo, useState } from "react";
 import { LABELS } from "@/lib/labels";

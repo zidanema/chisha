@@ -1,6 +1,6 @@
-// FeedbackInbox — /feedback 反馈中心 (D-056)
+// FeedbackInbox — /feedback 反馈中心 (D-058)
 // 三段: 待反馈 / 暂缓 / 已反馈; 每行点击进 /feedback/<id>;
-// ⋯ 菜单提供 snooze / stop (D-058).
+// ⋯ 菜单提供 snooze / stop (D-060).
 
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";

@@ -575,7 +575,7 @@
 
 ## D-022: V1 接入 OpenClaw + 飞书卡片（取代 D-018）
 日期: 2026-05-11
-状态: partial superseded by D-049（2026-05-15 — 飞书"主交互"降级为"V1.5 推送+deeplink 通道"，V1 主交互改 Web SPA）
+状态: partial superseded by D-051（2026-05-15 — 飞书"主交互"降级为"V1.5 推送+deeplink 通道"，V1 主交互改 Web SPA）
 
 背景: D-018 当初为了规避 MCP/IM 复杂度选 Claude Code 优先。但复盘 PRD §5 故事 1 后发现：
 - Claude Code 是 CLI/IDE 形态，不能主动推送
@@ -641,7 +641,7 @@
 
 ## D-024: V1 精排 = 打分 top 3 + LLM 只写 reason
 日期: 2026-05-11
-状态: active
+状态: **superseded by D-049 (2026-05-14)** — V1 简化路径代码已删, V2 (D-033 起) 是唯一推荐链路. 当时"LLM 在严格规则上不稳, 先用打分 top 3 起步"的决策本身仍然合理 (V2 在 tool_use forced schema 和 enforce_brand_unique 兜底后才稳到 17/18). 但 V1 baseline 保留的初衷 (V2 翻车时降级) 已不需要 — V2 自身有 fallback_rerank 规则路径兜底, 不依赖 V1 入口.
 
 背景: D-005 决定"召回 + 打分 + 精排（LLM）"三阶段，但 V1 阶段：
 - LLM 在"严格执行规则"和"挑哪 3 个"上不稳，引入随机性
@@ -1727,11 +1727,134 @@ V1-V2 期间 profile.yaml 一直是 mock 数据 (goal=减脂增肌, 价格 35/50
 
 依赖: D-047 Part A (tool_use schema), D-047 Part B (LLM Provider 抽象)
 
+
+## D-049 — L2 输出契约改 head-only: apply_caps 不再保留 tail 段
+
+**2026-05-14** · 架构决策
+
+**背景**: D-045 引入 brand 层 cap(默认 per_brand_top_k=2)本意是同品牌进 L3 最多 2 条。但 `apply_caps()` 历史上返回 `head + tail`——head 段严格执行 cap, tail 段是被 cap demote 的同品牌副本仍然挂在序列尾部。L3 输入 `topK=60` 直接切前 60 条, head 装满后开始切 tail, **实测 Super Model 在 shenzhen-bay top60 出现 8 次**(IMPL_LOG.md D-047 三审 #1 "实测核对" 段, 当前约 line 317)。
+
+D-047 三审的应对是改 prompt: 告诉 LLM"输入里仍可能含同品牌多变体, 你的工作之一就是同品牌内部择优", 用 `_enforce_brand_unique` 在 L3 出口兜底成 1 条。这等于把 brand cap 的实际收口从 L2 推到 L3 prompt, 多承担一层不确定性 (LLM 是否真的会择优)。
+
+**决策**: `apply_caps()` 只返回 head (砍掉 tail 段), brand cap=2 真正生效在 L2:
+- L3 输入侧: 同品牌至多 2 个变体, LLM 仅在菜品组合维度做择优 (不再需要在 6-8 个变体里挑)
+- L3 出口侧: `_enforce_brand_unique` 仍保留 1 条/品牌兜底, 同品牌不同分店不会同时出现在最终 5 条
+- 用户口径: 同品牌不同分店挑哪家更近由用户自决, 不是 LLM 职责 (用户原话: "对用户来说比较简单, 也不会是瓶颈")
+
+`diversify_top()` 默认 `max_per_brand` 保持 1 (口径回正记录见下方"实施过程修正"): 它仅在 fallback 出口使用, 必须与 LLM 主路径 `_enforce_brand_unique` 出口 brand=1 保持一致, 否则用户看到 5 条里有 2 条 Super Model. **L2 → L3 输入侧** 的 brand cap=2 完全由 `apply_caps()` 在 head 段控制, 与 fallback 出口口径解耦。
+
+**Codex BLOCKER 防护**: D-043 时 Codex 已 catch 过"cap 串联让 demote 的条复活"bug, 该 catch 现在以 head-only 形式重写 (test_apply_caps_regression_against_naive_chain): 正确单遍实现下 head 长度 = 2 且全是粥; 朴素串联 head-only 会变 4 且含汤 — 区分点仍有效。
+
+**推翻 / 影响**:
+- D-047 三审修复 #1 的部分论证 (prompt 写"输入里可能含 6-8 个变体") superseded — 改成"至多 2 条变体, 在这 2 条里挑菜品组合"
+- IMPL_LOG.md:315"top60 Super Model 出现 8 次"实测条件作废, 改后理论上限 = brand cap = 2
+- **D-024 (V1 简化路径) superseded**: 顺手砍掉 `recommend_meal(version="v1")` 分支、`chisha/reason.py`、`prompts/reason_one_line.md` 和 `scripts/eval_recommend.py` (V1 vs V2 离线评估脚本, V2 17/18 稳定后对比意义没了). V2 自带 `fallback_rerank` 规则路径兜底, V1 baseline 不再需要. 详见 D-024 superseded 注脚
+
+**实施过程修正 (踩坑记录)**:
+初版方案把 `diversify_top()` 默认 `max_per_brand` 1 → 2, 同步改了 api.py + rerank.py fallback 路径. dry_run 立刻暴露问题: V1 simple 路径 (当时 dry_run 默认走 V1) 输出 30/30 里有 20 个 Super Model — 同分店 2 个 combo 都进 top 3. 此次踩坑揭示两层认知错位:
+1. **混淆了"L2 → L3 输入侧 cap"和"最终输出口径"** — 用户原意是前者, 不动后者
+2. **V1 路径还在生产代码里** — dry_run 实际跑的不是用户日常用的 V2 主路径
+修正: 回滚 diversify_top 默认到 1, 同时彻底砍掉 V1 路径让 dry_run 默认走 V2.
+
+**变更点**: `chisha/score.py` (apply_caps head-only), `chisha/api.py` (V1 分支删, version 参数删), `chisha/rerank.py` (fallback brand=1 不变), `prompts/rerank_system.md`, `chisha/debug_recommend.py` (清理 import), `tests/test_score_v2.py` (4 个 cap 测试), `tests/test_api_v2.py` (删 V1 测试), `chisha/reason.py` + `prompts/reason_one_line.md` + `scripts/eval_recommend.py` (整文件删), README.md / DESIGN.md / ROADMAP.md (V1 路径引用更新)
+
+依赖: D-043 (L2 重设计), D-045 (brand 层 cap), D-024 (V1 路径, superseded), D-047 三审 #1 (部分推翻)
+
+
 ---
 
-## D-049 — Web 优先, 飞书降级为推送通道
+## D-044.1 — wetness 退出 baseline 权重 (只作 session mood)
+日期: 2026-05-15
+状态: active
 
-**2026-05-15** · 产品形态决策 → 完整实施细节见 [IMPLEMENTATION_LOG.md#d-049](IMPLEMENTATION_LOG.md#d-049)
+### 背景
+D-044 改 profile 真实化时, 把 taste_description / avoid_dishes / spicy_tolerance 都按"行为 ≠ 偏好"原则纠正了 (用户口味喜欢辣椒炒/糖醋/红烧, 不是过去为了控热量妥协选的清爽汤水类), 但 `scoring_weights.wetness=0.5` 这个 baseline 权重漏改, 仍在每次推荐里给含汤底/卤水 combo 加 +0.5 分.
+
+实测体感: top-N 仍持续偏向汤水类 combo, 用户主动反馈"为什么一直在推汤水/wetness". 排查根因——wetness 这个字段最早 (D-032) 是从"用户喜欢清爽不油带汤水"这条早期 taste_description 抽象出来的, 而那条描述本身就是从行为反推的伪偏好.
+
+### 决策: 砍静态权重, 保 chip/feedback 触发路径
+- `profile.yaml scoring_weights.wetness`: 0.5 → 0.0
+- 保留: `chisha/score.py wetness_bonus(combo)` 函数 / `NutritionProfile.wetness` schema / data 已打标 / `long_term_prefs.CHIP_TO_BOOST["想喝汤"] = "wetness"` (用户主动反馈"想喝汤"时 session 级激活)
+
+### 原则: trait 进 baseline, mood 走 session
+- baseline 权重承载**稳定 trait** (低油 / 高蛋白 / 控甜酱 / 拒加工肉——用户健康约束的硬偏好)
+- 汤水/口味浓淡这类**情境性诉求**走 session 路径 (chip 反馈 / daily_mood / 季节/天气先验)
+- "从历史行为抽象到 baseline 权重" 是反复出错的 anti-pattern (D-044 已警示, 这是同款漏的尾巴)
+
+### 影响 / 测试
+- `tests/test_score_v2.py wetness_bonus` 单元测试不动 (函数保留)
+- 偏好层关键词扫描 `_TASTE_KW_TO_BOOST = {"汤": "wetness", ...}` 暂保留, 因为当前 `taste_description` 仍有 "喜欢汤水/带汁的也行" 一句, 会通过 taste_match 路径注入 wetness boost (权重 0.4×0.5=0.2). 这是次级源, 若用户反馈 wetness 仍持续推, 二阶处理 (改 taste_description 或删 _TASTE_KW_TO_BOOST 中的汤水关键词)
+
+### 触发重审条件
+- L3 输出仍持续偏向汤水类 → 检查二阶源 (taste_description 关键词扫描)
+- 用户反馈"想喝汤" chip 后 wetness 没生效 → 检查 long_term_prefs 路径
+
+依赖: D-032 (引入 wetness 字段), D-043 (taste_match / 关键词扫描), D-044 (profile 真实化)
+
+
+---
+
+## D-050 — CLI 精排运行时纠错: validator 结构化 error code + 一次性 retry-with-feedback
+
+**2026-05-15** · 架构决策
+
+**背景**: D-048 把 L3 拆成主路径 (anthropic/openrouter tool_use forced schema, 17/18) 和 CLI 自用降级路径 (claude_code_cli, 不支持 tool_use 只能 prompt 软约束). 本次把 CLI 默认 model 从 sonnet 切到 opus 求质量提升后, dry_run 暴露新失败模式: **opus 质量贪心覆盖 prompt 计数指令** —— 从 top-band 挑 4 条 exploit + 1 条 mid-band 当 explore, 主动放弃第二个 explore 槽 (它判断"硬塞次优 explore 不如多给一个 exploit"). 实测 ~20-40% session 触发 `explore 数量 1 != 期望 2` fallback, 商家分布退化到 5 家。
+
+sonnet 没这问题 (倾向无脑遵守计数), 但 sonnet 选菜质量明显弱于 opus (D-047 V4 矩阵已验证).
+
+试过把"计数硬约束"写到 CLI patch 后的 prompt 段 (`_CLI_OUTPUT_SECTION`), 反而让 opus 开始返回 6 条, 失败率从 20% 升到 100%. 加重 prompt 不是答案 —— opus 的"全局质量优化"倾向需要机械纠错, 不是更严厉的指令。
+
+**决策三件套**:
+
+1. **validator 返回结构化 error code** (`chisha/rerank.py:RerankValidationCode`)
+   - `_validate_llm_candidates_v` / `_diagnose_candidates` 返回 `(cands, code, detail)` 三元组
+   - code 是稳定枚举: `EXPLORE_COUNT_MISMATCH` / `OVER_N_MAX` / `EXPLORE_POSITION_WRONG` / `INDEX_OUT_OF_RANGE` 等
+   - detail 仍是中文人类可读供 trace / fallback_reason 显示, 但 retry 路由不再依赖文案
+   - Codex review Q2 反馈: 之前用 `("explore 数量", "n_max", "数量") in detail` 字符串匹配, validator 文案改一下就静默漏触发
+
+2. **retry trigger 按 code allowlist 路由** (`_RETRY_TRIGGER_CODES`)
+   - 仅 `{OVER_N_MAX, EXPLORE_COUNT_MISMATCH, EXPLORE_POSITION_WRONG}` 三类触发 retry
+   - 不 retry 的: 解析失败 / 缺字段 / index 越界 / fit_score 越界 等 —— opus 重答也不会变好, 直接 fallback 省 12s + $0.03
+
+3. **retry 限定 CLI 路径 + 一次性 + 显式纠错 prefix** (`_run_llm_rerank`)
+   - 仅 `is_cli=True` 时启用 (主路径 tool_use 不需要)
+   - 最多 retry 一次, 失败即正常 fallback
+   - prefix append 到 user_msg 末尾 (不改 system prompt, 防 prompt cache 失效并保留 user-turn correction 语义)
+   - prefix 内容: ①告知"上次你给了 X exploit + Y explore"; ②要求"正好 N-K + K, 不多不少"; ③明确"其余硬过滤/口味/健康/同品牌择优规则全部仍然生效, 基于原 [CANDIDATES] 重新挑, 不是改标签" (Codex Q3 防 retry 时质量退化)
+   - **不**贴上次错误 JSON: 会锁死模型在错误选择, 增加 minimal-edit 倾向而非真正重选
+
+**边界与适用范围**:
+
+- 仅 CLI 自用降级路径, 主路径 tool_use forced schema 无此问题, 也不走 retry
+- 仅 count/position 类失败, 不扩展到所有 fallback 场景
+- CLI 路径仍属 D-048 边界内的"自用 best-effort", 生产场景应配 `provider=anthropic/openrouter`
+
+**Codex 闭环要点 (D-048.1 教训延续)**:
+
+- Q1 拒绝"代码确定性 demote"方案: 把高分 exploit 改成 `is_explore=true` 会破坏 `one_line_reason` 语义 + 违反"explore 来自 idx≥10"规则, retry 保证语义自洽
+- Q2 结构化 error code (落地)
+- Q3 correction prefix 明确"其余规则仍生效" (落地)
+- Q4 opus 默认在 CLI 自用边界内 OK, 但生产应强走 tool_use (无新动作, 仍属 D-048 定位)
+- Q5 根本避坑思路: 不要把硬结构约束交给纯 prompt; CLI = best-effort, 不作为唯一可靠路径 (D-048 已定位, 注释强化)
+
+**trace 字段新增** (调试台 / log 可观测): `retry_attempted` (bool) / `retry_succeeded` (bool) / `retry_first_failure_code` (str) / `retry_latency_ms` (int) / `llm_response_retry` (raw resp). `latency_ms` 保留原始首次调用值不累加, 区分"首次 12s + retry 12s" vs "单次慢 24s"。
+
+`fallback_reason` 格式调整: `candidates 业务校验失败 [<CODE>]: <detail>`, 方便 grep / 调试台 badge。
+
+**dry_run 实测**:
+- 修前 opus 无 retry: 2-4/10 fallback, 多样性退化到 5 家店
+- 修后 opus + retry: 第一轮 10/10 成功 (其中 1 次走 retry), 第二轮 10/10 成功 (0 retry), 商家分布 12+ 家
+- retry 延迟 ~12s + 单次成本 ~$0.03 (合计 ~24s / ~$0.06), 大多数 session 不触发
+
+**变更点**: `chisha/rerank.py` (RerankValidationCode 类 + _RETRY_TRIGGER_CODES + _validate/_diagnose 三元组返回 + _run_llm_rerank retry 块), `chisha/llm_providers/claude_code_cli.py` (`_DEFAULT_MODEL` sonnet → opus), `profile.yaml` (`llm.model.claude_code_cli` sonnet → opus), `prompts/rerank_system.md` (主路径 tool_use 段加计数硬约束 + 边界小节澄清, CLI patch 路径不生效但留着以备未来切回)
+
+依赖: D-047 (provider 抽象 + opus 默认主路径), D-048 (CLI 分流 + status 三态), D-048.1 (prompt 清理 + Codex 跨 AI review 流程)
+
+---
+
+## D-051 — Web 优先, 飞书降级为推送通道
+
+**2026-05-15** · 产品形态决策 → 完整实施细节见 [IMPLEMENTATION_LOG.md#d-051](IMPLEMENTATION_LOG.md#d-051)
 
 **背景**: V1 推荐链路已端到端跑通 (数据 + 召回硬过滤 D-041 + L2 12 维 D-043 + L3 tool_use D-047 + 调试台 D-039 + 反馈闭环 P3), 卡在 D-022 飞书 cron 接入这步。复盘后意识到飞书卡片做"主交互"有几个根本性约束:
 - 字段密度低, 自定义控件有限 — refine 多轮对话 / profile 编辑根本放不进卡片
@@ -1775,7 +1898,7 @@ V1-V2 期间 profile.yaml 一直是 mock 数据 (goal=减脂增肌, 价格 35/50
 
 ---
 
-## D-050: Accept 信号去 deeplink, 改持久 inline 锁定 + 复制店名
+## D-052: Accept 信号去 deeplink, 改持久 inline 锁定 + 复制店名
 
 日期: 2026-05-15
 状态: active
@@ -1812,7 +1935,7 @@ V1-V2 期间 profile.yaml 一直是 mock 数据 (goal=减脂增肌, 价格 35/50
 
 ---
 
-## D-051: Refine 历史从底部列表升级为顶部面包屑 + smooth-scroll
+## D-053: Refine 历史从底部列表升级为顶部面包屑 + smooth-scroll
 
 日期: 2026-05-15
 状态: active
@@ -1851,7 +1974,7 @@ V1-V2 期间 profile.yaml 一直是 mock 数据 (goal=减脂增肌, 价格 35/50
 
 ---
 
-## D-052: Skip-meal escape hatch (6 reason chip)
+## D-054: Skip-meal escape hatch (6 reason chip)
 
 日期: 2026-05-15
 状态: active
@@ -1890,7 +2013,7 @@ V1-V2 期间 profile.yaml 一直是 mock 数据 (goal=减脂增肌, 价格 35/50
 
 ---
 
-## D-053: 同 session 抑制 unfed banner
+## D-055: 同 session 抑制 unfed banner
 
 日期: 2026-05-15
 状态: active
@@ -1913,7 +2036,7 @@ const shownUnfed = sameSession ? null : unfed;
 - 跨 session (中午 pick 完关页面, 下午 14:00 重开) 自然进入回顾态, banner 该弹时弹
 
 反对意见 / 风险:
-- 用户在同 session 内 refine 多轮、最终关闭页面没吃, banner 也不会弹 — 但 D-052 的 skip 路径已经覆盖, 不重复
+- 用户在同 session 内 refine 多轮、最终关闭页面没吃, banner 也不会弹 — 但 D-054 的 skip 路径已经覆盖, 不重复
 - 同 session_id 跨大段时间 (理论上 refine 后过几小时回来仍是同 session) banner 仍被抑制 — 缓解: session 在跨日时由后端切, 实际不会发生
 
 触发重审的条件:
@@ -1925,18 +2048,18 @@ const shownUnfed = sameSession ? null : unfed;
 
 ---
 
-## D-054: NavBar 加「反馈」tab + 角标 (V1.1)
+## D-056: NavBar 加「反馈」tab + 角标 (V1.1)
 
 日期: 2026-05-15
 状态: active
-背景: V1 入口架构 (D-049~D-053) 时, 反馈入口只有主页顶部一条 `PendingFeedbackBanner`。三个失效场景:
+背景: V1 入口架构 (D-051~D-055) 时, 反馈入口只有主页顶部一条 `PendingFeedbackBanner`。三个失效场景:
 - banner ✕ 关掉后, 那顿饭再也找不到反馈页 (URL 不可记忆 / 无主动入口)
 - 多条积压时只看到最近一条, 隔天点别的 → 旧条目实质失踪
 - 没有"我所有的反馈记录"全局视图, 用户不知道系统记了什么
 
 决定: NavBar 加第三个 tab「反馈」, 跟「历史」「偏好」并列。永远可见 = 永远可达。
 - 角标显示积压数 (active unfed, 未 snooze 未 stop)
-- 点击进 `/feedback` 反馈中心 (见 D-056)
+- 点击进 `/feedback` 反馈中心 (见 D-058)
 - 角标 ≤ 0 时不渲染
 
 理由:
@@ -1946,7 +2069,7 @@ const shownUnfed = sameSession ? null : unfed;
 
 反对意见 / 风险:
 - 又多一个固定 tab, 顶导栏更挤 — 但 V1 没有"主页广告位" / "搜索" 这类需要争位置的对手, 顶导栏密度可承受
-- 角标可能给用户压力 (3 餐没反馈 ↔ "未读消息" 心智) — 缓解: snooze (D-058) 让用户能主动消角标
+- 角标可能给用户压力 (3 餐没反馈 ↔ "未读消息" 心智) — 缓解: snooze (D-060) 让用户能主动消角标
 
 触发重审条件:
 - 实测用户从未点开过反馈 tab (说明角标 = noise, 改 dot 形态或干脆撤掉)
@@ -1954,24 +2077,24 @@ const shownUnfed = sameSession ? null : unfed;
 
 依赖 / 影响:
 - 落地: `apps/web/src/components/NavBar.tsx`; 数据从 `useChishaState.inbox` 读
-- 配合: D-055 banner 升级 + D-056 inbox 页
+- 配合: D-057 banner 升级 + D-058 inbox 页
 
 ---
 
-## D-055: PendingFeedbackBanner 升级为卡片 + 多条堆叠 (V1.1)
+## D-057: PendingFeedbackBanner 升级为卡片 + 多条堆叠 (V1.1)
 
 日期: 2026-05-15
-状态: active (取代 D-049 slim banner 形态)
-背景: D-049 落地的 banner 是 slim 形态 (一行细 banner + 关闭 ✕), V1.1 入口架构 review 中发现三个不足:
+状态: active (取代 D-051 slim banner 形态)
+背景: D-051 落地的 banner 是 slim 形态 (一行细 banner + 关闭 ✕), V1.1 入口架构 review 中发现三个不足:
 - 信息密度低 — 餐厅名 + summary + meta 全堆一行, 容易被瞟过去
 - 单条心智 — 只显示最近一条, 多条积压时旧条目隐形
-- 操作模糊 — ✕ 是"以后再说"还是"永久关闭" 没区分 (见 D-058)
+- 操作模糊 — ✕ 是"以后再说"还是"永久关闭" 没区分 (见 D-060)
 
 决定: 改卡片堆叠形态:
 - 顶部 metadata 行: ● 待反馈 · 3 小时前 · 午餐 · 右侧 ⋯ 菜单
 - 主体: 餐厅名 (font-semibold 14.5px) + summary 一行 line-clamp
 - 底部 footer: 「5 秒反馈一下 →」 + 「还有 N 餐没反馈 去反馈中心 →」(N>0 时显示)
-- ⋯ 菜单提供 snooze / stop 显式两选项 (见 D-058)
+- ⋯ 菜单提供 snooze / stop 显式两选项 (见 D-060)
 - 卡片视觉用 accent 6% 染色背景 + 35% 边框, 比 slim 形态显眼一档
 
 理由:
@@ -1989,15 +2112,15 @@ const shownUnfed = sameSession ? null : unfed;
 
 依赖 / 影响:
 - 落地: `apps/web/src/components/PendingFeedbackBanner.tsx` (全量改写); 砍掉 SlimBanner 函数
-- 配合: D-054 + D-056 + D-058
+- 配合: D-056 + D-058 + D-060
 
 ---
 
-## D-056: /feedback 反馈中心新路由 (V1.1)
+## D-058: /feedback 反馈中心新路由 (V1.1)
 
 日期: 2026-05-15
 状态: active
-背景: D-054 决定 NavBar 加反馈 tab 后, tab 落地页必须是个反馈中心 (不是直接跳第一条反馈 — 那是 `/feedback/last` 的事)。中心页要解决三件事:
+背景: D-056 决定 NavBar 加反馈 tab 后, tab 落地页必须是个反馈中心 (不是直接跳第一条反馈 — 那是 `/feedback/last` 的事)。中心页要解决三件事:
 - 看全部待反馈条目 (不只是 banner 上那条)
 - 区分 snooze (临时) vs stop (永久) vs 已反馈 三种状态
 - 给「snooze 一条」/「stop 一条」 一个非 banner 的操作入口
@@ -2010,7 +2133,7 @@ const shownUnfed = sameSession ? null : unfed;
 
 理由:
 - 三段语义对应反馈生命周期 (待办 / 软搁置 / 完成), 跟 inbox 心智一致
-- 暂缓段不隐藏 — 让 snooze 不变成"丢失" (D-058 说 snooze 是 "我现在没空" 不是 "扔了")
+- 暂缓段不隐藏 — 让 snooze 不变成"丢失" (D-060 说 snooze 是 "我现在没空" 不是 "扔了")
 - 已反馈段限制 6 条 (recentFeedbacks limit=6) — 老反馈应该走 history 查, 这里只承担"最近几餐"心智
 
 反对意见 / 风险:
@@ -2024,19 +2147,19 @@ const shownUnfed = sameSession ? null : unfed;
 依赖 / 影响:
 - 落地: `apps/web/src/pages/FeedbackInbox.tsx`
 - API: 新增 `GET /api/feedback/inbox?include_snoozed=` (代替 `last_unfed` 单条) + `GET /api/feedback/recent` (代替原 placeholder)
-- 配合: D-054 NavBar tab + D-058 snooze/stop 语义
+- 配合: D-056 NavBar tab + D-060 snooze/stop 语义
 
 ---
 
-## D-057: /history 每行可点击进反馈 (V1.1)
+## D-059: /history 每行可点击进反馈 (V1.1)
 
 日期: 2026-05-15
 状态: active
-背景: D-049 落地的 history 页是只读列表 (日期 / 餐次 / mood / candidates / accepted_rank), 用户看到"昨天点的 X 还没反馈" 没有直接操作入口, 必须去主页看 banner 或去新 inbox。割裂。
+背景: D-051 落地的 history 页是只读列表 (日期 / 餐次 / mood / candidates / accepted_rank), 用户看到"昨天点的 X 还没反馈" 没有直接操作入口, 必须去主页看 banner 或去新 inbox。割裂。
 
 决定: history 每行可点:
 - 未反馈行 → 跳 `/feedback/<sid>` 进表单
-- 已反馈行 → 跳 `/feedback/<sid>` 进 detail view (双态分支 D-064)
+- 已反馈行 → 跳 `/feedback/<sid>` 进 detail view (双态分支 D-066)
 - 跳过餐 (accepted_rank=null 且无反馈记录) → 不可点, 显示"都没吃" 灰字
 
 视觉:
@@ -2047,7 +2170,7 @@ const shownUnfed = sameSession ? null : unfed;
 理由:
 - "我从哪里发起反馈" 应该跟"我从哪里看历史" 是同一个动作 — 历史和反馈本质是同一组数据
 - 跨页面联动: 主页 banner 解决"刚吃完", inbox 解决"最近积压", history 解决"翻旧账" — 三条路径都通 detail
-- chip 形态切换 (★ → 👍/😐/👍) 是 D-061 信号框架的视觉化, 跟 schema 一致
+- chip 形态切换 (★ → 👍/😐/👍) 是 D-063 信号框架的视觉化, 跟 schema 一致
 
 反对意见 / 风险:
 - 行可点击 + chip 多色 → 视觉密度上升, 列表更花 — 但 history 本来就是低频页 (每日 < 1 次访问), 信息密度比留白重要
@@ -2058,27 +2181,27 @@ const shownUnfed = sameSession ? null : unfed;
 
 依赖 / 影响:
 - 落地: `apps/web/src/pages/HistoryPage.tsx`
-- 配合: D-061 gut chip 视觉 + D-064 双态分支
+- 配合: D-063 gut chip 视觉 + D-066 双态分支
 
 ---
 
-## D-058: Banner ✕ = snooze (24h 软); ⋯ 菜单 = stop (永久) (V1.1)
+## D-060: Banner ✕ = snooze (24h 软); ⋯ 菜单 = stop (永久) (V1.1)
 
 日期: 2026-05-15
-状态: active (取代 D-049 banner ✕ = dismiss 单态)
-背景: D-049 的 banner ✕ 是单态 "dismiss = 永久消失"。原型 review 中发现这是错误抽象:
+状态: active (取代 D-051 banner ✕ = dismiss 单态)
+背景: D-051 的 banner ✕ 是单态 "dismiss = 永久消失"。原型 review 中发现这是错误抽象:
 - 用户场景 A: "我现在工作中, 一会儿再填" → 想要软关闭
 - 用户场景 B: "这餐我不想再被提醒了 (吃了但忘了细节 / 真不想反馈)" → 想要硬关闭
 - 单 ✕ 把这两种都映射成"永久消失" → A 用户的反馈丢失
 
 决定: banner 关闭操作分两态:
 - **snooze (软关闭)** = ✕ 默认 / ⋯ 菜单「以后再说」 → 24h 不显示在 banner, **但 inbox 暂缓段仍在**, 用户主动回来还能填
-- **stop (硬关闭)** = ⋯ 菜单「这餐别催了」 → banner 永久不显示, inbox 也移除, **但 history 行仍可点进表单** (D-057 兜底)
+- **stop (硬关闭)** = ⋯ 菜单「这餐别催了」 → banner 永久不显示, inbox 也移除, **但 history 行仍可点进表单** (D-059 兜底)
 
 数据语义:
 - snooze = "我现在没空" → 不污染推荐模型 (用户暂时回避, 不代表负面信号)
 - stop = "这条不该被催" → 也不污染推荐模型 (用户的反馈记录意愿, 不是菜的质量信号)
-- 两者都**不**作为 ranking signal — 跟反馈本体 (D-061) 区分
+- 两者都**不**作为 ranking signal — 跟反馈本体 (D-063) 区分
 
 理由:
 - 给 A 用户兜底: 软关闭后用户回来还能填, 数据闭环不丢
@@ -2088,7 +2211,7 @@ const shownUnfed = sameSession ? null : unfed;
 
 反对意见 / 风险:
 - 两态增加复杂度, 用户可能不区分 — 但即使用户全选 snooze 也无害 (24h 后回来), 兜底不会丢数据
-- stop 是单向, 没有撤销 — 但 history 行可点 (D-057) 是兜底入口, 用户想反馈还能找到
+- stop 是单向, 没有撤销 — 但 history 行可点 (D-059) 是兜底入口, 用户想反馈还能找到
 
 触发重审条件:
 - 实测 ⋯ 菜单使用率 < 5% (说明用户根本不区分两态, 改回单 ✕ 默认 snooze)
@@ -2101,10 +2224,10 @@ const shownUnfed = sameSession ? null : unfed;
 
 ---
 
-## D-059: 反馈表单探索 5 个方向 (方法论) (V1.1)
+## D-061: 反馈表单探索 5 个方向 (方法论) (V1.1)
 
 日期: 2026-05-15
-状态: archived (方法论档案, 选定 E 见 D-060)
+状态: archived (方法论档案, 选定 E 见 D-062)
 背景: V1 反馈表单 (好吃度 5 星 + 整体满意 5 星 + 4 chip + 备注) 有 4 个核心问题:
 - 信号冗余 (accept 已记 rank, 又让用户 radio 一次)
 - 维度模糊 (好吃度 vs 整体满意 用户分不清差别)
@@ -2131,16 +2254,16 @@ const shownUnfed = sameSession ? null : unfed;
 - 用户/产品方在 5 个之间纠结时间过长 — 缓解: live switcher 上线 1 周内必须收敛 (本次 1 天内收敛到 E)
 
 依赖 / 影响:
-- 这是方法论决策, 不是产品决策 — 落地结果在 D-060
+- 这是方法论决策, 不是产品决策 — 落地结果在 D-062
 - 原型档案 (5 个变体源码) 保存在 `chisha-user (1)/feedback-variants.jsx` (设计交付物); 正式工程只保留 E
 
 ---
 
-## D-060: 选定 E 渐进披露 + 借鉴 D 复盘卡形态作为生产方向 (V1.1)
+## D-062: 选定 E 渐进披露 + 借鉴 D 复盘卡形态作为生产方向 (V1.1)
 
 日期: 2026-05-15
 状态: active
-背景: D-059 5 变体 review 后取舍空间清楚了:
+背景: D-061 5 变体 review 后取舍空间清楚了:
 - A 极简: 信号太薄 (只有一个 gut 值, calibration 信号 0)
 - B 维度: 5 个 segmented 全部必填心智, 多数用户填到一半放弃
 - C 对话: 模仿 LLM 心智不必要, 用户来反馈不是来聊天
@@ -2168,15 +2291,15 @@ const shownUnfed = sameSession ? null : unfed;
 依赖 / 影响:
 - 落地: `apps/web/src/components/feedback/ProgressiveForm.tsx`
 - 砍掉: A/B/C/D 4 个变体 + variant switcher (生产不要)
-- 配合: D-061 信号框架 + D-062 头部语义 + D-063 4 维定义
+- 配合: D-063 信号框架 + D-064 头部语义 + D-065 4 维定义
 
 ---
 
-## D-061: 反馈字段的信号框架: calibration / behavior / gut 三类 (V1.1)
+## D-063: 反馈字段的信号框架: calibration / behavior / gut 三类 (V1.1)
 
 日期: 2026-05-15
 状态: active · 方法论框架
-背景: 选 E (D-060) 后, 必须决定**展开区填哪些字段**。空想容易塞太多 (像 V1 原版 4 chip + 2 ★ 6 个字段) 或太少 (像 A 单 gut 信号贫瘠)。需要一个"该不该加这个字段"的判别准则。
+背景: 选 E (D-062) 后, 必须决定**展开区填哪些字段**。空想容易塞太多 (像 V1 原版 4 chip + 2 ★ 6 个字段) 或太少 (像 A 单 gut 信号贫瘠)。需要一个"该不该加这个字段"的判别准则。
 
 决定: 反馈字段按对推荐模型的作用分三类:
 
@@ -2193,7 +2316,7 @@ const shownUnfed = sameSession ? null : unfed;
 理由:
 - 给"该不该加这个字段"一个机械化判别 (而不是"产品 sense") — 避免随手加字段
 - 三类显式分离, 下游模型消化时 weight 不同 (calibration 用 reverse-loss, behavior 用 ranking signal, gut 用 prior)
-- gut 一个就够 — 整体观感不需要双维度 (好吃 vs 满意 这种重叠维度被砍掉, 见 D-062)
+- gut 一个就够 — 整体观感不需要双维度 (好吃 vs 满意 这种重叠维度被砍掉, 见 D-064)
 
 反对意见 / 风险:
 - 三类分得太硬, 现实字段可能跨类 (如"分量" 既是 calibration 又是 behavior) — 缓解: 选最强信号那类归类, 跨类只是描述
@@ -2211,11 +2334,11 @@ const shownUnfed = sameSession ? null : unfed;
 
 ---
 
-## D-062: E 头部 = gut (好吃度 难吃/普通/好吃), 跟 behavior 字段分离 (V1.1)
+## D-064: E 头部 = gut (好吃度 难吃/普通/好吃), 跟 behavior 字段分离 (V1.1)
 
 日期: 2026-05-15
 状态: active
-背景: 选定 E 头部 3 档情绪一击 (D-060), 接下来要决定头部三档**问的是什么**:
+背景: 选定 E 头部 3 档情绪一击 (D-062), 接下来要决定头部三档**问的是什么**:
 - 方案 A: "下次还点吗" (behavior signal)
 - 方案 B: "整体好吃吗" (gut signal)
 - 方案 C: "整体满意吗" (gut signal 但维度模糊)
@@ -2225,7 +2348,7 @@ const shownUnfed = sameSession ? null : unfed;
 理由:
 - 一个菜可以**好吃但贵不会再点** (好吃 + 不还点) — 好吃度跟复购意愿是**两个独立维度**, 头部只能问一个
 - 头部应该问最快回答的那个 — "好吃吗" 比 "下次还点吗" 决策成本低 (好吃是即时感受, 还点是综合判断)
-- 复购意愿 (behavior, 排序强信号) 放到展开区 (D-063 的 `repurchase_intent`), 让真正想给系统信号的用户填
+- 复购意愿 (behavior, 排序强信号) 放到展开区 (D-065 的 `repurchase_intent`), 让真正想给系统信号的用户填
 - 砍掉"整体满意" 选项 — 它跟"好吃度"维度重叠 (V1 原版的 5 星 ×2 错误), 模糊性比信号高
 
 反对意见 / 风险:
@@ -2239,13 +2362,13 @@ const shownUnfed = sameSession ? null : unfed;
 
 ---
 
-## D-063: E 展开 4 维, 每行对齐当时 prediction (V1.1)
+## D-065: E 展开 4 维, 每行对齐当时 prediction (V1.1)
 
 日期: 2026-05-15
 状态: active · schema 钉住
-背景: D-061 框架 + D-062 头部确定后, 展开区填什么字段、怎么呈现:
-- 字段必须满足 D-061 的 ROI 准则 (能反向改 prediction 或 ranking)
-- 呈现必须把"当时系统怎么说" 摆给用户看 (D-060 借鉴 D 复盘卡: prediction vs reality)
+背景: D-063 框架 + D-064 头部确定后, 展开区填什么字段、怎么呈现:
+- 字段必须满足 D-063 的 ROI 准则 (能反向改 prediction 或 ranking)
+- 呈现必须把"当时系统怎么说" 摆给用户看 (D-062 借鉴 D 复盘卡: prediction vs reality)
 
 决定: 展开区 4 维, 每行 3 列 (label / 当时 prediction / 你实际 3 档选项):
 
@@ -2262,7 +2385,7 @@ const shownUnfed = sameSession ? null : unfed;
 - 每个字段独立, 全部 optional (null 表示用户没填)
 
 理由:
-- 4 维全是 D-061 ROI 准则下"能反向修改具体 prediction 或排序" 的字段, 一个都不浪费
+- 4 维全是 D-063 ROI 准则下"能反向修改具体 prediction 或排序" 的字段, 一个都不浪费
 - "reason_match" 是最高 ROI: LLM reason generator 没有别的反向训练信号 (其他 prediction 用数值校准, reason 只有 reverse-loss feedback)
 - "prediction vs reality" 呈现让用户在填的过程中**自动复盘**系统说错了哪里, 信号质量高于纯打分
 - 4 个不多不少: 砍到 3 个会丢一个高 ROI 字段, 加到 5 个会让展开率从 ~30% 跌到 ~15%
@@ -2282,7 +2405,7 @@ const shownUnfed = sameSession ? null : unfed;
 
 ---
 
-## D-064: 反馈一次性提交 = 永久 readonly, 不可修改 (V1.1)
+## D-066: 反馈一次性提交 = 永久 readonly, 不可修改 (V1.1)
 
 日期: 2026-05-15
 状态: active · schema 钉住
@@ -2296,11 +2419,11 @@ const shownUnfed = sameSession ? null : unfed;
 理由:
 - 反馈是 **timestamped fact**: "我在 2026-05-15 19:43 觉得这顿好吃" 这件事不应该 retroactive 改
 - 改 = 推荐模型基础不稳定: 如果用户 1 周后改了反馈, 中间这周基于旧反馈做的推荐 / 学习全部需要回溯重算
-- "事后回想" 的需求由 D-065 的 append-only timeline 满足 (新数据点, 不污染原始反馈)
+- "事后回想" 的需求由 D-067 的 append-only timeline 满足 (新数据点, 不污染原始反馈)
 - 时间窗口 (方案 B) 是错误妥协: 5 分钟内能改 ≠ 5 分 01 秒不能改, 边界毫无 product 意义, 实施复杂度高且用户难以理解
 
 反对意见 / 风险:
-- 用户打错字 / 误点 (难吃 vs 好吃) 没法修 → 缓解: append 备注「上面打错, 应该是好吃」, 下游 LLM 可消化文本; V2 加显式"撤销重提" (D-066 待办)
+- 用户打错字 / 误点 (难吃 vs 好吃) 没法修 → 缓解: append 备注「上面打错, 应该是好吃」, 下游 LLM 可消化文本; V2 加显式"撤销重提" (D-068 待办)
 - "永久 readonly" 心智重, 用户犹豫不填 → 实测如此再降级为 24h 窗口
 
 触发重审条件:
@@ -2309,16 +2432,16 @@ const shownUnfed = sameSession ? null : unfed;
 
 依赖 / 影响:
 - schema: `FeedbackRecord` 提交后所有 calibration / behavior / gut / note / accepted_rank 字段全部 frozen
-- detail view (D-064 落地): 全部字段渲染为只读, 标"已封存 · 不可修改, 但可以追加备注"
+- detail view (D-066 落地): 全部字段渲染为只读, 标"已封存 · 不可修改, 但可以追加备注"
 - 落地: `apps/web/src/components/feedback/FeedbackDetailView.tsx` 替换 form 渲染
 
 ---
 
-## D-065: 永远可 append 备注 (append-only timeline) (V1.1)
+## D-067: 永远可 append 备注 (append-only timeline) (V1.1)
 
 日期: 2026-05-15
 状态: active · schema 钉住
-背景: D-064 说 readonly, 但用户事后确实有补充需求 ("第二天回想, 胃确实有点重" / "下次还会再点但要备注少油") — 这些是**新观察**, 不是"修正"。需要给一个表达通道, 但不能让它污染原始反馈。
+背景: D-066 说 readonly, 但用户事后确实有补充需求 ("第二天回想, 胃确实有点重" / "下次还会再点但要备注少油") — 这些是**新观察**, 不是"修正"。需要给一个表达通道, 但不能让它污染原始反馈。
 
 决定: 在 detail view 加 append-only timeline:
 - 用户在 detail view 输入框写补充 → 调 `POST /api/feedback/<sid>/comments { text }` → 后端 push `{ id, text, created_at }` 到 `feedbacks[sid].comments[]`
@@ -2334,10 +2457,10 @@ const shownUnfed = sameSession ? null : unfed;
 理由:
 - 给"事后回想"出口, 但隔离 — 原始数据稳定, 新数据增量
 - append-only 比"编辑覆盖" 信息密度高 (能看到用户心智演变, 不只看最新结论)
-- 不结构化 (纯文本) 是有意为之: V1.1 阶段不知道用户会写什么, 先收文本, V2 再做 chip / emoji 结构化 (D-066)
+- 不结构化 (纯文本) 是有意为之: V1.1 阶段不知道用户会写什么, 先收文本, V2 再做 chip / emoji 结构化 (D-068)
 
 反对意见 / 风险:
-- 用户可能在 comment 里写"上面打错了应该是好吃" 而不是新观察 — 这就是 D-064 readonly 的副作用; 不修, V2 加显式"撤销重提" 解决
+- 用户可能在 comment 里写"上面打错了应该是好吃" 而不是新观察 — 这就是 D-066 readonly 的副作用; 不修, V2 加显式"撤销重提" 解决
 - comments[] 无 cap 长期可能膨胀 — 实测如果有用户写 > 50 条再加, V1.1 阶段不优化
 
 依赖 / 影响:
@@ -2347,13 +2470,13 @@ const shownUnfed = sameSession ? null : unfed;
 
 ---
 
-## D-066: V1.1 砍掉的辅助功能 (放 V2) (V1.1)
+## D-068: V1.1 砍掉的辅助功能 (放 V2) (V1.1)
 
 日期: 2026-05-15
 状态: active · 范围决策
 背景: V1.1 反馈系统 review 中提了几个辅助功能, 都被砍到 V2:
 - 删除反馈 (GDPR / 用户主权角度有用, V2 做)
-- 编辑反馈 (即使有时间窗口也不做, 强制 append-only, 见 D-064)
+- 编辑反馈 (即使有时间窗口也不做, 强制 append-only, 见 D-066)
 - 反馈历史专门入口 (暂时复用 inbox 已反馈段 + history)
 - Comment 的 chip / emoji 结构化输入 (让 append 也是数值信号, V2 做)
 - 反馈 banner 一键打分 (banner inline 三档迷你打分, 原型 card variant 有 mock, schema 已预留 `quick: true` 标记)
@@ -2365,9 +2488,8 @@ const shownUnfed = sameSession ? null : unfed;
 理由:
 - V1.1 是反馈闭环 MVP, 目标是"用户能填 + 系统能用", 辅助功能不影响这个最小闭环
 - "Comment 结构化" 等需要 V1.1 自用一周收集真实文本后, 再设计 chip / emoji 集合 — 提前设计会拍脑袋
-- 删除 / 撤销在 V1.1 用户实测中如果痛点高, 触发 D-064 重审; 不痛就推 V2
+- 删除 / 撤销在 V1.1 用户实测中如果痛点高, 触发 D-066 重审; 不痛就推 V2
 
 依赖 / 影响:
 - ROADMAP V2.0 待办里加: "反馈系统 V2 增量 (删除 / 撤销 / Comment 结构化 / banner 一键打分 / A/B 框架)"
-- 不影响 V1.1 schema 设计 — `quick: true` 字段已在 schema 预留 (D-061), banner 一键打分上线只是前端补 UI
-
+- 不影响 V1.1 schema 设计 — `quick: true` 字段已在 schema 预留 (D-063), banner 一键打分上线只是前端补 UI

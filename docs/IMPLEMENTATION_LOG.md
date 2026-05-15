@@ -29,8 +29,10 @@
 | [D-046.1](#d-0461-l3-精排-max_tokens--json_mode-临时修-废弃) | L3 临时修(废弃) | — |
 | [D-047](#d-047-l3-精排重构--tool_use-forced-schema--opus-默认--top60--cache_control) | L3 tool_use forced schema + opus | — |
 | [D-048](#d-048--l3-双路径收口-cli-no-tool-分流--配置错-hard-fail--trace-结构化) | L3 双路径 (CLI + API/OR) + config_error | — |
-| [D-049 执行](#d-049-执行记录--web-用户视图-v1-落地-appsweb) | apps/web V1 SPA 落地 (Vite+React+TS) | [DECISIONS#D-049](DECISIONS.md#d-049--web-优先-飞书降级为推送通道) |
-| [D-054~D-066 执行](#d-054d-066-执行记录--v11-反馈系统落地-appsweb) | V1.1 反馈系统 (form/detail/inbox/banner stack/snooze-stop) | [DECISIONS#D-054~D-066](DECISIONS.md#d-054-navbar-加反馈-tab--角标-v11) |
+| [D-048.1](#d-0481--l3-精排-prompt-清理-工程注释移除--few-shot-修冲突--user-message-字段渲染统一) | L3 prompt 可读性清理 + few-shot 修硬约束冲突 | — |
+
+| [D-051 执行](#d-051-执行记录--web-用户视图-v1-落地-appsweb) | apps/web V1 SPA 落地 (Vite+React+TS) | [DECISIONS#D-051](DECISIONS.md#d-051--web-优先-飞书降级为推送通道) |
+| [D-056~D-068 执行](#d-056d-068-执行记录--v11-反馈系统落地-appsweb) | V1.1 反馈系统 (form/detail/inbox/banner stack/snooze-stop) | [DECISIONS#D-056~D-068](DECISIONS.md#d-056-navbar-加反馈-tab--角标-v11) |
 
 ---
 
@@ -309,15 +311,19 @@ home (餐厅稀疏, 431 combos):
 
 二审用 general-purpose subagent 模拟"Codex 视角"做的, 不是真 Codex. 用户安装 codex-cli 0.130.0 后, 用真 Codex 重审, 发现 4 个 Claude 一审 + 假二审都漏掉的真 bug:
 
-#### 1. System prompt 事实错误 (严重)
+#### 1. System prompt 事实错误 (严重) — **部分 superseded by D-049**
+
+> ⚠️ D-049 (2026-05-14) 后: `apply_caps()` 改 head-only, top60 不再含 tail 段同品牌变体, 实际同品牌至多 2 条. 下文"6-8 次"的实测背景作废; prompt 已同步改成"至多 2 条变体, 在这 2 条里挑菜品组合". 但 #2 ~ #5 仍然有效.
 
 之前 prompt 写: "L2 已做品牌/餐厅/菜系/形态多层 cap, 输入里不会有同店重复 combo (同一 brand 至多 1 条). 你不必再做去重."
 
-**实测核对**: shenzhen-bay top60 里 Super Model 出现 **8 次**, 21 个 brand 重复 ≥2 次. 真实 brand cap=2 (D-045), 但 `apply_caps()` 返回 `head + tail`, top60 包含大量 tail 段同品牌变体.
+**实测核对** (D-049 前): shenzhen-bay top60 里 Super Model 出现 **8 次**, 21 个 brand 重复 ≥2 次. 真实 brand cap=2 (D-045), 但 `apply_caps()` 返回 `head + tail`, top60 包含大量 tail 段同品牌变体.
 
 LLM 读了这句话会以为输入已去重, **不会尝试同品牌内部择优**. 实际上输入有大量同 brand 候选, LLM 应该知道可以挑最贴情境的那条 (例如 Super Model 8 个变体里选蛋白最足 / 油最低 / 与 daily_mood 最对的那条).
 
-修复: prompt 改成 "**输入里仍可能含同品牌、同餐厅的多个变体**(例如 Super Model 可能出现 6-8 次). 你的工作之一就是在同品牌变体中选最贴合当下情境的那一条. 最终输出阶段系统会再做一次品牌去重兜底, 同 brand 最多保留 1 条, 所以你也不需要在 5 条输出里塞两个 Super Model."
+修复 (D-049 前): prompt 改成 "**输入里仍可能含同品牌、同餐厅的多个变体**(例如 Super Model 可能出现 6-8 次). 你的工作之一就是在同品牌变体中选最贴合当下情境的那一条. 最终输出阶段系统会再做一次品牌去重兜底, 同 brand 最多保留 1 条, 所以你也不需要在 5 条输出里塞两个 Super Model."
+
+D-049 后 prompt 进一步收紧: 既然 L2 输入已 brand cap=2 真生效, LLM 不需要在 6-8 个变体中择优, 只在 ≤2 个变体里挑菜品组合即可. 同品牌不同分店哪家更近由用户自决。
 
 #### 2. `_validate_llm_candidates()` 漏 idx 上界校验
 
@@ -649,14 +655,257 @@ else:
 
 ---
 
-## D-049 执行记录 · Web 用户视图 V1 落地 (apps/web)
+## D-048.1 — L3 精排 prompt 清理: 工程注释移除 + few-shot 修冲突 + user message 字段渲染统一
 
-**2026-05-15** · 实施细节，决策见 [DECISIONS D-049](DECISIONS.md#d-049) + D-050~D-053
+**2026-05-14** · 工程实施 (D-048 后续 prompt-only 清理, 无 schema/链路改动)
+
+### 触发
+
+用户作为「人」读 `prompts/rerank_system.md` 时主观感觉"工程注释泄漏、目标埋得深、中英文穿插", 提出和 Codex 作为「大模型 / agent 开发专家」一起 review。
+
+### 联合 review (Claude + Codex 各自独立读)
+
+发起命令: `Skill(codex:rescue)` → `Agent(codex:codex-rescue)`. Codex 用 `gpt-5.3-codex` 独立读 `prompts/rerank_system.md` + `rerank.py:build_user_message` + 相关 helper. 输出 ≤600 字的 A/B/C/D 报告。
+
+#### 共识发现 (Claude + Codex 都识别)
+
+| # | 问题 | 影响 |
+|---|---|---|
+| 1 | 工程元注释泄漏: `D-046, D-047 改 tool_use 强制 schema` / `稳态部分 — 进 Anthropic prompt cache` / `L1 召回 + L2 打分（含品牌/餐厅/菜系/形态四层去重 cap）` / `系统会再做一次品牌去重兜底` / `你算了也会被覆盖` 共 6 处, 整段进 cache 喂给 LLM | 占 KV cache, 注意力分配错; "兜底"语气还会鼓励 LLM 放松约束 |
+| 2 | 目标被格式说明淹没 (任务陈述在第 4 行, 但格式速查+读法占到第 39 行才到排序原则) | LLM 注意力被前置的字段表稀释 |
+| 3 | 工程性硬约束 (explore-last / combo_index 不重复) 必须留 system, schema 只管类型不够 | 保留 |
+
+#### Codex 独有发现 (Claude 漏的, 高价值)
+
+| # | 问题 | 影响 |
+|---|---|---|
+| A | few-shot 与硬约束直接冲突: `蒸贝贝南瓜｜纯素·蒸·油1·甜1` 显式写 `甜1`, 但 `_fmt_dish_line:297` 是 `sweet >= 2` 才显示, **代码实际不会产出 `甜1`** → 教 LLM 错误的格式直觉 | LLM 可能基于示例反推"原来 0-1 也会出现", 误判输入 |
+| B | `麻婆豆腐｜豆制品·炒·油3·辣4·甜2·processed｜role=主菜｜18` 示例同时有 `processed` + `role=主菜`, **直接违反第 53 行硬约束"主菜带 processed 丢弃"** → few-shot 在教违规组合 | LLM 学到"main 菜带 processed 是合法格式", 可能不丢弃 |
+| C | 段标签错配: prompt 写 `[PROFILE+CONTEXT]` 是合并段, 但 `_profile_block` / `_context_block` 实际拼成独立的 `[PROFILE]` 和 `[CONTEXT]` 两段 | LLM 找字段时按错的 section 名查 |
+
+#### Claude 独有发现
+
+| # | 问题 | 影响 |
+|---|---|---|
+| D | 读法示例价格精度 `¥18` vs 代码实际 `f"{price:.1f}"` 输出 `18.0` | 小, 但示例对齐代码行为更可信 |
+| E | `_profile_block` 空集合渲染成 Python `repr`: `喜欢: []` / `avoid: []` 像代码残留 | 跟 system prompt `(无)/(空)/未写即 false` 系列风格不一致 |
+| F | `_context_block` 最近 3 天 cuisine 渲染成 Python dict repr `{'川菜': 3, '日料': 1}` (单引号风) | LLM 能解析, 但 `川菜×3 日料×1` 更紧凑、更符合中文 prompt 风格 |
+
+#### 不动 (评估过但 churn > 收益)
+
+- `int(dist_m)/1000` 在 `_fmt_combo_block:326` 是真 bug (2150m 显示 2.0km 而非 2.1km), 但属数值精度而非 prompt 优化, 应单独修
+- `?` 缺失占位 / `心情` vs `daily_mood` 中英映射: LLM 上下文足够推断, 改了 churn 不划算
+
+### 修改
+
+#### system prompt (`prompts/rerank_system.md`)
+
+- **顶部 HTML 注释**只保留 CLI patch 锚点警告 (`# 输出方式` 标题 + 文末 `select_top_candidates + 现在等待` 行是 `_patch_system_prompt_for_cli` 的锚点), 其它工程元信息全删
+- 任务陈述前置到第 1 行
+- 删 "L1 召回 + L2 打分" / "系统会兜底" / "你算了也会被覆盖" / D-046, D-047 编号
+- 字段说明从散文 + bullet 改成表格
+- few-shot 修冲突:
+  - `蒸贝贝南瓜｜...·甜1` → `蒸贝贝南瓜｜纯素·蒸·油1` (跟 sweet >= 2 才显示的代码一致)
+  - `麻婆豆腐｜...processed｜role=主菜` → `腊肠｜红肉·炒·油3·processed｜8.0` (配菜默认省略, 不踩硬约束)
+- 价格示例 `¥18` → `¥18.0` 对齐 `:.1f`
+- 结构重排: 任务 → 硬约束 → 重排原则 → 输入速查 → 输出协议 → reason 示范 → 边界
+- 长度: 6538 → 5784 字符 (-12%)。重点不是压 token, 是注意力 focus
+
+#### user message helper (`rerank.py`)
+
+新增两个小 helper, 统一 fallback 风格:
+
+```python
+def _fmt_list_or_none(xs) -> str:
+    """空 → '(无)', 否则空格分隔. 替代 Python '[]' repr."""
+
+def _fmt_counts_or_none(d) -> str:
+    """空 → '(空)', 否则 'key×N key×N'. 替代 Python dict repr."""
+```
+
+`_profile_block` / `_context_block` 用上后, user message 输出变化示例:
+
+```
+# 改前
+喜欢: ['粤菜', '潮汕']
+不喜欢: []
+最近 3 天 cuisine: {'川菜': 3, '日料': 1}
+
+# 改后
+喜欢: 粤菜 潮汕
+不喜欢: (无)
+最近 3 天 cuisine: 川菜×3 日料×1
+```
+
+#### sample (`prompts/rerank_user.md`)
+
+跟代码实际输出对齐:
+- `[PROFILE]` / `[CONTEXT]` 用实际数据示例而非 `{占位符}`, 方便人对照
+- `黑米饭｜主食·煮·油1·grain=糙米杂粮` 修成 `黑米饭｜主食·煮·油1｜role=主食·grain=糙米杂粮` (代码 seg2 含 role+grain, 不是 seg1)
+
+### 测试
+
+- 45 个 rerank 单测全过 (含 3 个 patch 锚点测试 + 1 个 sanity test 验证当前 prompt 能被 CLI patch)
+- 全量 382 passed / 1 failed (`test_cleanup_expired` 是 pre-existing session TTL 日期边界问题, 跟 prompt 无关)
+
+### 关键文件改动
+
+5 个文件:
+- `prompts/rerank_system.md`: 整体重写, 工程注释隔离到顶部 HTML 注释, 结构重排, few-shot 修冲突
+- `prompts/rerank_user.md`: sample 用实际数据替代占位符, 字段格式对齐代码
+- `chisha/rerank.py`: 加 `_fmt_list_or_none` / `_fmt_counts_or_none` 两个 helper, 替换 `_profile_block` / `_context_block` 里的 Python repr
+- `docs/IMPLEMENTATION_LOG.md`: 本段
+
+### 教训 (跨场景适用)
+
+10. **prompt 文件里的 `# 注释` 不是注释**: markdown 文件没有真正的"不进 LLM 视野"机制. `# 标题` 是给 LLM 看的, `<!-- HTML -->` 虽然 LLM 看得见但会被理解为 dev note 而忽略。给开发者的工程元信息要么写到代码侧 docstring, 要么显式 HTML 注释明确"dev note", 不能写成 `# xxx` 当成自己看不到。
+11. **few-shot 必须自洽**: few-shot 是 LLM 学得最快的部分, 如果示例和硬约束冲突, LLM 会优先信示例而非规则。每次改硬约束后必须扫一遍 few-shot 看有没有反例, 反之亦然。
+12. **跨 AI review 比单 AI 自检高一个数量级**: D-048 已经验证过一次"Codex 抓到 Claude 漏的 BLOCKER", D-048.1 又验证一次 (Codex 独立抓到 few-shot 与硬约束直接冲突这种"自己写的自己看不出"的盲区)。教训: prompt / 关键系统改动前**默认开 Codex 第三方独立 review**, 不只是"觉得复杂时才开"。
+13. **重命名优化目标**: 一开始想着"删工程注释让 prompt 更干净", 但真正高价值的不是删字数 (-12% 收益小), 而是修 few-shot 冲突 + 修标签错配 (这才是会真实影响 LLM 输出的)。下次做 prompt 优化先按"会不会改变 LLM 输出"排序, 不按主观可读性排。
+
+依赖: D-046 (L3 prompt 拆 system/user), D-047 (tool_use forced schema), D-048 (CLI no-tool 分流 + patch 锚点)
+
+
+## D-050 — CLI 精排 opus 默认切换 + retry-with-feedback 落地
+
+**2026-05-15** · 工程实施 (D-050 决策对应执行记录)
+
+### 触发
+
+用户主观要求"CLI 路径默认 model 升 opus 4.7" (D-047 V4 矩阵已证 opus 选菜质量明显优于 sonnet). 切换两行:
+- `chisha/llm_providers/claude_code_cli.py:25` `_DEFAULT_MODEL = "sonnet"` → `"opus"`
+- `profile.yaml` `llm.model.claude_code_cli: sonnet` → `opus`
+
+### 失败模式发现
+
+切换后第一次 `dry_run --n 5 --meal both` (10 session) 出现 2/10 fallback:
+
+```
+[rerank] explore 数量错误: 期望 2, 实际 1
+[rerank fallback] candidates 业务校验失败: explore 数量 1 != 期望 2
+```
+
+加临时 debug 打印 `out["llm_response"]["content"]` 后 root cause 清楚: **opus 主动放弃第二个 explore 槽**。两次失败 raw 都是相同 pattern:
+
+```json
+{"candidates":[
+  {"rank":1, "is_explore":false, "combo_index":3,  ...},   // 0-9 band
+  {"rank":2, "is_explore":false, "combo_index":14, ...},   // 10-19 band
+  {"rank":3, "is_explore":false, "combo_index":2,  ...},   // 0-9 band
+  {"rank":4, "is_explore":false, "combo_index":1,  ...},   // 0-9 band ← 应该是 explore 但 opus 给了 exploit
+  {"rank":5, "is_explore":true,  "combo_index":31, ...}    // 30-39 band
+]}
+```
+
+opus 判断"4 高质量 exploit + 1 explore 比 3 高质量 + 2 次优 mid-band explore 体验更好"。sonnet 没这倾向是因为 sonnet 倾向无脑遵守 prompt 字面计数。
+
+### 第一轮修法尝试 (失败, 撤回)
+
+加强 prompt 计数约束: 在 `# 输出方式` 段顶部加"计数硬约束(最高优先级)"小节, 同步改边界两条软指令. 同时把硬约束塞进 CLI patch 后的 `_CLI_OUTPUT_SECTION`。
+
+**第二次 dry_run: 10/10 fallback** (vs 修前 2/10), 商家分布 5 家 × 10 sessions = 全部规则 fallback. 还出现新错: `[rerank] LLM 返回 6 > n_max=5, 截断`。
+
+opus 看到更严厉的计数指令后, 行为反而更乱 —— 既不愿减少高分 exploit, 又被迫满足"explore=2", 结果给 6 条。**加重 prompt 反向恶化**。
+
+撤掉 CLI patch 段的硬约束 (`_CLI_OUTPUT_SECTION` 恢复精简版), 主路径 tool_use 段的硬约束保留 (那条路径走 forced schema 不会出现这个问题, 但留着对未来调试有价值)。
+
+### 第二轮修法 (落地)
+
+改思路: prompt 软约束打不过 opus 的全局优化倾向, 改用**机械纠错**.
+
+在 `_run_llm_rerank` 里 CLI 路径校验失败时, 用关键字 (`"explore 数量"` / `"n_max"` / `"数量"` / `"返回"`) 匹配 detail 决定是否 retry, 构造 correction prefix append 到 user_msg 再调一次 LLM。
+
+**初版 dry_run 实测 10/10 成功** (其中 1 session 走 retry), retry 延迟 ~12s + 单次成本 ~$0.03 (合计 ~24s / ~$0.06)。
+
+### 联合 Codex review
+
+按 D-048 / D-048.1 流程发起跨 AI review (`Agent(codex-rescue)`). Codex 用 gpt-5.3-codex 独立读 diff + 现存 docs/DECISIONS.md D-047 / D-048 背景, 输出五问 (Q1 retry 是否合适 / Q2 关键字匹配是否 robust / Q3 correction prefix 设计 / Q4 opus 默认是否好决定 / Q5 根本避坑思路)。
+
+#### 共识 / 接受的反馈
+
+| Q | Codex 意见 | 落地 |
+|---|---|---|
+| Q1 | retry 是合适方案, 但**(c) 代码确定性 demote 不可取** —— 把高分 exploit 改成 is_explore=true 会破坏 `one_line_reason` 语义 + 违反"explore 来自 idx≥10"规则 | 不动这块 |
+| Q2 | 关键字匹配脆弱, 文案改动会静默漏触发. **validator 应返回结构化 error_code** | 落地: `RerankValidationCode` 类 + `_validate_llm_candidates_v` / `_diagnose_candidates` 改三元组返回 + `_RETRY_TRIGGER_CODES` allowlist |
+| Q3 | correction prefix 没说"其余规则仍生效", retry 时可能让 opus 降为"只满足计数, 忽略 taste/health/avoid". **不要贴上次错误 JSON** (会锁死在错误选择) | 落地: prefix 加一句"**系统 prompt 里所有其余规则全部仍然生效, 基于原 CANDIDATES 重新挑, 不是改标签**"; 不贴 JSON |
+| Q4 | opus 默认在自用边界内 OK, 但生产应强走 tool_use 主路径 | 无新动作 (D-048 已定位 CLI = 自用); 注释强化 |
+| Q5 | CLI = best-effort 自用通道, 不该承载生产级精排. 结构化任务永远走 tool_use | 落地: retry 块开头加注释强化 D-048 边界 |
+
+#### 我自己发现 Codex 没提的小问题
+
+- `out["latency_ms"]` 累加 retry 延迟会让 trace 字段含义漂移 (原本是单次, 累加后变成总时长). 改成 `retry_latency_ms` 独立字段, `latency_ms` 保留首次调用原值。
+
+### 结构化 error code 落地细节
+
+```python
+class RerankValidationCode:
+    OK = "OK"
+    NOT_LIST = "NOT_LIST"
+    EMPTY = "EMPTY"
+    OVER_N_MAX = "OVER_N_MAX"               # retry-trigger
+    ITEM_NOT_DICT = "ITEM_NOT_DICT"
+    MISSING_FIELDS = "MISSING_FIELDS"
+    INVALID_INDEX = "INVALID_INDEX"
+    INDEX_OUT_OF_RANGE = "INDEX_OUT_OF_RANGE"
+    INDEX_DUPLICATE = "INDEX_DUPLICATE"
+    INVALID_FIT_SCORE = "INVALID_FIT_SCORE"
+    INVALID_TASTE_MATCH = "INVALID_TASTE_MATCH"
+    INVALID_IS_EXPLORE = "INVALID_IS_EXPLORE"
+    INVALID_RISK_FLAGS = "INVALID_RISK_FLAGS"
+    RANK_NOT_SEQUENTIAL = "RANK_NOT_SEQUENTIAL"
+    EXPLORE_COUNT_MISMATCH = "EXPLORE_COUNT_MISMATCH"  # retry-trigger
+    EXPLORE_POSITION_WRONG = "EXPLORE_POSITION_WRONG"  # retry-trigger
+    UNKNOWN = "UNKNOWN"
+
+_RETRY_TRIGGER_CODES = frozenset({
+    RerankValidationCode.OVER_N_MAX,
+    RerankValidationCode.EXPLORE_COUNT_MISMATCH,
+    RerankValidationCode.EXPLORE_POSITION_WRONG,
+})
+```
+
+不 retry 的 case (format / index / value 错): opus 重答也不会变好, 直接 fallback 省 12s + $0.03。
+
+### dry_run 最终实测 (Codex 推荐方案全量落地后)
+
+- `dry_run --n 5 --meal both` (10 session): 10/10 成功, 0 retry, band 分布健康 (`[0-9, 10-19, 30-39, 20-29, 40-59]` 等)
+- `dry_run --n 10 --meal both` (20 session): 20/20 成功, 0 retry
+- 商家分布 12+ 家 (vs 修前规则 fallback 退化到 5 家)
+- 单次 12-15s / $0.03; retry 触发时 ~24s / $0.06
+- 测试: `tests/test_rerank.py` 45 全过 + 全量 381 passed (1 pre-existing flaky `test_cleanup_expired` 跟改动无关)
+
+### 关键文件改动
+
+- `chisha/rerank.py`:
+  - 加 `RerankValidationCode` 类 + `_RETRY_TRIGGER_CODES` allowlist
+  - `_validate_llm_candidates_v` / `_diagnose_candidates` 改三元组 `(cands, code, detail)` 返回
+  - `_run_llm_rerank` 加 CLI retry 块 (~50 行): code 路由 + correction prefix 构造 + 第二次调用 + 二次校验
+  - `out["fallback_reason"]` 格式改 `candidates 业务校验失败 [<CODE>]: <detail>`
+  - trace 加 `retry_attempted` / `retry_succeeded` / `retry_first_failure_code` / `retry_latency_ms` / `llm_response_retry`
+- `chisha/llm_providers/claude_code_cli.py`: `_DEFAULT_MODEL` sonnet → opus
+- `profile.yaml`: `llm.model.claude_code_cli` sonnet → opus + 注释更新理由
+- `prompts/rerank_system.md`: `# 输出方式` 段顶部加"计数硬约束"小节; 边界小节澄清"候选不足"语义 (主路径 tool_use 用; CLI patch 路径整段替换故不生效, 留着对未来切回主路径或调试有价值)
+
+### 教训 (跨场景适用)
+
+14. **opus vs sonnet 失败模式截然不同, model 切换不是无成本**: opus 在多目标权衡上更"全局优化", 会主动违反字面 prompt 指令换更好的整体结果; sonnet 倾向字面遵守 prompt. 切 model 必须重新跑 dry_run 覆盖关键失败维度, 不能假定"更贵的模型一定不坏"。
+
+15. **prompt 软约束打不过 LLM 全局优化倾向时, 改机械纠错 (validate→retry→fallback) 而非加重 prompt**: 第一轮"加硬约束"反向恶化是这次最有教育意义的踩坑 —— 当 opus 已经看见计数指令但仍主动违反, 再加严厉只会让它行为更不稳。这种情况只能在代码层做闭环。
+
+16. **validator 错误描述要给"机器路由用的 code" + "人看的 detail" 两份**: 字符串匹配 fallback_reason 决定 retry 触发条件是典型 anti-pattern (Codex Q2 抓出来的). 任何"上层根据下层错误信息做决策"的场景都该用稳定 enum, 不该解析人类可读文案。
+
+17. **跨 AI review 的 ROI 再次验证**: 这次 Codex Q2 抓的 "validator 应返回 error_code" 是 Claude 自己写完测试通过后没看出的 robustness 问题. D-048.1 教训 12 (默认开 Codex review) 在 D-050 又生效一次。
+
+依赖: D-047 (provider 抽象 + tool_use forced schema 17/18), D-048 (CLI 分流 + status 三态 + Codex review 流程), D-048.1 (prompt 清理 + 跨 AI review 教训), D-050 (本条对应的架构决策)
+
+## D-051 执行记录 · Web 用户视图 V1 落地 (apps/web)
+
+**2026-05-15** · 实施细节，决策见 [DECISIONS D-051](DECISIONS.md#d-051) + D-052~D-055
 
 ### 输入
 
 - `claude.ai/design` 协同产出的 V0 原型（13 文件，CDN+Babel 单页）解压后位于 `chisha-user.zip`
-- `DESIGN_NOTES.md` 沉淀了 4 条新决策（§8.2 → D-050~D-053）+ 文案规范 + 视觉系统
+- `DESIGN_NOTES.md` 沉淀了 4 条新决策（§8.2 → D-052~D-055）+ 文案规范 + 视觉系统
 
 ### 工程动作
 
@@ -704,15 +953,15 @@ $ npm run dev         # vite v5.4.21 ready in 119 ms
 
 ---
 
-## D-054~D-066 执行记录 · V1.1 反馈系统落地 (apps/web)
+## D-056~D-068 执行记录 · V1.1 反馈系统落地 (apps/web)
 
-**2026-05-15** · 实施细节, 决策见 [DECISIONS D-054~D-066](DECISIONS.md#d-054)
+**2026-05-15** · 实施细节, 决策见 [DECISIONS D-056~D-068](DECISIONS.md#d-056)
 
 ### 输入
 
 - 设计交付物: `chisha-user (1)/` (claude.ai/design 沉淀, 含 5 个 feedback 变体原型 + DESIGN_NOTES.md §10 V1.1 决策)
 - handoff: `chisha-user (1)/CLAUDE_CODE_HANDOFF_feedback.md` (任务范围 + 反模式 + 验收 user journey)
-- 决策落地: D-054~D-066 (DECISIONS.md 新加)
+- 决策落地: D-056~D-068 (DECISIONS.md 新加)
 
 ### 实施范围
 
@@ -722,9 +971,9 @@ $ npm run dev         # vite v5.4.21 ready in 119 ms
 
 **新增 (4 文件)**:
 - `apps/web/src/components/feedback/atoms.tsx` — 共享 `ProteinPred` / `OilPred` / `clipReason` / `relAgo` / `buildDimRows`
-- `apps/web/src/components/feedback/ProgressiveForm.tsx` — E 渐进披露表单 (D-060 + D-063)
-- `apps/web/src/components/feedback/FeedbackDetailView.tsx` — 已反馈 readonly snapshot + append timeline (D-064 + D-065)
-- `apps/web/src/pages/FeedbackInbox.tsx` — `/feedback` 反馈中心三段 (D-056)
+- `apps/web/src/components/feedback/ProgressiveForm.tsx` — E 渐进披露表单 (D-062 + D-065)
+- `apps/web/src/components/feedback/FeedbackDetailView.tsx` — 已反馈 readonly snapshot + append timeline (D-066 + D-067)
+- `apps/web/src/pages/FeedbackInbox.tsx` — `/feedback` 反馈中心三段 (D-058)
 - `apps/web/src/pages/FeedbackPage.tsx` — `/feedback/:id` 双态分支 (form / detail)
 
 **改写 (8 文件)**:
@@ -733,11 +982,11 @@ $ npm run dev         # vite v5.4.21 ready in 119 ms
 - `apps/web/src/lib/api.ts` — `ChishaApi` 接口换签名: 砍 `lastUnfed` / `dismissFeedbackBanner`; 加 `inbox` / `snoozeFeedback` / `stopFeedback` / `recentFeedbacks` / `getFeedback` / `appendFeedbackComment`
 - `apps/web/src/lib/mockApi.ts` — STORE.acceptedQueue 字段升级 (`snoozed_until` / `stopped`); STORE.feedbacks 改为 `FeedbackRecord` 含 `comments[]`; 7 个新端点实现 + 砍掉 lastUnfed / dismissBanner
 - `apps/web/src/lib/useChishaState.tsx` — context 从 `unfed: UnfedSession | null` 改为 `inbox: UnfedSession[]`; `refreshUnfed` → `refreshInbox`
-- `apps/web/src/components/NavBar.tsx` — 加「反馈」tab + 角标 (D-054)
-- `apps/web/src/components/PendingFeedbackBanner.tsx` — slim banner 全量改写为 stack variant (D-055): metadata 行 + ⋯ 菜单 + 主卡 + footer 多条提示
+- `apps/web/src/components/NavBar.tsx` — 加「反馈」tab + 角标 (D-056)
+- `apps/web/src/components/PendingFeedbackBanner.tsx` — slim banner 全量改写为 stack variant (D-057): metadata 行 + ⋯ 菜单 + 主卡 + footer 多条提示
 - `apps/web/src/App.tsx` — 路由加 `/feedback` (`FeedbackInbox`); `/feedback/:id` 改用 `FeedbackPage` (替代 placeholder); 接 `refreshInbox`
 - `apps/web/src/pages/HomePage.tsx` — banner 调用签名换为 `unfedList` 数组 + `onSnooze` / `onStop` / `onOpenInbox`
-- `apps/web/src/pages/HistoryPage.tsx` — 每行可点击 + 未反馈紫 chip + 已反馈 gut chip + 跳过餐 dead row (D-057)
+- `apps/web/src/pages/HistoryPage.tsx` — 每行可点击 + 未反馈紫 chip + 已反馈 gut chip + 跳过餐 dead row (D-059)
 
 **删除 (1 文件)**:
 - `apps/web/src/pages/FeedbackPlaceholder.tsx` — 被 FeedbackPage 取代
@@ -746,18 +995,18 @@ $ npm run dev         # vite v5.4.21 ready in 119 ms
 
 **`FeedbackPayload` (V1 → V1.1)**:
 - 砍 `rating_taste: number` / `rating_satisfaction: number` / `chips: string[]`
-- 加 `rating: -1 | 0 | 1 | null` (gut, D-062)
-- 加 `reason_match` / `fullness` / `oil_calibration` / `repurchase_intent: 0 | 1 | 2 | null` (4 维 calibration/behavior, D-063)
-- 加 `variant: "progressive" | "not-eaten"` (D-066 砍掉了 minimal/dimensions/conversational/retro 4 个备选)
+- 加 `rating: -1 | 0 | 1 | null` (gut, D-064)
+- 加 `reason_match` / `fullness` / `oil_calibration` / `repurchase_intent: 0 | 1 | 2 | null` (4 维 calibration/behavior, D-065)
+- 加 `variant: "progressive" | "not-eaten"` (D-068 砍掉了 minimal/dimensions/conversational/retro 4 个备选)
 - 加 `quick?: boolean` (banner inline 一键打分预留, V2 做)
 
-**`FeedbackRecord = FeedbackPayload + { submitted_at, comments[] }`** (D-064 + D-065):
+**`FeedbackRecord = FeedbackPayload + { submitted_at, comments[] }`** (D-066 + D-067):
 - `submitted_at: ISO8601` (frozen-in-time fact, 不可改)
 - `comments: Array<{ id, text, created_at }>` (append-only timeline, 不污染原始)
 
 **`UnfedSession` (V1 → V1.1)**:
 - 加 `summary: string` (banner 卡片渲染需要)
-- 加 `snoozed: boolean` / `stopped: boolean` (D-058 两态)
+- 加 `snoozed: boolean` / `stopped: boolean` (D-060 两态)
 
 ### API 端点 (mock 已落, 后端待装)
 
@@ -803,14 +1052,14 @@ curl localhost:5173/feedback/test_sid → 200
 
 ### 反 anti-pattern
 
-- **没保留 V1 5 星双维度** — 强制 schema migration, 用户砍掉 `rating_taste` / `rating_satisfaction` (D-062 + D-066 决策已显式砍)
-- **没在反馈页加修改入口** — D-064 强制 readonly, 即使 1 分钟内也不能改
-- **没让 banner ✕ = 永久 stop** — D-058 默认 snooze
+- **没保留 V1 5 星双维度** — 强制 schema migration, 用户砍掉 `rating_taste` / `rating_satisfaction` (D-064 + D-068 决策已显式砍)
+- **没在反馈页加修改入口** — D-066 强制 readonly, 即使 1 分钟内也不能改
+- **没让 banner ✕ = 永久 stop** — D-060 默认 snooze
 - **没 seed demo backlog** — 原型 `data.js::seedDemoBacklog()` 在 mock 中没搬, 生产用真数据
-- **没保留 4 个备选表单变体** (minimal/dimensions/conversational/retro) — D-060 选定 E 后, A/B/C/D + variant switcher 全砍 (5 个变体源码在 `chisha-user (1)/feedback-variants.jsx` 设计档案保留)
+- **没保留 4 个备选表单变体** (minimal/dimensions/conversational/retro) — D-062 选定 E 后, A/B/C/D + variant switcher 全砍 (5 个变体源码在 `chisha-user (1)/feedback-variants.jsx` 设计档案保留)
 
 ### 已知风险 (待后续 PR)
 
 - 后端 FastAPI 还没装 7 个新 endpoint — 默认 mock 模式可用 (VITE_USE_MOCK=1)
-- `chisha-user (1)/` 设计交付物文件夹本次提交时一起删, 已沉淀到 D-054~D-066 + IMPL_LOG 这条 + style-guide
+- `chisha-user (1)/` 设计交付物文件夹本次提交时一起删, 已沉淀到 D-056~D-068 + IMPL_LOG 这条 + style-guide
 - `reason_match` 的下游消化 (LLM reason generator reverse-loss) 还没实施 — 后端接入后, 推荐链路要把 comments[] inject 给 prompt

@@ -13,7 +13,7 @@
 
 `chisha` 把它系统性地解决：每顿饭在 11:25 / 18:00 主动推送提醒，给 3 个组合，30 秒选一个就走。
 
-> **V1 当前形态**（[D-049](docs/DECISIONS.md#d-049)）：本机 localhost Web SPA（用户视图 + 调试台合一），自用打磨体验。V1.5 接入飞书做推送 + deeplink 跳转。
+> **V1 当前形态**（[D-051](docs/DECISIONS.md#d-051)）：本机 localhost Web SPA（用户视图 + 调试台合一），自用打磨体验。V1.5 接入飞书做推送 + deeplink 跳转。
 
 > **餐盘策略说明**：不追求严格 1/2-1/4-1/4 比例（中式外卖现实下不可达），改弱约束三件套：控油 + 至少 1 道蔬菜 + 蛋白下限。详见 [DECISIONS D-023](docs/DECISIONS.md#d-023)。
 
@@ -34,7 +34,12 @@
 
 ## 项目状态
 
-**V1 in flight** —— 数据接入 + 推荐三阶段（L1/L2/L3 已全跑通）+ **Web 用户视图 SPA 已落地**（`apps/web/`，[D-049~D-053](docs/DECISIONS.md#d-049) 入口架构 + [D-054~D-066](docs/DECISIONS.md#d-054-navbar-加反馈-tab--角标-v11) V1.1 反馈系统, 2026-05-15）+ 自用一周。
+**V1 in flight** —— 数据接入 + 推荐（召回 + L2 打分 + L3 LLM 精排, D-033/D-035/D-046/D-047/D-048）+ OpenClaw 飞书卡片接入 + 自用一周。
+
+> 注: D-049 (2026-05-14) 砍掉了 D-024 的"V1 简化路径 (打分 top 3 + LLM 写 reason)", 现在唯一链路是 L3 LLM 精排 top60→5。
+> 注: D-050 (2026-05-15) CLI 路径 (claude_code_cli, 自用降级) opus 默认 + validate→retry→fallback 闭环, 修 opus 质量贪心覆盖 prompt 计数指令的失败模式。
+
+**V1 in flight** —— 数据接入 + 推荐三阶段（L1/L2/L3 已全跑通）+ **Web 用户视图 SPA 已落地**（`apps/web/`，[D-051~D-055](docs/DECISIONS.md#d-051) 入口架构 + [D-056~D-068](docs/DECISIONS.md#d-056-navbar-加反馈-tab--角标-v11) V1.1 反馈系统, 2026-05-15）+ 自用一周。
 
 > **V1 主交互**：本机 localhost Web SPA。`cd apps/web && npm install && npm run dev` → http://localhost:5173。详见 [`apps/web/README.md`](apps/web/README.md) + [`docs/style-guide.md`](docs/style-guide.md) + [`docs/api.md`](docs/api.md)。飞书延后到 V1.5 做推送通道。
 
@@ -48,7 +53,7 @@
 |---|---|---|
 | [docs/PRD.md](docs/PRD.md) | 产品需求 · 为什么做、做给谁、做成什么样 | 第一份读，建立产品定位 |
 | [DESIGN.md](DESIGN.md) | 设计与实现 · 架构、schema、API、prompt、避坑 | 实现时随时查 |
-| [docs/style-guide.md](docs/style-guide.md) | UI 文案规范 + 视觉系统 + 锁定反模式（D-050~D-053 + D-058/D-064/D-065） | 改 `apps/web/` 任何用户视图前必读 |
+| [docs/style-guide.md](docs/style-guide.md) | UI 文案规范 + 视觉系统 + 锁定反模式（D-052~D-055 + D-060/D-066/D-067） | 改 `apps/web/` 任何用户视图前必读 |
 | [docs/api.md](docs/api.md) | 前后端 API 契约（V1） | 调 `/api/*` 或后端装新端点前必读 |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | 决策日志 · 产品/架构/方法论 决策为什么这样而不是那样 | 想推翻某个设计前先看 |
 | [docs/IMPLEMENTATION_LOG.md](docs/IMPLEMENTATION_LOG.md) | 工程实施日志 · prompt 改了几行、batch 数、bug 排查、参数微调 | 排查具体实现、复盘工程细节时 |
@@ -70,7 +75,7 @@
 - 数据层 loader: `chisha/loader.py` (raw → §5.2 schema, brand 后缀剥离)
 - 召回: `chisha/recall.py` (硬过滤 + 多样性 + 弱约束三件套校验 + 组合策略)
 - 打分: `chisha/score.py` (V1 公式 + 品牌/菜系多样性 top 3)
-- 精排: `chisha/api.py` + `chisha/reason.py` (D-024 不让 LLM 选 3 个)
+- 精排: `chisha/api.py` 主入口 + `chisha/rerank.py` L3 LLM 精排 (D-033/D-046/D-047)
 - 接入: `integrations/openclaw/` (skill + 飞书卡片渲染)
 - 工具: `scripts/tag_dishes.py` (LLM 打标), `mock_tagged.py` (规则 mock), `dry_run.py`, `inspect_candidates.py`
 - 数据: `data/shenzhen-bay/` (office, 139 家 7256 菜) + `data/home/` (home, 38 家 2117 菜)
@@ -109,19 +114,19 @@ uv run python -m scripts.inspect_candidates --meal dinner --limit 100
 uv run python -m scripts.dry_run --n 5 --meal both
 ```
 
-#### 4. 起 Web 服务（D-049，V1 主交互）
+#### 4. 起 Web 服务（D-051，V1 主交互）
 
 ```bash
 # 调试台已可用（D-039）
 uv run python -m chisha.debug_server  # http://127.0.0.1:8765/debug
 
-# 用户视图 + 调试台合一 Web 服务（D-049 实施中，待 claude.ai/design 出稿后实装）
+# 用户视图 + 调试台合一 Web 服务（D-051 实施中，待 claude.ai/design 出稿后实装）
 # uv run python -m chisha.web  # → / (用户) + /debug (调试)
 ```
 
 #### 5. ~~接 OpenClaw + 飞书~~ → 推迟到 V1.5
 
-D-049 翻案：飞书降级为推送 + deeplink 通道，V1 不接入。integrations/openclaw/ 骨架保留。
+D-051 翻案：飞书降级为推送 + deeplink 通道，V1 不接入。integrations/openclaw/ 骨架保留。
 
 #### 6. 自用一周 + 纸笔记录
 
@@ -172,13 +177,12 @@ chisha/
 │       └── dishes_tagged.json
 ├── chisha/                    # L2 推荐层代码（Python 包）
 │   ├── __init__.py
-│   ├── api.py                 # recommend_meal 主入口 (V1 + V2)
+│   ├── api.py                 # recommend_meal 主入口 (D-033 单一 V2 路径, D-049 后)
 │   ├── recall.py              # 召回 + 硬过滤双层 + combo 灵活组合 (D-040/041)
 │   ├── score.py               # 打分 V2 ~12 维
-│   ├── rerank.py              # V2 LLM 精排 top30→5 (D-035)
+│   ├── rerank.py              # L3 LLM 精排 top60→5 (D-035/D-046/D-047/D-048/D-050)
 │   ├── context.py             # ContextSnapshot 注入层 (D-034)
 │   ├── refine.py              # refine 二轮 (D-033)
-│   ├── reason.py              # LLM 写一句话理由（V1 路径用）
 │   ├── llm_client.py          # provider 路由层 (D-047)
 │   ├── llm_providers/         # 三 provider: anthropic_api / openrouter / claude_code_cli (D-047)
 │   ├── debug_recommend.py     # 调试台用的 instrumented 管道 (D-039)

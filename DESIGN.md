@@ -167,7 +167,7 @@
 
 #### 里程碑 3：~~接入 OpenClaw + 飞书卡片~~ → V1 改 Web SPA · 飞书延后到 V1.5（约 1-2 周）
 
-> **2026-05-15 翻案**（[D-049](docs/DECISIONS.md#d-049)）：V1 主交互改本机 localhost Web SPA（`apps/web/`），飞书"主动推 + 卡片交互"降级到 V1.5 做"推送 + deeplink 跳 Web"。**下面这段原飞书卡片方案保留作历史**，prefer 走 Web SPA 路径。Web 用户视图设计与文案规范见 [`docs/style-guide.md`](docs/style-guide.md)，前后端契约见 [`docs/api.md`](docs/api.md)。
+> **2026-05-15 翻案**（[D-051](docs/DECISIONS.md#d-051)）：V1 主交互改本机 localhost Web SPA（`apps/web/`），飞书"主动推 + 卡片交互"降级到 V1.5 做"推送 + deeplink 跳 Web"。**下面这段原飞书卡片方案保留作历史**，prefer 走 Web SPA 路径。Web 用户视图设计与文案规范见 [`docs/style-guide.md`](docs/style-guide.md)，前后端契约见 [`docs/api.md`](docs/api.md)。
 
 **目标**（旧版本，已 partial superseded）：OpenClaw 在 11:25 / 18:00 主动推飞书卡片，自己用一周。
 
@@ -221,7 +221,7 @@ chisha/
 │   ├── api.py                   # recommend_meal 主入口
 │   ├── recall.py                # 召回 + 多样性
 │   ├── score.py                 # 打分函数
-│   ├── reason.py                # LLM 写一句话理由（V1 LLM 只在这）
+│   ├── rerank.py                # L3 LLM 精排 (D-033/D-046/D-047)
 │   ├── llm_client.py            # LLM 路由层 (D-047): provider 选择 + 模型解析
 │   └── llm_providers/           # 三 provider (D-047)
 │       ├── anthropic_api.py     # ANTHROPIC_API_KEY 直连
@@ -239,8 +239,10 @@ chisha/
 │   └── inspect_candidates.py    # 抽查工具
 │
 ├── prompts/
-│   ├── tag_dishes.md            # 打标 prompt
-│   └── reason_one_line.md       # 写理由 prompt（V1 唯一精排 LLM 用途）
+│   ├── tag_dishes.md            # 菜品打标 prompt (D-037, V3 dual-model)
+│   ├── rerank_system.md         # L3 精排 system prompt (D-046/D-047)
+│   ├── rerank_user.md           # L3 精排 user 模板 (D-046)
+│   └── parse_feedback.md        # 反馈解析 prompt
 │
 ├── tests/
 │
@@ -258,7 +260,9 @@ chisha/
 3. **每批 30-50 条**：太大准确率掉
 4. **JSON 输出做兜底解析**：try/except + 重试
 
-### 3.6 V1 精排：打分 top 3 + LLM 写理由（不做 LLM 精排）
+### 3.6 V1 精排：打分 top 3 + LLM 写理由（**已删除 — D-049**）
+
+> ⚠️ V1 简化路径 (D-024) 已被 D-049 砍除, 代码不再存在 (`chisha/reason.py` / `prompts/reason_one_line.md` 整文件删, `scripts/eval_recommend.py` 离线对比脚本也删). 现在唯一推荐链路是 V2 (D-033 起): build_context → recall → score V2 → L3 LLM rerank top60→5. 下文章节保留作历史决策叙述。
 
 V1 不让 LLM "选 3 个"。流程是：
 
@@ -266,7 +270,7 @@ V1 不让 LLM "选 3 个"。流程是：
 召回 100 → 打分排序 → 取 top 3 → LLM 为每条单独写 reason_one_line
 ```
 
-**V1 LLM 唯一用途**：写理由 prompt（`prompts/reason_one_line.md`）：
+**V1 LLM 唯一用途**：写理由 prompt（`prompts/reason_one_line.md`，已删）：
 
 ```
 你给一个外卖组合写一句推荐理由（≤ 30 字），帮用户快速判断要不要选。
@@ -906,7 +910,7 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由
 - LLM 自行判断重精排 vs 重召回
 
 **G. 验收**：
-- 8-12 个黄金 case（[tests/golden_cases.yaml](../tests/golden_cases.yaml)） + `scripts/eval_recommend.py` 离线对比 V1 vs V2
+- ~~8-12 个黄金 case + `scripts/eval_recommend.py` 离线对比 V1 vs V2~~ — D-049 后 V1 砍除, 脚本一并删, golden case 仍保留作未来调试 case 库
 - 自用 1-2 周采集反馈到 30+ 条触发 V2.2
 
 **本轮明确不做**：personal_offsets 实时写入 / learned_profile 聚合（V2.2）/ combo planner 重写 / profile.yaml 大改 schema / 跨店 combo / 健康疲劳"cheat 配额"机制 / Post-meal 主动推送（改成下次饭点被动）.
@@ -992,11 +996,14 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由
 | **46** | **L3 精排 prompt + payload 重构（top60 + system/user 拆分 + 紧凑化 + health_flags 规则后处理）** | **D-046** |
 | **47** | **L3 精排重构（tool_use forced schema + opus 默认 + cache_control + helper 抽出消灭双份代码）** | **D-047** |
 | **48** | **L3 双路径收口（CLI no-tool 分流 + provider 配置错 hard-fail + trace 结构化三态）** | **D-048** |
-| **49** | **V1 主交互改本机 Web SPA，飞书降级为 V1.5 推送通道**（partial supersedes D-022） | **D-049** |
-| **50** | **Accept 信号去 deeplink，改持久 inline 锁定 + 复制店名** | **D-050** |
-| **51** | **Refine 历史从底部列表升级为顶部面包屑 + smooth-scroll；输入框置顶、chip-fallback** | **D-051** |
-| **52** | **Skip-meal escape hatch（6 reason chip + 兜底跳过，新增 `POST /api/skip`）** | **D-052** |
-| **53** | **同 session 抑制 unfed banner（避免"还没吃完"被催反馈）** | **D-053** |
+| **49** | **L2 输出契约改 head-only**（apply_caps 不再保留 tail 段） | **D-049** |
+| **44.1** | **wetness 退出 baseline 权重（汤水偏好作 session mood, 不做 trait）** | **D-044.1** |
+
+| **49** | **V1 主交互改本机 Web SPA，飞书降级为 V1.5 推送通道**（partial supersedes D-022） | **D-051** |
+| **50** | **Accept 信号去 deeplink，改持久 inline 锁定 + 复制店名** | **D-052** |
+| **51** | **Refine 历史从底部列表升级为顶部面包屑 + smooth-scroll；输入框置顶、chip-fallback** | **D-053** |
+| **52** | **Skip-meal escape hatch（6 reason chip + 兜底跳过，新增 `POST /api/skip`）** | **D-054** |
+| **53** | **同 session 抑制 unfed banner（避免"还没吃完"被催反馈）** | **D-055** |
 
 ---
 
@@ -1012,9 +1019,9 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由
 6. **实现召回** `chisha/recall.py`（含弱约束三件套校验、组合策略）
 7. **抽查 100 个候选**，看是否合理
 8. **实现打分** `chisha/score.py`（V1 无个性化项）
-9. **实现"取 top 3 + 写 reason"** `chisha/api.py` + `chisha/reason.py`（V1 不做 LLM 精排）
+9. ~~**实现"取 top 3 + 写 reason"** `chisha/api.py` + `chisha/reason.py`（V1 不做 LLM 精排）~~ — D-049 后实际走 V2 主路径 (L3 LLM 精排 top60→5), `chisha/reason.py` 已删
 10. **空跑 5 次推荐**，看输出质量
-11. ~~接入 OpenClaw + 飞书卡片~~ → **改装 Web SPA 用户视图**：[`apps/web/`](apps/web/) 已就绪（D-049~D-053），下一步 FastAPI 后端装 V1 `/api/*` 端点跟 SPA 拉通（契约见 [`docs/api.md`](docs/api.md)）
+11. ~~接入 OpenClaw + 飞书卡片~~ → **改装 Web SPA 用户视图**：[`apps/web/`](apps/web/) 已就绪（D-051~D-055），下一步 FastAPI 后端装 V1 `/api/*` 端点跟 SPA 拉通（契约见 [`docs/api.md`](docs/api.md)）
 12. ~~配 cron~~ → macOS launchd 本机定时拉起 web 服务（工作日 11:00 / 17:30），自用一周，UI 内的 accept/skip 埋点替代纸笔
 
 V1.5 再回头接飞书做"推送 + deeplink 跳 Web"轻量入口。

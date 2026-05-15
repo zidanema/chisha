@@ -701,11 +701,16 @@ def apply_caps(
     ranked: list[dict],
     profile: dict | None,
 ) -> list[dict]:
-    """D-043 三层 cap + D-045 brand 层: restaurant + brand + cuisine + food_form 同时满足.
+    """D-043 三层 cap + D-045 brand 层 + D-049 head-only:
+    restaurant + brand + cuisine + food_form 同时满足.
 
     Codex review 修复: 之前是串联调用三个单层 cap, 后层会把前层 demote 的 tail
     重新纳入 head, 导致约束失效. 现在一次遍历同时维护四个计数器, head 必须
     同时满足全部四层约束.
+
+    D-049: 仅返回 head, 不再拼接 tail. 之前 `return head + tail` 让 L3
+    输入 topK 切到 tail 段, 造成同品牌候选刷屏 (实测 Super Model top60 占 8 条).
+    现在 brand cap 真正生效, L3 仅在同品牌 ≤2 个变体内做菜品组合择优.
 
     cap=0 表示该层不做约束. brand 缺失回退到 rid (单店即单品牌).
     """
@@ -715,7 +720,6 @@ def apply_caps(
     cap_c = caps["cuisine"]
     cap_f = caps["food_form"]
     head: list[dict] = []
-    tail: list[dict] = []
     cnt_r: dict[str, int] = {}
     cnt_b: dict[str, int] = {}
     cnt_c: dict[str, int] = {}
@@ -727,18 +731,14 @@ def apply_caps(
         dishes = c.get("dishes") or []
         cui = dishes[0].get("cuisine") if dishes else None
         form = combo_food_form(c)
-        # 任一层 cap 已满 → 下放 tail
+        # 任一层 cap 已满 → 丢弃 (D-049: 不再保留 tail)
         if cap_r > 0 and rid and cnt_r.get(rid, 0) >= cap_r:
-            tail.append(c)
             continue
         if cap_b > 0 and brand and cnt_b.get(brand, 0) >= cap_b:
-            tail.append(c)
             continue
         if cap_c > 0 and cui and cnt_c.get(cui, 0) >= cap_c:
-            tail.append(c)
             continue
         if cap_f > 0 and form and cnt_f.get(form, 0) >= cap_f:
-            tail.append(c)
             continue
         head.append(c)
         if rid:
@@ -749,7 +749,7 @@ def apply_caps(
             cnt_c[cui] = cnt_c.get(cui, 0) + 1
         if form:
             cnt_f[form] = cnt_f.get(form, 0) + 1
-    return head + tail
+    return head
 
 
 # ─────────────────────── D-043: food_form 规则推断 ───────────────────────
@@ -915,7 +915,11 @@ def diversify_top(
     max_per_brand: int = 1,
     max_per_cuisine: int = 2,
 ) -> list[dict]:
-    """Top N 选择时强制品牌/菜系多样性, 避免 top 3 都来自同一连锁."""
+    """Top N 选择时强制品牌/菜系多样性, 避免 top 3 都来自同一连锁.
+
+    D-049: 仅 rerank fallback 路径使用 (V2 主路径走 LLM + _enforce_brand_unique).
+    max_per_brand=1 与 LLM 路径出口 brand 去重对齐, 保证 fallback 输出口径一致.
+    """
     out = []
     used_brand: dict[str, int] = {}
     used_cuisine: dict[str, int] = {}

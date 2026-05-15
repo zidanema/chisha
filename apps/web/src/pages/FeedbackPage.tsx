@@ -1,8 +1,8 @@
-// FeedbackPage — /feedback/:id 双态 (D-064 一次性 readonly)
+// FeedbackPage — /feedback/:id 双态 (D-066 一次性 readonly)
 //   feedback === null   → ProgressiveForm
 //   feedback !== null   → FeedbackDetailView (snapshot + append timeline)
 //
-// 提交后就地 setFeedback, 不 navigate 走 (D-064 "完成感")。
+// 提交后就地 setFeedback, 不 navigate 走 (D-066 "完成感")。
 
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";

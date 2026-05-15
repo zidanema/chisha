@@ -1,6 +1,6 @@
-// PendingFeedbackBanner — V1.1 stack variant (D-055)
-// 卡片 + 多条堆叠: 主卡 + "还有 N 餐没反馈 去反馈中心 →" + ⋯ snooze/stop 菜单 (D-058)。
-// V1 的 slim banner 已退役 (上一轮 D-049 入口); ✕ 默认 = snooze, 不是 stop。
+// PendingFeedbackBanner — V1.1 stack variant (D-057)
+// 卡片 + 多条堆叠: 主卡 + "还有 N 餐没反馈 去反馈中心 →" + ⋯ snooze/stop 菜单 (D-060)。
+// V1 的 slim banner 已退役 (上一轮 D-051 入口); ✕ 默认 = snooze, 不是 stop。
 
 import { useState } from "react";
 import { LABELS } from "@/lib/labels";
