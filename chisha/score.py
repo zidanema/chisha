@@ -403,53 +403,33 @@ def taste_match_bonus(combo: dict, taste_hints: dict | None) -> float:
 
 def context_boost(combo: dict, context: "ContextSnapshot | None",
                    today: dt.date | None = None) -> float:
-    """ContextSnapshot 软调权 (D-034 + D-043 default mood 兜底).
+    """ContextSnapshot 软调权 (D-071 后只剩 want_soup 一条规则).
 
-    daily_mood 命中: want_soup → +0.5 if combo 有汤水
-                     want_light → +0.3 if 平均 oil <= 2; -0.3 if oil >= 4
-                     low_carb → -0.3 if combo 含主食 dish
-                     want_clean → -0.4 if 含 processed_meat
-                     want_indulgent → -0.2 if 油很低 (太清淡不解馋)
+    D-071 推翻 D-034/D-043: 砍 want_light / low_carb / want_clean / want_indulgent
+    四条 mood 规则 (方法论 baseline 已固化, 不该 session 级再调; 详见 D-070 三层信号模型);
+    砍季节默认 mood 兜底 (`infer_default_mood`).
 
-    D-043: 缺 daily_mood 时按季节推断 default mood, 分数 × DEFAULT_MOOD_CONFIDENCE.
+    保留 want_soup 一条: combo 含汤水 → +0.5 (汤羹供给不足 zone 下 L3 推不稳,
+    用结构化 wetness 字段做 L2 确定性加分通道).
+
+    注: 此函数刻意保留为独立维度而非合并进 wetness_bonus, 作为未来 L0
+    methodology spec (D-072) soft_rules 的接口位 — 不要再加新 mood 分支.
     """
-    confidence = 1.0
     mood: str | None = None
     if context is not None and context.daily_mood is not None:
         mood = context.daily_mood
-    else:
-        inferred = infer_default_mood(today)
-        if inferred is None:
-            return 0.0
-        mood = inferred
-        confidence = DEFAULT_MOOD_CONFIDENCE
-    s = 0.0
-    has_wet = wetness_bonus(combo) > 0
-    oils = [d.get("nutrition_profile", {}).get("oil_level", 3)
-            for d in combo["dishes"]]
-    avg_oil = sum(oils) / max(1, len(oils))
-    has_carb_dish = any(
-        (d.get("nutrition_profile") or {}).get("dish_role") == DISH_ROLE_CARB
-        for d in combo["dishes"]
-    )
-    has_processed = processed_meat_penalty(combo) > 0
-    if mood == "want_soup" and has_wet:
-        s += 0.5
-    elif mood == "want_light":
-        s += 0.3 if avg_oil <= 2 else (-0.3 if avg_oil >= 4 else 0.0)
-    elif mood == "low_carb" and has_carb_dish:
-        s -= 0.3
-    elif mood == "want_clean" and has_processed:
-        s -= 0.4
-    elif mood == "want_indulgent" and avg_oil <= 2:
-        s -= 0.2
-    s *= confidence
-    return max(-1.0, min(1.0, s))
+    if mood != "want_soup":
+        return 0.0
+    if wetness_bonus(combo) > 0:
+        return 0.5
+    return 0.0
 
 
-# ─────────────────────── D-043: 兜底信号 ───────────────────────
-# 原则: 缺数据 ≠ 无信号. taste_match 没 hints 时从 profile 静态抽;
-#       context_boost 没 mood 时按时段/季节推断 (低置信弱先验).
+# ─────────────────────── D-043: 兜底信号 (D-071 季节兜底已废) ───────────────────────
+# 原则: 缺数据 ≠ 无信号. taste_match 没 hints 时从 profile 静态抽.
+#
+# D-071: D-043 季节默认 mood 兜底 (`infer_default_mood`) 已废 — 方法论 baseline
+# 已固化, 不需季节猜测 (详见 D-070 定位收敛). context_boost 没 mood 时直接返 0.
 
 # taste_description 中常见关键词 → boost/penalty token 映射
 _TASTE_KW_TO_BOOST = {
@@ -493,27 +473,6 @@ def extract_static_taste_hints(profile: dict | None) -> dict | None:
     if not boost and not penalty:
         return None
     return {"boost": sorted(boost), "penalty": sorted(penalty)}
-
-
-def infer_default_mood(today: dt.date | None = None) -> str | None:
-    """D-043: 没传 daily_mood 时按季节推断默认 mood (低置信先验).
-
-    规则:
-      - 夏季 (6-9 月) → want_light
-      - 冬季 (12-2 月) → want_indulgent
-      - 春秋 → None (不强加)
-    """
-    today = today or dt.date.today()
-    month = today.month
-    if 6 <= month <= 9:
-        return "want_light"
-    if month in (12, 1, 2):
-        return "want_indulgent"
-    return None
-
-
-# default mood 的置信度系数 (vs 真实 mood 的 1.0)
-DEFAULT_MOOD_CONFIDENCE = 0.4
 
 
 # ─────────────────────── D-043: 不可补偿惩罚 ───────────────────────

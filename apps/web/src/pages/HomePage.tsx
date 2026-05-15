@@ -36,9 +36,12 @@ export function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function fetchRecommend(args?: { meal?: MealType; mood?: Mood }) {
+  // D-071: 不再让用户选 mood, mood 固定 'neutral' (后端 daily_mood=None).
+  // want_soup 走 refine 文本关键词识别 (chisha/refine.py:infer_refine_mood).
+  const FIXED_MOOD: Mood = "neutral";
+
+  async function fetchRecommend(args?: { meal?: MealType }) {
     const meal = args?.meal ?? home.meal;
-    const mood = args?.mood ?? home.mood;
     setHome({
       loading: true,
       refineHistory: [],
@@ -46,7 +49,7 @@ export function HomePage() {
       skipped: false,
       skipReason: null,
     });
-    const resp = await api.recommend({ meal_type: meal, mood });
+    const resp = await api.recommend({ meal_type: meal, mood: FIXED_MOOD });
     setHome({
       session: {
         session_id: resp.session_id,
@@ -69,7 +72,7 @@ export function HomePage() {
       session_id: home.session.session_id,
       refine_text: "",
       meal_type: home.meal,
-      mood: home.mood,
+      mood: FIXED_MOOD,
       round: home.session.round + 1,
       excludeIds,
     });
@@ -87,11 +90,7 @@ export function HomePage() {
 
   function setMeal(m: MealType) {
     setHome({ meal: m });
-    void fetchRecommend({ meal: m, mood: home.mood });
-  }
-  function setMood(m: Mood) {
-    setHome({ mood: m });
-    void fetchRecommend({ meal: home.meal, mood: m });
+    void fetchRecommend({ meal: m });
   }
 
   // ── Refine ───────────────────────────────────────────────────────────────────
@@ -107,7 +106,7 @@ export function HomePage() {
       session_id: home.session.session_id,
       refine_text: text,
       meal_type: home.meal,
-      mood: home.mood,
+      mood: FIXED_MOOD,
       round: nextRound,
       excludeIds: [],
     });
@@ -205,8 +204,6 @@ export function HomePage() {
       <StatusBar
         meal={home.meal}
         setMeal={setMeal}
-        mood={home.mood}
-        setMood={setMood}
         onRegen={regenerate}
         regenerating={home.loading}
       />

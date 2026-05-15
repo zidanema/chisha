@@ -1187,3 +1187,75 @@ GET    /api/history?days=999                HTTP 400
 - ruamel.yaml deep-merge 写 profile.yaml: 长 multi-line block (如 `taste_description: |`) 在覆盖时 `|` 可能变 `|-`, 不影响语义但形态有微调
 - `_remember_session_safe` (web_api) 还是 best-effort 吞错: 设计意图是 session replay 仅为反馈页便利, 推荐主链路不能因落盘失败断; 但极端情况下用户提交反馈时 5 候选 dump 可能丢, 反馈页会 404 — 实测后再决定是否提级
 - 历史 `recommend_log.jsonl` 没去重 / 没分割; 自用一周后做 logrotate
+
+---
+
+## D-071 执行记录 · 砍 mood picker + want_soup 关键词识别
+
+**2026-05-15** · D-070 定位收敛的工程落地 Step 1
+
+### 改了什么
+
+**前端 (apps/web/)**:
+- `components/StatusBar.tsx`: 删 mood chip 区块 (52-70 行) 和 setMood/mood props, 保留 LABELS.mood / Mood 类型 (调试台仍用)
+- `pages/HomePage.tsx`: 引入 `FIXED_MOOD: Mood = 'neutral'` 常量, fetchRecommend / regenerate / onRefine 三处用固定值; 删 setMood handler 与调用点
+
+**后端 (chisha/refine.py)**:
+- 新增 `infer_refine_mood(user_input)`: 子串匹配, 否定优先. 正向词 10 个 / 否定词 6 个 (D-071 字典)
+- 新增 `_match_positive_keyword` / `_match_negative_keyword` 内部辅助 (供埋点用)
+- 新增 `MOOD_TRACE_SCHEMA_VERSION = 1` 常量 + `_build_mood_trace()` + `_append_mood_trace()`. 双写: refine() 返回 dict 加 `mood_inference` 段; 同时落 `logs/refine_mood_trace.jsonl` (5MB 轮转, 写失败静默)
+- `refine()` 主入口: 在 build_context 前算 `effective_daily_mood = state.daily_mood or inferred_mood`, 显式优先于推断 (Codex Round 1 Q2)
+
+**后端 (chisha/score.py)**:
+- `context_boost`: 砍 4 条 mood 规则 (want_light / low_carb / want_clean / want_indulgent), 保留 want_soup. 函数从 ~30 行简化到 ~10 行, 注释明确这是 D-072 spec 接口位, 不要再扩
+- 删 `infer_default_mood` 函数 + `DEFAULT_MOOD_CONFIDENCE` 常量 + `context_boost` 里调用兜底分支 (D-043 季节兜底在 D-070 定位下不适用)
+
+**测试 (tests/)**:
+- 新增 `test_refine_mood_inference.py` 34 case: 正向命中 5 / 否定 4 / 反例 3 / 已知局限 2 / 边界守门 8 (param) / 内部 helper 2 / trace 构造 4 / jsonl 写入 2 / 前后端契约 3
+- 改 `test_score_v2.py`: 删 4 条 want_light/low_carb/want_clean/want_indulgent 老断言, 替换为 deprecated-behavior 显式 assert == 0 (Codex Q6 + delete-tests MAJOR); 删 3 条 infer_default_mood 老断言, 替换为 `not hasattr(score_mod, ...)` + `context_boost(None) == 0` 反季节兜底断言
+
+### Codex Round 1 Review 发现与修复
+
+实现前提交 plan 走 codex-rescue gpt-5.3-codex 独立 review, 输出 **条件 Go**:
+
+| 等级 | 发现 | 落地 |
+|-----|------|------|
+| BLOCKER | 契约漂移: 残留 mood 调用点可能仍发非 neutral | 加 3 个 Python 结构化扫描 contract test, 锁 StatusBar 无 mood props / HomePage 用 FIXED_MOOD 常量 / web_api `neutral → daily_mood=None` 映射 |
+| MAJOR | Q1 关键词字典对抗负例不足 (店名/反讽场景) | 加 2 个 "提及但非欲望" case (鸡蛋羹这家店 / 粥铺主打面), 注释明确这是已知局限, 退 L3 兜底 |
+| MAJOR | Q4 jsonl schema/轮转/非阻塞缺设计 | schema_version 字段 + 5MB 轮转 (.1 备份) + try/except 静默失败 + 单测 `test_append_mood_trace_silent_on_failure` 锁不阻断 |
+| MAJOR | Q6 边界靠 review 守不工程化 | 加 8 个 parametrize 边界守门 case, 任意非 want_soup 意图文本 (清淡/轻食/解馋/辣/加工肉...) 必返 None |
+| MAJOR | delete tests 直接删抹掉历史 | want_light/low_carb/want_clean/want_indulgent 老测试改成 deprecated-behavior 显式 `assert == 0.0`, 不静默删 |
+| PASS | Q2 显式 > 推断短路语义 | trace 加 `source: explicit\|inferred\|none` 字段显式化 |
+| MINOR | Q3 context_boost 是否合并到 wetness_bonus | 保留独立维度, 注释说明是 D-072 spec 接口位 |
+| MINOR | Q5 "汤泡饭" None vs "想喝汤泡饭" want_soup 对照 | 加显式对比对单测 (test_inference_no_match_tang_pao_fan + test_inference_xiang_he_tang_pao_fan_still_hits) |
+
+### 回归与验证
+
+- `uv run pytest tests/ -q`: 412 passed, 1 failed (pre-existing `test_cleanup_expired`, D-048 已知, 与本次无关)
+- `npm run typecheck` (apps/web): 通过, 无新 TS error
+- `uv run python -m scripts.dry_run --n 3 --meal lunch`: 5 推荐输出正常, 不再误用 daily_mood 兜底
+- 手动 refine 集成测试 (走 chisha/refine.py:refine() 完整链路, 不打 LLM):
+  - "今天有点冷想喝热汤" → matched=热汤, inject=want_soup, source=inferred ✅
+  - "今天别来汤了想吃辣的" → negated=True, inject=None, source=none ✅
+  - "想吃肉" → matched=None, inject=None, source=none ✅
+  - logs/refine_mood_trace.jsonl 3 行 schema_version=1 正常落盘
+
+### 踩到的坑
+
+1. **mood 'neutral' 在前端是字面量, 在后端 web_api 映射为 daily_mood=None** — 前后端各自管语义, 中间字符串 'neutral' 是 wire 约定. 删 mood picker 时本可以让前端发 daily_mood=None, 但保留 'neutral' wire 兼容 (后续若加新 mood 复用同入参) — 是有意的轻债, 在契约 test 里锁住
+2. **delete tests 是 Codex 特意点出来的小坑**: 直接删旧 mood 分支测试, 历史会消失; 替换为 "这维度返 0" 的 deprecated-behavior 断言, 让未来 refactor 一眼看到 "这是有意收敛, 不是遗忘"
+3. **子串匹配的"提及但非欲望"** 是已知局限 (鸡蛋羹这家店命中"羹"), 现在用 known-limitation 单测明确接受当前行为, 未来若加意图分类把 case 改成 None 即可 — 反而比"假装这条 case 不存在"更诚实
+4. **score.py 重构延后到 D-072**: 这次只删 4 条 mood 分支 + infer_default_mood, 不改打分函数签名 / 不调权重, 严格守 D-071 边界 (不顺手做 D-072 范围的事)
+
+### 反 anti-pattern (这次没踩)
+
+- **没扩 infer_refine_mood scope**: 字典死死锁在 10 正向 + 6 否定 want_soup 词, docstring 明确边界, 单测有边界守门. D-071 警告执行到位
+- **没把 jsonl 写成阻塞**: 全部 try/except + best-effort + 路径不可写场景有单测
+- **没漏 Mood 类型保留**: LABELS.mood / Mood 类型留在 lib/types.ts 给调试台用, 前端只是入口移除
+- **没在 score.py 顺手调权重**: D-072 才动权重, D-071 只做信号源头 (mood)
+
+### 依赖与影响
+
+- 推翻: D-043 季节默认 mood 兜底 + want_light/low_carb/want_clean/want_indulgent 4 条 context_boost 规则
+- 保留: D-034 ContextSnapshot / D-043 want_soup wetness 通道 / D-048 trace 字段精神 (mood_inference 与 D-048 L3 trace 同级共存)
+- 下一步 (D-072): methodology spec 抽象, context_boost 函数实质会被 spec.soft_rules 接管 (现在保留接口位)

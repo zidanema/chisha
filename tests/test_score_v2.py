@@ -10,7 +10,6 @@ import pytest
 
 from chisha.context import ContextSnapshot
 from chisha.score import (
-    DEFAULT_MOOD_CONFIDENCE,
     V2_DEFAULT_WEIGHTS,
     apply_caps,
     apply_unforgivable_penalty,
@@ -25,7 +24,6 @@ from chisha.score import (
     distance_penalty,
     eta_penalty,
     extract_static_taste_hints,
-    infer_default_mood,
     infer_food_form,
     popularity_score,
     price_penalty,
@@ -209,10 +207,12 @@ def _ctx(daily_mood):
 
 
 def test_context_boost_no_context():
-    """D-043: 没 context 时, 春秋季 default mood=None → 0; 夏冬季见专门测试."""
+    """D-071: 没 context (None) → 0; 季节默认 mood 兜底已废 (D-043 → D-071)."""
     c = _combo([make_dish(wetness=3)])
-    # 强制春季 (4 月), default mood = None
+    # 任意月份均应返回 0 (季节兜底已删, 不再生效)
     assert context_boost(c, None, today=dt.date(2026, 4, 15)) == 0.0
+    assert context_boost(c, None, today=dt.date(2026, 7, 15)) == 0.0
+    assert context_boost(c, None, today=dt.date(2026, 1, 15)) == 0.0
 
 
 def test_context_boost_neutral():
@@ -231,29 +231,32 @@ def test_context_boost_want_soup_without_soup():
     assert context_boost(c, _ctx("want_soup")) == 0.0
 
 
-def test_context_boost_want_light_low_oil():
-    c = _combo([make_dish(oil_level=2)])
-    assert context_boost(c, _ctx("want_light")) == 0.3
+# ─────────────────────── D-071: 已废 mood 分支 deprecated-behavior 断言
+# Codex Round 1 Q6: 用显式 assert 0.0 锁定 want_light / want_clean /
+# want_indulgent / low_carb 不再被识别, 防未来 refactor 悄悄复活.
+
+def test_context_boost_want_light_deprecated():
+    """D-071: want_light 分支已删, 任何油位 combo 都应返回 0."""
+    assert context_boost(_combo([make_dish(oil_level=2)]), _ctx("want_light")) == 0.0
+    assert context_boost(_combo([make_dish(oil_level=4)]), _ctx("want_light")) == 0.0
 
 
-def test_context_boost_want_light_high_oil_negative():
-    c = _combo([make_dish(oil_level=4)])
-    assert context_boost(c, _ctx("want_light")) == -0.3
-
-
-def test_context_boost_low_carb_with_carb_dish():
+def test_context_boost_low_carb_deprecated():
+    """D-071: low_carb 分支已删, 含主食 combo 不再被扣分."""
     c = _combo([make_dish(dish_role="主食", grain_type="白米")])
-    assert context_boost(c, _ctx("low_carb")) == -0.3
+    assert context_boost(c, _ctx("low_carb")) == 0.0
 
 
-def test_context_boost_want_clean_processed():
+def test_context_boost_want_clean_deprecated():
+    """D-071: want_clean 分支已删, 加工肉 combo 不再被扣分 (走 processed_meat 主维度)."""
     c = _combo([make_dish(processed_meat_flag=True, dish_role="主菜")])
-    assert context_boost(c, _ctx("want_clean")) == -0.4
+    assert context_boost(c, _ctx("want_clean")) == 0.0
 
 
-def test_context_boost_want_indulgent_too_light():
+def test_context_boost_want_indulgent_deprecated():
+    """D-071: want_indulgent 分支已删, 低油 combo 不再被微扣."""
     c = _combo([make_dish(oil_level=1)])
-    assert context_boost(c, _ctx("want_indulgent")) == -0.2
+    assert context_boost(c, _ctx("want_indulgent")) == 0.0
 
 
 # ─────────────────────── score_combo 集成
@@ -708,32 +711,27 @@ def test_extract_static_taste_hints_empty_returns_none():
     assert extract_static_taste_hints(None) is None
 
 
-# ─────────────────────── D-043: infer_default_mood
-def test_infer_default_mood_summer_light():
-    assert infer_default_mood(dt.date(2026, 7, 15)) == "want_light"
-    assert infer_default_mood(dt.date(2026, 9, 1)) == "want_light"
+# ─────────────────────── D-071: infer_default_mood deprecated 断言
+# Codex Round 1 Q6 + MAJOR (delete tests 替换为 deprecated-behavior 断言).
+
+def test_infer_default_mood_removed():
+    """D-071: D-043 季节默认 mood 兜底已删 — 方法论 baseline 已固化, 不需季节猜测."""
+    import chisha.score as score_mod
+    assert not hasattr(score_mod, "infer_default_mood"), (
+        "infer_default_mood 已被 D-071 删除, 不应再存在"
+    )
+    assert not hasattr(score_mod, "DEFAULT_MOOD_CONFIDENCE"), (
+        "DEFAULT_MOOD_CONFIDENCE 已被 D-071 删除"
+    )
 
 
-def test_infer_default_mood_winter_indulgent():
-    assert infer_default_mood(dt.date(2026, 1, 15)) == "want_indulgent"
-    assert infer_default_mood(dt.date(2026, 12, 1)) == "want_indulgent"
-
-
-def test_infer_default_mood_spring_autumn_none():
-    assert infer_default_mood(dt.date(2026, 4, 15)) is None
-    assert infer_default_mood(dt.date(2026, 10, 15)) is None
-
-
-def test_context_boost_uses_default_mood_low_confidence():
-    """没传 context 时, 夏季 default mood=want_light 生效但被置信度折扣."""
-    # 低油 combo 在 want_light 下原本 +0.3
+def test_context_boost_no_seasonal_fallback():
+    """D-071: 没 mood 时不再按季节兜底, 任意季节都返回 0."""
     c = _combo([make_dish(oil_level=1)])
-    # 在春季 (4 月) → default mood = None → 0
-    s_spring = context_boost(c, context=None, today=dt.date(2026, 4, 15))
-    assert s_spring == 0.0
-    # 在夏季 (7 月) → default mood = want_light → 0.3 * 0.4 = 0.12
-    s_summer = context_boost(c, context=None, today=dt.date(2026, 7, 15))
-    assert abs(s_summer - 0.3 * DEFAULT_MOOD_CONFIDENCE) < 1e-6
+    # 夏季 (7 月) 原本会 want_light 兜底, 现在应 0
+    assert context_boost(c, context=None, today=dt.date(2026, 7, 15)) == 0.0
+    # 冬季 (1 月) 原本会 want_indulgent 兜底, 现在应 0
+    assert context_boost(c, context=None, today=dt.date(2026, 1, 15)) == 0.0
 
 
 # ─────────────────────── D-043: apply_unforgivable_penalty

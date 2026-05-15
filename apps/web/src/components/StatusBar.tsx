@@ -1,19 +1,20 @@
 import { LABELS } from "@/lib/labels";
 import { cx } from "@/lib/cx";
-import type { MealType, Mood } from "@/lib/types";
+import type { MealType } from "@/lib/types";
+
+// D-071: mood picker 整块隐藏 (随便/清淡/解馋/轻食 4 chip).
+// 方法论 baseline 已固化, 不需要 session 级显式 mood; want_soup 偏好走 refine
+// 文本关键词识别 (chisha/refine.py:infer_refine_mood). Mood 类型/LABELS.mood
+// 保留供调试台对比能力, 不删 — 仅前端入口移除.
 
 export function StatusBar({
   meal,
   setMeal,
-  mood,
-  setMood,
   onRegen,
   regenerating,
 }: {
   meal: MealType;
   setMeal: (m: MealType) => void;
-  mood: Mood;
-  setMood: (m: Mood) => void;
   onRegen: () => void;
   regenerating: boolean;
 }) {
@@ -47,26 +48,6 @@ export function StatusBar({
             {LABELS.ui.regen}
           </button>
         </div>
-      </div>
-
-      <div className="mt-3 flex items-center gap-1.5 flex-wrap">
-        {LABELS.moodList.map((id) => {
-          const active = mood === id;
-          return (
-            <button
-              key={id}
-              onClick={() => setMood(id)}
-              className={cx(
-                "px-2.5 py-0.5 rounded-md text-[12.5px] border",
-                active
-                  ? "border-[color:var(--accent)] text-[color:var(--accent)] bg-[color:var(--accent-bg)]"
-                  : "border-[color:var(--border)] text-[color:var(--muted)] hover:text-[color:var(--fg)] hover:border-[color:var(--fg)]"
-              )}
-            >
-              {LABELS.mood[id]}
-            </button>
-          );
-        })}
       </div>
     </div>
   );
