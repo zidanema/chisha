@@ -1,6 +1,12 @@
-"""refine.py 单测.
+"""refine 主流程单测 (D-073 v2 重写).
 
-end-to-end refine 跑通需要召回数据, 这里用 fixture 构造小型 zone 数据.
+砍掉的旧 D-035 chips_to_taste_hints 测试 (refine 端不再产 chip).
+砍掉的旧 D-071 mood inference 测试 (单独文件已删).
+
+保留:
+  - refine session 生命周期 (round++, history, persists)
+  - refine_intent 字段携带 (取代 parsed_feedback)
+  - refine 不出 explore (refine=True → n_explore=0)
 """
 from __future__ import annotations
 
@@ -8,122 +14,66 @@ import datetime as dt
 
 import pytest
 
-from chisha.refine import chips_to_taste_hints, refine
+from chisha.refine import refine
 from chisha.session import create_session, save_session
 from tests.conftest import make_dish, make_restaurant
 
 
-# ─────────────────────── chips_to_taste_hints
-def test_chips_to_hints_soup():
-    hints = chips_to_taste_hints(["想喝汤"])
-    assert "wetness" in hints["boost"]
-
-
-def test_chips_to_hints_too_oily_means_low_oil_boost():
-    """'太油' chip 应转成 boost low_oil (用户想 low_oil)."""
-    hints = chips_to_taste_hints(["太油"])
-    assert "low_oil" in hints["boost"]
-    assert "low_oil" not in hints["penalty"]
-
-
-def test_chips_to_hints_sweet_penalty():
-    hints = chips_to_taste_hints(["太甜"])
-    assert "sweet_sauce" in hints["penalty"]
-
-
-def test_chips_to_hints_processed_meat_penalty():
-    hints = chips_to_taste_hints(["加工肉太多"])
-    assert "processed_meat" in hints["penalty"]
-
-
-def test_chips_to_hints_unknown_chip_ignored():
-    hints = chips_to_taste_hints(["送慢", "拒签"])
-    # 这些 chip 不映射到 taste 维度
-    assert hints["boost"] == []
-    assert hints["penalty"] == []
-
-
-def test_chips_to_hints_multiple():
-    hints = chips_to_taste_hints(["想喝汤", "太油", "加工肉太多"])
-    assert "wetness" in hints["boost"]
-    assert "low_oil" in hints["boost"]
-    assert "processed_meat" in hints["penalty"]
-
-
-# ─────────────────────── refine end-to-end
 @pytest.fixture
 def small_profile():
     return {
-        "basics": {"office_zone": "test", "zones": {"lunch": "test"}},
-        "taste_description": "喜欢汤水, 不要油焖",
-        "preferences": {
-            "liked_cuisines": ["潮汕"],
-            "disliked_cuisines": [],
-            "avoid_dishes": [],
-            "spicy_tolerance": 2,
+        "basics": {"name": "测试", "city": "test",
+                    "zones": {"lunch": "test", "dinner": "test"},
+                    "office_zone": "test"},
+        "plate_rule": {
+            "must_have_vegetable": True,
+            "min_vegetable_dishes": 1,
+            "min_protein_g": 0,
+            "prefer_oil_level_at_most": 3,
+            "hard_max_oil_level": 5,
         },
-        "plate_rule": {"must_have_vegetable": True, "min_vegetable_dishes": 1,
-                        "min_protein_g": 25, "prefer_oil_level_at_most": 3,
-                        "hard_max_oil_level": 5},
+        "preferences": {
+            "liked_cuisines": [], "disliked_cuisines": [],
+            "banned_cuisines": [],
+            "avoid_dishes": [], "avoid_main_ingredients": [],
+            "avoid_cooking_methods": [], "avoid_restaurants": [],
+            "spicy_tolerance": 3,
+        },
+        "delivery_constraints": {"hard_max_eta_min": 45, "prefer_max_eta_min": 30},
+        "price_range": {"hard_max_lunch": 200, "hard_max_dinner": 200,
+                        "prefer_max_lunch": 100, "prefer_max_dinner": 100},
         "diversity": {"no_same_restaurant_within_days": 7,
-                       "no_same_main_ingredient_within_days": 3},
-        "recall": {"top_n": 100, "per_restaurant_max": 3,
-                    "min_monthly_sales": 10},
+                      "no_same_main_ingredient_within_days": 3},
+        "recall": {"per_restaurant_max": 5, "per_restaurant_top_k": 3,
+                   "per_brand_top_k": 2, "per_cuisine_top_k": 6,
+                   "per_food_form_top_k": 8, "min_monthly_sales": 0,
+                   "max_dishes_per_combo": 3, "max_protein_per_combo": 1,
+                   "max_veg_per_combo": 1, "max_carb_per_combo": 1},
+        "scoring_weights": {
+            "low_oil": 0.5, "popularity": 0.4, "cuisine_preference": 0.3,
+            "variety_bonus": 0.5, "carb_quality": 0.6, "processed_meat": 1.0,
+            "sweet_sauce": 0.7, "wetness": 0.5, "dish_role_match": 0.3,
+            "intent_cuisine": 0.20, "intent_ingredient": 0.10, "intent_flavor": 0.10,
+        },
+        "taste_description": "",
     }
 
 
 @pytest.fixture
 def tiny_zone():
-    """3 家店 x 各几道菜, 足够 recall 出几个 combo."""
     rests = [
-        {**make_restaurant(rid="r1", name="潮汕汤店"),
-         "office_zone": "test", "category": "潮汕"},
-        {**make_restaurant(rid="r2", name="湘菜店"),
-         "office_zone": "test", "category": "湘菜"},
-        {**make_restaurant(rid="r3", name="日式店"),
-         "office_zone": "test", "category": "日式"},
+        make_restaurant("r_1", "湖南老灶台"),
+        make_restaurant("r_2", "日料一番"),
     ]
     dishes = [
-        # r1 潮汕: 汤水牛肉 + 蔬菜
-        make_dish(dish_id="d1_1", restaurant_id="r1",
-                  raw_name="潮汕牛肉汤", canonical_name="潮汕牛肉汤",
-                  cuisine="潮汕", main_ingredient_type="红肉",
-                  oil_level=2, protein_grams_estimate=35,
-                  vegetable_ratio_estimate=0.1, wetness=3,
-                  dish_role="主菜", monthly_sales=200),
-        make_dish(dish_id="d1_2", restaurant_id="r1",
-                  raw_name="蒜蓉空心菜", canonical_name="蒜蓉空心菜",
-                  cuisine="潮汕", main_ingredient_type="纯素",
-                  oil_level=2, vegetable_ratio_estimate=0.95,
-                  protein_grams_estimate=3, dish_role="配菜",
-                  monthly_sales=180),
-        # r2 湘菜: 重口炒肉 + 蔬菜
-        make_dish(dish_id="d2_1", restaurant_id="r2",
-                  raw_name="辣椒炒肉", canonical_name="辣椒炒肉",
-                  cuisine="湘菜", main_ingredient_type="白肉",
-                  oil_level=4, protein_grams_estimate=30,
-                  vegetable_ratio_estimate=0.2, dish_role="主菜",
-                  monthly_sales=150),
-        make_dish(dish_id="d2_2", restaurant_id="r2",
-                  raw_name="炒油麦", canonical_name="炒油麦菜",
-                  cuisine="湘菜", main_ingredient_type="纯素",
-                  oil_level=3, vegetable_ratio_estimate=0.9,
-                  protein_grams_estimate=3, dish_role="配菜",
-                  monthly_sales=100),
-        # r3 日式: 拉面 (主食重)
-        make_dish(dish_id="d3_1", restaurant_id="r3",
-                  raw_name="豚骨拉面", canonical_name="豚骨拉面",
-                  cuisine="日式", main_ingredient_type="主食",
-                  oil_level=3, protein_grams_estimate=20,
-                  vegetable_ratio_estimate=0.1, is_complete_meal=True,
-                  dish_role="主食", grain_type="精制面",
-                  monthly_sales=300),
-        make_dish(dish_id="d3_2", restaurant_id="r3",
-                  raw_name="日式沙拉", canonical_name="日式沙拉",
-                  cuisine="日式", main_ingredient_type="纯素",
-                  oil_level=1, vegetable_ratio_estimate=0.95,
-                  protein_grams_estimate=5, dish_role="配菜",
-                  monthly_sales=80),
+        make_dish("d_1", "r_1", "酸辣椒炒肉", cuisine="湘菜",
+                  main_ingredient_type="红肉", vegetable_ratio_estimate=0.0, spicy_level=2),
+        make_dish("d_2", "r_1", "清炒时蔬", cuisine="湘菜",
+                  main_ingredient_type="纯素", vegetable_ratio_estimate=0.8, spicy_level=0),
+        make_dish("d_3", "r_2", "三文鱼刺身", cuisine="日式",
+                  main_ingredient_type="海鲜", vegetable_ratio_estimate=0.0, spicy_level=0),
+        make_dish("d_4", "r_2", "海带沙拉", cuisine="日式",
+                  main_ingredient_type="纯素", vegetable_ratio_estimate=0.8, spicy_level=0),
     ]
     return rests, dishes
 
@@ -166,8 +116,9 @@ def test_refine_increments_round(tmp_path, small_profile, tiny_zone):
     assert out["round"] == 2
     assert out["refine_input"] == "想喝汤别给我面"
     assert "candidates" in out
-    # taste_hints 应反映 chips
-    assert "wetness" in out["taste_hints"]["boost"]
+    # D-073: refine_intent 取代 parsed_feedback/taste_hints
+    assert "refine_intent" in out
+    assert "soup" in out["refine_intent"]["flavor_tags"]
 
 
 def test_refine_no_explore(tmp_path, small_profile, tiny_zone):
@@ -197,13 +148,31 @@ def test_refine_persists_session(tmp_path, small_profile, tiny_zone):
     assert len(reloaded.last_candidates) > 0
 
 
-def test_refine_parsed_feedback_attached(tmp_path, small_profile, tiny_zone):
+def test_refine_intent_attached(tmp_path, small_profile, tiny_zone):
+    """D-073: refine 输出携带结构化 refine_intent."""
     rests, dishes = tiny_zone
-    sid = "sid_parsed"
+    sid = "sid_intent"
     s = create_session(sid, "lunch", "test")
     save_session(s, tmp_path)
-    out = refine(sid, "太油了, 想喝汤", small_profile, rests, dishes, [],
+    out = refine(sid, "想吃湘菜, 肉多一点", small_profile, rests, dishes, [],
                   root=tmp_path, today=dt.date(2026, 5, 13), use_llm=False)
-    pf = out["parsed_feedback"]
-    assert "太油" in pf["chips"]
-    assert "想喝汤" in pf["chips"]
+    intent = out["refine_intent"]
+    # rule_parse fallback 应能抓到 cuisine + portion
+    assert "湖南菜" in intent["cuisine_want"]
+    assert "more_meat" in intent["portion"]
+
+
+def test_refine_avoid_hard_filter(tmp_path, small_profile, tiny_zone):
+    """D-073: cuisine_avoid 硬过滤, 二轮候选不含目标菜系."""
+    rests, dishes = tiny_zone
+    sid = "sid_avoid"
+    s = create_session(sid, "lunch", "test")
+    save_session(s, tmp_path)
+    out = refine(sid, "不要日料, 想吃湘菜", small_profile, rests, dishes, [],
+                  root=tmp_path, today=dt.date(2026, 5, 13), use_llm=False)
+    # candidates 全部不该是 日式 cuisine
+    cuisines = []
+    for c in out["candidates"]:
+        for d in c.get("dishes", []):
+            cuisines.append(d.get("cuisine"))
+    assert "日式" not in cuisines

@@ -56,7 +56,7 @@
 ```json
 {
   "session_id": "...",
-  "refine_text": "想吃辣的",
+  "refine_text": "想吃点湖南菜，然后肉多一点。",
   "meal_type": "lunch",
   "mood": "neutral",
   "round": 2,
@@ -64,7 +64,27 @@
 }
 ```
 
-响应: 同 `RecommendResponse`, 复用 `session_id`, `round++`, `context.refine_input` 带原文。
+响应: 同 `RecommendResponse`, 复用 `session_id`, `round++`, 顶层新增 `refine_input` (原文) 和 `refine_intent` (结构化意图, D-073).
+
+`refine_intent` schema (字段全空时仍带, 但 list 空 / null):
+```json
+{
+  "cuisine_want": ["湖南菜"],
+  "cuisine_avoid": [],
+  "ingredient_want": ["肉"],
+  "ingredient_avoid": [],
+  "cooking_method": [],
+  "flavor_tags": ["heavy", "spicy"],
+  "raw_flavor": ["重口味", "辣一点"],
+  "portion": ["more_meat"],
+  "staple_preference": null,
+  "price_band": null,
+  "freeform_note": "...",
+  "raw_text": "..."
+}
+```
+
+由 `chisha/refine_intent.py::parse_refine_intent` 生成 (LLM + 规则 fallback), 取代 V1 的 `parsed_feedback / taste_hints` 字段 (D-073 superseded D-035 在 refine 端). 详见 DECISIONS D-073.
 
 ### 6.3 `POST /api/accept` (D-052)
 

@@ -1356,3 +1356,134 @@ GET    /api/history?days=999                HTTP 400
 - 修订: D-072 触发条件 (走 D-072.1, L2 trace baseline 替代采纳率门)
 - 关联: D-070 三层信号模型 L0 工程化; D-071 context_boost 接口位预留生效
 - 下一步 (Phase 1): 第二份 spec (减脂 / 增肌 / 糖控) 走 `profiles/methodologies/{name}.yaml` 接入; 若需要新字段类型 → 走 `extra_rules: []` 逃逸口先临时, 再走 D-072.M 修订把字段升正
+
+---
+
+## D-073 执行记录 · refine 走结构化意图 + 重召回 + 砍 D-071 + sanity sweep
+
+**2026-05-16** · 推翻 V1 refine chip 词表链路, 让"用户主动表达诉求"真正生效
+
+### 改了什么
+
+**新增 `chisha/refine_intent.py` (~280 行)**:
+- `RefineIntent` dataclass 12 字段: cuisine_want/avoid (自由字符串) + ingredient_want/avoid + cooking_method + flavor_tags (8 归一枚举) + raw_flavor + portion (4 枚举) + staple_preference (3 枚举) + price_band (3 枚举) + freeform_note + raw_text
+- `parse_refine_intent(text, use_llm, profile_llm)`: LLM 优先 + rule fallback, 输出严格清洗 (枚举校验 / 去重 / strip)
+- `rule_parse(text)`: 关键词 + 否定窗口 (Codex P1-1 修订 `_is_negated_near` 4-char 前缀检查, 覆盖"不要牛肉/不想吃肉"分流 avoid)
+- `_FLAVOR_SYNONYMS` / `_PORTION_SYNONYMS` / `_CUISINE_KEYWORDS` 归一表
+
+**新增 `prompts/parse_refine_intent.md`**:
+- LLM prompt 含 10 few-shot 示例 (主 case + 否定 + 多目标 + 冲突 + 程度 + cuisine alias + 空文本 + 反联想边界 + 价格)
+- 规则: 不限词表 (cuisine/ingredient 开放) + 不主观联想 + 冲突优先精确 (`flavor_tags` 留空, raw_flavor 带原文给 L3)
+
+**`chisha/refine.py` 大改**:
+- 用 `parse_refine_intent` 取代 `parse_feedback`
+- 砍 `chips_to_taste_hints` + `_CHIP_TO_HINT` + `infer_refine_mood` + `_match_*_keyword` + `_build_mood_trace` + `_append_mood_trace` (D-071 superseded)
+- 砍 `append_feedback` 调用 (Codex §7: refine 端不沉淀长期偏好, 仅写 `logs/refine_intent_trace.jsonl` 观测)
+- 返回响应字段从 `parsed_feedback / taste_hints / mood_inference` 改成 `refine_intent`
+
+**`chisha/recall.py` 加 intent 链路** (Codex §2 关键修订):
+- `_intent_dish_score(d, intent)`: 单菜对 intent 命中度, 进 `build_combos_for_restaurant` 的 dish 池排序 key (intent_score × 1.5 + monthly_sales/1000), 防被 `proteins[:6]` / `vegs[:5]` 截断扔掉
+- `recall(intent=)` 主入口: 末尾调 `_apply_intent_buckets` 做三桶 (exact / soft / 全集兜底) + `cuisine_avoid / ingredient_avoid` 硬过滤; Q1 决策 exact < 阈值 max(n×2, L3_INPUT_TOP_K×0.15) 时回落全集
+
+**`chisha/score.py` 加 L2 意图加分**:
+- `CUISINE_ALIASES` (15 个常用别名归一: 湖南菜→湘菜, 日料→日式, ...) + `normalize_cuisine()`
+- `_PROTEIN_KEYWORDS_TO_MTYPE` (Codex P0-2 修订, 取代旧的 `_INGREDIENT_BROAD` 遍历 fallback): 牛/猪/羊→红肉, 鸡/鸭→白肉, 鱼/虾/蟹/贝→海鲜
+- `cuisine_exact_match` / `cuisine_soft_match` (Codex P1-2 修订: ≥2 字才匹配 + 1 字白名单, 避 "西"→"广西米粉" 误中)
+- `contains_ingredient`: 广义词走 `_INGREDIENT_BROAD` + 具体词走菜名子串 + 蛋白关键词精确 fallback
+- `intent_match_bonus(combo, intent, profile) → {cuisine, ingredient, flavor}`: 三档拆分 (Codex §3), 各 ∈ [0, 1]; portion/staple/price 经 ingredient/cuisine 通道
+- `health_guardrail(combo, profile)`: oil_avg > prefer+1 或 unforgivable 共享条件触发 → intent 三档 × 0.4 折扣 (防"全是麻辣火锅")
+- `intent_match_bonus.spicy` 走 `min(profile.spicy_tolerance, 2)` 安全边界 (Codex §5: intent 不能覆盖 profile)
+- `context_boost` 退化为恒返 0.0 (D-071 残留 want_soup 通道彻底砍, Codex P0-1)
+- `rank_combos(intent=)` 透传; `V2_DEFAULT_WEIGHTS` 加 intent_cuisine 0.50 / intent_ingredient 0.20 / intent_flavor 0.10
+
+**`chisha/context.py`**:
+- `ContextSnapshot` + `build_context` 加 `refine_intent: dict | None` 字段
+- `DAILY_MOODS` 字面值保留 want_soup 等 (前端兼容), 加注释明确 D-073 后非 neutral 值**不产生 L2 加分**
+
+**`chisha/rerank.py` `_context_block`**:
+- 新增 "refine 意图 (结构化)" 段, 渲染 intent 非空字段
+
+**`chisha/web_api.py` /api/refine**:
+- response 顶层 `parsed_feedback / taste_hints` 改 `refine_intent`
+- `build_context` 调用透传 `refine_intent=raw.get("refine_intent")`
+
+**`prompts/rerank_system.md` §1-7 优先级表更新**:
+```
+1. 硬约束 > 2. refine_intent (结构化) > 3. refine_input (原文)
+> 4. daily_mood + chips > 5. taste_description > 6. 健康结构 > 7. 多样性
+```
+
+**`profile.yaml`**:
+- 加 3 个权重 intent_cuisine 0.50 / intent_ingredient 0.20 / intent_flavor 0.10
+- 注释明确"临时校准, 待自用一周后用 baseline_l2_snapshot 跑 std 二审" (Codex P1-3)
+
+**前端 sanity sweep (与 D-073 后端解耦但同 commit 收口)**:
+- `apps/web/src/lib/api.ts` `useMock` 默认从 `mock-first` 改 `real-first` (Vite dev 不再默认 mock, mock 须显式 `VITE_USE_MOCK=1` 开)
+- `apps/web/src/components/NavBar.tsx` 加红色 `MOCK` 角标 (走 mock 时 UI 提示, 防同类"对着 mock 看不到 backend 实测差异"的 debug 浪费)
+- `apps/web/dist/` 重建 (旧 build May 15 19:29 落后于 D-071 砍 mood picker May 15 23:49)
+
+**测试**:
+- 新增 `tests/test_refine_intent_parser.py` (41 测试覆盖 LLM/rule fallback + 否定 + 冲突 + 多目标 + 空文本 + alias)
+- 新增 `tests/test_intent_score.py` (27 + 9 测试覆盖 intent_match_bonus + 三桶 + combo 截断前排序 + 牛肉≠白肉 + soft match 1 字阻断)
+- 改 `tests/test_refine.py` (砍 chips_to_taste_hints 测试 → refine_intent 断言)
+- 改 `tests/test_score_v2.py` (`test_context_boost_want_soup_*` 改为 D-073 锁定恒 0 + `test_score_combo_soup_boost_*` 改为通过 RefineIntent.flavor_tags=["soup"] 触发)
+- 删 `tests/test_refine_mood_inference.py` (D-071 整文件)
+- 归档 `logs/refine_mood_trace.jsonl` → `.legacy.jsonl`
+- 全测套: 460 passed, 1 skipped, 5 deselected, 0 回归 (test_cleanup_expired pre-existing flaky)
+
+### 验证
+
+**端到端实测** (POST /api/refine, 真后端):
+
+| 输入 | intent 抽取 | 二轮 5 候选变化 |
+|---|---|---|
+| "想吃点湖南菜，然后肉多一点。" | cuisine_want=[湖南菜], ingredient_want=[肉], portion=[more_meat] | 5 条里 4 条湘菜 + 1 川菜亲缘辣味 |
+| "今天想吃点重口味的，吃湘菜吧，辣一点，肉多一点。" | + flavor_tags=[heavy, spicy] + raw_flavor=[重口味, 辣一点] | 4/5 大幅变化, 全部命中湘菜+辣+肉 |
+| "不要日料，想吃湘菜" | cuisine_want=[湖南菜], cuisine_avoid=[日料] | 0 日料 + top3 全湘菜 |
+| "想吃牛肉" | ingredient_want=[牛肉] | 3 家含牛肉相关菜 |
+| "不要牛肉" | ingredient_avoid=[牛肉] | 避开牛肉 (P1-1 否定正则生效) |
+
+**单 case 详诊** (湖南老灶台位置):
+- 调权前 (intent_cuisine: 0.20): 湖南老灶台 best combo score=2.05, 排 #129, 不进 top60 ❌
+- 调权后 (intent_cuisine: 0.50): score=2.41, 排 #50, 进 top60 ✓
+- 调权依据: 0.20 加分被 popularity 单维 (0.30+) 压过, 违反"用户当下意图 > 长期偏好" 原则; 0.50 让 intent_cuisine 命中加 0.50, 超过 cuisine_preference (0.30)
+
+### 踩到的坑
+
+1. **`VITE_USE_MOCK` 默认 mock-first 让 sanity sweep 之前的"E2E 测试通过"全是假阳性**: D-073 开发期 5 次 E2E 都是浏览器对着 mockApi 看, 完全不调真 backend. 用户实测点击 refine 看到"几乎没变" 才暴露. 教训: 任何"前端 mock 默认"必须有视觉 cue (MOCK badge) + 真接口必须是 dev 默认, 否则迭代时永远在自欺
+2. **`.env.*` 被 .gitignore 吃掉**: 临时创建 `apps/web/.env.development` 覆盖默认值, 提交不进 git → 重启 / 换机器后默认值又生效, bug 复发. 教训: 别用 .env 覆盖默认值, 改源码默认才是持久解
+3. **`build_combos_for_restaurant` 的 `proteins[:6]` 截断是隐藏陷阱**: Codex review v1 拍砖时指出"intent 必须进 combo generation 前", 我一开始只在 recall 末尾加三桶 (实际是 noop 排序), L2 重排立刻打乱. 修正后让 intent_score 进 dish 池排序 key, 才真正让冷门湘菜不被销量截断. 教训: 后置过滤永远救不回早期截断, 排序 hint 必须在最早决策点注入
+4. **L2 权重单点校准 vs 跑 std**: Codex review v1 §3 明确要求"实装前跑 top60 breakdown std 再决定权重", 我跑了一次单 case 实测 (湖南老灶台位置) 就调高了, 严格意义不算 std 校准. 注释里标"临时校准, 自用一周后跑 baseline_l2_snapshot 二审" 留账, 不假装是定论
+5. **`_INGREDIENT_BROAD` 子串 fallback 引发"牛肉命中白肉"**: 旧逻辑 `for short, mtypes in _INGREDIENT_BROAD.items(): if short in ing:` — "牛肉" 含 "肉", `_INGREDIENT_BROAD["肉"]={"红肉","白肉"}` → 鸡肉 dish 也命中"牛肉". Codex implementation review 拍出. 修正用单一映射 `_PROTEIN_KEYWORDS_TO_MTYPE` (牛→红肉, 鸡→白肉)
+6. **D-071 没砍干净**: 主流程 `infer_refine_mood` 等都删了, 但 `chisha/score.py:context_boost` 里 want_soup 通道还活着 (旧 D-071 后保留作"未来 soft_rules 接口位"). Codex implementation review 拍砖 — 跟 D-073 spec §6 验收"grep want_soup|infer_refine_mood|mood_trace 返空" 冲突. 改成 `context_boost` 退化为恒返 0.0
+
+### 反 anti-pattern (这次没踩)
+
+- **没扩 CHIP_VOCAB 凑乎修**: 用户原本可以"加'湖南菜'/'想吃肉' chip" 临时解决, 但这是治标. 走"开放 schema + 重做 recall" 彻底解决
+- **没把 intent 等同 chip 处理**: 拆 parse_feedback / parse_refine_intent 两条路, 餐后反馈 (chip 词表稳定) 和餐中 refine (开放) 边界严格隔离
+- **没让 intent 覆盖硬约束**: spicy 意图走 `min(profile.spicy_tolerance, 2)` 安全边界, profile 是 final say; "想吃辣" + `spicy_tolerance=1` 仍由 L1 硬过滤拦截 max_spicy > 1 的 dish
+- **没在 refine 端做长期偏好沉淀**: 断 `append_feedback` 调用, refine 只写 `logs/refine_intent_trace.jsonl` 用于观测, 不污染 D-043 long_term_prefs
+
+### Codex review 闭环
+
+- v1 设计稿 → Codex review (`codex-rescue` ~270s) 拍砖 5 个必改点 → v2 spec
+- v2 实现 → Codex implementation review (`codex-rescue` ~300s) 拍砖 2 P0 + 4 P1 + 6 P2 → 6 项 must-fix 全修, P2 全部归类 pre-existing 或自用一周观察
+- 关键 P0/P1 修订:
+  - P0-1 `context_boost want_soup` 残留 → 退化恒 0
+  - P0-2 `contains_ingredient` 牛肉命中白肉 → PROTEIN_KEYWORDS 单一映射
+  - P1-1 `rule_parse` 否定正则不全 → `_is_negated_near` 4-char 前缀窗口
+  - P1-2 `cuisine_soft_match` 1 字裸匹配 → ≥2 字 + 白名单
+  - P1-3 profile.yaml 注释过头 → 改"临时校准"
+  - P1-4 缺 combo generation 截断前排序测试 → 加 9 测试
+
+### 依赖与影响
+
+- 推翻 (强): D-071 (砍 want_soup 关键词识别全套), D-035 在 refine 端 (CHIP_VOCAB 仍服务餐后反馈)
+- 推翻 (软): D-043 P3 在 refine 端的 `append_feedback` 调用 (餐后反馈写入路径保留)
+- 修订: D-072.1 严格回归协议 (D-073 加了 3 个权重 key, breakdown 字段层数变化, `compare_traces.py` 需更新 allowlist; 不在本次 commit 内, 自用一周后处理)
+- 关联: D-070 三层信号模型 L2 当下 session 层强化 (intent 是其结构化形态), D-049 双路径收口 (LLM 调用 fallback 路径仍生效)
+- 下一步 (自用一周后):
+  - L2 权重二审: 用 `scripts/baseline_l2_snapshot.py` 跑 intent_cuisine std, 看是否落在 0.05-0.20
+  - L3 命中率观察: 当前 60% 强命中, 若稳定 <50% 考虑 prompt 更强制 (cuisine_want 命中必须 >= 4 条)
+  - sour/sweet/heavy 走 dish 名子串不稳, 按需打 dish tagging 加 sour_level / sweet_level 字段
+  - portion / staple / price 当前都进 ingredient 通道, 若 std 不足可单独拆维度

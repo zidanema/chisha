@@ -12,13 +12,14 @@ from typing import Any
 
 
 # 当日开场 1 问的可选值. None = 用户没回答 / 跳过.
+# D-071 砍前端 mood picker 后, 前端默认 FIXED_MOOD='neutral'.
+# D-073 进一步砍 context_boost 的 want_soup 通道 — 当日情绪偏好统一走 RefineIntent.
+# 此枚举保留为接受值, 但所有非 'neutral' 值在 V1.2 后**不产生 L2 加分**.
+# 如果未来要重新启用 mood-level 调权, 必须先回看 D-070/D-073 决策.
 DAILY_MOODS = {
-    "want_light",        # 今天想清淡
-    "want_indulgent",    # 今天想爽
-    "want_soup",         # 今天想喝汤
-    "low_carb",          # 今天主食少
-    "want_clean",        # 今天不要加工 / 重口
-    "neutral",           # 默认 / 跳过
+    "neutral",           # 默认 / 跳过 (V1.2 实际唯一生效值)
+    # 以下为历史接受值, 不再影响打分 (D-073 superseded):
+    "want_light", "want_indulgent", "want_soup", "low_carb", "want_clean",
 }
 
 
@@ -52,7 +53,8 @@ class ContextSnapshot:
     recent_3d_ingredients: dict[str, int] # {"红肉": 3, "白肉": 1}
     last_feedback: FeedbackSummary | None
     daily_mood: str | None                # 见 DAILY_MOODS
-    refine_input: str | None              # refine 二轮用户自然语言
+    refine_input: str | None              # refine 二轮用户自然语言原文 (L3 看)
+    refine_intent: dict | None = None     # D-073: 结构化意图 (RefineIntent.to_log_dict())
 
     def to_llm_dict(self) -> dict[str, Any]:
         """LLM rerank prompt 用的扁平 dict, 去掉 dt 类型."""
@@ -191,6 +193,7 @@ def build_context(
     today: dt.date | dt.datetime,
     daily_mood: str | None = None,
     refine_input: str | None = None,
+    refine_intent: dict | None = None,
     now: dt.datetime | None = None,
 ) -> ContextSnapshot:
     """生成本次推荐的 ContextSnapshot.
@@ -222,4 +225,5 @@ def build_context(
         last_feedback=_extract_last_feedback(meal_log, today_d),
         daily_mood=daily_mood,
         refine_input=refine_input,
+        refine_intent=refine_intent,
     )

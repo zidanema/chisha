@@ -575,7 +575,8 @@
 
 ## D-022: V1 接入 OpenClaw + 飞书卡片（取代 D-018）
 日期: 2026-05-11
-状态: partial superseded by D-051（2026-05-15 — 飞书"主交互"降级为"V1.5 推送+deeplink 通道"，V1 主交互改 Web SPA）
+状态: partial superseded by D-051（2026-05-15 — 飞书"主交互"降级为"V1.5 推送+deeplink 通道"，V1 主交互改 Web SPA）;
+       **further superseded-pending by D-074**（2026-05-16 战略共识 — V1.5 独立飞书通道砍, 飞书归 Phase 0 reference adapter 一部分; 待 Step 2 完成后落 D-074, 详见 [docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md](../docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md)）
 
 背景: D-018 当初为了规避 MCP/IM 复杂度选 Claude Code 优先。但复盘 PRD §5 故事 1 后发现：
 - Claude Code 是 CLI/IDE 形态，不能主动推送
@@ -1219,7 +1220,7 @@ DeepSeek v4 系列在新 golden set 上表现超预期, pro/flash 双雄打平 (
 
 ## D-038: 推荐链路 LLM 抽象与外部 Agent 接入策略
 日期: 2026-05-12
-状态: active (Phase 1 已实施, Phase 2 待 OpenClaw/Hermes 接入触发)
+状态: Phase 1 active; **Phase 2 superseded-pending by D-074**（2026-05-16 战略共识 — closure 注入方案换为 `llm_request_spec` machine-readable 数据契约, chisha 输出 prompt + tool_schema 给 Agent, Agent 用自己 LLM 调完回灌. 理由: closure 注入要求 Agent 同步暴露 LLM 函数, 异步 / IM / 跨进程 Agent 都做不到. 待 Step 2 完成后落 D-074, 详见 [docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md](../docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md)）
 
 背景:
 chisha 最终形态是 Skill / 库, **被** OpenClaw / Hermes / Claude Code skill 调用,
@@ -1855,6 +1856,8 @@ sonnet 没这问题 (倾向无脑遵守计数), 但 sonnet 选菜质量明显弱
 ## D-051 — Web 优先, 飞书降级为推送通道
 
 **2026-05-15** · 产品形态决策 → 完整实施细节见 [IMPLEMENTATION_LOG.md#d-051](IMPLEMENTATION_LOG.md#d-051)
+
+> **2026-05-16 状态更新**: 本决策的"V1.5 飞书独立推送通道"部分将被 **D-074 partial superseded** — 砍 V1.5 独立飞书 adapter, 飞书归入 Phase 0 reference adapter; Web SPA 长期保留作算法层迭代台 + Layer 1 protocol consumer (不再是"主交互"). 待 Step 2 完成后落 D-074, 详见 [docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md](../docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md).
 
 **背景**: V1 推荐链路已端到端跑通 (数据 + 召回硬过滤 D-041 + L2 12 维 D-043 + L3 tool_use D-047 + 调试台 D-039 + 反馈闭环 P3), 卡在 D-022 飞书 cron 接入这步。复盘后意识到飞书卡片做"主交互"有几个根本性约束:
 - 字段密度低, 自定义控件有限 — refine 多轮对话 / profile 编辑根本放不进卡片
@@ -2819,3 +2822,121 @@ Step 3 执行触发条件 (Phase 0 验收门):
 依赖 / 影响:
 - 推翻: D-072 Step 3 触发条件 "采纳率 ≥ 50% + 30 样本"
 - 关联: `scripts/baseline_l2_snapshot.py` / `scripts/compare_traces.py` 为本决策落地工具
+
+---
+
+## D-073: refine 走结构化意图 (RefineIntent) + 重召回, 让"用户主动表达诉求"真正生效
+
+日期: 2026-05-16
+状态: active · 推翻 D-071 全量 + D-035/D-043 P3 在 refine 端的应用
+
+### 触发事件
+
+用户实测 `"想吃点湖南菜，然后肉多一点。"` (V1 refine 链路):
+
+- `parse_feedback` 走 LLM, 因 CHIP_VOCAB 封闭 (22 个 chip), 只抽到 `chips=["想吃肉"]`, "湖南菜"丢失
+- `chips_to_taste_hints(["想吃肉"])` = `{boost:[], penalty:[]}` (D-035 的 `_CHIP_TO_HINT` 已正式移除"想吃肉"映射, 见 refine.py:174 注释)
+- `infer_refine_mood` 关键词只识 want_soup, "湖南"完全无关
+- → **L2 排序与首轮完全相同**, top-60 候选池不变
+- → 仅 L3 LLM 看到 `refine_input` 原文, 在 top-60 内重排
+- 实测 L3 救场出 3 条湘菜命中, 但属于"撞大运" (top-60 池子刚好有湘菜)
+
+用户结论: **"用户主动表达诉求时, 系统应该尽量满足, 而不是这么多约束。"**
+
+### 决定
+
+走"方案 D" (Opus 设计 + Codex review 落实 5 个修订点后通过): **拆 parser + 开放 schema + 重做 recall + L2 加权 + 砍 D-071**.
+
+#### 拆 parser
+
+| 函数 | 输入 | 输出 | 用途 |
+|---|---|---|---|
+| `parse_feedback` (保留) | 餐后反馈文本 | `FeedbackParsed` (chips/rating/want_again) | /api/feedback, 长期偏好沉淀 |
+| `parse_refine_intent` (新建) | 餐中 refine 文本 | `RefineIntent` (开放结构) | /api/refine, 当下推荐意图 |
+
+理由: 餐后反馈要 chip 词表稳定 (做长期偏好统计), 餐中 refine 要开放 (听懂用户当下话). 挤一起是当前所有问题的根源.
+
+#### RefineIntent schema (开放 + 部分归一)
+
+```python
+@dataclass
+class RefineIntent:
+    cuisine_want: list[str]          # 自由字符串 ["湖南菜", "川菜"]
+    cuisine_avoid: list[str]
+    ingredient_want: list[str]       # ["肉", "牛肉"]
+    ingredient_avoid: list[str]
+    cooking_method: list[str]
+    flavor_tags: list[str]           # 归一枚举 ∈ {spicy, mild, sour, sweet, soup, dry, light, heavy}
+    raw_flavor: list[str]            # 原文供 L3
+    portion: list[str]               # ∈ {more_meat, less_carb, more_veg, not_too_full}
+    staple_preference: str | None    # ∈ {avoid_staple, want_rice, want_noodle}
+    price_band: str | None           # ∈ {cheap, normal, premium}
+    freeform_note: str               # 原文兜底
+```
+
+LLM prompt 规则: 抽取意图, 未表达留空, **不要主观联想**, cuisine/ingredient 不限词表.
+
+#### 推荐链路接入
+
+1. **recall 重做** (Codex review §2 关键修订):
+   - intent 进 `build_combos_for_restaurant` 之前的 dish 池排序 (intent_score 加进 sort key, 防被 `per_rest_max` 截断)
+   - 召回后做三桶拼合: exact cuisine / soft cuisine 或 ingredient / 全集兜底
+   - cuisine_avoid + ingredient_avoid 硬过滤
+   - Q1 决策: exact 桶 < 阈值 max(n×2, L3_INPUT_TOP_K×0.15) 时回落全集
+
+2. **L2 加 `intent_match_bonus`** (Codex §3 拆三档):
+   - `intent_cuisine` 0.50: cuisine 命中 (exact 1.0 / soft 0.6)
+   - `intent_ingredient` 0.20: ingredient + portion + staple 命中
+   - `intent_flavor` 0.10: flavor_tags 命中
+   - 2026-05-16 实测校准: 初版 0.20/0.10/0.10 被 popularity 单维压过, 用户意图 < 长期偏好, 调高让 intent 真正 dominant
+
+3. **健康 guardrail** (Codex §3): 触发 oil_avg > prefer+1 或 unforgivable 条件 → intent 三档加分 × 0.4
+
+4. **辣度尊重 spicy_tolerance** (Codex §5): target = min(spicy_tolerance, 2); spicy_level > tolerance 仍由 L1 硬过滤拦截, intent **不能覆盖 profile**
+
+5. **L3 prompt 双轨**: ContextSnapshot 加 `refine_intent` 字段; rerank_system.md §1-7 优先级表: **硬约束 > refine_intent > refine_input > daily_mood > taste_description > 健康结构 > 多样性**
+
+#### 砍 D-071 (Q3 用户决策: 彻底删)
+
+- `infer_refine_mood` / `_match_*_keyword` / `_build_mood_trace` / `_append_mood_trace` 全删
+- `tests/test_refine_mood_inference.py` 整文件删
+- `logs/refine_mood_trace.jsonl` 归档为 `.legacy.jsonl` (历史保留)
+- 由 `RefineIntent.flavor_tags=["soup"]` 取代 (LLM 抽取比关键词稳)
+
+#### 断 D-043 P3 在 refine 端的 append_feedback (Codex §7)
+
+- refine 不再调 `append_feedback`, 不把 intent 沉淀进 `long_term_prefs`
+- 理由: "今天想吃湖南菜" 是当下意图不是长期偏好, 写入会污染 D-043 chip 历史
+- 长期偏好沉淀只走餐后反馈; refine 只写 `logs/refine_intent_trace.jsonl` 观测
+
+### 实测验证 (2026-05-16)
+
+输入: `"想吃点湖南菜，然后肉多一点。"`
+
+| 链路点 | 实测结果 | 评价 |
+|---|---|---|
+| parse_refine_intent | `cuisine_want=[湖南菜], ingredient_want=[肉], portion=[more_meat]` | ✅ 完美 |
+| L2 capped top-5 (校准后) | 全是湘菜店 | ✅ |
+| 湖南老灶台位置 | 从 #129 (初始权重) 升到 #50 (top60 内) | ✅ |
+| L3 实际输出 5 条 | 3 条强湘菜 + 1 江浙菜含湘味菜 + 1 大米先生 | ⚠️ 60% 强命中, 比 v1 撞大运稳定 |
+
+### 推翻的旧决策
+
+| 旧 D | 状态 |
+|---|---|
+| D-035 (chip 反馈解析员) | 部分推翻 (仅服务餐后反馈; 不再服务餐中 refine) |
+| D-043 P3 (refine 写 long_term_prefs) | 推翻 (refine 端断, 餐后反馈保留) |
+| D-071 (want_soup 关键词识别) | **完全 superseded** |
+
+### 已知不确定 / 后续
+
+1. L3 命中率非 100% (60% 强命中). 是否要让 L3 prompt 更强制, 自用一周观察后决定
+2. L2 权重 0.50/0.20/0.10 是首次拍板, 自用一周看 top60 std 再二审
+3. `flavor_tags.{sour/sweet/heavy}` 用关键词命中 dish name 不够稳, 未来按需打 sour_level/sweet_level 字段
+4. portion/staple/price 都进 ingredient 通道, 后续若 std 不足可单独拆维度
+
+### 来源
+
+- Opus 设计 v1 → Codex review (`codex-rescue`, ~270s) 拍砖 5 个修订点 → Opus 合并 v2
+- 用户决策: Q1 回落全集 / Q2 spicy_tolerance-aware / Q3 彻底砍 D-071
+- 工程节奏: 3 天 (schema/parser → recall/score → 主流程 + 砍 D-071 + 文档)

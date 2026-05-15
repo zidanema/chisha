@@ -221,14 +221,13 @@ def test_context_boost_neutral():
     assert context_boost(c, ctx) == 0.0
 
 
-def test_context_boost_want_soup_with_soup():
-    c = _combo([make_dish(wetness=3)])
-    assert context_boost(c, _ctx("want_soup")) == 0.5
-
-
-def test_context_boost_want_soup_without_soup():
-    c = _combo([make_dish(wetness=1)])
-    assert context_boost(c, _ctx("want_soup")) == 0.0
+def test_context_boost_want_soup_superseded_by_d073():
+    """D-073: want_soup 走 RefineIntent.flavor_tags=['soup'] + intent_match_bonus,
+    context_boost 退化为恒 0.0. 锁定行为防止 D-071 残留复活."""
+    c_with_soup = _combo([make_dish(wetness=3)])
+    c_dry = _combo([make_dish(wetness=1)])
+    assert context_boost(c_with_soup, _ctx("want_soup")) == 0.0
+    assert context_boost(c_dry, _ctx("want_soup")) == 0.0
 
 
 # ─────────────────────── D-071: 已废 mood 分支 deprecated-behavior 断言
@@ -294,16 +293,21 @@ def test_score_combo_processed_meat_lowers_total(basic_profile):
     assert s_bad < s_clean
 
 
-def test_score_combo_soup_boost_with_context(basic_profile):
-    """同 combo, daily_mood=want_soup 且含汤水 → 更高分."""
+def test_score_combo_soup_boost_via_refine_intent_d073(basic_profile):
+    """D-073: 汤水加分链路从 daily_mood=want_soup 迁移到 RefineIntent.flavor_tags=['soup'].
+
+    锁定: 同 combo 带 intent (flavor_tags=['soup']) → 比无 intent 更高分.
+    """
+    from chisha.refine_intent import RefineIntent
     soup = make_dish(wetness=3, dish_role="主菜",
                      protein_grams_estimate=30)
     veg = make_dish(dish_id="dv", main_ingredient_type="纯素",
                     vegetable_ratio_estimate=0.9, dish_role="配菜")
     c = _combo([soup, veg])
-    s_no_ctx, _ = score_combo(c, basic_profile)
-    s_with_ctx, _ = score_combo(c, basic_profile, context=_ctx("want_soup"))
-    assert s_with_ctx > s_no_ctx
+    s_no_intent, _ = score_combo(c, basic_profile)
+    intent = RefineIntent(flavor_tags=["soup"])
+    s_with_intent, _ = score_combo(c, basic_profile, intent=intent)
+    assert s_with_intent > s_no_intent
 
 
 def test_v2_default_weights_complete():

@@ -273,3 +273,57 @@ if has_unforgivable_penalty(combo):  # 如 sweet_sauce ≥ 3 且 processed_meat 
 - 不要把"个人化微调" 写进 spec（如 `min_protein_g: 40` 是志丹个人 override，不该写进 `harvard_plate.yaml`）
 - 不要扩 spec 字段来"调"打分行为；调权重就改 profile.scoring_weights，不要绕道改 spec
 - spec 必须能用 `baseline_l2_snapshot + compare_traces` 严格回归（重构前后 L2 trace |delta| < 1e-6, D-072.1）
+
+---
+
+## 15 · 用户当下意图优先（D-073）
+
+> 来源：D-073 触发事件 — 用户实测"想吃点湖南菜，然后肉多一点"后, 系统响应弱.
+> 推翻方向：CHIP_VOCAB 封闭词表 + chip 死映射 + refine 不重召回 → 让开放表达真正影响推荐.
+
+### 原则
+
+**优先级**：
+
+```
+硬约束 (avoid/spicy_tolerance/unforgivable) > 用户当下意图 (refine_intent) > 长期偏好 (taste_description/cuisine_preference) > 多样性约束
+```
+
+当用户在 refine 阶段主动表达诉求时, 系统的默认行为是**尽力满足**, 而不是用约束词表过滤掉用户的话. **约束只用在用户没表达的维度上**.
+
+### 三个具体边界
+
+1. **硬约束永远不能被意图覆盖**:
+   - 用户说"想吃辣" + profile `spicy_tolerance=1` → spicy_level > 1 仍由 L1 硬过滤
+   - 用户说"想吃日料" + profile `banned_cuisines=[日料]` → 日料仍硬过滤
+   - **意图在安全边界内优化, 不是替代 profile**
+
+2. **长期偏好让位给当下意图**:
+   - intent_cuisine 权重 (0.50) > cuisine_preference 权重 (0.30)
+   - 这是 D-073 实测校准结论 (2026-05-16): 初版 0.20 被 popularity 单维压过, 调高到 0.50 后用户意图才真正 dominant
+
+3. **健康 guardrail 兜底, 防"意图压过营养结构"**:
+   - oil_avg > prefer+1 或 unforgivable penalty 共享条件触发 → intent 三档加分 × 0.4
+   - 防止"用户说想吃辣 → 全是麻辣火锅" 这种极端结果
+
+### 推荐链路接入点
+
+| 层 | intent 影响方式 |
+|---|---|
+| L1 recall | cuisine_avoid / ingredient_avoid 硬过滤; 三桶拼合 (exact / soft / 全集); combo 生成前 dish 池排序加权 |
+| L2 score | `intent_match_bonus` 三档 (cuisine 0.50 / ingredient 0.20 / flavor 0.10), 健康 guardrail × 0.4 |
+| L3 rerank | ContextSnapshot.refine_intent 进 prompt, 优先级表第 2 位 (仅次于硬约束) |
+
+### 反 anti-pattern
+
+- 不要用封闭词表 (CHIP_VOCAB / `_CHIP_TO_HINT`) 限制用户表达 → "湖南菜" / "想吃面" 这类正常表达进不来
+- 不要在 refine 端把"当下意图"沉淀进"长期偏好" → "今天想吃湖南菜" 不等于"长期喜欢湘菜"; D-043 P3 在 refine 端的 append_feedback 已断
+- 不要让 intent 加分太低 → 实测低于长期偏好维度 (cuisine_preference 0.30) 时用户意图被淹没; 权重必须经实测校准
+- 不要让 intent 完全 dominant → 健康 guardrail + 优先级表保留多样性/营养结构的发声空间
+
+### 与 §1 分层职责的关系
+
+D-073 没推翻分层. intent 在每层都做事, 但严格遵守边界:
+- L1: intent 只做硬过滤 (avoid) 和"排序前置" (不打分)
+- L2: intent 进 `intent_match_bonus` 打分, 不重复 L1 已做的过滤
+- L3: intent 进 prompt 让 LLM 做最后的多样性平衡, 不替 L2 修偏置

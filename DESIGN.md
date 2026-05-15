@@ -45,10 +45,12 @@
 
 ### 1.2 工件 B：`chisha`（L2 推荐层）
 
-- **形态**：开源 Skill 仓库（GitHub），未来打包成 MCP Server
-- **内容**：推荐方法论代码、prompt 模板、数据 schema
-- **使用方**：用户在自己的 Agent 里加载
+- **形态**：开源 Skill 仓库（GitHub），未来按 **CLI + Skill 模式** 打包（跟飞书 CLI 同款，本地 CLI + skill markdown + machine-readable manifest，**不做 MCP Server**）
+- **内容**：推荐方法论代码、prompt 模板、数据 schema、`manifest.json` / `openapi.yaml` 协议契约
+- **使用方**：用户在自己的 Agent 里加载，Agent 调 chisha CLI 即起即退
 - **核心特性**：用户的画像、反馈、历史**全部本地存储**，闭环在用户侧
+
+> **2026-05-16 战略方向更新**：原"未来打包 MCP Server"已在 AI-friendly 终态共识中改方向，改走 CLI + Skill 模式。待 Phase 0 Step 2 自用一周完成后落 D-074 正式翻案。详见 [docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md](docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md)。
 
 ### 1.3 数据归属
 
@@ -88,7 +90,7 @@
 
 **层间调用方式**：
 - V1：L2 直接 `from chisha_data import api` import 调用（最简单）
-- V2+：可选 CLI 包装 / MCP 包装（开放给同事时再做）
+- V2+：CLI 包装 + `manifest.json` / `openapi.yaml` / `AGENT_ONBOARDING.md` 三件套（**CLI + Skill 模式**，跟飞书 CLI 同款；待 D-074 落，详见 [docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md](docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md)）
 
 ---
 
@@ -538,6 +540,8 @@ price_range:
 # 当日情境 (V2 Context 注入层 D-034，由 OpenClaw trigger 每日首次饭点前问 1 句写入 session)
 # 不进 profile.yaml 长期字段，是 per-day session 状态。这里只是 schema 参考：
 # session.daily_mood ∈ {want_light, want_indulgent, want_soup, low_carb, want_clean, neutral, null}
+# D-073 后: 非 neutral mood 值仍被 enum 接受但 **不产生 L2 加分** (context_boost 退化为恒 0).
+# 餐中情绪偏好统一由 RefineIntent.flavor_tags (D-073) 表达, 不再走 daily_mood 通道.
 ```
 
 `taste_description` 在 V2 起进 L3 打分和 L4 LLM rerank 决策（不再只进 reason），由 LLM 反馈解析员 + rerank 员把自然语言推断成结构化 boost/penalty。
@@ -930,12 +934,14 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由
 - 输出 top_preferences / bottom_preferences / blacklist / summary_for_llm
 - 精排 prompt 加入 learned_profile.summary_for_llm
 
-### V2.3：Claude Code 接入 + MCP 化
+### V2.3：~~Claude Code 接入 + MCP 化~~ → CLI + Skill 模式接入
 
-- 写 SKILL.md（Claude Code 接入入口，用户主动 query 场景）
-- 打包 MCP Server（开放给其他长程 Agent）
-- 写 INSTALL.md（OpenClaw / HappyClaw / Claude Code 三种接入说明）
-- LLM 抽象（OpenAI / Ollama adapter）
+> **2026-05-16 方向已改**：不做 MCP Server，按 **CLI + Skill 模式**（同款飞书 CLI）。详见 [docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md](docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md)。下面旧任务待 D-074 落后重写。
+
+- ~~写 SKILL.md~~ → 改写 `manifest.json` + `openapi.yaml` + `AGENT_ONBOARDING.md` 三件套
+- ~~打包 MCP Server~~ → 改做 `chisha init --agent <type>` CLI + `chisha doctor` + `chisha schedule install`
+- ~~INSTALL.md（OpenClaw / HappyClaw / Claude Code 三种）~~ → 改做 Phase 0 单个 reference adapter (Claude Code)
+- LLM 抽象 → 走 `llm_request_spec` 数据契约（chisha 不调 LLM）
 - 打分权重外部化到 config.yaml
 
 ### V2.4：数据层按工区拆包

@@ -43,6 +43,12 @@ V2_DEFAULT_WEIGHTS: dict[str, float] = {
     "price": 0.5,                    # 取负
     "taste_match": 0.4,              # D-043: 启用兜底 hints 后变活, 起始 0.4
     "context_boost": 0.25,           # D-043: 默认 mood 低置信
+    # ── D-073: refine 意图三档 (Codex §3 拆分; 2026-05-16 实测校准) ──
+    # 初始 0.20 实测 intent 加分被 popularity 单维压过, 校准到 0.50 让用户意图 >
+    # 长期偏好 (cuisine_preference 0.30). 健康 guardrail × 0.4 仍保留兜底.
+    "intent_cuisine": 0.50,
+    "intent_ingredient": 0.20,
+    "intent_flavor": 0.10,
 }
 
 
@@ -401,27 +407,383 @@ def taste_match_bonus(combo: dict, taste_hints: dict | None) -> float:
     return max(-1.0, min(1.0, s))
 
 
+# ─────────────────────── D-073: cuisine/ingredient match helpers ───────────────────────
+#
+# 数据 cuisine 字段值: 湘菜/粤菜/川菜/潮汕/小吃/快餐/西式/江浙/日式/西北/东北/韩式/汤粥/东南亚/其他
+# 用户表达可能用别名 ("湖南菜"="湘菜", "粤式"="粤菜", "日料"="日式" 等), 需归一.
+
+CUISINE_ALIASES: dict[str, str] = {
+    # → 数据中实际 cuisine 值
+    "湖南菜": "湘菜", "湘菜": "湘菜", "湖南料理": "湘菜",
+    "广东菜": "粤菜", "粤式": "粤菜", "粤菜": "粤菜",
+    "四川菜": "川菜", "川渝": "川菜", "川菜": "川菜",
+    "日料": "日式", "日本菜": "日式", "日式": "日式",
+    "上海菜": "江浙", "沪菜": "江浙", "杭帮菜": "江浙",
+    "江浙菜": "江浙", "江浙": "江浙", "浙菜": "江浙",
+    "韩国料理": "韩式", "韩餐": "韩式", "韩式": "韩式",
+    "潮州菜": "潮汕", "潮汕菜": "潮汕", "潮汕": "潮汕",
+    "西餐": "西式", "西式料理": "西式", "西式": "西式",
+    "东北菜": "东北", "东北": "东北",
+    "西北菜": "西北", "新疆菜": "西北", "西北": "西北",
+    "东南亚菜": "东南亚", "东南亚": "东南亚",
+    "粥": "汤粥", "汤粥": "汤粥",
+}
+
+
+def normalize_cuisine(name: str) -> str | None:
+    """用户输入 cuisine 名 → 数据 cuisine 字段值. 未知返回 None."""
+    if not name:
+        return None
+    return CUISINE_ALIASES.get(name.strip())
+
+
+def cuisine_exact_match(combo: dict, cuisine_want: list[str]) -> bool:
+    """combo 中有 dish.cuisine ∈ (cuisine_want 归一后) 即命中."""
+    if not cuisine_want:
+        return False
+    targets: set[str] = set()
+    for c in cuisine_want:
+        n = normalize_cuisine(c)
+        if n:
+            targets.add(n)
+    if not targets:
+        return False
+    return any(d.get("cuisine") in targets for d in combo.get("dishes") or [])
+
+
+def cuisine_soft_match(combo: dict, cuisine_want: list[str]) -> bool:
+    """店名 或 菜名 包含目标 cuisine 字面子串 → 软命中 (用于 exact 未中但相关).
+
+    匹配策略 (从严到宽):
+      1. 原词命中: "湖南菜" in "湖南菜馆"
+      2. 去"菜"后缀命中: "湖南" in "湖南老灶台"
+      3. 同义词 (经 normalize_cuisine) 命中: "粤菜" → "粤" in "粤式甜品"
+    """
+    if not cuisine_want:
+        return False
+    rest = combo.get("restaurant") or {}
+    haystack = (rest.get("name") or "") + " " + (rest.get("brand") or "")
+    for d in combo.get("dishes") or []:
+        haystack += " " + (d.get("canonical_name") or "")
+
+    # Codex P1-2 修订: bare 至少 2 字才匹配, 避免 "粤"→"粤A" / "西"→"广西米粉"
+    # 1 字裸匹配通过白名单 (用户高频简称 + 边界语义)
+    _ONE_CHAR_WHITELIST = {"粤式", "湘味", "川味", "潮汕"}
+
+    for c in cuisine_want:
+        if not c:
+            continue
+        # 1. 原词命中 (>= 2 字)
+        if len(c) >= 2 and c in haystack:
+            return True
+        # 2. 去"菜"/"料理"后缀, 仅 2 字以上的 bare 才做子串匹配
+        bare = c.rstrip("菜").replace("料理", "").replace("菜系", "").strip()
+        if bare and len(bare) >= 2 and bare in haystack:
+            return True
+        # 3. 1 字 bare 走白名单 (例: "粤菜" → bare="粤" 不直接 in, 但 "粤式" 整词在 haystack)
+        if bare and len(bare) == 1:
+            for ww in _ONE_CHAR_WHITELIST:
+                if ww.startswith(bare) and ww in haystack:
+                    return True
+        # 4. 归一后再尝试 (粤菜/粤式/广东菜 等)
+        norm = normalize_cuisine(c)
+        if norm and norm != c:
+            bare_norm = norm.rstrip("菜").strip()
+            if bare_norm and len(bare_norm) >= 2 and bare_norm in haystack:
+                return True
+    return False
+
+
+# 食材匹配: 用户说 "牛肉" → 看 canonical_name 是否含; 用户说 "肉" → main_ingredient_type ∈ {红肉,白肉}
+_INGREDIENT_BROAD: dict[str, set[str]] = {
+    "肉": {"红肉", "白肉"},
+    "海鲜": {"海鲜"},
+    "鱼": {"海鲜"},
+    "虾": {"海鲜"},
+    "鸡": {"白肉"},
+    "鸡肉": {"白肉"},
+    "牛": {"红肉"},
+    "猪": {"红肉"},
+    "羊": {"红肉"},
+    "蛋": {"蛋"},
+    "豆": {"豆制品"},
+    "豆制品": {"豆制品"},
+    "素": {"纯素"},
+    "蔬菜": {"纯素"},
+}
+
+
+# 具体蛋白关键词 → main_ingredient_type 类别 (Codex P0-2 修订, 取代旧的 _INGREDIENT_BROAD 子串遍历).
+# 旧逻辑里 "牛肉" 含 "肉" → _INGREDIENT_BROAD["肉"]={"红肉","白肉"} → 白肉也命中, 食材意图泛化过度.
+# 现在: 具体食材词必须命中精确蛋白关键词才走 main_ingredient 兜底, 且只匹配单一类别.
+_PROTEIN_KEYWORDS_TO_MTYPE: dict[str, str] = {
+    "牛": "红肉", "猪": "红肉", "羊": "红肉",
+    "鸡": "白肉", "鸭": "白肉",
+    "鱼": "海鲜", "虾": "海鲜", "蟹": "海鲜", "贝": "海鲜",
+}
+
+
+def contains_ingredient(combo: dict, ingredient: str) -> bool:
+    """combo 是否含目标食材.
+
+    两条路径:
+      1. 广义词 (肉/海鲜/纯素/蛋/豆制品/...) → _INGREDIENT_BROAD 命中 main_ingredient_type
+      2. 具体词 (牛肉/鸡肉/虾/...):
+         a. 菜名子串命中 (优先)
+         b. 提取精确蛋白关键词 (牛/鸡/虾/鱼...) → main_ingredient_type 单类匹配
+
+    Codex P0-2 修订: 不再遍历 _INGREDIENT_BROAD.items() 做"子串包含"判断,
+    避免 "牛肉" 误命中白肉、"鸡肉" 误命中红肉. _PROTEIN_KEYWORDS_TO_MTYPE 是
+    单一映射, 一个关键词对应一个 main_ingredient 类别.
+    """
+    if not ingredient:
+        return False
+    ing = ingredient.strip()
+    # 路径 1: 广义词 (整词命中)
+    broad = _INGREDIENT_BROAD.get(ing)
+    if broad:
+        for d in combo.get("dishes") or []:
+            np_ = d.get("nutrition_profile") or {}
+            if np_.get("main_ingredient_type") in broad:
+                return True
+        return False
+    # 路径 2a: 具体词菜名子串
+    for d in combo.get("dishes") or []:
+        name = d.get("canonical_name") or ""
+        if ing in name:
+            return True
+    # 路径 2b: 具体词中包含精确蛋白关键词 → 单一类别匹配
+    matched_mtypes: set[str] = set()
+    for kw, mtype in _PROTEIN_KEYWORDS_TO_MTYPE.items():
+        if kw in ing:
+            matched_mtypes.add(mtype)
+    if matched_mtypes:
+        for d in combo.get("dishes") or []:
+            np_ = d.get("nutrition_profile") or {}
+            if np_.get("main_ingredient_type") in matched_mtypes:
+                return True
+    return False
+
+
+# ─────────────────────── D-073: intent_match_bonus + health_guardrail ─────
+
+def health_guardrail(combo: dict, profile: dict) -> float:
+    """触发健康风险时, intent 加分打折. 返回乘子 ∈ {0.4, 1.0}.
+
+    触发条件 (任一):
+      - oil_avg > prefer_oil_level_at_most + 1
+      - apply_unforgivable_penalty 也会触发 (sweet/processed_meat/wetness 组合)
+
+    Codex review §3: 防止"全是麻辣火锅"——intent 服从健康约束.
+    """
+    prefer_oil = profile["plate_rule"].get("prefer_oil_level_at_most", 3)
+    oils = [
+        d.get("nutrition_profile", {}).get("oil_level", 3)
+        for d in combo.get("dishes") or []
+    ]
+    oil_avg = sum(oils) / max(1, len(oils))
+    if oil_avg > prefer_oil + 1:
+        return 0.4
+    # unforgivable penalty 共享触发条件
+    dishes = combo.get("dishes") or []
+    sweet_hits = sum(
+        1 for d in dishes
+        if _safe_int((d.get("nutrition_profile") or {}).get("sweet_sauce_level"), 0) >= 3
+    )
+    proc_hits = sum(
+        1 for d in dishes
+        if (d.get("nutrition_profile") or {}).get("processed_meat_flag")
+    )
+    wet_hits = sum(
+        1 for d in dishes
+        if _safe_int((d.get("nutrition_profile") or {}).get("wetness"), 0) >= 3
+    )
+    if ((sweet_hits >= 1 and proc_hits >= 1)
+        or proc_hits >= 2
+        or (sweet_hits >= 1 and wet_hits >= 1)):
+        return 0.4
+    return 1.0
+
+
+def intent_match_bonus(
+    combo: dict,
+    intent,  # RefineIntent | None (避免循环 import, 鸭子类型)
+    profile: dict,
+) -> dict[str, float]:
+    """D-073: 结构化意图匹配, 返回三档拆解 {'cuisine', 'ingredient', 'flavor'}, 各 ∈ [0, 1].
+
+    Codex review §3: 拆三档而非单一权重, 让健康/多样性维度保留发言权.
+    Codex review §5: spicy 走 profile.spicy_tolerance, 不能覆盖 profile.
+    Codex review §3: 健康 guardrail 触发 → 全部 × 0.4.
+    """
+    out = {"cuisine": 0.0, "ingredient": 0.0, "flavor": 0.0}
+    if intent is None:
+        return out
+
+    # 1. cuisine (exact 1.0 / soft 0.6)
+    if getattr(intent, "cuisine_want", None):
+        if cuisine_exact_match(combo, intent.cuisine_want):
+            out["cuisine"] = 1.0
+        elif cuisine_soft_match(combo, intent.cuisine_want):
+            out["cuisine"] = 0.6
+
+    # 2. ingredient (per item 0.4, 上限 1.0)
+    if getattr(intent, "ingredient_want", None):
+        hit = sum(1 for ing in intent.ingredient_want
+                  if contains_ingredient(combo, ing))
+        out["ingredient"] = min(1.0, hit * 0.4)
+
+    # 3. flavor
+    flavor_score = 0.0
+    flavor_tags = getattr(intent, "flavor_tags", None) or []
+
+    if "spicy" in flavor_tags:
+        # Codex §5: 用 profile.spicy_tolerance 做安全边界, 不覆盖
+        prefs = profile.get("preferences") or {}
+        tolerance = prefs.get("spicy_tolerance", 2)
+        target = min(tolerance, 2)
+        spicies = [d.get("nutrition_profile", {}).get("spicy_level", 0)
+                   for d in combo.get("dishes") or []]
+        max_spicy = max(spicies, default=0)
+        # max_spicy > tolerance 已由 L1 硬过滤拦截; 此路径只考虑 [0, tolerance]
+        if max_spicy == target:
+            flavor_score += 0.5
+        elif 1 <= max_spicy < target:
+            flavor_score += 0.25
+        # max_spicy == 0 不加分 (用户想吃辣但 combo 完全不辣)
+
+    if "soup" in flavor_tags and wetness_bonus(combo) > 0:
+        flavor_score += 0.5
+
+    if "light" in flavor_tags:
+        oils = [d.get("nutrition_profile", {}).get("oil_level", 3)
+                for d in combo.get("dishes") or []]
+        if oils and (sum(oils) / len(oils)) <= 2:
+            flavor_score += 0.5
+
+    if "heavy" in flavor_tags:
+        oils = [d.get("nutrition_profile", {}).get("oil_level", 3)
+                for d in combo.get("dishes") or []]
+        if oils and (sum(oils) / len(oils)) >= 3:
+            flavor_score += 0.3
+
+    if "sour" in flavor_tags:
+        # 数据没 sour_level, 走 dish 名子串
+        names = " ".join((d.get("canonical_name") or "")
+                          for d in combo.get("dishes") or [])
+        if any(k in names for k in ("酸", "醋", "柠檬")):
+            flavor_score += 0.3
+
+    if "sweet" in flavor_tags:
+        # 与现有 sweet_sauce_penalty 相反方向, 仅 sweet_sauce_level >= 2 给分
+        max_sweet = 0
+        for d in combo.get("dishes") or []:
+            lvl = _safe_int((d.get("nutrition_profile") or {}).get("sweet_sauce_level"), 0)
+            max_sweet = max(max_sweet, lvl)
+        if max_sweet >= 2:
+            flavor_score += 0.3
+
+    if "dry" in flavor_tags:
+        # 反 wetness: combo 全 wetness <= 1
+        wets = [_safe_int((d.get("nutrition_profile") or {}).get("wetness"), 1)
+                for d in combo.get("dishes") or []]
+        if wets and max(wets) <= 1:
+            flavor_score += 0.3
+
+    if "mild" in flavor_tags:
+        # 不辣偏好: combo 所有 dish spicy_level == 0
+        spicies = [d.get("nutrition_profile", {}).get("spicy_level", 0)
+                   for d in combo.get("dishes") or []]
+        if spicies and max(spicies) == 0:
+            flavor_score += 0.3
+
+    out["flavor"] = min(1.0, flavor_score)
+
+    # 4. portion 信号 (Codex §2 补充): 进 ingredient 通道 (more_meat → 多肉加分)
+    portion = getattr(intent, "portion", None) or []
+    if "more_meat" in portion:
+        meat_n = sum(
+            1 for d in combo.get("dishes") or []
+            if (d.get("nutrition_profile") or {}).get("main_ingredient_type")
+                in {"红肉", "白肉", "海鲜"}
+        )
+        if meat_n >= 2:
+            out["ingredient"] = min(1.0, out["ingredient"] + 0.4)
+        elif meat_n >= 1:
+            out["ingredient"] = min(1.0, out["ingredient"] + 0.2)
+    if "less_carb" in portion:
+        carb_n = sum(
+            1 for d in combo.get("dishes") or []
+            if (d.get("nutrition_profile") or {}).get("dish_role") == DISH_ROLE_CARB
+        )
+        if carb_n == 0:
+            out["ingredient"] = min(1.0, out["ingredient"] + 0.3)
+        elif carb_n >= 2:
+            out["ingredient"] = max(0.0, out["ingredient"] - 0.3)
+    if "more_veg" in portion:
+        from chisha.recall import is_vegetable_dish
+        veg_n = sum(1 for d in combo.get("dishes") or [] if is_vegetable_dish(d))
+        if veg_n >= 2:
+            out["ingredient"] = min(1.0, out["ingredient"] + 0.3)
+
+    # 5. staple_preference 信号: 进 ingredient 通道
+    staple = getattr(intent, "staple_preference", None)
+    if staple == "avoid_staple":
+        has_carb = any(
+            (d.get("nutrition_profile") or {}).get("dish_role") == DISH_ROLE_CARB
+            for d in combo.get("dishes") or []
+        )
+        if not has_carb:
+            out["ingredient"] = min(1.0, out["ingredient"] + 0.3)
+    elif staple == "want_rice":
+        has_rice = any(
+            (d.get("nutrition_profile") or {}).get("grain_type") in {"白米", "糙米杂粮"}
+            or "饭" in (d.get("canonical_name") or "")
+            for d in combo.get("dishes") or []
+        )
+        if has_rice:
+            out["ingredient"] = min(1.0, out["ingredient"] + 0.3)
+    elif staple == "want_noodle":
+        has_noodle = any(
+            (d.get("nutrition_profile") or {}).get("grain_type") in {"精制面", "全麦面"}
+            or "面" in (d.get("canonical_name") or "")
+            for d in combo.get("dishes") or []
+        )
+        if has_noodle:
+            out["ingredient"] = min(1.0, out["ingredient"] + 0.3)
+
+    # 6. price_band: 进 cuisine 通道 (无更合适的, 且通常和菜系倾向并行)
+    pb = getattr(intent, "price_band", None)
+    if pb:
+        from chisha.recall import dish_price
+        total = sum(dish_price(d) for d in combo.get("dishes") or [])
+        if pb == "cheap" and total <= 40:
+            out["cuisine"] = min(1.0, out["cuisine"] + 0.2)
+        elif pb == "premium" and total >= 100:
+            out["cuisine"] = min(1.0, out["cuisine"] + 0.2)
+
+    # 7. 健康 guardrail (Codex §3)
+    guard = health_guardrail(combo, profile)
+    if guard < 1.0:
+        for k in out:
+            out[k] *= guard
+
+    return out
+
+
 def context_boost(combo: dict, context: "ContextSnapshot | None",
                    today: dt.date | None = None) -> float:
-    """ContextSnapshot 软调权 (D-071 后只剩 want_soup 一条规则).
+    """ContextSnapshot 软调权 — D-073 后空函数, 保留 API 兼容.
 
-    D-071 推翻 D-034/D-043: 砍 want_light / low_carb / want_clean / want_indulgent
-    四条 mood 规则 (方法论 baseline 已固化, 不该 session 级再调; 详见 D-070 三层信号模型);
-    砍季节默认 mood 兜底 (`infer_default_mood`).
+    历史:
+      - D-034/D-043: 4 条 mood 规则 (want_light / low_carb / want_clean / want_indulgent)
+      - D-071: 砍 4 条, 仅留 want_soup 一条 (combo 含汤水 → +0.5)
+      - D-073: 彻底砍 want_soup, 由 RefineIntent.flavor_tags=["soup"] +
+        intent_match_bonus 取代. 不再走 daily_mood 通道.
 
-    保留 want_soup 一条: combo 含汤水 → +0.5 (汤羹供给不足 zone 下 L3 推不稳,
-    用结构化 wetness 字段做 L2 确定性加分通道).
-
-    注: 此函数刻意保留为独立维度而非合并进 wetness_bonus, 作为未来 L0
-    methodology spec (D-072) soft_rules 的接口位 — 不要再加新 mood 分支.
+    此函数现在恒返回 0.0. 保留只为不破坏 score_combo 的字段 layout.
+    后续如要重启 context-level 软调权, 必须先回看 D-070/D-073 决策再加.
     """
-    mood: str | None = None
-    if context is not None and context.daily_mood is not None:
-        mood = context.daily_mood
-    if mood != "want_soup":
-        return 0.0
-    if wetness_bonus(combo) > 0:
-        return 0.5
     return 0.0
 
 
@@ -536,17 +898,20 @@ def score_combo(
     context: "ContextSnapshot | None" = None,
     taste_hints: dict | None = None,
     meal_type: str | None = None,
+    intent=None,  # D-073: RefineIntent | None
 ) -> tuple[float, dict[str, float]]:
     """计算 combo 综合分. 返回 (score, breakdown).
 
-    V1 行为: 不传 context/taste_hints/meal_type 时, 仍只用 6 维 + V2 维度
-            (V2 维度数据缺时返回 0, 不影响结果).
+    V1 行为: 不传 context/taste_hints/meal_type/intent 时, 仍只用 6 维 + V2 维度.
     V2 行为: 传 context + taste_hints + meal_type 时, 全 ~12 维生效.
+    D-073: 传 intent (refine 二轮) 时, intent_match 三档加分生效.
     """
     w = profile.get("scoring_weights") or {}
 
     def _w(key: str) -> float:
         return float(w.get(key, V2_DEFAULT_WEIGHTS.get(key, 0.0)))
+
+    intent_parts = intent_match_bonus(combo, intent, profile)
 
     parts = {
         # V1 维度
@@ -573,6 +938,10 @@ def score_combo(
         # V2 偏好/情境
         "taste_match": taste_match_bonus(combo, taste_hints) * _w("taste_match"),
         "context_boost": context_boost(combo, context, today=today) * _w("context_boost"),
+        # D-073 refine 意图 (intent=None 时全 0)
+        "intent_cuisine": intent_parts["cuisine"] * _w("intent_cuisine"),
+        "intent_ingredient": intent_parts["ingredient"] * _w("intent_ingredient"),
+        "intent_flavor": intent_parts["flavor"] * _w("intent_flavor"),
     }
     return sum(parts.values()), parts
 
@@ -586,6 +955,7 @@ def rank_combos(
     taste_hints: dict | None = None,
     meal_type: str | None = None,
     root=None,
+    intent=None,  # D-073: RefineIntent | None, refine 二轮启用
 ) -> list[dict]:
     """对 combos 打分排序, 返回带 score/breakdown 的列表 (降序).
 
@@ -612,7 +982,7 @@ def rank_combos(
     for c in combos:
         s, br = score_combo(c, profile, meal_log, today,
                             context=context, taste_hints=effective_hints,
-                            meal_type=meal_type)
+                            meal_type=meal_type, intent=intent)
         s = apply_unforgivable_penalty(s, c, profile)
         scored.append({**c, "score": s, "score_breakdown": br})
     scored.sort(key=lambda x: x["score"], reverse=True)

@@ -7,11 +7,13 @@
 ```bash
 cd apps/web
 npm install
-npm run dev          # http://localhost:5173 (Mock API)
-# 或者: VITE_USE_MOCK=0 npm run dev   # 真接口模式，/api 反代到 8765
+npm run dev                      # http://localhost:5173 (默认: 真接口, /api 反代到 8765)
+# 或者: VITE_USE_MOCK=1 npm run dev   # mock 模式 (离线 UI 调试, NavBar 显示红色 MOCK 角标)
 ```
 
-后端走 `chisha/debug_server.py` 的 8765 端口；`/api/*` 已在 `vite.config.ts` 配反代。
+**默认走真接口** (D-073 后, backend stable). 后端 `chisha/debug_server.py` 监听 8765, `/api/*` 已在 `vite.config.ts` 配反代.
+
+历史: 早期 mock-first 默认导致 D-073 调试时对着 mock 看不到 backend 实测差异 — 改 real-first + NavBar `MOCK` 角标双保险, 详见 IMPL_LOG D-073 sanity sweep.
 
 ## 路由
 
@@ -26,11 +28,11 @@ npm run dev          # http://localhost:5173 (Mock API)
 
 ## 数据层
 
-- `src/lib/api.ts` — 真接口骨架，HTTP/JSON
+- `src/lib/api.ts` — 真接口客户端，HTTP/JSON
 - `src/lib/mockApi.ts` — mock 数据，端口 §5 契约（[docs/api.md](../../docs/api.md)）
-- `VITE_USE_MOCK=1`（默认）走 mock；`VITE_USE_MOCK=0` 走真接口
+- `VITE_USE_MOCK=0`（默认, 真接口）；`VITE_USE_MOCK=1` 切 mock (UI 上 NavBar 显示红色 `MOCK` 角标)
 
-V1.1 反馈链路 7 个端点在 mockApi 全量实现, 后端 FastAPI 待装 — 详见 [docs/api.md §5](../../docs/api.md) + [IMPL_LOG D-056~D-068](../../docs/IMPLEMENTATION_LOG.md#d-056d-068-执行记录--v11-反馈系统落地-appsweb)。
+V1.1 反馈链路 7 个端点已在后端 FastAPI 装上 (D-069) 并在 mockApi 全量实现 — 详见 [docs/api.md §5](../../docs/api.md) + [IMPL_LOG D-056~D-068](../../docs/IMPLEMENTATION_LOG.md#d-056d-068-执行记录--v11-反馈系统落地-appsweb)。
 
 ## 设计原则
 

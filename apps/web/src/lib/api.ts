@@ -99,9 +99,12 @@ const real: ChishaApi = {
 };
 
 // ── Dispatcher ────────────────────────────────────────────────────────────────
-// VITE_USE_MOCK="0" → real fetch; anything else (including unset) → mock.
-// Mock is the V1 dev default until /api/* is stable on the FastAPI side.
-const useMock = (import.meta.env.VITE_USE_MOCK ?? "1") !== "0";
+// Default = real fetch (backend stable since D-069/D-073).
+// Explicit `VITE_USE_MOCK=1` opts back into the mock store for offline UI work.
+//
+// 历史: 初版默认 mock-first (D-051 时 backend 没装), 后果是 D-073 调试期间
+// 用户对着 mock 看不到 backend 实测差异. 改 real-first 后 mock 必须显式开.
+const useMock = (import.meta.env.VITE_USE_MOCK ?? "0") === "1";
 
 export const api: ChishaApi = useMock ? mock.api : real;
 export const isMock = useMock;

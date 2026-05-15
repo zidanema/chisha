@@ -34,9 +34,11 @@
 
 ## 项目状态
 
-**Phase 0 工程侧已收尾**（2026-05-15）—— 「原则派点餐执行外包」定位收敛（[D-070](docs/DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)）+ 砍 mood picker（[D-071](docs/DECISIONS.md#d-071-砍-mood-picker--want_soup-关键词识别-v1)）+ methodology spec 抽象（[D-072](docs/DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)/[D-072.1](docs/DECISIONS.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)）+ 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + FastAPI 13 端点。
+**Phase 0 工程侧已收尾**（2026-05-15）—— 「原则派点餐执行外包」定位收敛（[D-070](docs/DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)）+ 砍 mood picker（D-071, 已 superseded）+ methodology spec 抽象（[D-072](docs/DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)/[D-072.1](docs/DECISIONS.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)）+ 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + FastAPI 13 端点。
 
-剩下 **Step 2 用户自用一周**（采纳率验证, 不在代码范围）→ Phase 1 同事推广。
+**refine 链路大改**（2026-05-16, [D-073](docs/DECISIONS.md#d-073-refine-走结构化意图-refineintent--重召回-让用户主动表达诉求真正生效)）—— 实测"想吃点湖南菜，然后肉多一点"暴露 CHIP_VOCAB 封闭词表 + chip 死映射 + refine 不重召回 3 个结构性约束 → 拆 parser、开放 RefineIntent schema、重做 recall、L2 加 intent_match_bonus（cuisine 0.50 / ingredient 0.20 / flavor 0.10）、健康 guardrail、彻底砍 D-071。
+
+剩下 **Step 2 用户自用一周**（采纳率 + D-073 命中率验证, 不在代码范围）→ Phase 1 同事推广。
 
 > **V1 主交互**：本机 localhost Web SPA。`cd apps/web && npm install && npm run dev` → http://localhost:5173。详见 [`apps/web/README.md`](apps/web/README.md) + [`docs/style-guide.md`](docs/style-guide.md) + [`docs/api.md`](docs/api.md)。飞书延后到 V1.5 做推送通道。
 
@@ -59,6 +61,9 @@
 | [docs/L3_RERANK_REDESIGN.md](docs/L3_RERANK_REDESIGN.md) | L3 精排重构方案（D-047）| 改 L3 精排前**必读** |
 | [eval/dish_tagging_eval/](eval/dish_tagging_eval/) | 菜品打标评测框架（dual-model golden set 171 条 + 评测脚本）| 复评打标质量、改 prompt 前 |
 | [eval/dish_tagging_model_eval_spec.md](eval/dish_tagging_model_eval_spec.md) | 评测说明（面向 PM）| 想理解评测口径与结论时 |
+| [docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md](docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md) | AI-friendly 接入终态共识（Opus + Codex + 志丹三方收敛，2026-05-16）| 改 Agent 接入相关设计前必读；待 Step 2 完成后落 D-074 |
+| [docs/agent-integration-approach.md](docs/agent-integration-approach.md) | "CLI + Skill" 模式技术交流文档（拿出去 sale 同行 / 写技术文章用）| 跟同行交流 Agent 接入方法论时 |
+| [docs/intro-for-colleagues.md](docs/intro-for-colleagues.md) | 给同事的产品 sale 文档（750 字）| sale chisha 给周围同事时 |
 
 **首次接触请按顺序读：PRD → ROADMAP → DESIGN → DECISIONS**。
 改推荐链路前请额外读 RECOMMEND_PRINCIPLES；改 L3 精排前读 L3_RERANK_REDESIGN；复盘工程细节看 IMPLEMENTATION_LOG。
@@ -73,7 +78,7 @@
 - **L1 召回**：`chisha/recall.py` 硬过滤双层 + combo 灵活组合（[D-040](docs/DECISIONS.md#d-040)/[D-041](docs/DECISIONS.md#d-041)）
 - **L2 打分**：`chisha/score.py` 16 维 + 4 层 cap（restaurant/brand/cuisine/food_form, [D-042](docs/DECISIONS.md#d-042)/[D-043](docs/DECISIONS.md#d-043)/[D-045](docs/DECISIONS.md#d-045)）+ 不可补偿惩罚
 - **L3 精排**：`chisha/rerank.py` LLM tool_use forced schema（[D-047](docs/DECISIONS.md#d-047)）+ 双路径分流 + 配置错 hard-fail（[D-048](docs/DECISIONS.md#d-048)）+ validate→retry→fallback（[D-050](docs/DECISIONS.md#d-050)）；prompt 注入方法论 rationale（D-072）
-- **Refine**：`chisha/refine.py` 二轮 chip 解析 + want_soup 关键词识别 + 否定优先（[D-071](docs/DECISIONS.md#d-071-砍-mood-picker--want_soup-关键词识别-v1)）
+- **Refine**：`chisha/refine.py` + `chisha/refine_intent.py` 结构化意图解析（cuisine/ingredient/flavor_tags/portion/staple/price 开放 schema, [D-073](docs/DECISIONS.md#d-073-refine-走结构化意图-refineintent--重召回-让用户主动表达诉求真正生效)）
 - **数据打标**：`scripts/tag_via_api.py` OpenRouter, 默认 `deepseek-v4-flash`（[D-037](docs/DECISIONS.md#d-037), 171 条 dual-model golden 横评）
 - **数据**：`data/shenzhen-bay/` 139 家 7256 菜 + `data/home/` 38 家 2117 菜
 - **Web SPA**：`apps/web/` Vite + React 18 + TS + Tailwind, HomePage / ProfilePage / HistoryPage / FeedbackPage / FeedbackInbox（[D-051~D-055](docs/DECISIONS.md#d-051) + [D-056~D-068](docs/DECISIONS.md#d-056-navbar-加反馈-tab--角标-v11)）
@@ -142,7 +147,8 @@ chisha/
 │   ├── score.py               # L2 打分 16 维 + 4 层 cap (D-042/043/045)
 │   ├── rerank.py              # L3 LLM 精排 top60→5 (D-035/046/047/048/050)
 │   ├── context.py             # ContextSnapshot (D-034)
-│   ├── refine.py              # refine 二轮 + want_soup 关键词识别 (D-033/071)
+│   ├── refine.py              # refine 二轮主流程 (D-033/073)
+│   ├── refine_intent.py       # D-073: RefineIntent schema + parser
 │   ├── feedback.py            # chip 反馈解析员 (D-035)
 │   ├── feedback_store.py      # V1.1 反馈系统单 JSON 落盘 (D-068/069)
 │   ├── llm_client.py          # provider 路由层 (D-047)

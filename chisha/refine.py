@@ -1,14 +1,17 @@
-"""refine_recommendation API (D-033 V2.1).
+"""refine_recommendation API (D-073 v2).
 
-接收 session_id + 用户自然语言反馈, 重新推 5 个 (无 explore, D-015):
-1. load_session
-2. parse_feedback 把自然语言 → chips
-3. chips → taste_hints (boost/penalty)
-4. user_input 进 ContextSnapshot.refine_input
-5. recall + rank_combos(taste_hints, context) + rerank(refine=True)
-6. 更新 session.round + last_candidates + refine_history
+D-073 重写要点 (推翻 D-035 在 refine 端 + D-071 全量):
+  - 用 parse_refine_intent (开放结构) 取代 parse_feedback (chip 词表)
+  - 砍 chips_to_taste_hints + _CHIP_TO_HINT (refine 端不再产 chip)
+  - 砍 infer_refine_mood + want_soup 关键词识别 + mood_trace 全套 (D-071 superseded)
+  - 断 append_feedback (refine 不沉淀长期偏好; 只走餐后反馈)
+  - 写 logs/refine_intent_trace.jsonl 替代 mood_trace (观测用)
 
-D-071: refine 入口前做 want_soup 关键词识别 (汤羹偏好补 L2 通道, 见 infer_refine_mood).
+数据流:
+  user_input → parse_refine_intent → RefineIntent
+    → recall(intent=...) 三桶 + intent-aware combo 排序
+    → rank_combos(intent=...) L2 intent_match_bonus 三档
+    → rerank(ctx.refine_intent=...) L3 看结构化 + 原文
 """
 from __future__ import annotations
 
@@ -18,186 +21,27 @@ from pathlib import Path
 from typing import Any
 
 from chisha.context import build_context
-from chisha.feedback import FeedbackParsed, parse_feedback
 from chisha.recall import recall
+from chisha.refine_intent import RefineIntent, parse_refine_intent
 from chisha.rerank import rerank
 from chisha.score import apply_caps, rank_combos
 from chisha.session import SessionState, load_session, save_session
 
 
-# ─────────────────────── D-071: want_soup 关键词识别 ───────────────────────
-# 边界 (强制): 此函数只服务 want_soup / wetness 偏好.
-# 不得加 want_clean / want_light / want_indulgent / low_carb 等其他 mood 关键词.
-# 不得扩展为通用 mood parser. 详见 docs/DECISIONS.md D-071 边界警告.
-#
-# 已知局限 (docstring 里说明):
-#   - 单字 "汤" / "喝" 不收 (会误召奶茶/汤泡饭)
-#   - 口语变体 ("喝点热的" / 错别字) 不识别, 退 L3 prompt 兜底
-#   - 子串匹配不感知意图, "鸡蛋羹这家店" 这种"提及但非欲望" 仍会误召 — 单测覆盖
-#
-# Codex Round 1 Q2: 显式 state.daily_mood 优先于推断 (调用方决定),
-# trace 用 source=explicit|inferred|none 区分; 见 _build_mood_trace.
+# ─────────────────────── D-073: refine_intent trace ───────────────────────
 
-_WANT_SOUP_POSITIVE: tuple[str, ...] = (
-    "想喝汤", "喝汤", "有汤", "带汤", "汤水", "汤羹",
-    "羹", "粥", "砂锅粥", "热汤",
-)
-_WANT_SOUP_NEGATIVE: tuple[str, ...] = (
-    "不想喝汤", "不要汤", "别来汤", "不喝汤", "不想吃粥", "不要粥",
-)
+_INTENT_TRACE_FILENAME = "logs/refine_intent_trace.jsonl"
 
 
-def infer_refine_mood(user_input: str | None) -> str | None:
-    """关键词扫描 user_input, 命中 want_soup 正向词且未被否定词拦截 → 'want_soup'.
-
-    否定优先: 命中否定词时直接返回 None, 不再检查正向词
-    (防 "今天别来汤了, 想吃辣的" 这类否定句被正向"汤"误召).
-
-    边界: 此函数只服务 want_soup, 不得扩展为通用 mood parser.
-    新增 mood 维度走 L3 prompt 或 refine 文本透传, 不走关键词.
-    """
-    if not user_input:
-        return None
-    for neg in _WANT_SOUP_NEGATIVE:
-        if neg in user_input:
-            return None
-    for pos in _WANT_SOUP_POSITIVE:
-        if pos in user_input:
-            return "want_soup"
-    return None
-
-
-def _match_positive_keyword(user_input: str | None) -> str | None:
-    """返回命中的正向词 (None 表示未命中), 供 trace 埋点用. 不做否定判断."""
-    if not user_input:
-        return None
-    for pos in _WANT_SOUP_POSITIVE:
-        if pos in user_input:
-            return pos
-    return None
-
-
-def _match_negative_keyword(user_input: str | None) -> str | None:
-    """返回命中的否定词 (None 表示未命中), 供 trace 埋点用."""
-    if not user_input:
-        return None
-    for neg in _WANT_SOUP_NEGATIVE:
-        if neg in user_input:
-            return neg
-    return None
-
-
-# trace schema version (Codex Q4 要求): 升 schema 时改这里 + 老消费方迁移
-MOOD_TRACE_SCHEMA_VERSION = 1
-
-
-def _build_mood_trace(
-    session_id: str,
-    user_input: str,
-    before_daily_mood: str | None,
-    inferred_mood: str | None,
-    matched_positive: str | None,
-    matched_negative: str | None,
-    effective_daily_mood: str | None,
-    now: dt.datetime | None = None,
-) -> dict[str, Any]:
-    """构造 D-071 埋点 trace 段. 5 字段 + schema version + source 标识 + 时间戳/session.
-
-    source 字段 (Codex Round 1 Q2):
-      - explicit: state.daily_mood 已有值, 推断不参与
-      - inferred: state.daily_mood 为 None, 关键词推断生效
-      - none: state.daily_mood 为 None 且推断也未命中
-    """
-    if before_daily_mood:
-        source = "explicit"
-    elif inferred_mood:
-        source = "inferred"
-    else:
-        source = "none"
-    return {
-        "schema_version": MOOD_TRACE_SCHEMA_VERSION,
-        "timestamp": (now or dt.datetime.now(dt.timezone.utc)).isoformat(),
-        "session_id": session_id,
-        "refine_text": user_input,
-        "matched_keyword": matched_positive,
-        "negated": matched_negative is not None,
-        "injected_daily_mood": effective_daily_mood,
-        "before_daily_mood": before_daily_mood,
-        "source": source,
-    }
-
-
-_MOOD_TRACE_FILENAME = "logs/refine_mood_trace.jsonl"
-# 文件超过此大小 (字节) 时旋转为 .1 备份 (Codex Q4 要求轮转策略)
-_MOOD_TRACE_ROTATE_BYTES = 5 * 1024 * 1024  # 5 MB
-
-
-def _append_mood_trace(trace: dict[str, Any], root: Path) -> None:
-    """非阻塞写一行 jsonl 到 logs/refine_mood_trace.jsonl. 失败静默.
-
-    Codex Q4 要求: 写失败必须不阻断 refine 主流程; schema 在行内带 version;
-    文件超过 _MOOD_TRACE_ROTATE_BYTES 时切到 .1 备份 (只保留一份历史).
-    """
+def _append_intent_trace(trace: dict[str, Any], root: Path) -> None:
+    """非阻塞写一行 jsonl. 失败静默不阻断 refine 主流程."""
     try:
-        path = root / _MOOD_TRACE_FILENAME
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # 简单轮转: 大于阈值时把当前文件挪到 .1 (覆盖旧 .1)
-        try:
-            if path.exists() and path.stat().st_size >= _MOOD_TRACE_ROTATE_BYTES:
-                backup = path.with_suffix(path.suffix + ".1")
-                if backup.exists():
-                    backup.unlink()
-                path.rename(backup)
-        except OSError:
-            pass
-        with path.open("a", encoding="utf-8") as f:
+        p = root / _INTENT_TRACE_FILENAME
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
             f.write(json.dumps(trace, ensure_ascii=False) + "\n")
     except Exception:
-        # best-effort: 写失败不阻断 refine 主流程
         pass
-
-
-# CHIP → taste_hints 映射 (D-035 LLM 反馈解析员产物的精简结构化版)
-# boost = 用户想要的; penalty = 用户不想要的
-# 维度名与 score.taste_match_bonus 对齐: wetness/low_oil/sweet_sauce/processed_meat/
-#                                       carb_heavy/spicy
-_CHIP_TO_HINT: dict[str, tuple[str, str]] = {
-    # boost (token 必须与 score.taste_match_bonus 支持的对齐)
-    "想喝汤": ("boost", "wetness"),
-    "想清淡": ("boost", "low_oil"),
-    # penalty
-    "太油": ("penalty", "low_oil"),       # 见 chips_to_taste_hints 末尾翻转逻辑
-    "太甜": ("penalty", "sweet_sauce"),
-    "太辣": ("penalty", "spicy"),
-    "加工肉太多": ("penalty", "processed_meat"),
-    "主食太多": ("penalty", "carb_heavy"),
-    # 注: "想吃辣" / "想吃肉" 移除 (Codex review): taste_match_bonus 未实现这两个
-    # boost token, 留着是静默无效的死映射. 想加回来需先扩 taste_match_bonus.
-}
-
-
-def chips_to_taste_hints(chips: list[str]) -> dict[str, list[str]]:
-    """把 chip 列表 → taste_hints (供 score.taste_match_bonus 用).
-
-    NOTE: 这是简化映射. 实际 V2.x 应该让 LLM 反馈解析员产更细的 hint
-    (含强度 / 多维 / 否定),  本轮先用枚举 chip 兜底.
-    """
-    boost: list[str] = []
-    penalty: list[str] = []
-    for c in chips:
-        if c not in _CHIP_TO_HINT:
-            continue
-        kind, dim = _CHIP_TO_HINT[c]
-        target = boost if kind == "boost" else penalty
-        if dim not in target:
-            target.append(dim)
-    # "太油" → penalty low_oil 实际语义是 boost low_oil (用户想 low_oil)
-    # 修正: 把 penalty 里 low_oil 移到 boost
-    if "low_oil" in penalty:
-        penalty.remove("low_oil")
-        if "low_oil" not in boost:
-            boost.append("low_oil")
-    return {"boost": boost, "penalty": penalty}
 
 
 def refine(
@@ -212,15 +56,13 @@ def refine(
     n: int = 5,
     use_llm: bool | None = None,
 ) -> dict:
-    """refine_recommendation 主入口.
-
-    返回 §5.7-style dict, 含 round / candidates / refine_input / parsed_feedback.
+    """refine_recommendation 主入口 (D-073 v2).
 
     Args:
         session_id: 上一轮 recommend_meal 的 session_id.
-        user_input: 用户自然语言反馈 (如 "今天想喝汤别给我面").
+        user_input: 用户自然语言反馈 ("想吃湖南菜, 肉多一点").
         profile / rests / tagged / meal_log / today: 推荐数据.
-        root: 仓库根目录 (用于 session 落盘).
+        root: 仓库根目录 (用于 session 落盘 + trace 写入).
         n: 输出候选数, refine 时 explore_count=0.
         use_llm: LLM 开关 (None=auto).
 
@@ -235,83 +77,70 @@ def refine(
 
     today = today or dt.date.today()
 
-    # 1. parse_feedback: user_input → chips + note
-    fb: FeedbackParsed = parse_feedback(
-        text=user_input, use_llm=use_llm,
-        profile_llm=profile.get("llm"),  # D-047: provider 路由
+    # 1. parse_refine_intent: user_input → 结构化意图
+    intent: RefineIntent = parse_refine_intent(
+        text=user_input,
+        use_llm=use_llm,
+        profile_llm=profile.get("llm"),
     )
 
-    # D-043 P3: 反馈写入 long_term_prefs (闭环数据采集)
-    # 失败不阻断 refine, 反馈学习是 best-effort
-    try:
-        from chisha.long_term_prefs import append_feedback
-        last_combo_sig = None
-        if state.last_candidates:
-            top1 = state.last_candidates[0]
-            last_combo_sig = (top1.get("restaurant", {}).get("name", "?")
-                              + " | " + ", ".join(top1.get("dish_names") or []))
-        append_feedback(
-            chips=fb.chips,
-            rating_taste=fb.rating_taste,
-            want_again=fb.want_again,
-            meal_type=state.meal_type,
-            session_id=session_id,
-            combo_signature=last_combo_sig,
-            root=root,
-        )
-    except Exception:
-        pass
-
-    # 2. chips → taste_hints
-    hints = chips_to_taste_hints(fb.chips)
-
-    # D-071: 关键词识别 want_soup, 仅当 state 没显式 daily_mood 时生效.
-    # 埋点 5 字段进 trace + jsonl, 用于一周后回看效果.
-    inferred_mood = infer_refine_mood(user_input)
-    effective_daily_mood = state.daily_mood or inferred_mood
-    mood_trace = _build_mood_trace(
-        session_id=session_id,
-        user_input=user_input,
-        before_daily_mood=state.daily_mood,
-        inferred_mood=inferred_mood,
-        matched_positive=_match_positive_keyword(user_input),
-        matched_negative=_match_negative_keyword(user_input),
-        effective_daily_mood=effective_daily_mood,
-    )
-    _append_mood_trace(mood_trace, root)
-
-    # 3. 重建 ContextSnapshot, 注入 refine_input
+    # 2. 重建 ContextSnapshot, 注入 refine_input (原文) + refine_intent (结构化)
     ctx = build_context(
         profile=profile,
         meal_log=meal_log,
         meal_type=state.meal_type,
         today=today,
-        daily_mood=effective_daily_mood,
+        daily_mood=state.daily_mood,
         refine_input=user_input,
+        refine_intent=intent.to_log_dict() if not intent.is_empty() else None,
     )
 
-    # 4. recall + rank + rerank (refine=True → no explore)
+    # 3. recall (intent 进 combo 生成 + 三桶 + avoid 硬过滤)
     combos = recall(profile, rests, tagged, meal_log, today,
-                    meal_type=state.meal_type)
+                     meal_type=state.meal_type,
+                     intent=intent if not intent.is_empty() else None,
+                     n=n)
+
+    # 4. L2 打分 (intent 进 intent_match_bonus 三档)
     ranked = rank_combos(combos, profile, meal_log, today,
-                          context=ctx, taste_hints=hints,
+                          context=ctx,
                           meal_type=state.meal_type,
-                          root=root)  # D-043 Codex 二审: 闭合 root 一致性
-    # D-043: refine 二轮也走三层 cap (restaurant + cuisine + food_form)
+                          root=root,
+                          intent=intent if not intent.is_empty() else None)
+    # D-043: refine 也走三层 cap
     ranked = apply_caps(ranked, profile)
-    # D-046: top30 → topK (与 v2 主路径一致, 二审实测后 K=60)
+    # D-046: top60 给 L3
     from chisha.rerank import L3_INPUT_TOP_K
     top_k = ranked[:L3_INPUT_TOP_K]
+
+    # 5. L3 LLM rerank (ctx 携带 refine_input + refine_intent)
     reranked = rerank(top_k, profile, context=ctx, meal_log=meal_log,
                        n=n, n_explore=0, refine=True, use_llm=use_llm)
 
-    # 5. 更新 session
+    # 6. 更新 session
     state.round += 1
     state.last_candidates = [_minimize(c) for c in reranked]
     state.refine_history.append(user_input)
     save_session(state, root)
 
-    # 6. 返回 §5.7-style
+    # 7. trace 写入 (D-073: 替代 D-071 mood_trace)
+    trace = {
+        "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "session_id": session_id,
+        "round": state.round,
+        "user_input": user_input,
+        "intent": intent.to_log_dict(),
+        "n_combos_recalled": len(combos),
+        "n_after_l2": len(ranked),
+        "n_returned": len(reranked),
+        "candidate_ids": [c.get("restaurant", {}).get("name", "") + "|" +
+                           ",".join(d.get("canonical_name", "")
+                                     for d in c.get("dishes", [])[:2])
+                          for c in reranked[:5]],
+    }
+    _append_intent_trace(trace, root)
+
+    # 8. 返回 §5.7-style (字段对前端兼容)
     return {
         "session_id": session_id,
         "meal_type": state.meal_type,
@@ -319,9 +148,7 @@ def refine(
         "round": state.round,
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "refine_input": user_input,
-        "parsed_feedback": fb.to_log_dict(),
-        "taste_hints": hints,
-        "mood_inference": mood_trace,  # D-071: want_soup 关键词识别埋点 (与 parsed_feedback 同级)
+        "refine_intent": intent.to_log_dict(),  # D-073: 替代 parsed_feedback
         "stats": {
             "n_dishes_total": len(tagged),
             "n_combos_recalled": len(combos),

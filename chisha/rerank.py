@@ -431,6 +431,16 @@ def _context_block(context: "ContextSnapshot | None") -> str:
         f"上次反馈 chips: {chips or '(无)'}",
         f"refine 输入: {cd.get('refine_input') or '(无)'}",
     ]
+    # D-073: 结构化意图段 (refine 二轮才有)
+    intent = cd.get("refine_intent")
+    if intent:
+        non_empty = {k: v for k, v in intent.items()
+                     if v and k not in ("raw_text", "freeform_note")}
+        if non_empty:
+            intent_str = "; ".join(
+                f"{k}={v}" for k, v in non_empty.items()
+            )
+            lines.append(f"refine 意图 (结构化): {intent_str}")
     return "\n".join(lines)
 
 

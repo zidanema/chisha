@@ -2,6 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import { LABELS } from "@/lib/labels";
 import { cx } from "@/lib/cx";
 import { useChisha } from "@/lib/useChishaState";
+import { isMock } from "@/lib/api";
 
 function Icon({ kind }: { kind: "gear" | "clock" | "fb" }) {
   if (kind === "gear")
@@ -44,6 +45,15 @@ export function NavBar() {
           </svg>
           <span className="font-semibold text-[14.5px] tracking-tight">{LABELS.ui.homeTitle}</span>
         </Link>
+        {isMock && (
+          <span
+            title="前端走 mock store, 不调真后端. 设 VITE_USE_MOCK=0 切真接口."
+            className="ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide"
+            style={{ background: "#dc2626", color: "white" }}
+          >
+            MOCK
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-1">
           <Link
             to="/feedback"

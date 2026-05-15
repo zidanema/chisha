@@ -120,6 +120,7 @@ def api_refine(req: RefineReq) -> dict:
         today=today,
         daily_mood=state.daily_mood,
         refine_input=req.refine_text or "",
+        refine_intent=raw.get("refine_intent"),  # D-073
     )
 
     out = {
@@ -134,8 +135,7 @@ def api_refine(req: RefineReq) -> dict:
         "candidates": candidates_fmt,
         # 调试用 (前端忽略):
         "refine_input": raw.get("refine_input"),
-        "parsed_feedback": raw.get("parsed_feedback"),
-        "taste_hints": raw.get("taste_hints"),
+        "refine_intent": raw.get("refine_intent"),  # D-073: 替代 parsed_feedback/taste_hints
     }
     _remember_session_safe(out["session_id"], out)
     return out
