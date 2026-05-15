@@ -1759,3 +1759,34 @@ D-047 三审的应对是改 prompt: 告诉 LLM"输入里仍可能含同品牌多
 **变更点**: `chisha/score.py` (apply_caps head-only), `chisha/api.py` (V1 分支删, version 参数删), `chisha/rerank.py` (fallback brand=1 不变), `prompts/rerank_system.md`, `chisha/debug_recommend.py` (清理 import), `tests/test_score_v2.py` (4 个 cap 测试), `tests/test_api_v2.py` (删 V1 测试), `chisha/reason.py` + `prompts/reason_one_line.md` + `scripts/eval_recommend.py` (整文件删), README.md / DESIGN.md / ROADMAP.md (V1 路径引用更新)
 
 依赖: D-043 (L2 重设计), D-045 (brand 层 cap), D-024 (V1 路径, superseded), D-047 三审 #1 (部分推翻)
+
+
+---
+
+## D-044.1 — wetness 退出 baseline 权重 (只作 session mood)
+日期: 2026-05-15
+状态: active
+
+### 背景
+D-044 改 profile 真实化时, 把 taste_description / avoid_dishes / spicy_tolerance 都按"行为 ≠ 偏好"原则纠正了 (用户口味喜欢辣椒炒/糖醋/红烧, 不是过去为了控热量妥协选的清爽汤水类), 但 `scoring_weights.wetness=0.5` 这个 baseline 权重漏改, 仍在每次推荐里给含汤底/卤水 combo 加 +0.5 分.
+
+实测体感: top-N 仍持续偏向汤水类 combo, 用户主动反馈"为什么一直在推汤水/wetness". 排查根因——wetness 这个字段最早 (D-032) 是从"用户喜欢清爽不油带汤水"这条早期 taste_description 抽象出来的, 而那条描述本身就是从行为反推的伪偏好.
+
+### 决策: 砍静态权重, 保 chip/feedback 触发路径
+- `profile.yaml scoring_weights.wetness`: 0.5 → 0.0
+- 保留: `chisha/score.py wetness_bonus(combo)` 函数 / `NutritionProfile.wetness` schema / data 已打标 / `long_term_prefs.CHIP_TO_BOOST["想喝汤"] = "wetness"` (用户主动反馈"想喝汤"时 session 级激活)
+
+### 原则: trait 进 baseline, mood 走 session
+- baseline 权重承载**稳定 trait** (低油 / 高蛋白 / 控甜酱 / 拒加工肉——用户健康约束的硬偏好)
+- 汤水/口味浓淡这类**情境性诉求**走 session 路径 (chip 反馈 / daily_mood / 季节/天气先验)
+- "从历史行为抽象到 baseline 权重" 是反复出错的 anti-pattern (D-044 已警示, 这是同款漏的尾巴)
+
+### 影响 / 测试
+- `tests/test_score_v2.py wetness_bonus` 单元测试不动 (函数保留)
+- 偏好层关键词扫描 `_TASTE_KW_TO_BOOST = {"汤": "wetness", ...}` 暂保留, 因为当前 `taste_description` 仍有 "喜欢汤水/带汁的也行" 一句, 会通过 taste_match 路径注入 wetness boost (权重 0.4×0.5=0.2). 这是次级源, 若用户反馈 wetness 仍持续推, 二阶处理 (改 taste_description 或删 _TASTE_KW_TO_BOOST 中的汤水关键词)
+
+### 触发重审条件
+- L3 输出仍持续偏向汤水类 → 检查二阶源 (taste_description 关键词扫描)
+- 用户反馈"想喝汤" chip 后 wetness 没生效 → 检查 long_term_prefs 路径
+
+依赖: D-032 (引入 wetness 字段), D-043 (taste_match / 关键词扫描), D-044 (profile 真实化)

@@ -994,6 +994,8 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由
 | **46** | **L3 精排 prompt + payload 重构（top60 + system/user 拆分 + 紧凑化 + health_flags 规则后处理）** | **D-046** |
 | **47** | **L3 精排重构（tool_use forced schema + opus 默认 + cache_control + helper 抽出消灭双份代码）** | **D-047** |
 | **48** | **L3 双路径收口（CLI no-tool 分流 + provider 配置错 hard-fail + trace 结构化三态）** | **D-048** |
+| **49** | **L2 输出契约改 head-only**（apply_caps 不再保留 tail 段） | **D-049** |
+| **44.1** | **wetness 退出 baseline 权重（汤水偏好作 session mood, 不做 trait）** | **D-044.1** |
 
 ---
 
