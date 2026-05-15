@@ -1,7 +1,7 @@
 # chisha · 项目级指令
 
-> 项目名:今天吃点啥 (chisha) · 个人 AI 餐饮推荐系统 (L1 数据 / L2 打分 / L3 LLM 精排)
-> 当前阶段:V1 in flight — 推荐链路 (V2 + 4 层 cap + L3 tool_use D-047 + 双路径收口 D-048) 已就绪; **Web SPA D-051~D-055 + V1.1 反馈系统 D-056~D-068 已落地 (2026-05-15, `apps/web/`)**; FastAPI V1 端点接入 + 自用一周采集采纳率是下一步。
+> 项目名:今天吃点啥 (chisha) · 个人 AI **原则派点餐执行外包**工具 (L0 方法论 spec / L1 数据 / L2 打分 / L3 LLM 精排)
+> 当前阶段:**Phase 0 工程侧收尾** — 推荐链路 + Web SPA + V1.1 反馈 + FastAPI 13 端点 + 砍 mood picker + methodology spec 抽象全部 ready (D-001~D-072, 2026-05-15)。剩 Step 2 用户自用一周采纳率验证, 不在代码范围。
 > 主语言:Python (后端) + TypeScript (前端) · 包管理:uv / npm · 测试:pytest
 
 ## 必读(首次接触本项目)
@@ -52,7 +52,20 @@ uv run python scripts/tag_via_api.py shenzhen-bay --limit 50
 
 # 测试
 uv run pytest tests/ -q
+
+# L2 trace 严格回归 (D-072.1, 改打分链路必跑)
+uv run python -m scripts.baseline_l2_snapshot --out-dir tmp/baseline_traces       # 改前存
+uv run python -m scripts.baseline_l2_snapshot --out-dir tmp/baseline_traces_after # 改后存
+uv run python -m scripts.compare_traces                                            # 严格对比 (EPSILON=1e-6)
 ```
+
+## 推荐链路改动红线 (D-070/D-071/D-072 沉淀)
+
+- **不要让用户主动选 mood**: D-071 砍掉 mood picker. 新心情维度走 refine 文本或 L3 prompt, 绝不在前端加 chip
+- **`infer_refine_mood` 只服务 want_soup**: 不许扩为通用 mood parser (D-071 边界, 单测有守门 8 case)
+- **methodology spec 抽象只搬运不改逻辑**: 改打分逻辑 / 调权重 / 加新维度都不走 spec, 走 score.py + DECISIONS 修订. spec 是 yaml 化的 V2_DEFAULT_WEIGHTS, 不是新接口
+- **改 score.py / methodology / spec 前后必跑 baseline_l2_snapshot + compare_traces**: top60 顺序 + 16 维 breakdown |delta| < 1e-6 才允许 commit (D-072.1)
+- **Phase 1 (同事推广) 才考虑**: data zone 拆包 / OpenClaw 接入 / screener 设计 / 第二份 methodology spec — Phase 0 内不做
 
 ## 提醒(给未来的 Claude Code)
 

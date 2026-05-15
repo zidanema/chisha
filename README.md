@@ -34,16 +34,13 @@
 
 ## 项目状态
 
-**V1 in flight** —— 数据接入 + 推荐（召回 + L2 打分 + L3 LLM 精排, D-033/D-035/D-046/D-047/D-048）+ OpenClaw 飞书卡片接入 + 自用一周。
+**Phase 0 工程侧已收尾**（2026-05-15）—— 「原则派点餐执行外包」定位收敛（[D-070](docs/DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)）+ 砍 mood picker（[D-071](docs/DECISIONS.md#d-071-砍-mood-picker--want_soup-关键词识别-v1)）+ methodology spec 抽象（[D-072](docs/DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)/[D-072.1](docs/DECISIONS.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)）+ 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + FastAPI 13 端点。
 
-> 注: D-049 (2026-05-14) 砍掉了 D-024 的"V1 简化路径 (打分 top 3 + LLM 写 reason)", 现在唯一链路是 L3 LLM 精排 top60→5。
-> 注: D-050 (2026-05-15) CLI 路径 (claude_code_cli, 自用降级) opus 默认 + validate→retry→fallback 闭环, 修 opus 质量贪心覆盖 prompt 计数指令的失败模式。
-
-**V1 in flight** —— 数据接入 + 推荐三阶段（L1/L2/L3 已全跑通）+ **Web 用户视图 SPA 已落地**（`apps/web/`，[D-051~D-055](docs/DECISIONS.md#d-051) 入口架构 + [D-056~D-068](docs/DECISIONS.md#d-056-navbar-加反馈-tab--角标-v11) V1.1 反馈系统, 2026-05-15）+ 自用一周。
+剩下 **Step 2 用户自用一周**（采纳率验证, 不在代码范围）→ Phase 1 同事推广。
 
 > **V1 主交互**：本机 localhost Web SPA。`cd apps/web && npm install && npm run dev` → http://localhost:5173。详见 [`apps/web/README.md`](apps/web/README.md) + [`docs/style-guide.md`](docs/style-guide.md) + [`docs/api.md`](docs/api.md)。飞书延后到 V1.5 做推送通道。
 
-详细路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+详细路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)；产品收敛逻辑见 [docs/PRD.md](docs/PRD.md) §1 + §3.4。
 
 ---
 
@@ -68,74 +65,28 @@
 
 ---
 
-## 当前进度（V1 spike 已完成代码侧，等真实 LLM 打标 + OpenClaw 接入）
+## 当前进度
 
-### ✅ 已完成（代码侧）
+### ✅ 工程侧（Phase 0 收尾）
 
-- 数据层 loader: `chisha/loader.py` (raw → §5.2 schema, brand 后缀剥离)
-- 召回: `chisha/recall.py` (硬过滤 + 多样性 + 弱约束三件套校验 + 组合策略)
-- 打分: `chisha/score.py` (V1 公式 + 品牌/菜系多样性 top 3)
-- 精排: `chisha/api.py` 主入口 + `chisha/rerank.py` L3 LLM 精排 (D-033/D-046/D-047)
-- 接入: `integrations/openclaw/` (skill + 飞书卡片渲染)
-- 工具: `scripts/tag_dishes.py` (LLM 打标), `mock_tagged.py` (规则 mock), `dry_run.py`, `inspect_candidates.py`
-- 数据: `data/shenzhen-bay/` (office, 139 家 7256 菜) + `data/home/` (home, 38 家 2117 菜)
-- 用 mock 数据 dry_run 5 次：lunch/dinner 各推 3 个组合，100% 蔬菜+蛋白达标，跨品牌
+- **L0 方法论层**（[D-072](docs/DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)）：`profiles/methodologies/harvard_plate.yaml` + `chisha/methodology.py` 加载/严格 keyset 校验/merge；profile.yaml `methodology: harvard_plate` 引用
+- **L1 召回**：`chisha/recall.py` 硬过滤双层 + combo 灵活组合（[D-040](docs/DECISIONS.md#d-040)/[D-041](docs/DECISIONS.md#d-041)）
+- **L2 打分**：`chisha/score.py` 16 维 + 4 层 cap（restaurant/brand/cuisine/food_form, [D-042](docs/DECISIONS.md#d-042)/[D-043](docs/DECISIONS.md#d-043)/[D-045](docs/DECISIONS.md#d-045)）+ 不可补偿惩罚
+- **L3 精排**：`chisha/rerank.py` LLM tool_use forced schema（[D-047](docs/DECISIONS.md#d-047)）+ 双路径分流 + 配置错 hard-fail（[D-048](docs/DECISIONS.md#d-048)）+ validate→retry→fallback（[D-050](docs/DECISIONS.md#d-050)）；prompt 注入方法论 rationale（D-072）
+- **Refine**：`chisha/refine.py` 二轮 chip 解析 + want_soup 关键词识别 + 否定优先（[D-071](docs/DECISIONS.md#d-071-砍-mood-picker--want_soup-关键词识别-v1)）
+- **数据打标**：`scripts/tag_via_api.py` OpenRouter, 默认 `deepseek-v4-flash`（[D-037](docs/DECISIONS.md#d-037), 171 条 dual-model golden 横评）
+- **数据**：`data/shenzhen-bay/` 139 家 7256 菜 + `data/home/` 38 家 2117 菜
+- **Web SPA**：`apps/web/` Vite + React 18 + TS + Tailwind, HomePage / ProfilePage / HistoryPage / FeedbackPage / FeedbackInbox（[D-051~D-055](docs/DECISIONS.md#d-051) + [D-056~D-068](docs/DECISIONS.md#d-056-navbar-加反馈-tab--角标-v11)）
+- **FastAPI 13 端点**：推荐 6（recommend/refine/accept/skip/profile/history）+ V1.1 反馈 7（inbox/snooze/stop/recent/get/record/comments），单 JSON 文件落盘（[IMPL_LOG D-069](docs/IMPLEMENTATION_LOG.md#d-069-执行记录--fastapi-v1--v11-后端-13-端点联调--codex-review-修复)）
+- **调试台**：FastAPI `:8765/debug` instrumented 管道, L1/L2/L3/Final 四段 + 16 维 breakdown + LLM payload 可见 + combo 追溯 + mood 三栏对比（[D-039](docs/DECISIONS.md#d-039)）
+- **回归工具**：`scripts/baseline_l2_snapshot.py` + `scripts/compare_traces.py` L2 trace 严格回归（[D-072.1](docs/DECISIONS.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)）
+- **测试**：435 单测全过（pre-existing test_cleanup_expired 1 个无关 flake）
 
-### ⏳ 你接下来要做
+### ⏳ 接下来
 
-#### 1. 真实 LLM 打标（替换 mock）
-
-> ⚠️ V3 生产打标走 `scripts/tag_via_api.py`（OpenRouter）, 默认模型 `deepseek/deepseek-v4-flash` (见 [D-037](docs/DECISIONS.md#d-037), 171 条 dual-model golden 横评最优性价比)
-> `scripts/tag_dishes.py` 是 Anthropic 直连旧脚本, 已停用
-
-```bash
-# .env 需有 OPENROUTER_API_KEY
-# 先 spike 50 条抽查 (默认 deepseek-flash)
-uv run python scripts/tag_via_api.py shenzhen-bay --limit 50
-# 抽查 50 条准确率 ≥ 80% 后再跑全量
-uv run python scripts/tag_via_api.py shenzhen-bay
-uv run python scripts/tag_via_api.py home
-
-# 显式覆盖模型 (例如 ceiling 准确率回归)
-uv run python scripts/tag_via_api.py shenzhen-bay --limit 50 \
-  --model anthropic/claude-sonnet-4.6
-```
-
-#### 2. 抽查召回 100 条（看是否合理）
-
-```bash
-uv run python -m scripts.inspect_candidates --meal lunch --limit 100
-uv run python -m scripts.inspect_candidates --meal dinner --limit 100
-```
-
-#### 3. 5 次空跑 dry_run（看推荐质量）
-
-```bash
-uv run python -m scripts.dry_run --n 5 --meal both
-```
-
-#### 4. 起 Web 服务（D-051 / D-069，V1 主交互）
-
-```bash
-# apps/web SPA 用户视图 + 老调试台合一 (IMPL_LOG D-069, 2026-05-15)
-cd apps/web && npm install && npm run build   # 首次或前端改动后
-cd ~/chisha
-uv run python -m chisha.debug_server
-# → http://127.0.0.1:8765/         (apps/web SPA, 真后端模式)
-# → http://127.0.0.1:8765/debug    (老调试台 D-039)
-# → http://127.0.0.1:8765/swagger  (FastAPI OpenAPI UI)
-
-# 前端 dev hot-reload (vite proxy → 8765)
-cd apps/web && npm run dev                    # http://localhost:5173
-```
-
-#### 5. ~~接 OpenClaw + 飞书~~ → 推迟到 V1.5
-
-D-051 翻案：飞书降级为推送 + deeplink 通道，V1 不接入。integrations/openclaw/ 骨架保留。
-
-#### 6. 自用一周 + 纸笔记录
-
-按 [ROADMAP.md V1 抽查标准](docs/ROADMAP.md)，工作日 7 日采纳率 ≥ 50% 才算 V1 通过。
+1. **Step 2 · 自用一周（用户行为，不在代码范围）**：`cd apps/web && npm install && npm run build && cd .. && uv run python -m chisha.debug_server` → http://127.0.0.1:8765/。每天用着看采纳率撑不撑得起来。详见 [ROADMAP Phase 路线](docs/ROADMAP.md#phase-路线d-070-沉淀取代旧-v1v2v3-笛卡尔积)
+2. **Phase 1 启动条件**：自己愿意每天用 + ≥ 3 同事自发持续使用密度门槛。准入前发 screener 探原则派密度
+3. **延后到 V1.5**：OpenClaw 飞书推送通道、调试台 React 化（D-051）、macOS launchd 定时拉起
 
 ### 💡 想改某个设计前先看
 
@@ -165,42 +116,53 @@ D-051 翻案：飞书降级为推送 + deeplink 通道，V1 不接入。integrat
 chisha/
 ├── README.md                  # 你在看
 ├── DESIGN.md                  # 当前版本设计与实现
-├── profile.yaml               # 用户偏好（弱约束三件套 + taste + meal_trigger_time）
+├── CLAUDE.md                  # 项目级 AI 协作指令 (改推荐链路前看红线)
+├── profile.yaml               # 用户偏好 (含 methodology: harvard_plate 引用, D-072)
+├── profiles/
+│   └── methodologies/         # L0 方法论 spec (D-072)
+│       └── harvard_plate.yaml # 哈佛餐盘 spec (7 必备字段 + 16 维 weights + 4 层 cap)
 ├── docs/
-│   ├── PRD.md                 # 产品需求
-│   ├── DECISIONS.md           # 决策日志（产品/架构/方法论决策）
-│   ├── IMPLEMENTATION_LOG.md  # 工程实施日志（prompt / 参数 / batch / bug 细节）
-│   ├── ROADMAP.md             # 路线图
-│   ├── RECOMMEND_PRINCIPLES.md # 推荐分层原则（D-043 沉淀）
-│   ├── L3_RERANK_REDESIGN.md  # L3 精排重构方案（D-047）
+│   ├── PRD.md                 # 产品需求 (D-070 收敛为「原则派点餐执行外包」)
+│   ├── DECISIONS.md           # 决策日志 (D-001~D-072, 全项目共享编号)
+│   ├── IMPLEMENTATION_LOG.md  # 工程实施日志 (prompt / 参数 / bug / 三轮 review)
+│   ├── ROADMAP.md             # Phase 路线 (Phase 0 自用 → Phase 1 同事 → Phase 2 扩展)
+│   ├── RECOMMEND_PRINCIPLES.md # 推荐分层原则 (D-043 + §14 L0 方法论沉淀)
+│   ├── L3_RERANK_REDESIGN.md  # L3 精排重构方案 (D-047)
+│   ├── api.md                 # 前后端 API 契约 (V1 + V1.1)
+│   ├── style-guide.md         # UI 文案规范 + 视觉系统 (D-052~D-055/D-060/D-066/D-067)
 │   ├── CONTRIBUTING_DOCS.md   # 文档维护准则与每次决策 checklist
 │   └── archive/               # 旧版设计文档归档
 ├── data/
-│   └── shenzhen-bay/          # 按工区分目录（V2.4 拆 chisha-data-{zone} 子包）
-│       ├── restaurants.json
-│       ├── dishes_raw.json
-│       └── dishes_tagged.json
-├── chisha/                    # L2 推荐层代码（Python 包）
-│   ├── __init__.py
+│   ├── shenzhen-bay/          # office zone, 139 家 7256 菜
+│   └── home/           # home zone, 38 家 2117 菜
+├── chisha/                    # L1~L3 推荐链路 Python 包
 │   ├── api.py                 # recommend_meal 主入口 (D-033 单一 V2 路径, D-049 后)
-│   ├── recall.py              # 召回 + 硬过滤双层 + combo 灵活组合 (D-040/041)
-│   ├── score.py               # 打分 V2 ~12 维
-│   ├── rerank.py              # L3 LLM 精排 top60→5 (D-035/D-046/D-047/D-048/D-050)
-│   ├── context.py             # ContextSnapshot 注入层 (D-034)
-│   ├── refine.py              # refine 二轮 (D-033)
+│   ├── methodology.py         # L0 spec 加载/校验/merge (D-072)
+│   ├── recall.py              # L1 召回 + 硬过滤双层 + combo 组合 (D-040/041)
+│   ├── score.py               # L2 打分 16 维 + 4 层 cap (D-042/043/045)
+│   ├── rerank.py              # L3 LLM 精排 top60→5 (D-035/046/047/048/050)
+│   ├── context.py             # ContextSnapshot (D-034)
+│   ├── refine.py              # refine 二轮 + want_soup 关键词识别 (D-033/071)
+│   ├── feedback.py            # chip 反馈解析员 (D-035)
+│   ├── feedback_store.py      # V1.1 反馈系统单 JSON 落盘 (D-068/069)
 │   ├── llm_client.py          # provider 路由层 (D-047)
-│   ├── llm_providers/         # 三 provider: anthropic_api / openrouter / claude_code_cli (D-047)
-│   ├── debug_recommend.py     # 调试台用的 instrumented 管道 (D-039)
-│   ├── debug_server.py        # FastAPI 调试台 server (D-039)
-│   ├── long_term_prefs.py     # 反馈闭环 P3 (D-043): 反馈历史 → boost/penalty hints
-│   └── static/                # 调试台前端 (debug.html / logic.html)
-├── integrations/
-│   └── openclaw/              # V1 接入 OpenClaw + 飞书 (cron 待装)
-│       ├── skill.py
-│       └── feishu_card.py
-├── scripts/                   # 数据维护脚本（打标 / 召回审计等）
-├── prompts/                   # LLM prompt 模板
-└── tests/                     # 308 测试 (D-041 audit + D-042 cap + D-043 重设计/反馈闭环)
+│   ├── llm_providers/         # anthropic_api / openrouter / claude_code_cli (D-047/048)
+│   ├── web_api.py             # FastAPI 13 端点 (apps/web 服务端, D-069)
+│   ├── debug_recommend.py     # 调试台 instrumented 管道 (D-039)
+│   ├── debug_server.py        # FastAPI server entry (D-039)
+│   ├── long_term_prefs.py     # 反馈闭环 P3 (D-043)
+│   └── static/                # 老调试台前端 (debug.html / logic.html)
+├── apps/web/                  # V1 主交互 React 18 + Vite + TS SPA (D-051~D-068)
+├── integrations/openclaw/     # 飞书推送通道骨架, V1.5 接入 (D-051 翻案)
+├── scripts/                   # 数据维护 + 回归工具
+│   ├── tag_via_api.py         # LLM 打标 (D-037 OpenRouter)
+│   ├── dry_run.py             # 推荐空跑
+│   ├── inspect_candidates.py  # 召回审计
+│   ├── baseline_l2_snapshot.py # L2 trace 回归基线 (D-072.1)
+│   ├── compare_traces.py      # 严格回归对比 |delta| < 1e-6 (D-072.1)
+│   └── baseline_l3_prompt_ab.py # L3 prompt A/B 对照 (Codex Round 2 M-2)
+├── prompts/                   # LLM prompt 模板 (rerank_system.md 等)
+└── tests/                     # 435 单测 (全链路 + methodology + refine mood + contract)
 ```
 
 ### 启调试台（D-039）
