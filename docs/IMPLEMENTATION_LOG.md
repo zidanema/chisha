@@ -1609,6 +1609,53 @@ GET    /api/history?days=999                HTTP 400
 
 ---
 
+## D-076.1 执行记录 · L1 词表扩 positive 方向 + D-078.3 sandbox inspect raw 字段
+
+日期: 2026-05-16
+形态: 1 commit (词表扩 + score 分支 + prompt 词表段 + inspect raw + 7 新增 test)
+状态: ✅ 588 测试全过 / baseline_l2 0 diff / 真实 LLM 4 餐 spicy boost 抽出实测
+
+### D-076.1: BOOST_TOKENS 加 spicy + sweet_sauce
+
+战略决策见 `docs/DECISIONS.md#d-0761`. 工程改动:
+
+| 文件 | 改动 |
+|---|---|
+| `chisha/l1_prefs.py` | `BOOST_TOKENS = frozenset(["low_oil", "wetness", "spicy", "sweet_sauce"])` (2→4) |
+| `chisha/score.py taste_match_bonus` | 加 spicy boost (max spicy_level>=2 → +0.5) + sweet_sauce boost (复用 sweet_sauce_penalty helper → +0.5) |
+| `prompts/l1_extract.md` | boost 段从 "(可用 2 个)" 改 "(可用 4 个)", 加 spicy/sweet_sauce 描述 + "主动追辣"判定 + "不加 processed_meat/carb_heavy boost 因违反 methodology baseline" 说明 |
+| `tests/test_l1_prefs.py` | `test_token_vocabulary_unchanged` 更新到新词表 + 加 "processed_meat/carb_heavy 不许 boost" 守门 + `test_validate_drops_wrong_bucket` 改用单向 token (processed_meat/low_oil) |
+| `tests/test_score_v2.py` | 5 个新 case: spicy boost hit / spicy boost zero / sweet_sauce boost / spicy boost+penalty cancel / sweet_sauce boost+penalty cancel |
+
+### 真实 LLM 演练 (4 餐 → boost=['spicy'])
+
+`tmp/spicy_boost_drill.py` driver:
+- 4 day sandbox lunch accept + feedback rating=1 repurchase=2 note="day{N}: 辣得真爽,这种重辣度正合胃口"
+- 手动 L1 抽取 → `boost=['spicy']` + evidence: "4/4 重辣餐 repurchase_intent=2 且 note 主动追辣..."
+- Day 5 lunch recommend → L3 prompt 含 `行为信号 (近 4 餐): boost=['spicy']`, top 5 reason 4/5 提"辣2/辣3", #4 直接说 "顶格命中追辣 boost"
+
+成本: 5 次 LLM (4 day recommend + 1 L1 extract + 1 Day 5 recommend) ≈ $0.08, ~85s.
+
+### D-078.3: sandbox inspect 露 raw 文件内容
+
+`chisha/web_api.py api_sandbox_inspect`: 在 `long_term_prefs` (走 load_prefs, 空时返 None) 之外加 `long_term_prefs_raw` (直接读磁盘 json). 用途: load_prefs 在 boost+penalty 都空时返 None (L2 等价语义对), 但 inspect 必须显示 `regularities_freetext` / `signals_not_scored` / `evidence` 这些 LLM 抽取的非词表沉淀 — 不能被"L2 等价 None"语义藏掉.
+
+实现 ~15 行, frontend SandboxBar 后续会读 `long_term_prefs_raw` 优先于 `long_term_prefs` 渲染. 现有 inspect 调用方 (老 SandboxBar) 仍可读旧 `long_term_prefs` 字段, 向后兼容.
+
+### 守门
+
+- 588 测试 (583 D-078.2 + 5 new spicy/sweet boost score) 全过
+- `baseline_l2_snapshot` + `compare_traces` 4 snap 0 diff (现存 prefs 不含新 token, 老行为不变)
+- 真实 LLM 演练: spicy boost 抽出 + L3 reason 显式 "顶格命中追辣 boost"
+
+### Phase 1 follow-up (留待 D-076.2+ / 同事推广后)
+
+- 更多 boost token (cuisine 偏好? cooking method 偏好?) — 等真实信号需求, 不盲扩
+- LLM 双重信号 (methodology 控油 + L1 low_oil) 长期观察是否塌方式低油 (现实测 -7.4% 健康量级)
+- SandboxBar.tsx 前端切换读 `long_term_prefs_raw` 渲染 (后端字段已加, 前端可分批改)
+
+---
+
 ## D-078.2 执行记录 · L1 → L3 prompt 漏桥修补 (L1 LLM 抽取产物注入 L3 系统提示)
 
 日期: 2026-05-16

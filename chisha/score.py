@@ -386,6 +386,17 @@ def taste_match_bonus(combo: dict, taste_hints: dict | None) -> float:
         avg = sum(oils) / max(1, len(oils))
         if avg <= 2:
             s += 0.5
+    # D-076.1: spicy / sweet_sauce 双向 (positive 信号扩, 与对应 penalty 镜像).
+    # 阈值用 max() 不用 avg() 因偏好辣的人在意有没有一道够辣的 (anchor combo),
+    # 不是整桌辣度均值. 同理 sweet_sauce.
+    if "spicy" in boost:
+        spicies = [d.get("nutrition_profile", {}).get("spicy_level", 0)
+                    for d in combo["dishes"]]
+        if max(spicies, default=0) >= 2:
+            s += 0.5
+    if "sweet_sauce" in boost and sweet_sauce_penalty(combo) > 0:
+        # sweet_sauce_penalty 内部判定 sweet_sauce_level > 0 的菜数. boost 复用此 helper.
+        s += 0.5
     if "sweet_sauce" in penalty and sweet_sauce_penalty(combo) > 0:
         s -= 0.5
     if "processed_meat" in penalty and processed_meat_penalty(combo) > 0:
@@ -404,6 +415,8 @@ def taste_match_bonus(combo: dict, taste_hints: dict | None) -> float:
                     for d in combo["dishes"]]
         if max(spicies, default=0) >= 2:
             s -= 0.5
+    # D-076.1: boost 和 penalty 同时含同一 token 是矛盾, 净效果 0 (上面两个分支
+    # 分别 +0.5/-0.5 自然抵消). L1 prompt 规则 5 已禁此情形 (penalty 优先).
     return max(-1.0, min(1.0, s))
 
 

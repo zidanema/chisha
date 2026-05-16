@@ -61,8 +61,9 @@ def test_validate_drops_unknown_tokens():
 
 
 def test_validate_drops_wrong_bucket():
-    """boost token 放进 penalty 会被丢弃 (反之亦然)."""
-    raw = {"boost": ["sweet_sauce"], "penalty": ["low_oil"]}
+    """单向 token 放错桶被丢弃. D-076.1 后 spicy / sweet_sauce 是双向, 不再 wrong-
+    bucket 候选 — 这里用 low_oil (仅 boost) + processed_meat (仅 penalty) 校验."""
+    raw = {"boost": ["processed_meat"], "penalty": ["low_oil"]}
     out = validate_prefs(raw)
     assert out["boost"] == []
     assert out["penalty"] == []
@@ -168,14 +169,26 @@ def test_to_runtime_hints_empty_returns_none():
     assert to_runtime_hints({"boost": [], "penalty": []}) is None
 
 
-# ─────────────────────── 词表完整性 (防 D-076 词表静默漂移)
+# ─────────────────────── 词表完整性 (防 D-076 / D-076.1 词表静默漂移)
 def test_token_vocabulary_unchanged():
-    """词表是 D-076 边界, 改动必须走独立决策 + baseline_l2_snapshot.
+    """词表是 D-076 / D-076.1 边界, 改动必须走独立决策 + baseline_l2_snapshot.
 
     如果这个测试挂了, 说明有人擅自扩了词表 — 应该回到 v3 §2.7 重新评估.
+
+    D-076.1 (2026-05-16): boost 加 spicy + sweet_sauce 双向, 与对应 penalty 对称.
+    不加 processed_meat / carb_heavy boost (违反 harvard_plate methodology baseline).
     """
-    assert BOOST_TOKENS == frozenset(["low_oil", "wetness"])
+    assert BOOST_TOKENS == frozenset(
+        ["low_oil", "wetness", "spicy", "sweet_sauce"]
+    )
     assert PENALTY_TOKENS == frozenset(
         ["sweet_sauce", "processed_meat", "carb_heavy", "spicy"]
     )
     assert ALL_TOKENS == BOOST_TOKENS | PENALTY_TOKENS
+    # D-076.1: spicy / sweet_sauce 必须双向支持 (penalty + boost intersection)
+    assert {"spicy", "sweet_sauce"} <= (BOOST_TOKENS & PENALTY_TOKENS)
+    # processed_meat / carb_heavy 仅 penalty (不在 boost)
+    assert {"processed_meat", "carb_heavy"} <= PENALTY_TOKENS
+    assert not ({"processed_meat", "carb_heavy"} & BOOST_TOKENS), (
+        "harvard_plate baseline 反对加工肉 + 1/4 carb 上限, 不许 boost"
+    )

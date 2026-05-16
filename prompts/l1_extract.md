@@ -68,15 +68,21 @@
 
 ## token 词表 (严格 enum, 不要发明新词)
 
-### boost (可用 2 个)
+### boost (可用 4 个 — D-076.1 加 spicy/sweet_sauce positive 方向)
 - `low_oil`: 用户实际偏好油轻 (来源: oil_calibration.too_high 占比 ≥ 30%)
 - `wetness`: 用户实际偏好有汤水/卤水 (来源: 投诉干燥 / 主动提"想喝汤" / `wetness` 维度高分餐复购率高)
+- `spicy`: 用户**偏好辣**, 不是简单"能吃辣" (来源: 重辣度菜 repurchase_intent=2 + note 主动提 "辣得爽/不够辣"; profile.preferences.spicy_tolerance 高仅说明耐受, 不直接抽 spicy boost — 必须有"主动追辣"行为)
+- `sweet_sauce`: 用户**偏好甜口** (来源: 甜口菜 repurchase_intent=2 + note 提"甜得正好/喜欢糖醋/红烧"; 不是 spicy_tolerance 那种容忍, 是主动选择)
 
 ### penalty (可用 4 个)
 - `sweet_sauce`: 用户不耐重甜 (来源: 复购率低的甜口菜 / note 提"太甜")
 - `processed_meat`: 用户避免加工肉 (来源: methodology = harvard_plate 默认避, 但确认用户实际选择也避)
 - `carb_heavy`: 用户不耐主食过多 (来源: fullness.too_high 关联高主食占比)
 - `spicy`: 用户不耐辣 (来源: note 投诉 "太辣" / 辣度高的菜负反馈)
+
+**注: spicy / sweet_sauce 同时支持 boost 和 penalty 方向**, 但同一次抽取**只能选一个方向** (规则 5 冲突信号: penalty 优先). 不存在 boost+penalty 同时挂同一 token.
+
+**为什么不加 `processed_meat` / `carb_heavy` boost?** harvard_plate methodology baseline 反对加工肉 + 1/4 carb 上限, boost 这两个 token 等于反方法论, 违反 D-072 边界. 用户行为若显示偏好加工肉 / 高碳水, 进 regularities_freetext 但不抽 boost.
 
 **词表外的偏好放 `regularities_freetext`** (例如"周末偏红肉", "工作日偏白肉")。这些不直接调权, 但用户可以在 inspect 弹窗看到, 作为未来扩词表的依据。
 

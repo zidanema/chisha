@@ -3311,3 +3311,80 @@ Codex 闭环 (跨 7 Phase + final PR, 8 轮 review):
 - `/api/sessions` 后端持久化 — 当前 localStorage cap 5 个 session × ~700KB
 - Web Notifications API fallback 桌面通知 — 真 LLM fallback 链路触发场景才补
 - L3 fallback 在 dev 模式下用 active-session=sess_a7f0 触发 mock 数据 demo, 不是真 fallback
+
+
+---
+
+## D-076.1: L1 词表加 positive 方向 boost (spicy / sweet_sauce)
+
+日期: 2026-05-16
+状态: ✅ 已落地 (commit 待加, baseline_l2 0 diff + 真实 LLM 4 餐演练验)
+关联: D-076 (L1 LLM 抽取) / D-078.2 (L1 → L3 prompt 桥)
+
+### 触发
+
+D-076 落地后 4 天 sandbox 演练 (4/4 oil=too_high) 验证 low_oil boost 闭环, 顺手暴露**L1 词表只有 penalty 方向 spicy / sweet_sauce / processed_meat / carb_heavy, 没有任何能表达"用户主动偏好"的 boost token**.
+
+志丹 (项目用户) 是吃辣 + 重口下饭用户. 4 天 "想吃点辣的" refine 后, refine_intent 命中,但**L1 抽取永远不可能产出 "用户偏好辣" 信号** — 词表里 spicy 只在 penalty 方向 (用户不耐辣). 用户真实偏好被强行降级到 `regularities_freetext`, 不进 L2 打分, 不进 L3 prompt.
+
+D-076 设计时 "词表锁定" 是 conservative 选择 (Phase 0 先跑通 L1 闭环), 但真实使用后这个限制是**产品级缺陷** — 系统结构性地无法表达正向口味偏好.
+
+### 决策
+
+**扩 BOOST_TOKENS = frozenset(["low_oil", "wetness", "spicy", "sweet_sauce"])** (从 2 个加到 4 个).
+
+具体:
+- `spicy` boost (与 penalty 镜像): 用户**主动追辣**, max(spicy_level) >= 2 → +0.5
+- `sweet_sauce` boost (与 penalty 镜像): 用户**主动偏甜口**, sweet_sauce_penalty(combo) > 0 → +0.5
+
+**不加** `processed_meat` / `carb_heavy` boost — 违反 harvard_plate methodology baseline (加工肉避 + 1/4 carb 上限). 用户行为若显示偏好加工肉/重碳水, 进 freetext 不进 boost.
+
+### Prompt 规则 (`prompts/l1_extract.md`)
+
+强调"主动追辣"行为判定:
+- spicy boost 来源: 重辣度菜 repurchase_intent=2 + note 主动提 "辣得爽/不够辣"
+- profile.preferences.spicy_tolerance 高仅说明耐受, **不直接抽 spicy boost** — 必须有主动追辣行为
+
+sweet_sauce boost 类似 — 不是 "spicy_tolerance" 那种容忍, 是主动选择.
+
+冲突信号规则 (规则 5) 不变: penalty 优先, 同一抽取只能选一方向. 不存在 boost+penalty 同时挂同一 token.
+
+### 验收 (真实 LLM 演练)
+
+4 餐都给 rating=1 + repurchase_intent=2 + note="辣得真爽,这种重辣度正合胃口" → L1 抽出:
+
+```json
+{
+  "boost": ["spicy"],
+  "evidence": [{
+    "token": "spicy",
+    "from_meals": ["sid_d1", "sid_d2", "sid_d3", "sid_d4"],
+    "rationale": "4/4 重辣餐 repurchase_intent=2 且 note 主动追辣 ('辣得真爽/下次还要'), 满足 spicy boost 的主动追辣条件"
+  }]
+}
+```
+
+Day 5 lunch recommend → L3 prompt 收到 D-078.2 桥透出的 `行为信号 (近 4 餐): boost=['spicy']`, top 5 LLM reason:
+- #1 "命中近4餐主动追辣"
+- #4 "重庆老麻抄手辣3顶格命中追辣boost" ← LLM 直接 reference "追辣 boost"
+- #2/#5 标"辣2"
+
+L1 (LLM 抽取) → L2 (`taste_match_bonus(spicy)=+0.5`) → L3 (prompt 注入 + LLM 显式 reasoning) **三层贯通**.
+
+### 守门
+
+- baseline_l2_snapshot 4 snap 0 diff (现存 prefs 不含新 token, 老行为不变)
+- 588 测试全过 (583 D-078.2 + 5 新增 spicy/sweet boost score + token vocab assertion)
+- `test_token_vocabulary_unchanged` 改成 D-076.1 词表 + 加 "processed_meat/carb_heavy 不许 boost" 守门
+
+### 不动 (留 Phase 1 / Phase 2)
+
+- 更多 boost token (例如 cuisine 偏好? formulation/形态偏好?) — Phase 1 同事推广后看真实信号需求, 不盲扩
+- LLM prompt 中 boost/penalty 的双重信号 (methodology 说控油 + L1 也说控油) 是否过强 — 现实测 LLM 没明显矫枉过正 (Day 5 油 -7.4% 是健康量级, 不是塌方式低油). 留长期观察
+
+### 反 anti-pattern
+
+- 没动 D-072 边界 (打分逻辑没改, taste_match_bonus 只加分支)
+- 没加新维度到 score 16 维 (仍是 V2 16 维)
+- 没绕过 maxItems=2 守门 (boost 仍最多 2 个)
+- 不加无 dish 数据字段对应的虚拟 token (例如"high_protein" 在 score 已有维度, 不需要词表 token)

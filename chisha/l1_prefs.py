@@ -48,8 +48,13 @@ from pathlib import Path
 from typing import Any
 
 
-# score.py taste_match_bonus 支持的 token 词表 (canonical, 不含别名)
-BOOST_TOKENS = frozenset(["low_oil", "wetness"])
+# score.py taste_match_bonus 支持的 token 词表 (canonical, 不含别名).
+#
+# D-076.1 (2026-05-16): boost 方向扩 spicy / sweet_sauce, 与对应 penalty 形成对称.
+# 触发: 演练实测发现"用户偏好辣"等正向口味信号只能进 regularities_freetext, 不进
+# 打分链路 → 志丹这种吃辣用户的核心口味偏好无法被系统消费. 不加 processed_meat /
+# carb_heavy boost (violates harvard_plate methodology baseline: 加工肉避 + 1/4 carb).
+BOOST_TOKENS = frozenset(["low_oil", "wetness", "spicy", "sweet_sauce"])
 PENALTY_TOKENS = frozenset(["sweet_sauce", "processed_meat", "carb_heavy", "spicy"])
 ALL_TOKENS = BOOST_TOKENS | PENALTY_TOKENS
 

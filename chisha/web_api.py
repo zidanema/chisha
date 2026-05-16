@@ -818,9 +818,20 @@ def api_sandbox_inspect(request: Request) -> dict:
 
     state = _sandbox.state(root=ROOT)
 
-    # L1 prefs (当前生效)
+    # L1 prefs (D-078.3): load_prefs 在 boost+penalty 都空时返 None (L2 等价语义),
+    # 但 inspect 必须显示磁盘 raw 内容 — regularities_freetext / signals_not_scored /
+    # evidence 是 LLM 抽取的非词表沉淀, debug 台必须可见, 不能被"L2 等价 None"语义藏掉.
     from chisha.l1_prefs import load_prefs
+    from chisha import data_root as _data_root
     prefs = load_prefs(root=ROOT) or {}
+    prefs_raw: dict | None = None
+    try:
+        prefs_path = _data_root.long_term_prefs_path(ROOT)
+        if prefs_path.exists():
+            import json as _json
+            prefs_raw = _json.loads(prefs_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        prefs_raw = None
 
     # 最近 10 条 V1.1 反馈
     feedbacks_recent: list[dict] = []
@@ -850,6 +861,9 @@ def api_sandbox_inspect(request: Request) -> dict:
         "enabled": True,
         "state": state,
         "long_term_prefs": prefs or None,
+        # D-078.3: raw 磁盘内容. 即使 boost+penalty 都空, regularities_freetext /
+        # signals_not_scored / evidence 也对 debug 有价值.
+        "long_term_prefs_raw": prefs_raw,
         "feedbacks_recent": feedbacks_recent,
         "feedbacks_total": len(feedbacks_recent),
         "meal_log_recent": meal_log_recent,

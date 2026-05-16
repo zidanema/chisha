@@ -196,6 +196,42 @@ def test_taste_match_sweet_penalty():
     assert taste_match_bonus(c, hints) == -0.5
 
 
+# D-076.1: positive direction tokens (spicy / sweet_sauce boost)
+def test_taste_match_spicy_boost_hits_when_max_spicy_high():
+    """boost=['spicy']: max(spicy_level)>=2 → +0.5 (用户主动追辣)."""
+    c = _combo([make_dish(spicy_level=2), make_dish(spicy_level=0)])
+    hints = {"boost": ["spicy"], "penalty": []}
+    assert taste_match_bonus(c, hints) == 0.5
+
+
+def test_taste_match_spicy_boost_zero_when_all_mild():
+    """boost=['spicy'] 但全 combo spicy_level<2 → 0."""
+    c = _combo([make_dish(spicy_level=1), make_dish(spicy_level=0)])
+    hints = {"boost": ["spicy"], "penalty": []}
+    assert taste_match_bonus(c, hints) == 0.0
+
+
+def test_taste_match_sweet_sauce_boost():
+    """boost=['sweet_sauce']: combo 有甜口菜 → +0.5."""
+    c = _combo([make_dish(sweet_sauce_level=3), make_dish(sweet_sauce_level=0)])
+    hints = {"boost": ["sweet_sauce"], "penalty": []}
+    assert taste_match_bonus(c, hints) == 0.5
+
+
+def test_taste_match_spicy_boost_and_penalty_cancel():
+    """validate_prefs 不允许 boost+penalty 同 token, 但若调用方硬塞两边都有,
+    score 自然抵消 (+0.5 -0.5 = 0). 守门防 ad-hoc 调用产生意外."""
+    c = _combo([make_dish(spicy_level=3)])
+    hints = {"boost": ["spicy"], "penalty": ["spicy"]}
+    assert taste_match_bonus(c, hints) == 0.0
+
+
+def test_taste_match_sweet_sauce_boost_and_penalty_cancel():
+    c = _combo([make_dish(sweet_sauce_level=3)])
+    hints = {"boost": ["sweet_sauce"], "penalty": ["sweet_sauce"]}
+    assert taste_match_bonus(c, hints) == 0.0
+
+
 # ─────────────────────── context_boost
 def _ctx(daily_mood):
     return ContextSnapshot(
