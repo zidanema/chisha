@@ -128,7 +128,7 @@ chisha/
 │       └── harvard_plate.yaml # 哈佛餐盘 spec (7 必备字段 + 16 维 weights + 4 层 cap)
 ├── docs/
 │   ├── PRD.md                 # 产品需求 (D-070 收敛为「原则派点餐执行外包」)
-│   ├── DECISIONS.md           # 决策日志 (D-001~D-072, 全项目共享编号)
+│   ├── DECISIONS.md           # 决策日志 (D-001~D-073.1, 全项目共享编号)
 │   ├── IMPLEMENTATION_LOG.md  # 工程实施日志 (prompt / 参数 / bug / 三轮 review)
 │   ├── ROADMAP.md             # Phase 路线 (Phase 0 自用 → Phase 1 同事 → Phase 2 扩展)
 │   ├── RECOMMEND_PRINCIPLES.md # 推荐分层原则 (D-043 + §14 L0 方法论沉淀)

@@ -2940,3 +2940,73 @@ LLM prompt 规则: 抽取意图, 未表达留空, **不要主观联想**, cuisin
 - Opus 设计 v1 → Codex review (`codex-rescue`, ~270s) 拍砖 5 个修订点 → Opus 合并 v2
 - 用户决策: Q1 回落全集 / Q2 spicy_tolerance-aware / Q3 彻底砍 D-071
 - 工程节奏: 3 天 (schema/parser → recall/score → 主流程 + 砍 D-071 + 文档)
+
+---
+
+## D-073.1: refine 显式 cuisine_want 时, 目标菜系免 cuisine/brand/food_form cap
+
+日期: 2026-05-16
+状态: active · D-073 followup, 修「换日料」bug
+
+### 触发事件
+
+用户在 web 实测点 chip「换日料」无效——refine 返回的 5 张里只有 rank 1-2 是日料 (鸟鹏烧鸟、鸟剑居酒屋), rank 3-5 让位给粥店/烤鸡/湘楼.
+
+诊断链路 (从前端逐层追):
+
+- 前端 ✓: chip click → `submit(chip)` 直接传 chip 文本到 `onSubmit`, 与手敲完全同一条 `api.refine` 路径 (apps/web/src/components/RefineInput.tsx)
+- `parse_refine_intent` ✓: `cuisine_want=["日料"]`, `normalize_cuisine` → `"日式"` 对齐数据 cuisine 字段值
+- `recall` ✓: 2449 combos, 其中 `cuisine_exact_match` 命中 86 个 (84 个 `dishes[0].cuisine == "日式"`)
+- L2 `rank_combos` ✓: `intent_match_bonus.cuisine = 1.0 × weight 0.50 = +0.5` 正确加上
+- **`apply_caps` ✗**: 多样性 cap 把日式 84 → 6 个进 top60
+  - `cuisine cap=6` 一刀切
+  - `brand cap=2` × 日式仅 5 个品牌 = 上限 10 个 combos
+  - `food_form cap=8` 在小菜系上偶发收紧
+
+→ L3 prompt 拿到 top60 里日式仅 6/60, 即使 prefer 日料也只能挑 2 张挂出来.
+
+### 决定
+
+`apply_caps(ranked, profile, intent=None)` 接 intent 参数. `intent.cuisine_want` 命中的菜系 (经 `normalize_cuisine` 归一) 进入 `exempt_cuisines` 集合, 免 **cuisine / brand / food_form** 三层 cap.
+
+`restaurant cap = per_restaurant_top_k = 3` 保留——这是"目标菜系小+餐厅集中"场景下防同一家店连刷一页的最后一道屏障.
+
+`intent=None` 时行为完全不变, 首轮 recommend / 空 refine 不受影响. `baseline_l2_snapshot` 0 diff 通过.
+
+### 不做的事
+
+- 不放宽 `restaurant cap`: 单店 3 个 combo 已足够给用户挑, 再放就是同店刷屏
+- 不动 `intent_match_bonus` 权重 (cuisine 0.50): L2 加分本来够, 问题是 cap 干掉了候选, 不是排序不够强
+- 不区分"软 want vs 硬 want": D-073 schema 没这层, 现阶段一律按硬意图处理. Phase 1 用户面广了再考虑
+- 不修 `apply_caps` 内 `cui = dishes[0].cuisine` 取值口径与 `cuisine_exact_match` 的 any-dish 口径不一致问题: 这是另一个 bug 范畴, 当前 fix 不要扩散
+
+### 实测结果
+
+| 输入 | 改前 L3 输出 5 张命中目标菜系 | 改后 |
+|---|---|---|
+| 换日料 | 2 | 3 (rank 1-3 全日料) |
+| 换粤菜 | (未基线测) | 4 (rank 1-4 全粤菜) |
+
+L2 端 `apply_caps` 后 top60 日式 combo: **6 → 16** (`换日料`场景).
+
+### 风险
+
+- 目标菜系小、餐厅集中时, 推荐里同 brand 可能并列出现 (例: 鸟鹏 + 鸟剑 + 一田屋同时上). 这是"用户明确要这个菜系"语义下可接受的代价, 不是 bug.
+- `cuisine_want` 与 `cuisine_avoid` 同时存在时: avoid 优先 (recall 层 `_apply_intent_buckets` 已硬过滤掉 avoid 命中的 combo, 不会进 `apply_caps`)
+- intent 解析错误把目标菜系认错时, 错的菜系会同时免 3 层 cap, 偏差被放大. 风险点在 `parse_refine_intent` 的 LLM 解析准确度, 不是 cap 改动本身.
+
+### 来源
+
+- 用户在 web 实测发现 chip 不生效, 直接报 bug
+- Opus (Claude Code) 诊断: 前端 → recall → L2 cap 逐层追, 最终定位在 `apply_caps` cuisine cap
+- 改动确认: 用户拍板方案 A (目标菜系免 cap), 验证发现 cuisine cap 免后仍受 brand cap 压制, 扩展到 brand + food_form 三层
+
+### 关联
+
+- 实施:
+  - `chisha/score.py:1029 apply_caps` 加 `intent` 参数 + `exempt_cuisines` 逻辑 (cuisine/brand/food_form 三层 cap 增加 `is_exempt` 短路)
+  - `chisha/refine.py:111` `apply_caps(ranked, profile, intent=...)` 透传
+- 回归:
+  - `baseline_l2_snapshot` + `compare_traces` 0 diff 通过 (首轮场景 intent=None 行为不变, 满足 D-072.1 红线)
+  - pytest 471 passed (`test_session::test_cleanup_expired` 因硬编码 2026-05-13 与当前日期相对漂移, 与本改动无关)
+- 推翻: 无 (D-073 设计语义保持, 仅修一个 cap 边界缺陷)

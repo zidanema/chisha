@@ -108,7 +108,9 @@ def refine(
                           root=root,
                           intent=intent if not intent.is_empty() else None)
     # D-043: refine 也走三层 cap
-    ranked = apply_caps(ranked, profile)
+    # D-073 followup: 传 intent, cuisine_want 命中的菜系免 cuisine cap (「换日料」bug)
+    ranked = apply_caps(ranked, profile,
+                        intent=intent if not intent.is_empty() else None)
     # D-046: top60 给 L3
     from chisha.rerank import L3_INPUT_TOP_K
     top_k = ranked[:L3_INPUT_TOP_K]

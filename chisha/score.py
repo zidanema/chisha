@@ -1029,6 +1029,7 @@ def resolve_caps(profile: dict | None) -> dict[str, int]:
 def apply_caps(
     ranked: list[dict],
     profile: dict | None,
+    intent=None,  # D-073 followup: RefineIntent | None, 用户明确 cuisine_want 时免 cuisine cap
 ) -> list[dict]:
     """D-043 三层 cap + D-045 brand 层 + D-049 head-only:
     restaurant + brand + cuisine + food_form 同时满足.
@@ -1042,12 +1043,25 @@ def apply_caps(
     现在 brand cap 真正生效, L3 仅在同品牌 ≤2 个变体内做菜品组合择优.
 
     cap=0 表示该层不做约束. brand 缺失回退到 rid (单店即单品牌).
+
+    refine intent 例外 (D-073 followup, 「换日料」bug):
+      用户在 refine 显式 cuisine_want 时, 目标菜系免 cuisine + brand + food_form
+      三层 cap. 实测「换日料」: 数据里日式仅 5 个 brand, brand cap=2 把候选压到
+      10 个上限, 与"原则派想吃 X 就给 X"语义冲突.
+      仅保留 restaurant cap (防单店连刷一页), 其他多样性约束在目标菜系内全部放开.
     """
     caps = resolve_caps(profile)
     cap_r = caps["restaurant"]
     cap_b = caps["brand"]
     cap_c = caps["cuisine"]
     cap_f = caps["food_form"]
+    # 目标菜系免 cuisine + brand + food_form cap (与计数口径一致, 都看 dishes[0].cuisine)
+    exempt_cuisines: set[str] = set()
+    if intent is not None:
+        for c in (getattr(intent, "cuisine_want", None) or []):
+            n = normalize_cuisine(c)
+            if n:
+                exempt_cuisines.add(n)
     head: list[dict] = []
     cnt_r: dict[str, int] = {}
     cnt_b: dict[str, int] = {}
@@ -1060,14 +1074,18 @@ def apply_caps(
         dishes = c.get("dishes") or []
         cui = dishes[0].get("cuisine") if dishes else None
         form = combo_food_form(c)
+        is_exempt = bool(cui and cui in exempt_cuisines)
         # 任一层 cap 已满 → 丢弃 (D-049: 不再保留 tail)
         if cap_r > 0 and rid and cnt_r.get(rid, 0) >= cap_r:
             continue
-        if cap_b > 0 and brand and cnt_b.get(brand, 0) >= cap_b:
+        if cap_b > 0 and brand and not is_exempt \
+                and cnt_b.get(brand, 0) >= cap_b:
             continue
-        if cap_c > 0 and cui and cnt_c.get(cui, 0) >= cap_c:
+        if cap_c > 0 and cui and not is_exempt \
+                and cnt_c.get(cui, 0) >= cap_c:
             continue
-        if cap_f > 0 and form and cnt_f.get(form, 0) >= cap_f:
+        if cap_f > 0 and form and not is_exempt \
+                and cnt_f.get(form, 0) >= cap_f:
             continue
         head.append(c)
         if rid:
