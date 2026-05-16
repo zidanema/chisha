@@ -383,6 +383,10 @@ def _fmt_counts_or_none(d) -> str:
 # snapshot 里 l1_prefs_snapshot 本来就允许是 None (那餐没抽出 prefs).
 _UNSET_L1_PREFS: Any = object()
 
+# B-001: 同样区分 "未传 feedback_view (走默认 build_feedback_view)"
+# vs "显式传 [] / list (What-if frozen replay 走 __frozen.feedback_view, 不读 disk)".
+_UNSET_FEEDBACK_VIEW: Any = object()
+
 
 def _profile_block(
     profile: dict,
@@ -486,6 +490,61 @@ def _context_block(context: "ContextSnapshot | None") -> str:
     return "\n".join(lines)
 
 
+def _feedback_block(feedback_view: list[dict] | None) -> str | None:
+    """B-001: 渲染 [FEEDBACK_RECENT] 段, 让 L3 LLM 看到近期反馈, 推荐理由可解释.
+
+    返回 None = 不渲染段 (view 空 / 无可显示条目).
+    仅展示近 30 天的 -1 / +1, 给 LLM 解释用. **排序压制靠 L2 score, 不靠 prompt**.
+
+    格式 (紧凑):
+      [FEEDBACK_RECENT]
+      最近 7 天 👎: 餐厅A (3d)
+      最近 30 天 👎: 餐厅B (12d)
+      最近 3 天 👍 (cooldown 避连吃): 餐厅C (1d)
+    """
+    if not feedback_view:
+        return None
+    neg_7d: list[tuple[str, int]] = []
+    neg_30d: list[tuple[str, int]] = []
+    pos_cooldown: list[tuple[str, int]] = []
+    seen_neg: set[str] = set()
+    seen_pos: set[str] = set()
+    for entry in feedback_view:
+        name = entry.get("restaurant_name") or ""
+        rating = entry.get("rating")
+        age = entry.get("age_days", 0)
+        if not name:
+            continue
+        if rating == -1 and name not in seen_neg:
+            seen_neg.add(name)
+            if age <= 7:
+                neg_7d.append((name, age))
+            elif age <= 30:
+                neg_30d.append((name, age))
+        elif rating == 1 and age < 3 and name not in seen_pos:
+            seen_pos.add(name)
+            pos_cooldown.append((name, age))
+    if not (neg_7d or neg_30d or pos_cooldown):
+        return None
+    lines = ["[FEEDBACK_RECENT]"]
+    if neg_7d:
+        lines.append(
+            "最近 7 天 👎: "
+            + ", ".join(f"{n} ({a}d)" for n, a in neg_7d)
+        )
+    if neg_30d:
+        lines.append(
+            "最近 30 天 👎: "
+            + ", ".join(f"{n} ({a}d)" for n, a in neg_30d)
+        )
+    if pos_cooldown:
+        lines.append(
+            "最近 3 天 👍 (cooldown 避连吃): "
+            + ", ".join(f"{n} ({a}d)" for n, a in pos_cooldown)
+        )
+    return "\n".join(lines)
+
+
 def build_user_message(
     top_combos: list[dict],
     profile: dict,
@@ -494,19 +553,26 @@ def build_user_message(
     n_explore: int,
     root: "Path | None" = None,
     l1_prefs_override: Any = _UNSET_L1_PREFS,
+    feedback_view: list[dict] | None = None,
 ) -> str:
-    """拼 user message: CONFIG + PROFILE + CONTEXT + CANDIDATES, 紧凑符号化.
+    """拼 user message: CONFIG + PROFILE + CONTEXT + (FEEDBACK?) + CANDIDATES.
 
     D-078.2: root 透传给 _profile_block 注入 L1 prefs.
     D-079 BLOCKER fix: l1_prefs_override 透传, What-if 路径必须走 frozen 而非
     runtime load (违反 "What-if 零 runtime read" 红线).
+    B-001: feedback_view 显式传入 (生产 = build_feedback_view, What-if = __frozen).
+      为避免污染 baseline / D-079 frozen 自包含, 调用方必须显式构造 view 后传入.
+      build_user_message 自身不读 disk.
     """
     blocks = [
         f"[CONFIG] n={n} n_explore={n_explore}",
         _profile_block(profile, root=root, l1_prefs_override=l1_prefs_override),
         _context_block(context),
-        "[CANDIDATES]",
     ]
+    fb_block = _feedback_block(feedback_view)
+    if fb_block:
+        blocks.append(fb_block)
+    blocks.append("[CANDIDATES]")
     for idx, c in enumerate(top_combos):
         blocks.append(_fmt_combo_block(idx, c))
     return "\n\n".join(blocks)
@@ -956,6 +1022,7 @@ def _run_llm_rerank(
     profile_llm: dict | None = None,
     root: "Path | None" = None,
     l1_prefs_override: Any = _UNSET_L1_PREFS,
+    feedback_view: list[dict] | None = None,
 ) -> dict:
     """共享 LLM rerank 调用 helper (D-047 抽出, 同时给 prod _llm_rerank +
     debug _llm_rerank_traced 用, 解决双份代码漂移问题).
@@ -1051,7 +1118,8 @@ def _run_llm_rerank(
             system_prompt = system_prompt_raw
         user_msg = build_user_message(top_combos, profile, context,
                                        n=n, n_explore=n_explore, root=root,
-                                       l1_prefs_override=l1_prefs_override)
+                                       l1_prefs_override=l1_prefs_override,
+                                       feedback_view=feedback_view)
         out["system_prompt_chars"] = len(system_prompt)
         out["user_message_chars"] = len(user_msg)
         out["user_message_full"] = user_msg
@@ -1220,7 +1288,8 @@ def _llm_rerank(top_combos: list[dict], profile: dict,
                 model: str | None = None,
                 n_max: int = 5,
                 root: "Path | None" = None,
-                l1_prefs_override: Any = _UNSET_L1_PREFS) -> list[dict] | None:
+                l1_prefs_override: Any = _UNSET_L1_PREFS,
+                feedback_view: list[dict] | None = None) -> list[dict] | None:
     """调 LLM 返回 list of candidate dict, 失败返回 None (上游 fallback).
 
     D-047: 走 _run_llm_rerank 共享 helper + tool_use 强制 schema.
@@ -1228,6 +1297,7 @@ def _llm_rerank(top_combos: list[dict], profile: dict,
     D-078.2: root 透传给 build_user_message 注入 L1 prefs.
     D-079 BLOCKER fix: l1_prefs_override 透传到 _run_llm_rerank, What-if frozen
     路径用 snapshot 而非 load_prefs(root).
+    B-001: feedback_view 透传, prompt 渲染 [FEEDBACK_RECENT] 段.
     """
     res = _run_llm_rerank(
         top_combos, profile, context,
@@ -1235,6 +1305,7 @@ def _llm_rerank(top_combos: list[dict], profile: dict,
         profile_llm=profile.get("llm"),
         root=root,
         l1_prefs_override=l1_prefs_override,
+        feedback_view=feedback_view,
     )
     if res["status"] == "config_error":
         # D-048 BLOCKER: provider 配置错误显式 ERROR 级日志, 不当普通 fallback.
@@ -1263,6 +1334,7 @@ def rerank(
     today: "dt.date | None" = None,
     trace_collector: dict | None = None,
     l1_prefs_override: Any = _UNSET_L1_PREFS,
+    feedback_view: Any = _UNSET_FEEDBACK_VIEW,
 ) -> list[dict]:
     """主入口. LLM 精排 + fallback.
 
@@ -1307,6 +1379,24 @@ def rerank(
         from chisha.llm_client import has_llm_key
         use_llm = has_llm_key()
 
+    # B-001: feedback_view 默认 = build_feedback_view(load_store(root), today).
+    # 显式传 (含 []) → 用之 (What-if frozen 路径必须显式传 frozen view, 不能让
+    # 默认路径走 disk read, 违反 D-079 "What-if 零 runtime read" 红线).
+    if feedback_view is _UNSET_FEEDBACK_VIEW:
+        if root is not None and today is not None:
+            try:
+                from chisha import feedback_store
+                _store = feedback_store.load_store(root)
+                effective_feedback_view: list[dict] | None = (
+                    feedback_store.build_feedback_view(_store, today)
+                )
+            except Exception:
+                effective_feedback_view = None
+        else:
+            effective_feedback_view = None
+    else:
+        effective_feedback_view = feedback_view or None
+
     llm_attempted = False
     llm_called = False
     if use_llm:
@@ -1319,6 +1409,7 @@ def rerank(
                 model=model, profile_llm=profile.get("llm"),
                 root=root,
                 l1_prefs_override=l1_prefs_override,
+                feedback_view=effective_feedback_view,
             )
             llm_resp = res.get("llm_response") or {}
             raw_text = (llm_resp.get("raw_text") or "") if isinstance(llm_resp, dict) else ""
@@ -1356,7 +1447,8 @@ def rerank(
                                    profile=profile, context=context,
                                    n=n, n_explore=n_explore,
                                    model=model, n_max=n, root=root,
-                                   l1_prefs_override=l1_prefs_override)
+                                   l1_prefs_override=l1_prefs_override,
+                                   feedback_view=effective_feedback_view)
             if llm_out is not None:
                 llm_called = True
         if llm_out is not None:

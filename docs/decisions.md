@@ -210,3 +210,12 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 后端是单一可信源，前端 localStorage 退为 7 天离线 fallback 永不参与列表合并；不动 L1/L2/L3/Final/Refine/Trace 6 个 panel 组件（what-if 是 overlay）
 - 改 trace schema 必 bump `TRACE_SCHEMA_VERSION`；改 score / methodology / spec 仍必跑 baseline_l2 守门（D-072.1 红线）
 - Codex 两轮 review 12 finding 全闭环（2 BLOCKER：`__frozen.l1_prefs_snapshot` + `l2_meal_log_view` 漏了 runtime read 漂移；7 FIX-NOW：failure matrix 固化 / `__source` 枚举 / 300→50MB trace size / Live `save-as-replay` 禁；1 push back: localhost 鉴权用 bind 替代端点 token；2 defer: schema upgrade policy + 文件分桶）
+
+## D-080
+**B-001 修复 — `feedback_recency` 短链路直入 score，补 L1 长链路盲区。** (2026-05-17)
+- 病因：反馈→推荐只有 L1 慢路径（≥20 餐 + 强信号才抽出 token），冷启动期 score.py / recall.py **不直接读 rating**，9 餐沙盒实测抽空，被踩餐厅 7 天后照样推
+- 解法：score.py 新增 `feedback_recency` 维度（weight=1.0）+ L3 prompt 加 `[FEEDBACK_RECENT]` 段；rating=-1 走指数衰减 `-1.5 * exp(-age/14)`，rating=+1 / age<3 cooldown 线性 -0.7 → 0，3+ 天弱 boost 上限 +0.25
+- 聚合：同餐厅多条取**最强负向优先**（不用 mean，防远期 -1 + 近期 +1 错误抵消，Codex 二轮 review 拍板）
+- 守门：`feedback_view=[]` 或无命中 → **不写** breakdown key（保 16 维 keyset 不变，baseline_l2 EPSILON=1e-6 严格 0 差）
+- 落点：sentinel 区分 `_UNSET_FEEDBACK_VIEW` vs `[]`，What-if 必须显式传 `__frozen.feedback_view`（D-079 零 runtime read 红线）
+- 不动 L1 长链路（双层互补）/ 不做 hard avoid（软扣分够压，且不和 D-073 cuisine_want 冲突）/ 仅餐厅级（菜品/配料留 Phase 1，B-002 并行处理 ingredient 不重叠）

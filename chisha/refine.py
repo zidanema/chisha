@@ -101,12 +101,23 @@ def refine(
                      intent=intent if not intent.is_empty() else None,
                      n=n)
 
+    # B-001: feedback_view 在 refine 二轮也注入, 保持与第一轮一致 (避免用户已
+    # 踩过的餐厅在 refine 后又回来). 一次性派生, 传给 L2 + L3.
+    try:
+        from chisha import feedback_store
+        feedback_view = feedback_store.build_feedback_view(
+            feedback_store.load_store(root), today
+        )
+    except Exception:
+        feedback_view = []
+
     # 4. L2 打分 (intent 进 intent_match_bonus 三档)
     ranked = rank_combos(combos, profile, meal_log, today,
                           context=ctx,
                           meal_type=state.meal_type,
                           root=root,
-                          intent=intent if not intent.is_empty() else None)
+                          intent=intent if not intent.is_empty() else None,
+                          feedback_view=feedback_view)
     # D-043: refine 也走三层 cap
     # D-073 followup: 传 intent, cuisine_want 命中的菜系免 cuisine cap (「换日料」bug)
     ranked = apply_caps(ranked, profile,
@@ -121,7 +132,8 @@ def refine(
     # (或反过来污染 prod), 行为信号在 refine 链路静默缺失.
     reranked = rerank(top_k, profile, context=ctx, meal_log=meal_log,
                        n=n, n_explore=0, refine=True, use_llm=use_llm,
-                       root=root)
+                       root=root,
+                       feedback_view=feedback_view)
 
     # 6. 更新 session
     state.round += 1

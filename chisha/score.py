@@ -49,6 +49,10 @@ V2_DEFAULT_WEIGHTS: dict[str, float] = {
     "intent_cuisine": 0.50,
     "intent_ingredient": 0.20,
     "intent_flavor": 0.10,
+    # ── B-001: feedback_recency 短链路 (2026-05-17) ──
+    # 近 60 天 feedback rating 直接进打分, 补 L1 长链路盲区.
+    # 仅命中时写入 breakdown (baseline_l2 守门 / EPSILON=1e-6 严格 0 差).
+    "feedback_recency": 1.0,
 }
 
 
@@ -418,6 +422,91 @@ def taste_match_bonus(combo: dict, taste_hints: dict | None) -> float:
     # D-076.1: boost 和 penalty 同时含同一 token 是矛盾, 净效果 0 (上面两个分支
     # 分别 +0.5/-0.5 自然抵消). L1 prompt 规则 5 已禁此情形 (penalty 优先).
     return max(-1.0, min(1.0, s))
+
+
+# ─────────────────────── B-001: feedback_recency 短链路 ───────────────────────
+#
+# 设计 (Codex 二轮 review 拍板):
+#   - 单条信号:
+#     rating=-1: -1.5 * exp(-age/14)        # 半衰期 ~10 天, 60 天接近 0
+#     rating=+1, age<3: -0.7*(1-age/3)      # cooldown 避连吃, 线性
+#     rating=+1, age>=3: +0.25*exp(-(age-3)/14)  # 弱 boost, 上限 +0.25
+#   - 聚合 (同餐厅多条):
+#     先取最强负向 (min), 无显著负向才取最强正向. 防"远期 -1 + 近期 +1"错误抵消.
+#   - clamp [-1.5, +0.25]
+#   - 餐厅匹配: combo["restaurant"]["name"] 精确匹配 view 里 restaurant_name
+#     (accepted 表只有 name 没 id, brand fallback 太粗会误伤分店, 留 Phase 1)
+#   - breakdown key:
+#     view 为空 OR 无命中 → 不写 "feedback_recency" key (baseline 守门口径)
+
+_FEEDBACK_TAU_NEG = 14.0   # 负反馈衰减半衰期参数
+_FEEDBACK_TAU_POS = 14.0   # 正反馈 boost 衰减
+_FEEDBACK_NEG_PEAK = -1.5  # rating=-1 / age=0 信号
+_FEEDBACK_POS_COOLDOWN_PEAK = -0.7  # rating=+1 / age=0 cooldown
+_FEEDBACK_POS_COOLDOWN_DAYS = 3
+_FEEDBACK_POS_BOOST_PEAK = 0.25
+_FEEDBACK_CLAMP_LOW = -1.5
+_FEEDBACK_CLAMP_HIGH = 0.25
+_FEEDBACK_NOISE_EPS = 0.05  # 浮点噪声门槛, 区分"显著负向"
+
+
+def _feedback_single_signal(rating: int, age_days: int) -> float:
+    """单条 feedback 对单餐厅的瞬时信号. Codex review 拍板曲线."""
+    if age_days < 0:
+        return 0.0
+    if rating == -1:
+        return _FEEDBACK_NEG_PEAK * math.exp(-age_days / _FEEDBACK_TAU_NEG)
+    if rating == 1:
+        if age_days < _FEEDBACK_POS_COOLDOWN_DAYS:
+            return _FEEDBACK_POS_COOLDOWN_PEAK * (
+                1.0 - age_days / _FEEDBACK_POS_COOLDOWN_DAYS
+            )
+        return _FEEDBACK_POS_BOOST_PEAK * math.exp(
+            -(age_days - _FEEDBACK_POS_COOLDOWN_DAYS) / _FEEDBACK_TAU_POS
+        )
+    return 0.0
+
+
+def _feedback_aggregate(signals: list[float]) -> float:
+    """同餐厅多条信号 → 单一值.
+
+    最强负向优先 (min). 无显著负向才取最强正向. 防远期 -1 + 近期 +1 错误抵消.
+    """
+    if not signals:
+        return 0.0
+    neg = [s for s in signals if s < -_FEEDBACK_NOISE_EPS]
+    if neg:
+        return max(_FEEDBACK_CLAMP_LOW, min(neg))
+    pos = [s for s in signals if s > _FEEDBACK_NOISE_EPS]
+    if pos:
+        return min(_FEEDBACK_CLAMP_HIGH, max(pos))
+    return 0.0
+
+
+def feedback_recency_score(
+    combo: dict,
+    feedback_view: list[dict] | None,
+) -> float:
+    """B-001: 近期 feedback 对单 combo 的影响.
+
+    feedback_view = [{"restaurant_name", "rating", "age_days"}, ...] (已派生过滤).
+    返回 signal in [-1.5, +0.25]; 无命中返 0.
+
+    L2 守门: 调用方仅在返回值 != 0 时把 "feedback_recency" 写进 breakdown,
+    保持 baseline 老 keyset 不变.
+    """
+    if not feedback_view:
+        return 0.0
+    rest = combo.get("restaurant") or {}
+    name = (rest.get("name") or "").strip()
+    if not name:
+        return 0.0
+    signals = [
+        _feedback_single_signal(entry["rating"], entry["age_days"])
+        for entry in feedback_view
+        if entry.get("restaurant_name") == name
+    ]
+    return _feedback_aggregate(signals)
 
 
 # ─────────────────────── D-073: cuisine/ingredient match helpers ───────────────────────
@@ -912,12 +1001,16 @@ def score_combo(
     taste_hints: dict | None = None,
     meal_type: str | None = None,
     intent=None,  # D-073: RefineIntent | None
+    feedback_view: list[dict] | None = None,  # B-001: 近期 feedback 短链路
 ) -> tuple[float, dict[str, float]]:
     """计算 combo 综合分. 返回 (score, breakdown).
 
     V1 行为: 不传 context/taste_hints/meal_type/intent 时, 仍只用 6 维 + V2 维度.
     V2 行为: 传 context + taste_hints + meal_type 时, 全 ~12 维生效.
     D-073: 传 intent (refine 二轮) 时, intent_match 三档加分生效.
+    B-001: 传 feedback_view (生产 = build_feedback_view, What-if = __frozen)
+      且单 combo 命中时, breakdown 加一项 "feedback_recency"; 无命中不写 key
+      (保持老 16 维 keyset 严格不变, D-072.1 baseline 守门).
     """
     w = profile.get("scoring_weights") or {}
 
@@ -956,12 +1049,21 @@ def score_combo(
         "intent_ingredient": intent_parts["ingredient"] * _w("intent_ingredient"),
         "intent_flavor": intent_parts["flavor"] * _w("intent_flavor"),
     }
+    # B-001: feedback_recency 仅命中时写 key (baseline 守门: feedback_view=[] 或
+    # 无命中 → keyset 严格不变, EPSILON=1e-6 0 差成立).
+    fb_signal = feedback_recency_score(combo, feedback_view)
+    if fb_signal != 0.0:
+        parts["feedback_recency"] = fb_signal * _w("feedback_recency")
     return sum(parts.values()), parts
 
 
 # D-079 Codex BLOCKER #4/#8: 区分 "未传 override" 与 "传了 None (= 当时无 prefs)".
 # sentinel object 让 l1_prefs_override=None 也走 override 路径 (不读 live prefs).
 _UNSET_L1_PREFS = object()
+
+# B-001: 同样区分 "未传 feedback_view" (生产路径 → build_feedback_view) vs
+# "显式传 [] / list" (What-if frozen replay 必须显式传, 不能让默认路径读 disk).
+_UNSET_FEEDBACK_VIEW = object()
 
 
 def rank_combos(
@@ -976,6 +1078,7 @@ def rank_combos(
     intent=None,  # D-073: RefineIntent | None, refine 二轮启用
     *,
     l1_prefs_override=_UNSET_L1_PREFS,  # D-079: 不传=load_prefs(root); 显式 dict 或 None=用之 (含 None 表示当时无 prefs)
+    feedback_view=_UNSET_FEEDBACK_VIEW,  # B-001: 不传=build_feedback_view(store, today); 显式 list=用之 (What-if 必传 frozen)
 ) -> list[dict]:
     """对 combos 打分排序, 返回带 score/breakdown 的列表 (降序).
 
@@ -1017,11 +1120,29 @@ def rank_combos(
     except Exception:
         runtime_hints = None
     effective_hints = merge_hints(static_hints, runtime_hints, taste_hints)
+    # B-001: feedback_view 默认 = build_feedback_view(load_store(root), today).
+    # 显式传 (含 []) → 用之, 不读 disk. What-if 必须走显式路径 (D-079 红线).
+    # today=None 时不算 (无法算 age_days), 走空 view 兜底.
+    if feedback_view is _UNSET_FEEDBACK_VIEW:
+        if root is not None and today is not None:
+            try:
+                from chisha import feedback_store
+                _store = feedback_store.load_store(root)
+                effective_feedback_view = feedback_store.build_feedback_view(
+                    _store, today
+                )
+            except Exception:
+                effective_feedback_view = []
+        else:
+            effective_feedback_view = []
+    else:
+        effective_feedback_view = feedback_view or []
     scored = []
     for c in combos:
         s, br = score_combo(c, profile, meal_log, today,
                             context=context, taste_hints=effective_hints,
-                            meal_type=meal_type, intent=intent)
+                            meal_type=meal_type, intent=intent,
+                            feedback_view=effective_feedback_view)
         s = apply_unforgivable_penalty(s, c, profile)
         scored.append({**c, "score": s, "score_breakdown": br})
     scored.sort(key=lambda x: x["score"], reverse=True)

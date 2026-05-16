@@ -473,6 +473,7 @@ def _format_ranked_for_trace(
 def _llm_rerank_traced(
     top_combos: list[dict], profile: dict, context, n: int, n_explore: int,
     model: str | None, n_max: int, root: "Path | None" = None,
+    feedback_view: list[dict] | None = None,  # B-001
 ) -> dict:
     """调 LLM, 返回 trace dict (含 system/user prompt / tool_input / fallback).
 
@@ -489,6 +490,7 @@ def _llm_rerank_traced(
         n=n, n_explore=n_explore, n_max=n_max, model=model,
         profile_llm=profile.get("llm"),  # D-047: provider 路由
         root=root,  # D-078.2: L1 prefs 注入到 _profile_block
+        feedback_view=feedback_view,  # B-001
     )
     llm_resp = res.get("llm_response") or {}
     # 兼容旧字段命名: raw_response / parsed_candidates / used / fallback_reason
@@ -573,10 +575,20 @@ def debug_recommend(
         daily_mood=daily_mood, refine_input=None
     )
 
+    # B-001: feedback_view 注入 L2 + L3 (debug live path; 永不写盘)
+    try:
+        from chisha import feedback_store
+        feedback_view = feedback_store.build_feedback_view(
+            feedback_store.load_store(root), today
+        )
+    except Exception:
+        feedback_view = []
+
     # ---- L2 打分 ----
     ranked_raw = rank_combos(
         combos, profile, meal_log, today,
         context=ctx, meal_type=meal_type, root=root,
+        feedback_view=feedback_view,
     )
     # D-043: 三层 cap (restaurant + cuisine + food_form), 防扎堆 topk
     caps = resolve_caps(profile)
@@ -669,6 +681,7 @@ def debug_recommend(
             topk, profile, ctx,
             n=n_return, n_explore=n_explore,
             model=None, n_max=n_return, root=root,
+            feedback_view=feedback_view,
         )
         if l3_llm.get("parsed_candidates"):
             mapped: list[dict] = []

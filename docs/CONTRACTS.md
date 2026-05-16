@@ -51,6 +51,7 @@
 - **已提交 feedback record = 永久 readonly。** 不能 in-place 修改 ratings；后续走 `comments` append-only timeline（参 D-066/D-067）。改 `feedback_store.py` 时如果引入 mutation API 就是 bug。
 - **三类信号语义不可混：** `gut`（-1/0/1）/ `calibration`（reason_match, oil_calibration）/ `behavior`（fullness, repurchase_intent）。schema 字段对应固定类别，不要新增字段时跨类（参 D-063~D-065）。
 - **`comments` 不直接进打分。** 可作为 LLM 推理上下文，但 numeric ranking signal 只来自 structured ratings。
+- **B-001 短链路 `feedback_recency` 守门口径：** `feedback_view=[]` 或 combo 名未命中时 **不写** `feedback_recency` 进 `score_breakdown`（保 baseline_l2 老 keyset 不变）。What-if 必须显式传 `__frozen.feedback_view`，不能让 sentinel `_UNSET_FEEDBACK_VIEW` 触发 `load_store(root)`（违反 D-079 "What-if 零 runtime read"）。生产链路在 `api.py`/`refine.py`/`debug_recommend.py` 入口一次性 `build_feedback_view`，同份传给 L2 + L3。
 
 ---
 
