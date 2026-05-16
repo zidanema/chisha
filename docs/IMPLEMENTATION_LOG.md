@@ -1413,3 +1413,66 @@ GET    /api/history?days=999                HTTP 400
 - `logs/meal_log.jsonl` 没有写入端 (PR-1c accept 只写 feedback_store.accepted), diversity_filter cooldown 实际不工作 — Phase 1 单独修
 - L1 抽取 prompt 在真实 LLM 上的稳定性还没跑过 (单测全 mock), 真跑时如果 LLM 不听话需 fixture 训练
 - sandbox 切回 prod 后 in-flight 请求行为未守门 — 当前用户一次会话只切一次, 暂不补
+
+
+## D-075 执行记录 · sandbox 时钟漏注入 + accept→meal_log 闭环 cooldown
+
+日期: 2026-05-16
+形态: 1 commit (含 Codex S1 + S2 两轮 review 修订)
+状态: ✅ 全测试 542 pass / baseline 0 diff / 用户视角真实 LLM 5 日演练全通
+
+### 提交单
+
+| commit | 内容 | 测试 |
+|---|---|---|
+| (待) | D-075 全量 (P0-1/P0-2/P1/P2 + S2 Codex 修补) | 542 ✓ |
+
+### 用户视角验收 (主路径)
+
+跑法: `uv run python -m chisha.debug_server` + `uv run python tmp/user_drive.py` (真实 LLM via claude_code_cli Max 订阅).
+
+| 步骤 | 期望 | 实测 |
+|---|---|---|
+| Day 1 accept 湖南老灶台 + 反馈 oil=2 repurchase=0 | accept 200 + meal_log.jsonl 写一条 | ✓ |
+| Day 2 advance → L1 触发 | state.last_l1_extraction.status: pending→ok, based_on_meals=1 (< MIN=3, skipped) | ✓ |
+| Day 2 候选 | 不含湖南老灶台 (cooldown 7d) | ✓ |
+| Day 3 advance → L1 触发 | based_on_meals=2, skipped_extraction=true | ✓ |
+| Day 4 advance → L1 真打 LLM (12s) | based_on_meals=3, boost=["low_oil"], evidence: "4/4 oil_calibration=too_high" | ✓ |
+| Day 12 (7d 后) | 湖南老灶台重回候选, cooldown 解锁 | ✓ |
+| taste_match_bonus(低油 combo, hints={boost:[low_oil]}) | 0.5 | ✓ |
+| taste_match_bonus(高油 combo, hints={boost:[low_oil]}) | 0.0 | ✓ |
+| reset → state.enabled=false + logs/sandbox 消失 + prod profile.yaml md5 不变 | ✓ | ✓ |
+
+### 关键技术点
+
+- **L1 时钟修补**: `aggregate_inputs(today=None, root=None)` 默认走 `clock.today(root)`. extract_and_save 透传 root. 测试 `test_aggregate_default_today_uses_chisha_clock` 用 monkeypatch sandbox._project_root 模拟虚拟时钟下 ts=05-30 > real today=05-16 但 < virtual today=06-01 仍计入.
+- **llm_client.call_text 重接**: `_default_llm_call` 从 `import call as llm_call` 改为 `import call_text`, 调用走位置参数 prompt (call_text 第一个参数 prompt 是 positional). 测试 `test_default_llm_call_uses_existing_llm_client_symbol` 守门符号存在.
+- **append_meal_log_entry**: 走 data_root.meal_log_path(root) + clock.now_utc(root). dishes 接受 flat (chisha.api._format_candidate) 和 nested (raw tagged) 两种形态, 落盘只保留 main_ingredient_type + canonical_name. 可选 zone/accepted_rank/combo_index/candidate_id 写满审计字段. 失败 hard-fail (web_api 层捕获 → 500).
+- **reset/disable 抢 L1 锁**: `_block_until_l1_idle_or_409` 抢 30s 超时则 409. anchor 13 用 monkeypatch + threading.Event 控制 worker 慢函数 + 并发触发 reset 验证 prod 路径不污染.
+- **advance pending → 409**: api_sandbox_advance 在 state.last_l1_extraction.status==pending 时直接 raise 409. anchor 14 守门.
+- **三态 inspect drawer**: SandboxBar.tsx React IIFE 分支 (null / skipped_extraction / 正常). meal_log_recent 真实条目渲染.
+
+### Codex audit 两轮
+
+- **S1**: 7 个 issue (P1×3 含 zone 缺失 / hard-fail 评估 / advance race; P2×4 含审计字段 / append 锁 / wait_l1_settle conftest / D-075 编号). 落地: zone + 审计字段 ✓, hard-fail 保留 ✓, conftest 提 wait_l1_settle ✓.
+- **S2**: 反馈一轮修复后 3 个新 issue (Q1 半态 transaction 拍板保留 hard-fail; Q2 advance pending 409 落 ✓; Q3-High reset/disable 抢锁防污染 prod 落 ✓; 其它 Medium/Low 留 backlog).
+
+### 新加测试 (4 anchor + 2 单测)
+
+- `test_aggregate_default_today_uses_chisha_clock`: 沙盒虚拟时钟下 ts 在 real today 未来但 virtual today 内的反馈正确计入
+- `test_default_llm_call_uses_existing_llm_client_symbol`: llm_client.call_text 存在 + _default_llm_call 调用 OK
+- anchor 11: 5 日推进 4 反馈 → based_on_meals=4 + prefs.boost=["low_oil"]
+- anchor 12: accept 写 meal_log + diversity_filter 屏蔽 + 8d 后解锁
+- anchor 13: reset 期间 L1 worker 跑慢 → reset 阻塞 → worker 完成后 reset 200 + prod 路径 long_term_prefs.json 不存在
+- anchor 14: advance 在 pending 时返 409
+
+### wait_l1_settle 共享 fixture
+
+`tests/conftest.py` 提供 `wait_l1_settle(client, prev_at, timeout=4.0)`. 关键点: 监 last_l1_extraction.at 翻新, 不监 status, 防 ok→ok 瞬间被 stale 状态误判 settle.
+
+### 已知 V1 gap (不在 D-075 范围, 候补 D-075.1+)
+
+- diversity_filter 按 zone 过滤 (跨 zone 污染概率低)
+- reset/disable 抢锁失败后的 dirty-flag 补跑 (现在只 409, 用户重试)
+- meal_log 多 tab 并发 append 文件锁 (与 recommend_log 同级)
+- L1 prompt 在真实 LLM 上稳定性 (本次真跑 1 次 12s ok, 长期需 fixture 训练防漂移)

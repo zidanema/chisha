@@ -121,6 +121,59 @@ def test_aggregate_window_filter():
     assert summary["based_on_meals"] == 1
 
 
+def test_default_llm_call_uses_existing_llm_client_symbol(monkeypatch):
+    """D-075 回归守门: _default_llm_call 必须 import 真实存在的符号.
+
+    原代码 `from chisha.llm_client import call as llm_call` 在 D-047 改名后
+    就坏了, 但 based_on_meals 卡 1 (时钟 bug) 一直没真正触发 LLM 调用, 掩盖了这处.
+    """
+    from chisha import l1_extractor, llm_client
+    # 守门: llm_client 必须有 call_text (l1_extractor 的依赖)
+    assert hasattr(llm_client, "call_text"), \
+        "llm_client.call_text 不存在; l1_extractor._default_llm_call 会 ImportError"
+
+    captured = {}
+    def fake_call_text(prompt, **kw):
+        captured["prompt"] = prompt
+        captured["system"] = kw.get("system")
+        return {"content": "{\"boost\": [], \"penalty\": []}", "raw_text": "..."}
+    monkeypatch.setattr(llm_client, "call_text", fake_call_text)
+
+    out = l1_extractor._default_llm_call(
+        prompt="P", system="S", profile_llm={"provider": "claude_code_cli"},
+    )
+    assert "{" in out
+    assert captured["prompt"] == "P"
+    assert captured["system"] == "S"
+
+
+def test_aggregate_default_today_uses_chisha_clock(monkeypatch, tmp_path):
+    """D-075 修补: aggregate_inputs(today=None) 必须走 chisha.clock.today(root=root),
+    不能用 dt.date.today() 否则 sandbox 模式下虚拟时钟产生的反馈被"未来日期"过滤掉.
+    """
+    from chisha import sandbox, clock
+    # 起 sandbox, 虚拟 today = 2026-06-01, 与真实 today (~05-16) 不同
+    sandbox.init(start_date="2026-06-01", root=tmp_path)
+    monkeypatch.setattr(sandbox, "_project_root", lambda: tmp_path)
+    assert clock.today(root=tmp_path) == dt.date(2026, 6, 1)
+
+    # 反馈 submitted_at = 2026-05-30 (虚拟 today=2026-06-01 之前, real today=05-16 之后)
+    feedbacks = {
+        "sid_a": _mk_feedback("sid_a", "2026-05-30T10:00:00+00:00", oil=2),
+    }
+    # 不传 today, 应该走 clock.today(root) → 06-01, sid_a 落在 window 内
+    summary = aggregate_inputs(
+        {"feedbacks": feedbacks, "accepted": {}, "sessions": {}},
+        profile={"methodology": "harvard_plate"},
+        window_days=14,
+        root=tmp_path,
+    )
+    assert summary["based_on_meals"] == 1, (
+        f"虚拟时钟下应计入 sid_a, 实际 based_on_meals={summary['based_on_meals']} "
+        "(D-075 bug 复现: 若回归到 dt.date.today() 则 ts=2026-05-30 > today=2026-05-16 被过滤)"
+    )
+
+
 def test_aggregate_calibration_histogram():
     feedbacks = {
         f"sid_{i}": _mk_feedback(f"sid_{i}", f"2026-05-1{i}T12:00:00",

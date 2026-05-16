@@ -317,6 +317,278 @@ def test_anchor_9_profile_isolated_in_sandbox(app_root):
     assert (root / "profile.yaml").read_text(encoding="utf-8") == prod_profile
 
 
+# ─────────────────────── Anchor 12 (D-075): accept 写 meal_log + cooldown 沙盒生效
+def test_anchor_12_accept_writes_meal_log_and_cooldown_active(app_root):
+    """D-075 守门: /api/accept 必须往虚拟 meal_log.jsonl 追加一条记录,
+    且 diversity_filter 在沙盒里能屏蔽 cooldown 内的店.
+    """
+    app, root = app_root
+    from chisha import clock, sandbox as sb, data_root
+    from chisha.recall import load_meal_log, diversity_filter
+
+    with TestClient(app) as c:
+        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
+        # 直接走 /api/accept 模拟前端 RecCard 「定它了」
+        candidate = {
+            "rank": 1,
+            "restaurant": {"id": "r_X", "name": "测试餐厅 X"},
+            "dishes": [
+                {"main_ingredient_type": "红肉", "canonical_name": "红烧肉饭",
+                 "oil_level": 4},
+            ],
+        }
+        r = c.post("/api/accept", json={
+            "session_id": "sid_a", "candidate_rank": 1,
+            "candidate": candidate,
+        })
+        assert r.status_code == 200
+
+        # meal_log.jsonl 应当出现在 sandbox 目录
+        sb_log = root / "logs" / "sandbox" / "meal_log.jsonl"
+        prod_log = root / "logs" / "meal_log.jsonl"
+        assert sb_log.exists(), "accept 未写 sandbox meal_log.jsonl"
+        assert not prod_log.exists(), "accept 误写 prod meal_log.jsonl"
+
+        entries = load_meal_log(root)
+        assert len(entries) == 1
+        e = entries[0]
+        assert e["restaurant_id"] == "r_X"
+        assert e["dishes"][0]["main_ingredient_type"] == "红肉"
+        # timestamp 必须走虚拟时钟
+        import datetime as _dt
+        ts = _dt.datetime.fromisoformat(e["timestamp"]).date()
+        assert ts == _dt.date(2026, 5, 20), (
+            f"meal_log timestamp 应=虚拟 today=2026-05-20, 实际={ts} "
+            "(回归: 若用 dt.datetime.now() 则会是真实 today)"
+        )
+
+        # diversity_filter 应屏蔽 r_X (7d cooldown)
+        profile = {"diversity": {"no_same_restaurant_within_days": 7,
+                                  "no_same_main_ingredient_within_days": 3}}
+        dishes_next = [
+            {"restaurant_id": "r_X", "name": "再来一份"},
+            {"restaurant_id": "r_Y", "name": "另一家"},
+        ]
+        filtered, _ = diversity_filter(
+            dishes_next, entries, profile, today=clock.today(root=root)
+        )
+        names = [d["restaurant_id"] for d in filtered]
+        assert "r_X" not in names, "cooldown 未屏蔽 7d 内重复餐厅"
+        assert "r_Y" in names
+
+        # 推 8 天后 r_X 应解锁
+        sb.advance(days=8, root=root)
+        filtered_late, _ = diversity_filter(
+            dishes_next, entries, profile, today=clock.today(root=root)
+        )
+        late_names = [d["restaurant_id"] for d in filtered_late]
+        assert "r_X" in late_names, "推进 8 天后仍未解锁 cooldown"
+
+
+# ─────────────────────── Anchor 13 (D-075 S2): reset 在 L1 worker 期间不能污染 prod
+def test_anchor_13_reset_waits_for_l1_worker(app_root, monkeypatch):
+    """Codex S2 Q3-High: reset 必须等 L1 worker 释放, 否则 worker save_prefs
+    在 sandbox 已 disabled 时会写到 prod data/long_term_prefs.json.
+
+    本测试通过 monkey 替换 extract_and_save 为慢函数 + 并发触发 reset, 验证
+    reset 要么等到 worker 结束, 要么 409 拒绝.
+    """
+    app, root = app_root
+    import threading
+    import time as _t
+
+    started = threading.Event()
+    finishing = threading.Event()
+
+    def slow_extract(store, profile, **kw):
+        started.set()
+        # 模拟 LLM 慢, finishing 不 set 之前不返回
+        for _ in range(50):
+            if finishing.is_set():
+                break
+            _t.sleep(0.01)
+        from chisha.l1_prefs import save_prefs
+        prefs = {
+            "version": 1, "boost": ["low_oil"], "penalty": [],
+            "based_on_meals": 5, "based_on_days": 14,
+            "extracted_at": "2026-05-21T00:00:00+00:00",
+            "signals_not_scored": {}, "evidence": [],
+            "regularities_freetext": [], "skipped_extraction": False,
+        }
+        save_prefs(prefs, root=kw.get("root"))
+        return prefs
+
+    from chisha import l1_extractor
+    monkeypatch.setattr(l1_extractor, "extract_and_save", slow_extract)
+
+    with TestClient(app) as c:
+        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
+        # 累 ≥3 餐反馈, 否则 L1 进 skipped 分支不走 LLM
+        from chisha import feedback_store
+        for i in range(3):
+            sid = f"sid_r{i}"
+            feedback_store.record_accept(
+                root, session_id=sid, candidate_rank=1,
+                meal_type="lunch", restaurant_name=f"店{i}", summary="",
+            )
+            feedback_store.record_feedback(root, {
+                "session_id": sid, "accepted_rank": 1,
+                "rating": -1, "oil_calibration": 2,
+                "fullness": 1, "reason_match": 1, "repurchase_intent": 0,
+                "note": "", "variant": "progressive", "quick": False,
+            })
+
+        # advance 触发 worker
+        c.post("/api/sandbox/advance", json={"days": 1})
+        # 等 worker started
+        assert started.wait(timeout=2.0), "worker 未启动"
+
+        # reset 在 worker 跑期间发起, 应该被阻塞或 409
+        # 拿一个线程发 reset, 同时让 worker 在 ~1s 后完成
+        result: dict = {}
+        def _reset():
+            r = c.post("/api/sandbox/reset")
+            result["status"] = r.status_code
+            result["body"] = r.json()
+        t = threading.Thread(target=_reset)
+        t.start()
+        # 让 reset 等 0.3s 后让 worker 完成
+        _t.sleep(0.3)
+        # 此时 reset 应仍在阻塞 (worker 还没 finishing)
+        assert t.is_alive(), "reset 没等 worker, 直接返了 (会污染 prod)"
+        finishing.set()
+        t.join(timeout=5.0)
+        assert result.get("status") == 200, f"reset 期望 200, 实际 {result}"
+
+        # prod 路径 long_term_prefs.json 必须不存在 (沙盒 reset 应只清沙盒)
+        prod_prefs = root / "data" / "long_term_prefs.json"
+        assert not prod_prefs.exists(), (
+            "L1 worker 在 reset 之后写到了 prod long_term_prefs.json (污染)"
+        )
+
+
+# ─────────────────────── Anchor 14 (D-075 S2): advance 期间 pending 返 409
+def test_anchor_14_advance_409_when_pending(app_root, monkeypatch):
+    """Codex S2 Q2: advance 在 L1 pending 期间 hard-fail 409, 防 UI bypass."""
+    app, root = app_root
+    import threading
+
+    started = threading.Event()
+    finishing = threading.Event()
+
+    def slow_extract(store, profile, **kw):
+        started.set()
+        finishing.wait(timeout=2.0)
+        from chisha.l1_prefs import save_prefs
+        save_prefs({
+            "version": 1, "boost": [], "penalty": [], "based_on_meals": 3,
+            "based_on_days": 14, "extracted_at": "2026-05-21T00:00:00+00:00",
+            "signals_not_scored": {}, "evidence": [],
+            "regularities_freetext": [], "skipped_extraction": False,
+        }, root=kw.get("root"))
+        return {}
+
+    from chisha import l1_extractor
+    monkeypatch.setattr(l1_extractor, "extract_and_save", slow_extract)
+
+    with TestClient(app) as c:
+        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
+        from chisha import feedback_store
+        for i in range(3):
+            sid = f"sid_p{i}"
+            feedback_store.record_accept(
+                root, session_id=sid, candidate_rank=1,
+                meal_type="lunch", restaurant_name=f"店{i}", summary="",
+            )
+            feedback_store.record_feedback(root, {
+                "session_id": sid, "accepted_rank": 1, "rating": -1,
+                "oil_calibration": 2, "fullness": 1, "reason_match": 1,
+                "repurchase_intent": 0, "note": "", "variant": "progressive",
+                "quick": False,
+            })
+
+        c.post("/api/sandbox/advance", json={"days": 1})
+        assert started.wait(timeout=2.0)
+        # 此时 state.status=pending, 第二次 advance 应 409
+        r = c.post("/api/sandbox/advance", json={"days": 1})
+        assert r.status_code == 409
+        finishing.set()
+
+
+# ─────────────────────── Anchor 11 (D-075): 虚拟时钟跨日 L1 抽取兑现
+def test_anchor_11_l1_uses_virtual_clock_across_days(app_root, monkeypatch):
+    """D-075 守门: 沙盒推进 5 日 + 累积 4 餐反馈 → L1 抽取必须看到 4 餐,
+    不能因为反馈 submitted_at = 虚拟未来时钟而被 dt.date.today() 过滤.
+    """
+    app, root = app_root
+    captured = {}
+
+    def fake_extract(store, profile, **kw):
+        # 复刻 web_api._trigger_l1_extraction_async 调用形态, 验证 root/today 透传
+        from chisha import l1_extractor
+        summary = l1_extractor.aggregate_inputs(
+            store, profile,
+            today=kw.get("today"),
+            window_days=kw.get("window_days", 14),
+            root=kw.get("root"),
+        )
+        captured["based_on_meals"] = summary["based_on_meals"]
+        # 兑现一个 low_oil prefs (mock LLM)
+        prefs = {
+            "version": 1, "boost": ["low_oil"], "penalty": [],
+            "based_on_meals": summary["based_on_meals"],
+            "evidence": [{"token": "low_oil", "rationale": "mocked"}],
+            "extracted_at": "2026-05-25T00:00:00+00:00",
+            "based_on_days": 14, "signals_not_scored": {},
+            "regularities_freetext": [], "skipped_extraction": False,
+        }
+        from chisha.l1_prefs import save_prefs
+        save_prefs(prefs, root=kw.get("root"))
+        return prefs
+
+    from chisha import l1_extractor as l1ext
+    monkeypatch.setattr(l1ext, "extract_and_save", fake_extract)
+
+    from tests.conftest import wait_l1_settle as _wait_l1_settle
+
+    with TestClient(app) as c:
+        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
+        from chisha import feedback_store
+        prev_at: str | None = None
+        # 4 餐反馈先全部录入 (避免 advance 后再 record 导致 worker 看不到最新一餐)
+        for i in range(4):
+            sid = f"sid_e{i}"
+            feedback_store.record_accept(
+                root, session_id=sid, candidate_rank=1,
+                meal_type="lunch", restaurant_name=f"店{i}", summary="",
+            )
+            feedback_store.record_feedback(root, {
+                "session_id": sid, "accepted_rank": 1,
+                "rating": -1, "oil_calibration": 2,
+                "fullness": 1, "reason_match": 1, "repurchase_intent": 0,
+                "note": "", "variant": "progressive", "quick": False,
+            })
+            if i < 3:
+                c.post("/api/sandbox/advance", json={"days": 1})
+                _, prev_at = _wait_l1_settle(c, prev_at)
+
+        # 最后再推一天触发 L1 抽取看到全部 4 餐
+        c.post("/api/sandbox/advance", json={"days": 1})
+        _, _ = _wait_l1_settle(c, prev_at)
+
+        # 守门: based_on_meals 必须 ≥ 4 (D-075 bug 回归会卡在 1)
+        assert captured.get("based_on_meals", 0) >= 4, (
+            f"L1 时钟漏注入回归: based_on_meals={captured.get('based_on_meals')}, "
+            "应为 4 (虚拟时钟下所有反馈都在 window 内)"
+        )
+
+        # inspect 应看到 low_oil prefs
+        insp = c.get("/api/sandbox/inspect").json()
+        prefs = insp.get("long_term_prefs")
+        assert prefs is not None
+        assert "low_oil" in prefs["boost"]
+
+
 # ─────────────────────── Anchor 10: reset 干净
 def test_anchor_10_reset_clean(app_root):
     app, root = app_root

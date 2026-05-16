@@ -34,9 +34,9 @@
 
 ## 项目状态
 
-**Phase 0 工程侧已收尾**（2026-05-16）—— 「原则派点餐执行外包」定位收敛（[D-070](docs/DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)）+ 砍 mood picker（[D-071](docs/DECISIONS.md#d-071-砍-mood-picker--want_soup-关键词识别-v1)）+ methodology spec 抽象（[D-072](docs/DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)/[D-072.1](docs/DECISIONS.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)）+ **L1 长期反馈层真兑现（[D-073](docs/DECISIONS.md#d-073-l1-长期反馈层重构--砍伪-l1--llm-抽取-v1x)）** + **Sandbox Time-Travel 模式（[D-074](docs/DECISIONS.md#d-074-sandbox-time-travel-模式-v1x)）** + 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + FastAPI 20 端点（D-069 13 + D-073/074 7）。
+**Phase 0 工程侧已收尾**（2026-05-16）—— 「原则派点餐执行外包」定位收敛（[D-070](docs/DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)）+ 砍 mood picker（[D-071](docs/DECISIONS.md#d-071-砍-mood-picker--want_soup-关键词识别-v1)）+ methodology spec 抽象（[D-072](docs/DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)/[D-072.1](docs/DECISIONS.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)）+ **L1 长期反馈层真兑现（[D-073](docs/DECISIONS.md#d-073-l1-长期反馈层重构--砍伪-l1--llm-抽取-v1x)）** + **Sandbox Time-Travel 模式（[D-074](docs/DECISIONS.md#d-074-sandbox-time-travel-模式-v1x)）** + **Sandbox 收尾修补（[D-075](docs/DECISIONS.md#d-075-sandbox-时钟漏注入修补--acceptmeal_log-闭环-cooldown-v1x)，时钟漏注入+meal_log 闭环 cooldown+Codex 二轮 audit）** + 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + FastAPI 20 端点（D-069 13 + D-073/074 7）。
 
-Step 2 用户自用验证现在可走 sandbox 一次会话压缩到分钟级（开沙盒 → 点"下一天" → 真实写反馈 → inspect 看 L1 抽取产物），不必等真实日历日 → Phase 1 同事推广。
+Step 2 用户自用验证现在可走 sandbox 一次会话压缩到分钟级（开沙盒 → 点"下一天" → 真实写反馈 → inspect 看 L1 抽取产物），不必等真实日历日 → Phase 1 同事推广。D-075 修补后真实 LLM 5 日演练已绿（based_on_meals 累积 1→2→3→4 + LLM 抽出 boost=low_oil + cooldown 屏蔽 + 8d 后解锁全部跑通）。
 
 > **V1 主交互**：本机 localhost Web SPA。`cd apps/web && npm install && npm run dev` → http://localhost:5173。详见 [`apps/web/README.md`](apps/web/README.md) + [`docs/style-guide.md`](docs/style-guide.md) + [`docs/api.md`](docs/api.md)。飞书延后到 V1.5 做推送通道。
 

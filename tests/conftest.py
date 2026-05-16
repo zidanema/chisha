@@ -120,3 +120,30 @@ def basic_profile():
             "variety_bonus": 0.3,
         },
     }
+
+
+# D-075: 异步 L1 抽取 settle 等待 — 监 last_l1_extraction.at 翻新而非
+# status, 避免上一轮 ok → 下一轮 ok→ok 过渡的瞬间被误判.
+def wait_l1_settle(client, prev_at: str | None = None,
+                    timeout: float = 4.0) -> tuple[str, str | None]:
+    """等 last_l1_extraction.at 比 prev_at 新且 status ∈ {ok, failed}.
+
+    Returns (status, new_at). 超时返回 ("timeout", prev_at).
+    """
+    import time as _t
+    deadline = _t.time() + timeout
+    while _t.time() < deadline:
+        s = client.get("/api/sandbox/state").json()
+        ext = s.get("last_l1_extraction") or {}
+        cur_at = ext.get("at")
+        if (cur_at and cur_at != prev_at
+                and ext.get("status") in ("ok", "failed")):
+            return ext.get("status"), cur_at
+        _t.sleep(0.05)
+    return "timeout", prev_at
+
+
+@pytest.fixture
+def wait_l1_settle_fixture():
+    """pytest fixture 包装. 用法: status, at = wait_l1_settle_fixture(c, prev_at)."""
+    return wait_l1_settle

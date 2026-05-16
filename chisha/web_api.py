@@ -166,10 +166,16 @@ def api_accept(req: AcceptReq) -> dict:
     summary = req.candidate.get("summary") or ""
     meal_type = req.candidate.get("meal_type")
     # accept 时 candidate 里通常没 meal_type, 从 session 反查
+    zone: str | None = None
     if not meal_type:
         from chisha.session import load_session
         state = load_session(req.session_id, ROOT, check_expiry=False)
         meal_type = state.meal_type if state else "lunch"
+        zone = state.zone if state else None
+    else:
+        from chisha.session import load_session
+        state = load_session(req.session_id, ROOT, check_expiry=False)
+        zone = state.zone if state else None
 
     # 写盘失败必须暴露给前端: acceptedQueue 是反馈系统 source-of-truth,
     # 静默丢失会让 banner/inbox/recent 链路全空 (Codex review MED-1).
@@ -185,6 +191,28 @@ def api_accept(req: AcceptReq) -> dict:
     except Exception as e:
         raise HTTPException(
             500, f"record_accept failed: {type(e).__name__}: {e}"
+        )
+
+    # D-075: meal_log 是 diversity cooldown 的 source-of-truth.
+    # accept 写 feedback_store 但 meal_log 静默失败 → accepted_count > meal_log
+    # 暗洞 → 一周内可能重复推同店. 与 record_accept 同等 hard-fail.
+    try:
+        from chisha.recall import append_meal_log_entry
+        append_meal_log_entry(
+            root=ROOT,
+            session_id=req.session_id,
+            meal_type=meal_type,
+            restaurant_id=rest_id,
+            restaurant_name=name,
+            dishes=req.candidate.get("dishes") or [],
+            zone=zone,
+            accepted_rank=req.candidate_rank,
+            combo_index=req.candidate.get("combo_index"),
+            candidate_id=req.candidate.get("id"),
+        )
+    except Exception as e:
+        raise HTTPException(
+            500, f"append_meal_log_entry failed: {type(e).__name__}: {e}"
         )
 
     from urllib.parse import quote
@@ -713,10 +741,36 @@ def api_sandbox_init(request: Request, req: SandboxInitReq) -> dict:
     return s
 
 
+_L1_LOCK_WAIT_SECONDS = 30.0
+
+
+def _block_until_l1_idle_or_409(action_label: str) -> None:
+    """D-075 Codex S2 Q3-High: reset/disable 期间 L1 worker 仍在跑 → save_prefs
+    若 sandbox 已 disable 会走回 prod data_root, 污染 prod long_term_prefs.json.
+    在 reset/disable 入口拿 _L1_EXTRACTION_LOCK (worker 持锁直至 save 结束),
+    抢不到则 409 让用户重试.
+    """
+    if _L1_EXTRACTION_LOCK.acquire(timeout=_L1_LOCK_WAIT_SECONDS):
+        # 立即释放; 我们只是确认 worker 已结束.
+        _L1_EXTRACTION_LOCK.release()
+        return
+    raise HTTPException(
+        409, f"{action_label} blocked: L1 extraction worker busy >"
+              f" {_L1_LOCK_WAIT_SECONDS:.0f}s, retry shortly"
+    )
+
+
 @router.post("/sandbox/advance")
 def api_sandbox_advance(request: Request, req: SandboxAdvanceReq) -> dict:
     """虚拟时钟前进 N 天, 异步触发 L1 抽取."""
     _require_localhost(request)
+    # D-075 Codex S2 Q2: L1 pending 时直接 409, 防 UI bypass 用裸 POST 绕过
+    # SandboxBar disable 按钮. trylock 跳过 (旧行为) 会让新日期推荐用 stale prefs.
+    st = _sandbox.state(root=ROOT)
+    if (st.get("last_l1_extraction") or {}).get("status") == "pending":
+        raise HTTPException(
+            409, "advance blocked: L1 extraction in progress, retry after settle"
+        )
     try:
         s = _sandbox.advance(days=req.days, root=ROOT)
     except RuntimeError as e:
@@ -728,8 +782,13 @@ def api_sandbox_advance(request: Request, req: SandboxAdvanceReq) -> dict:
 
 @router.post("/sandbox/reset")
 def api_sandbox_reset(request: Request) -> dict:
-    """删干净 sandbox 目录, prod 零风险."""
+    """删干净 sandbox 目录, prod 零风险.
+
+    D-075 Codex S2 Q3-High: 阻塞直到 L1 worker 释放, 否则 worker 的 save_prefs
+    在 sandbox 已 disabled 状态下会走回 prod 路径污染 long_term_prefs.json.
+    """
     _require_localhost(request)
+    _block_until_l1_idle_or_409("reset")
     return _sandbox.reset(root=ROOT)
 
 
@@ -737,6 +796,7 @@ def api_sandbox_reset(request: Request) -> dict:
 def api_sandbox_disable(request: Request) -> dict:
     """退出 sandbox 但保留数据 (下次 init 可复用)."""
     _require_localhost(request)
+    _block_until_l1_idle_or_409("disable")
     return _sandbox.disable(root=ROOT)
 
 
