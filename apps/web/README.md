@@ -30,7 +30,7 @@ npm run dev          # http://localhost:5173 (Mock API)
 - `src/lib/mockApi.ts` — mock 数据，端口 §5 契约（[docs/api.md](../../docs/api.md)）
 - `VITE_USE_MOCK=1`（默认）走 mock；`VITE_USE_MOCK=0` 走真接口
 
-V1.1 反馈链路 7 个端点在 mockApi 全量实现, 后端 FastAPI 待装 — 详见 [docs/api.md §5](../../docs/api.md) + [IMPL_LOG D-056~D-068](../../docs/IMPLEMENTATION_LOG.md#d-056d-068-执行记录--v11-反馈系统落地-appsweb)。
+V1.1 反馈链路 7 个端点在 mockApi 全量实现, 后端 FastAPI 待装 — 详见 [docs/api.md §5](../../docs/api.md) + [IMPL_LOG D-056~D-068](../../docs/archive/IMPLEMENTATION_LOG_phase0.md#d-056d-068-执行记录--v11-反馈系统落地-appsweb)。
 
 ## 设计原则
 

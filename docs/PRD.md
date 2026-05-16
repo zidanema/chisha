@@ -46,7 +46,7 @@
 
 至于"刚好 1/2 比例"——靠人脑在饭桌上调，不靠算法在召回时凑。客单价 60-100 元、偶尔剩饭，都是可接受代价。
 
-详见 [DESIGN.md §5.3 plate_rule](../DESIGN.md)、决策 [D-023](DECISIONS.md#d-023)。
+详见 [DESIGN.md §5.3 plate_rule](../archive/DESIGN_phase0.md)、决策 [D-023](DECISIONS.md#d-023)。
 
 ### 2.3 为什么不直接用 Keep / 薄荷健康 / 美团的 AI 助手
 
@@ -247,7 +247,7 @@ V1 跑通后看两件事：
 
 - 采集源、清洗、打标、保鲜（暂定 15 天周期）由 collector 负责
 - 本仓 `chisha` 只消费 collector 输出的 `restaurants.json` + `dishes_tagged.json`
-- 数据格式由两边约定 schema（见 [DESIGN.md §5.2](../DESIGN.md)）
+- 数据格式由两边约定 schema（见 [DESIGN.md §5.2](../archive/DESIGN_phase0.md)）
 - Collector 与 chisha 各自独立演进、独立发版
 
 详见决策 [D-027](DECISIONS.md#d-027)。

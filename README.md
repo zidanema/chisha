@@ -7,15 +7,15 @@
 
 ## 这是什么
 
-定位见 [D-070](docs/DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)：**原则派点餐助手**——服务的是已经认了一套饮食方法论（减脂控油 / 增肌高蛋白 / 糖控 / 孕期...）、痛点在**每天落地费力**的人。明确不服务"什么都行又什么都不想吃"的目标缺失型用户。
+定位见 [D-070](docs/archive/DECISIONS_phase0.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)：**原则派点餐助手**——服务的是已经认了一套饮食方法论（减脂控油 / 增肌高蛋白 / 糖控 / 孕期...）、痛点在**每天落地费力**的人。明确不服务"什么都行又什么都不想吃"的目标缺失型用户。
 
 我自己是典型用户：认了哈佛餐盘弱约束（控油 + 有蔬菜 + 有蛋白），但每天点外卖还得花 10-20 分钟翻 200 家店上千道菜手动凑齐这个结构。
 
 `chisha` 把这个执行过程系统性外包：每顿饭在 11:25 / 18:00 主动推送提醒，给 5 个组合，30 秒选一个就走。
 
-> **V1 当前形态**（[D-051](docs/DECISIONS.md#d-051)）：本机 localhost Web SPA（用户视图 + 调试台合一），自用打磨体验。V1.5 接入飞书做推送 + deeplink 跳转。
+> **V1 当前形态**（[D-051](docs/archive/DECISIONS_phase0.md#d-051)）：本机 localhost Web SPA（用户视图 + 调试台合一），自用打磨体验。V1.5 接入飞书做推送 + deeplink 跳转。
 
-> **餐盘策略说明**：不追求严格 1/2-1/4-1/4 比例（中式外卖现实下不可达），改弱约束三件套：控油 + 至少 1 道蔬菜 + 蛋白下限。详见 [DECISIONS D-023](docs/DECISIONS.md#d-023)。
+> **餐盘策略说明**：不追求严格 1/2-1/4-1/4 比例（中式外卖现实下不可达），改弱约束三件套：控油 + 至少 1 道蔬菜 + 蛋白下限。详见 [DECISIONS D-023](docs/archive/DECISIONS_phase0.md#d-023)。
 
 详细动机见 [docs/PRD.md](docs/PRD.md)。
 
@@ -26,7 +26,7 @@
 - **项目名（对人）**：今天吃点啥
 - **代码名（对机器）**：`chisha`
 - **未来 pip 包**：`chisha`（推荐引擎） + `chisha-data-{office_zone}`（数据按工区拆子包，如 `chisha-data-shenzhen-bay`）
-- **sister project**：`chisha-collector`（数据采集 / 清洗 / 打标 / 保鲜，独立维护，[D-027](docs/DECISIONS.md#d-027)）
+- **sister project**：`chisha-collector`（数据采集 / 清洗 / 打标 / 保鲜，独立维护，[D-027](docs/archive/DECISIONS_phase0.md#d-027)）
 
 文档里"今天吃点啥"和 `chisha` 会交替出现，意思一样。
 
@@ -34,7 +34,7 @@
 
 ## 项目状态
 
-**Phase 0 工程侧已收尾**（2026-05-15）—— 「原则派点餐执行外包」定位收敛（[D-070](docs/DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)）+ 砍 mood picker（[D-071](docs/DECISIONS.md#d-071-砍-mood-picker--want_soup-关键词识别-v1)）+ methodology spec 抽象（[D-072](docs/DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)/[D-072.1](docs/DECISIONS.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)）+ 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + FastAPI 13 端点。
+**Phase 0 工程侧已收尾**（2026-05-15）—— 「原则派点餐执行外包」定位收敛（[D-070](docs/archive/DECISIONS_phase0.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)）+ 砍 mood picker（[D-071](docs/archive/DECISIONS_phase0.md#d-071-砍-mood-picker--want_soup-关键词识别-v1)）+ methodology spec 抽象（[D-072](docs/archive/DECISIONS_phase0.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)/[D-072.1](docs/archive/DECISIONS_phase0.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)）+ 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + FastAPI 13 端点。
 
 剩下 **Step 2 用户自用一周**（采纳率验证, 不在代码范围）→ Phase 1 同事推广。
 
@@ -46,67 +46,43 @@
 
 ## 文档体系
 
-| 文档 | 内容 | 何时读 |
-|---|---|---|
-| [docs/PRD.md](docs/PRD.md) | 产品需求 · 为什么做、做给谁、做成什么样 | 第一份读，建立产品定位 |
-| [DESIGN.md](DESIGN.md) | 设计与实现 · 架构、schema、API、prompt、避坑 | 实现时随时查 |
-| [docs/style-guide.md](docs/style-guide.md) | UI 文案规范 + 视觉系统 + 锁定反模式（D-052~D-055 + D-060/D-066/D-067） | 改 `apps/web/` 任何用户视图前必读 |
-| [docs/api.md](docs/api.md) | 前后端 API 契约（V1） | 调 `/api/*` 或后端装新端点前必读 |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | 决策日志 · 产品/架构/方法论 决策为什么这样而不是那样 | 想推翻某个设计前先看 |
-| [docs/IMPLEMENTATION_LOG.md](docs/IMPLEMENTATION_LOG.md) | 工程实施日志 · prompt 改了几行、batch 数、bug 排查、参数微调 | 排查具体实现、复盘工程细节时 |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 路线图 · V1/V2/V3 边界，已砍清单 | 想加新功能前先看 |
-| [docs/RECOMMEND_PRINCIPLES.md](docs/RECOMMEND_PRINCIPLES.md) | 推荐系统分层原则与方法论（D-043 沉淀）| 改打分/召回/重排前**必读** |
-| [docs/L3_RERANK_REDESIGN.md](docs/L3_RERANK_REDESIGN.md) | L3 精排重构方案（D-047）| 改 L3 精排前**必读** |
-| [eval/dish_tagging_eval/](eval/dish_tagging_eval/) | 菜品打标评测框架（dual-model golden set 171 条 + 评测脚本）| 复评打标质量、改 prompt 前 |
-| [eval/dish_tagging_model_eval_spec.md](eval/dish_tagging_model_eval_spec.md) | 评测说明（面向 PM）| 想理解评测口径与结论时 |
+> **📋 整理中（2026-05-16）**：Phase 0 收尾，文档体系按"读者分层"重构（参见 [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md)）。
+> 旧的 `DECISIONS.md` / `IMPLEMENTATION_LOG.md` / `DESIGN.md` 已归档到 `docs/archive/`，不再维护。
+> 活决策正在提炼到 `docs/decisions.md`（单文件，≤ 15 行/条），Agent 跨文件约束在 `docs/CONTRACTS.md`（待建）。
 
-**首次接触请按顺序读：PRD → ROADMAP → DESIGN → DECISIONS**。
-改推荐链路前请额外读 RECOMMEND_PRINCIPLES；改 L3 精排前读 L3_RERANK_REDESIGN；复盘工程细节看 IMPLEMENTATION_LOG。
+| 文档 | 主读者 | 内容 |
+|---|---|---|
+| [docs/PRD.md](docs/PRD.md) | 你 | 产品需求 · 为什么做、做给谁 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 你 | 路线图 · V1/V2/V3 边界，已砍清单 |
+| `docs/decisions.md` | 你 · agent 偶尔 grep | 活决策日志（单文件，提炼中） |
+| [CLAUDE.md](CLAUDE.md) | Coding agent 每次会话 | 项目红线 / 常用命令 / avoid 清单 |
+| `docs/CONTRACTS.md` | Coding agent 每次会话 | 跨文件隐含约束（待建） |
+| [docs/api.md](docs/api.md) | agent | 前后端 API 契约（V1） |
+| [docs/style-guide.md](docs/style-guide.md) | agent | `apps/web/` UI 文案 + 视觉系统 + 反模式 |
+| [eval/dish_tagging_eval/](eval/dish_tagging_eval/) | 复评 prompt 时 | 打标评测框架（171 条 golden set） |
+| `docs/archive/` | 历史考古 | Phase 0 旧 DECISIONS / IMPL_LOG / DESIGN，**不再维护** |
 
 ---
 
 ## 当前进度
 
-### ✅ 工程侧（Phase 0 收尾）
+**Phase 0 工程侧 ✅ 收尾**（2026-05-15）。详细 phase 状态、里程碑、已砍清单见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
-- **L0 方法论层**（[D-072](docs/DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)）：`profiles/methodologies/harvard_plate.yaml` + `chisha/methodology.py` 加载/严格 keyset 校验/merge；profile.yaml `methodology: harvard_plate` 引用
-- **L1 召回**：`chisha/recall.py` 硬过滤双层 + combo 灵活组合（[D-040](docs/DECISIONS.md#d-040)/[D-041](docs/DECISIONS.md#d-041)）
-- **L2 打分**：`chisha/score.py` 16 维 + 4 层 cap（restaurant/brand/cuisine/food_form, [D-042](docs/DECISIONS.md#d-042)/[D-043](docs/DECISIONS.md#d-043)/[D-045](docs/DECISIONS.md#d-045)）+ 不可补偿惩罚
-- **L3 精排**：`chisha/rerank.py` LLM tool_use forced schema（[D-047](docs/DECISIONS.md#d-047)）+ 双路径分流 + 配置错 hard-fail（[D-048](docs/DECISIONS.md#d-048)）+ validate→retry→fallback（[D-050](docs/DECISIONS.md#d-050)）；prompt 注入方法论 rationale（D-072）
-- **Refine**：`chisha/refine.py` 二轮 chip 解析 + want_soup 关键词识别 + 否定优先（[D-071](docs/DECISIONS.md#d-071-砍-mood-picker--want_soup-关键词识别-v1)）
-- **数据打标**：`scripts/tag_via_api.py` OpenRouter, 默认 `deepseek-v4-flash`（[D-037](docs/DECISIONS.md#d-037), 171 条 dual-model golden 横评）
-- **数据**：`data/shenzhen-bay/` 139 家 7256 菜 + `data/home/` 38 家 2117 菜
-- **Web SPA**：`apps/web/` Vite + React 18 + TS + Tailwind, HomePage / ProfilePage / HistoryPage / FeedbackPage / FeedbackInbox（[D-051~D-055](docs/DECISIONS.md#d-051) + [D-056~D-068](docs/DECISIONS.md#d-056-navbar-加反馈-tab--角标-v11)）
-- **FastAPI 13 端点**：推荐 6（recommend/refine/accept/skip/profile/history）+ V1.1 反馈 7（inbox/snooze/stop/recent/get/record/comments），单 JSON 文件落盘（[IMPL_LOG D-069](docs/IMPLEMENTATION_LOG.md#d-069-执行记录--fastapi-v1--v11-后端-13-端点联调--codex-review-修复)）
-- **调试台**：FastAPI `:8765/debug` instrumented 管道, L1/L2/L3/Final 四段 + 16 维 breakdown + LLM payload 可见 + combo 追溯 + mood 三栏对比（[D-039](docs/DECISIONS.md#d-039)）
-- **回归工具**：`scripts/baseline_l2_snapshot.py` + `scripts/compare_traces.py` L2 trace 严格回归（[D-072.1](docs/DECISIONS.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)）
-- **测试**：435 单测全过（pre-existing test_cleanup_expired 1 个无关 flake）
+**接下来**：Step 2 自用一周（用户行为，不在代码范围）→ Phase 1 同事推广（启动条件：自己愿意每天用 + ≥ 3 同事自发持续使用）。
 
-### ⏳ 接下来
-
-1. **Step 2 · 自用一周（用户行为，不在代码范围）**：`cd apps/web && npm install && npm run build && cd .. && uv run python -m chisha.debug_server` → http://127.0.0.1:8765/。每天用着看采纳率撑不撑得起来。详见 [ROADMAP Phase 路线](docs/ROADMAP.md#phase-路线d-070-沉淀取代旧-v1v2v3-笛卡尔积)
-2. **Phase 1 启动条件**：自己愿意每天用 + ≥ 3 同事自发持续使用密度门槛。准入前发 screener 探原则派密度
-3. **延后到 V1.5**：OpenClaw 飞书推送通道、调试台 React 化（D-051）、macOS launchd 定时拉起
-
-### 💡 想改某个设计前先看
-
-实现某个功能前，先确认它在 ROADMAP 的当前版本里。如果发现不在，但想做，先去 DECISIONS 加一条新决策说明为什么要把它提前。
-
-读文档顺序：[PRD](docs/PRD.md) → [ROADMAP](docs/ROADMAP.md) → [DESIGN](DESIGN.md) §3-§4 → [DECISIONS](docs/DECISIONS.md)
+实现新功能前先查 [ROADMAP](docs/ROADMAP.md) 当前版本范围；想推翻已有设计先查 [decisions.md](docs/decisions.md)；改代码前查 [CONTRACTS.md](docs/CONTRACTS.md) 跨文件约束。
 
 ---
 
 ## 文档维护规则
 
-为保证上下文不漂移：
+为保证上下文不漂移，文档按"读者"分四桶（详见 [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md)）：
 
-1. **新增决策必须先分类**：产品方向/架构/方法论/schema → `DECISIONS.md`；prompt 改 N 行/参数微调/batch 数/bug 排查 → `IMPLEMENTATION_LOG.md`
-   - 判别准则：**半年后做下一次大重构时,会不会回头查这条?** 会 → DECISIONS；不会 → IMPLEMENTATION_LOG
-2. **路线变更必须更新 ROADMAP.md**，已砍的功能加进已砍清单
-3. **PRD 极少改动**，定位变化才改（每次改要在 DECISIONS 加一条说明）
-4. **DESIGN 每个大版本一份**，旧版归档到 docs/archive/，不删
-5. **每次 D-XXX 落地的 commit 后 3 项 checklist**:① 写到 DECISIONS 还是 IMPLEMENTATION_LOG?② 是否推翻了之前某条? 推翻就标 superseded 并加链接 ③ 是否需要更新 README 进度章节 / ROADMAP 当前状态?
-   - 见 [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md)
+1. **产品决策（给你）**：写 `docs/decisions.md`，目标 3-5 行/条，> 15 行就是塞实施细节，停下
+2. **Agent 契约（给 coding agent）**：跨文件隐含约束写 `docs/CONTRACTS.md`；红线/命令写 `CLAUDE.md`
+3. **工程细节默认不写文档**：字段表 / prompt 行号 / batch 数 / bug 排查 — 代码 + git log 即权威
+4. **路线变更**：更新 ROADMAP，已砍的进已砍清单
+5. **PRD 极少改**：定位变化才改，每次改在 decisions 加一条说明
 
 ---
 
@@ -115,23 +91,20 @@
 ```
 chisha/
 ├── README.md                  # 你在看
-├── DESIGN.md                  # 当前版本设计与实现
-├── CLAUDE.md                  # 项目级 AI 协作指令 (改推荐链路前看红线)
-├── profile.yaml               # 用户偏好 (含 methodology: harvard_plate 引用, D-072)
+├── CLAUDE.md                  # 项目级 AI 协作指令 (Coding agent 必读)
+├── profile.yaml               # 用户偏好 (含 methodology: harvard_plate 引用)
 ├── profiles/
-│   └── methodologies/         # L0 方法论 spec (D-072)
-│       └── harvard_plate.yaml # 哈佛餐盘 spec (7 必备字段 + 16 维 weights + 4 层 cap)
+│   └── methodologies/         # L0 方法论 spec
+│       └── harvard_plate.yaml # 哈佛餐盘 spec
 ├── docs/
-│   ├── PRD.md                 # 产品需求 (D-070 收敛为「原则派点餐执行外包」)
-│   ├── DECISIONS.md           # 决策日志 (D-001~D-072, 全项目共享编号)
-│   ├── IMPLEMENTATION_LOG.md  # 工程实施日志 (prompt / 参数 / bug / 三轮 review)
+│   ├── PRD.md                 # 产品需求
 │   ├── ROADMAP.md             # Phase 路线 (Phase 0 自用 → Phase 1 同事 → Phase 2 扩展)
-│   ├── RECOMMEND_PRINCIPLES.md # 推荐分层原则 (D-043 + §14 L0 方法论沉淀)
-│   ├── L3_RERANK_REDESIGN.md  # L3 精排重构方案 (D-047)
+│   ├── decisions.md           # 活决策日志 (~25 条, 你看的)
+│   ├── CONTRACTS.md           # Agent 跨文件隐含约束 (Coding agent 看的)
 │   ├── api.md                 # 前后端 API 契约 (V1 + V1.1)
-│   ├── style-guide.md         # UI 文案规范 + 视觉系统 (D-052~D-055/D-060/D-066/D-067)
-│   ├── CONTRIBUTING_DOCS.md   # 文档维护准则与每次决策 checklist
-│   └── archive/               # 旧版设计文档归档
+│   ├── style-guide.md         # UI 文案规范 + 视觉系统
+│   ├── CONTRIBUTING_DOCS.md   # 文档维护准则 (四桶分层)
+│   └── archive/               # Phase 0 旧 DECISIONS / IMPL_LOG / DESIGN / L3_REDESIGN / RECOMMEND_PRINCIPLES (不再维护)
 ├── data/
 │   ├── shenzhen-bay/          # office zone, 139 家 7256 菜
 │   └── home/           # home zone, 38 家 2117 菜

@@ -1,98 +1,99 @@
 # 文档维护准则 · chisha
 
-> 目的:让文档不漂移、不重复、不腐烂。每次决策落地都过这套 checklist,30 秒搞定。
->
-> 适用:志丹 + 任何接手的 Claude Code session / OpenClaw agent / 外部协作者。
+> 目的：让文档不漂移、不重复、不腐烂。2026-05-16 按"读者分层"重构（详见 [decisions.md](decisions.md) 顶部说明）。
 
 ---
 
-## 1. 文档分工
+## 1. 四桶文档（按读者分）
 
-| 文档 | 写什么 | 不写什么 |
-|---|---|---|
-| [PRD.md](PRD.md) | 为什么做、做给谁、做成什么样;产品定位、用户痛点、北极星指标 | 实现细节、技术选型 |
-| [DESIGN.md](../DESIGN.md) | 当前版本架构、schema、API、prompt 大纲、避坑要点 | 决策推演、历史推翻 |
-| [DECISIONS.md](DECISIONS.md) | **产品方向 / 架构原则 / 方法论 / schema 设计** 决策的推演、考虑过的方案、推翻历史 | 工程实施细节、prompt 修改 N 行、batch 数 |
-| [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md) | prompt 改了几行、参数微调、batch 数 / timestamp、bug 排查、回填脚本 | 战略决策推演、产品方向 |
-| [style-guide.md](style-guide.md) | `apps/web/` 用户视图的文案规范 + 视觉系统 + 反模式清单（D-052~D-055 锁定的交互） | 后端实现、推荐算法 |
-| [api.md](api.md) | 前后端 API 契约（V1 `/api/*` 端点表 + 字段细节 + 加载态约定） | 内部模块接口、Python SDK |
-| [ROADMAP.md](ROADMAP.md) | V1/V2/V3 边界、当前状态、已砍清单 | 历史决策推演 |
-| [RECOMMEND_PRINCIPLES.md](RECOMMEND_PRINCIPLES.md) | 推荐分层(L1/L2/L3) 职责铁律、打分维度原则 | 具体打分公式、参数值 |
-| [L3_RERANK_REDESIGN.md](L3_RERANK_REDESIGN.md) | L3 精排实施方案 (D-047) 与必读约束 | L1/L2 设计 |
-
----
-
-## 2. 决策归类判别准则
-
-每次准备写 D-XXX 时,先问:
-
-> **半年后做下一次大重构时,会不会回头查这条?**
-
-- **会查** → 写到 [DECISIONS.md](DECISIONS.md)
-  - 例子:"用户偏好如何刻画"、"L2 打分是否区分长期/短期"、"召回是否做硬过滤"、"schema 加哪 5 个新字段"、"用 LLM 精排还是规则精排"
-- **不会查** → 写到 [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md)
-  - 例子:"prompt 第 49 行重写凉拌锚点"、"per_restaurant_top_k 从 3 调到 2"、"batch 16 workers 跑了 85 min"、"修了 4 个 normalize 漂移"
-
-**边界 case**:
-- 一条决策包含战略部分 + 工程细节:战略部分写 DECISIONS,执行进度/batch 数另开一条 IMPL_LOG 条目并互相 link (参考 D-031/D-032)
-- 决定加一个新字段是 DECISIONS,具体 prompt 怎么写让 LLM 输出这个字段是 IMPL_LOG
-- 模型选型 (sonnet vs opus) 如果含成本/质量权衡推演 → DECISIONS;如果只是"按 D-XXX 的结论实施" → IMPL_LOG
+| 桶 | 文件 | 主读者 | 写什么 | 写多长 |
+|---|---|---|---|---|
+| **A · 产品决策** | [decisions.md](decisions.md) | 你 | 产品方向 / 推翻历史 / 没选 B 方案的原因 | **3-5 行/条**，> 15 行就是塞实施 |
+| | [PRD.md](PRD.md) | 你 | 产品定位 / 用户痛点 / 北极星 | 极少改 |
+| | [ROADMAP.md](ROADMAP.md) | 你 | V1/V2/V3 边界 / 已砍清单 | 阶段切换时改 |
+| **B · Agent 契约** | [CONTRACTS.md](CONTRACTS.md) | Coding agent 每次会话 | 跨文件隐含约束 / 反直觉规则 / 系统级 invariant | ≤ 200 行 |
+| | [../CLAUDE.md](../CLAUDE.md) | Coding agent 每次会话 | 红线 / 常用命令 / 当前阶段焦点 | ≤ 100 行 |
+| | [api.md](api.md) | Agent | 前后端 API 契约（V1） | 接口变化时改 |
+| | [style-guide.md](style-guide.md) | Agent | `apps/web/` UI 文案 + 视觉系统 + 反模式 | UI 决策落地时改 |
+| **C · 归档** | [archive/](archive/) | 历史考古 | Phase 0 旧 DECISIONS / IMPL_LOG / DESIGN / 等 | **不维护** |
+| **D · 评测** | [../eval/](../eval/) | 复评 prompt 时 | 评测框架 + golden set + spec | 评测重做时改 |
 
 ---
 
-## 3. 每次 D-XXX commit 后 checklist
+## 2. 写新决策（活在 decisions.md）
 
-每条新决策落地完(代码合并、测试过),3 项检查 30 秒:
+**目标**：3-5 行。够说清"决定 + 一句话原因"就停。
+- 自然展开 ≤ 15 行（真有方案对比时）
+- **> 20 行就停下**，你在写实施。把实施细节丢给 git commit body / code 本身
+- 无固定 4 段模板。想清楚就写，写不清楚说明决策本身没想清楚——别用模板撑场面
+- superseded 就地标 `[已废弃 by D-NNN]`，**不删不挪**（保留推翻历史）
 
-### ① 写到 DECISIONS 还是 IMPLEMENTATION_LOG?
-
-按上面"归类判别准则"决定。两份文件**共享 D-XXX 编号**,便于双向跳转。
-
-### ② 是否推翻了之前某条决策?
-
-- 推翻 → 找到旧条目,在标题或状态行加 `(superseded by D-NNN)`,**不删旧条目**(保留推翻历史)
-- 升级/补强 → 新条目正文写 "依赖:D-NNN" 并简述"在 NNN 基础上加什么"
-
-### ③ 是否需要联动更新其它文档?
-
-| 改了什么 | 检查这些 |
-|---|---|
-| 产品定位 / 北极星 | PRD、ROADMAP |
-| 架构 / API / schema | DESIGN |
-| V1/V2/V3 时序 / 砍/加功能 | ROADMAP |
-| 推荐分层逻辑 / 打分原则 | RECOMMEND_PRINCIPLES |
-| L3 精排策略 | L3_RERANK_REDESIGN |
-| 任意改动 + V1 acceptance 相关 | README 进度章节 |
+**示例（4 行版）**：
+```markdown
+## D-070 · 定位收敛到原则派 (2026-05-15)
+砍"通用点餐推荐"，改服务已认了一套饮食方法论的人。
+通用人群目标缺失没法刻画偏好；原则派痛点明确可外包。
+推翻：之前隐含的"什么都行的人"路径。
+```
 
 ---
 
-## 4. 反 anti-patterns
+## 3. 工程细节去哪？
 
-- ❌ **写到 DECISIONS 的"执行进度"流水**:batch 数、timestamp、命令行不属于决策;搬到 IMPL_LOG
-- ❌ **同一份内容在 DESIGN 和 DECISIONS 都写一遍**:DESIGN 只放当前实现,DECISIONS 只放推演 + 推翻历史。两者用 link 互相指
-- ❌ **D-XXX 写完不更新 ROADMAP / README**:决策与进度脱节是头号文档腐烂源
-- ❌ **新加文档却不在 README 文档体系表里登记**:外人找不到等于不存在
-- ❌ **PRD 频繁改**:定位级变化才动 PRD,每次动要在 DECISIONS 加一条说明为什么
+**默认：不写文档，放代码。** 三个例外才进 [CONTRACTS.md](CONTRACTS.md)：
 
----
+1. **跨文件隐含约束** — 改 A 文件破坏 B 文件预期，且 B 局部看不出依赖 A
+2. **反直觉约束** — 代码"看起来"应该这样，但实际不能（踩过的坑）
+3. **系统级 invariant** — 违反让管道静默错误
 
-## 5. 阶段收口(每个里程碑 / 每周一次)
+**不写**（无论多重要，代码已有）：
+- 字段表 / schema keyset
+- prompt 行号 / 参数值
+- 测试列表 / 覆盖率
+- batch 数 / timestamp / commit hash
+- 文件改动清单
 
-V1 / V2 / V3 切换或每周一次 wrap-up 时,做一遍:
-
-1. **DECISIONS 全文扫一遍** — 有 `superseded` 没改的 / 有"已废弃"还在 active 状态的 → 修
-2. **IMPL_LOG 倒查** — 上周新增的 IMPL_LOG 条目,是否有错位的决策应该升到 DECISIONS?
-3. **ROADMAP 当前状态** — 与最近 git log 对照,缺的 D-XXX 补进去
-4. **README 进度章节** — 与 ROADMAP 当前状态对齐
-5. **DESIGN §7 速查表** — 新决策的 stub 行加进去
-
-如果会话型工具 (Claude Code 等) 有 `neat-freak` skill,在阶段收口时**主动调用**,而不是等到下次 review 才发现漂移。
+git log + grep 代码即权威。
 
 ---
 
-## 6. 文件命名 / 编号约定
+## 4. 每次 D-XXX commit 后 checklist
 
-- D-XXX 编号**全项目共享**,跨 DECISIONS / IMPLEMENTATION_LOG 唯一
-- 推翻型条目 D-NNN.M 形式(如 D-046.1 是 D-046 后的修订)
-- 文档新建必须先在 README 文档体系表登记;不进表 = 失踪文档
-- DECISIONS / IMPL_LOG 新条目追加到尾部,**禁止插队改编号**
+1. **写到 decisions 还是 CONTRACTS？**
+   - 产品方向 / 推翻历史 → `decisions.md`
+   - agent 必须遵守的硬约束 → `CONTRACTS.md`
+   - 两边都不属于 → 大概率你在写实施，git commit body 就够
+2. **是否推翻旧决策？** 推翻就地标 `[已废弃 by D-NNN]`，不删
+3. **是否需要联动？** ROADMAP 当前状态 / README 进度章节
+
+---
+
+## 5. 反 anti-patterns
+
+- ❌ **写决策超过 20 行** → 你在塞实施。删掉重写
+- ❌ **同内容在 decisions 和 CONTRACTS 都写一遍** → decisions 是 "为什么"，CONTRACTS 是 "必须遵守的硬约束"，互相 link 不重复内容
+- ❌ **D-XXX 写完不更新 ROADMAP / README** → 决策与进度脱节是头号腐烂源
+- ❌ **新加文档却不在 README 文档体系表登记** → 外人找不到等于不存在
+- ❌ **PRD 频繁改** → 定位级变化才动 PRD，每次改要在 decisions 加一条说明
+
+---
+
+## 6. 阶段收口
+
+V1 / V2 / V3 切换或每周一次 wrap-up 时：
+
+1. **decisions.md 全文扫一遍** — 有 superseded 没改的 / 已废弃还在 active 状态的 → 修
+2. **CONTRACTS.md 检查** — 新加的 invariant 是不是真的"代码看不出"，否则砍掉
+3. **ROADMAP 当前状态** — 与最近 git log 对照，缺的补
+4. **README 进度章节** — 与 ROADMAP 对齐
+
+若用 `neat-freak` skill 自动整理，**调用前 prompt 加一句**："写决策 ≤ 15 行，超过就是实施。讲不完就丢弃，不要塞回旧 IMPL_LOG 归档"。
+
+---
+
+## 7. 编号约定
+
+- D-XXX 全项目共享，新决策追加到 `decisions.md` 尾部
+- 推翻型 D-NNN.M（如 D-046.1 是 D-046 后的修订）
+- superseded 就地标 `[已废弃 by D-NNN]`，**不删不挪**
+- 新建文档必须在 README 文档体系表登记

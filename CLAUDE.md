@@ -10,30 +10,32 @@
 1. [README.md](README.md) — 项目状态与文档体系总表
 2. [docs/PRD.md](docs/PRD.md) — 产品定位
 3. [docs/ROADMAP.md](docs/ROADMAP.md) — V1/V2/V3 边界、已砍清单
-4. [DESIGN.md](DESIGN.md) — 当前架构与实现
-5. [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md) — 文档纪律(改任何文档前必读)
+4. [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md) — 文档纪律(改任何文档前必读)
+5. `docs/decisions.md`(提炼中)+ `docs/CONTRACTS.md`(待建) — 替代已归档的 DESIGN / DECISIONS / IMPL_LOG
 
-改推荐链路前额外读 [docs/RECOMMEND_PRINCIPLES.md](docs/RECOMMEND_PRINCIPLES.md);改 L3 精排前必读 [docs/L3_RERANK_REDESIGN.md](docs/L3_RERANK_REDESIGN.md)。
-改 `apps/web/` 用户视图前必读 [docs/style-guide.md](docs/style-guide.md) (D-052~D-055 + D-060/D-066/D-067 锁定的交互不可重设计);改 `/api/*` 前必读 [docs/api.md](docs/api.md);改反馈链路前必读 DECISIONS D-056~D-068 信号框架与生命周期约束。
+改 `apps/web/` 用户视图前必读 [docs/style-guide.md](docs/style-guide.md);改 `/api/*` 前必读 [docs/api.md](docs/api.md)。
+改推荐链路 / L3 精排:历史背景在 [docs/archive/DECISIONS_phase0.md](docs/archive/DECISIONS_phase0.md),活约束在 `docs/CONTRACTS.md`(Wave 3 落)。
 
-## 文档纪律(强制)
+## 文档纪律(强制 · 2026-05-16 重构后)
 
-每次决策落地或代码大改后,过 3 项 checklist:
+文档按"读者"分四桶:
 
-1. **新条目写哪边?**
-   - 产品/架构/方法论/schema 决策 → [docs/DECISIONS.md](docs/DECISIONS.md)
-   - 工程实施细节 (prompt 改 N 行 / 参数 / batch / bug 排查) → [docs/IMPLEMENTATION_LOG.md](docs/IMPLEMENTATION_LOG.md)
-   - 判别准则: **半年后做下一次大重构会不会回头查这条?** 会查 → DECISIONS;不会 → IMPL_LOG
-2. **是否推翻了旧决策?** 推翻就在旧条目标 `superseded by D-NNN`,不删
-3. **是否需要联动更新?** ROADMAP 当前状态 / README 进度章节 / DESIGN §7 速查表
+| 桶 | 文件 | 写什么 | 写多长 |
+|---|---|---|---|
+| 产品决策(给用户) | `docs/decisions.md` | 产品方向 / 推翻历史 / 没选 B 方案的原因 | **3-5 行**,> 15 行说明你在写实施,停下 |
+| Agent 契约(给 Claude/Codex) | `docs/CONTRACTS.md` | 跨文件隐含约束 / 反直觉规则 / 系统级 invariant | 单条 ≤ 10 行,全文 ≤ 200 行 |
+| Agent 红线(给 Claude/Codex) | `CLAUDE.md`(本文件) | 命令 / avoid 清单 / 当前阶段焦点 | 全文 ≤ 100 行 |
+| 历史归档(不维护) | `docs/archive/*_phase0.md` | Phase 0 历史 | 只读 |
 
-详细判别表与反 anti-patterns 见 [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md)。
+**不写**(无论多重要,代码已有): 字段表 / schema keyset / prompt 行号 / 参数值 / 测试列表 / batch 数 / commit hash / 文件改动清单 — git log + grep 代码即权威。
+
+详见 [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md)(Wave 4 重写)。
 
 ## 决策编号约定
 
-- D-XXX 编号**全项目共享**,跨 DECISIONS / IMPLEMENTATION_LOG 唯一
-- 推翻型条目用 D-NNN.M 形式(如 D-046.1 是 D-046 后的修订)
-- 新条目追加到文件尾部,禁止插队改编号
+- D-XXX 编号**全项目共享**,新条目追加到 `docs/decisions.md` 尾部
+- 推翻型条目用 D-NNN.M(如 D-046.1)
+- superseded 就地标 `[已废弃 by D-NNN]`,不删不挪
 
 ## 常用命令
 
@@ -69,6 +71,6 @@ uv run python -m scripts.compare_traces                                         
 
 ## 提醒(给未来的 Claude Code)
 
-- DECISIONS.md 已经发生过定位漂移 (62.5% 条目漂成工程日志);P0 拆分后**严格守边界**,新条目写之前先过判别准则
-- 改完任意 D-XXX 后,**主动检查** README / ROADMAP 是否要同步更新,不要等用户发现漂移
-- 阶段性收口时主动调用 `neat-freak` skill,不要等漂移堆积
+- **文档体系 2026-05-16 重构过**:DECISIONS/IMPL_LOG/DESIGN 已归档,新决策只写 `docs/decisions.md`,且 ≤ 15 行/条。超过就是你在写实施,删掉重写
+- 改完任意 D-XXX 后,**主动检查** README / ROADMAP 是否要同步更新
+- 阶段性收口时主动调用 `neat-freak` skill,但要带一句"≤ 15 行原则,讲不完就丢弃"防它过度沉淀
