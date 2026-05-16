@@ -241,26 +241,10 @@ def refine(
         profile_llm=profile.get("llm"),  # D-047: provider 路由
     )
 
-    # D-043 P3: 反馈写入 long_term_prefs (闭环数据采集)
-    # 失败不阻断 refine, 反馈学习是 best-effort
-    try:
-        from chisha.long_term_prefs import append_feedback
-        last_combo_sig = None
-        if state.last_candidates:
-            top1 = state.last_candidates[0]
-            last_combo_sig = (top1.get("restaurant", {}).get("name", "?")
-                              + " | " + ", ".join(top1.get("dish_names") or []))
-        append_feedback(
-            chips=fb.chips,
-            rating_taste=fb.rating_taste,
-            want_again=fb.want_again,
-            meal_type=state.meal_type,
-            session_id=session_id,
-            combo_signature=last_combo_sig,
-            root=root,
-        )
-    except Exception:
-        pass
+    # D-073 PR-0.5: 砍掉 refine chip → feedback_history.jsonl 的错位写入.
+    # refine chip 是 D-070 L2 当下 session 信号, 不该跨 session 累加成"伪长期偏好".
+    # 长期偏好走 L1 LLM 抽取 (chisha/l1_extractor.py + V1.1 反馈) , 见 D-073.
+    # 旧 long_term_prefs.append_feedback 函数保留为 deprecated stub 防外部调用挂.
 
     # 2. chips → taste_hints
     hints = chips_to_taste_hints(fb.chips)
