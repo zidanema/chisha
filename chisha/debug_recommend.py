@@ -422,6 +422,18 @@ def _llm_rerank_traced(
     llm_resp = res.get("llm_response") or {}
     # 兼容旧字段命名: raw_response / parsed_candidates / used / fallback_reason
     raw_text = (llm_resp.get("raw_text") or "") if isinstance(llm_resp, dict) else ""
+    # debug-ui Phase 2: 额外暴露 system_prompt_full / max_tokens / temperature
+    # 让前端 I/O viewer 能展示真实 prompt 内容 (chars-only 无法 review).
+    is_cli = res.get("resolved_provider") == "claude_code_cli"
+    try:
+        from chisha.rerank import SYSTEM_PROMPT_PATH, _patch_system_prompt_for_cli
+        _sys_raw = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        system_prompt_full = (
+            _patch_system_prompt_for_cli(_sys_raw) if is_cli else _sys_raw
+        )
+    except Exception:
+        system_prompt_full = ""
+
     return {
         # D-048: status 三态 — "ok" (L3 真跑通) / "fallback" (LLM 调了但出问题)
         # / "config_error" (provider 路由配置错根本没跑). UI 应分开标记.
@@ -431,6 +443,7 @@ def _llm_rerank_traced(
         "used": res["status"] == "ok" or llm_resp != {},
         "model": res.get("model"),
         "system_prompt_chars": res["system_prompt_chars"],
+        "system_prompt_full": system_prompt_full,
         "user_message_chars": res["user_message_chars"],
         "user_message_preview": (res["user_message_full"] or "")[:2000],
         "user_message_full": res["user_message_full"],  # D-047 实验用, 后续可去
@@ -442,6 +455,9 @@ def _llm_rerank_traced(
         "fallback_reason": res.get("fallback_reason"),
         "latency_ms": res.get("latency_ms"),
         "usage": llm_resp.get("usage") if isinstance(llm_resp, dict) else None,
+        # 同步 rerank.py 的实际取值 (D-048 占位 + cli 4096 / others 2048).
+        "max_tokens": 4096 if is_cli else 2048,
+        "temperature": 0.0,
     }
 
 
@@ -740,12 +756,28 @@ def _trace_target(
             name = _normalize(d.get("canonical_name", ""))
             if not any(q in name for q in dish_qs):
                 continue
+        # debug-ui Phase 4: 暴露 nutrition_profile 子集让前端 detail panel
+        # 不用再二次 fetch dish 元数据.
+        np = d.get("nutrition_profile") or {}
         matched_dishes.append({
             "dish_id": d.get("dish_id"),
             "name": d.get("canonical_name"),
             "restaurant_id": d.get("restaurant_id"),
             "restaurant_name":
                 rest_idx.get(d.get("restaurant_id", ""), {}).get("name"),
+            "price": d.get("price"),
+            "nutrition_profile": {
+                "oil_level": np.get("oil_level"),
+                "spicy_level": np.get("spicy_level"),
+                "protein_grams_estimate": np.get("protein_grams_estimate"),
+                "main_ingredient_type": np.get("main_ingredient_type"),
+                "cooking_method": np.get("cooking_method"),
+                "wetness": np.get("wetness"),
+                "grain_type": np.get("grain_type"),
+                "processed_meat_flag": np.get("processed_meat_flag"),
+                "sweet_sauce_level": np.get("sweet_sauce_level"),
+                "vegetable_ratio_estimate": np.get("vegetable_ratio_estimate"),
+            },
         })
     # 限制结果太多刷屏
     matched_dishes = matched_dishes[:50]

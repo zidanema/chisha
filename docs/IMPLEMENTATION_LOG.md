@@ -1606,3 +1606,97 @@ GET    /api/history?days=999                HTTP 400
 - reset/disable 抢锁失败后的 dirty-flag 补跑 (现在只 409, 用户重试)
 - meal_log 多 tab 并发 append 文件锁 (与 recommend_log 同级)
 - L1 prompt 在真实 LLM 上稳定性 (本次真跑 1 次 12s ok, 长期需 fixture 训练防漂移)
+
+---
+
+## D-075 执行记录 · `apps/debug-ui/` Phase 1-7 build-out + 双轮 Codex review
+
+日期: 2026-05-16
+worktree: `.claude/worktrees/debugger-web` (branch on top of `3ed8411`)
+战略决策见 `docs/DECISIONS.md` D-075.
+
+### Codex 双轮 review pattern (8 轮)
+
+每个 Phase 走 plan review + diff review 闭环 (变种 D-036 dual-model audit):
+1. 写 plan markdown 到 `.codex-review/phase-N-plan.md`, 含 Open Questions
+2. Codex 给 N 个 BLOCKER / FIX-NOW / DEFER + 立场
+3. 修方案 / 砍范围, 实现代码
+4. typecheck + build + E2E live smoke
+5. 写 diff review markdown 到 `.codex-review/phase-N-diff-review.md`
+6. Codex 验证 FIX 真落地 + 找新 bug
+7. 修剩余 FIX-NOW, 推进 Phase N+1
+
+最终 final-pr-review 走第 8 轮整 PR 终审, 修 2 FIX-NOW (CSS 声明完整性 + Safari 5MB 配额) 后 ship.
+
+### Phase 1-7 工程量
+
+- 56 files, ~10k 行落地 (合并 commit `feat(D-075)`)
+- 全部 TS/TSX 组件 ≤ 400 行 (`App.tsx` 379, `PanelL3.tsx` 335, `api/adapter.ts` 373)
+- 数据文件豁免: `styles.css` 1562 (1:1 搬自 design canvas + Phase 5 mark.find-hit + .replay-btn 功能扩展), `mocks/session.ts` 457 (LCG seed=42 deterministic)
+
+### Codex 跨 phase BLOCKER 全清单 (4 个全修)
+
+1. **delta abs() 在 comboDiffBadge** (Phase 3): `↑ -3` / `↓ -3` 这种 UI 文案 bug, 一行修
+2. **dropped final cards 必须可见** (Phase 3): 三态本来 dropped 不渲染. 在 `PanelFinal` 加 `droppedRows` prop, `PanelRefine` 传 `diff.droppedFinals`
+3. **runTrace 必须传齐 meal/today/profileOverride** (Phase 4): 否则 trace 是不同上下文的 recommendation, 结果错位
+4. **localStorage MAX_ITEMS Safari 5MB 配额** (final review): 原 8 个 × 700KB = 5.6MB 爆 iOS 硬限. 砍到 5 个 (3.5MB)
+
+### Codex 跨 phase FIX-NOW 全清单 (14 个全修)
+
+Phase 1: 5 个 — `--blue/--red/...` color var 缺定义 / `panel-l2:165` 用未定义 var / `breakdown[k].toFixed` 缺字段崩 / DAG header 14ms/18ms/1207 硬编码 / PanelL2 210 行 Phase 2 会超 400, Phase 1 顺手拆 KpiBar/Heatmap/ComboTable
+Phase 2: 3 个 — localStorage 容量泄漏 (orphan key 不清) / runMain 无 race guard / L2 weights dict→array 必须显式 DIM_ORDER 不靠 Python dict insertion order
+Phase 4: 1 个 — `_trace_target` 缺 nutrition_profile, detail panel 需要
+Phase 5: 2 个 — CollapsedJson 递归无 maxDepth 可爆栈 / App.tsx 404 > 400 行
+Phase 6: 4 个 — oil 1..5 / sweet 0..3 / wetness 1..3 / spicy 0..N 非 string 是 number, 前端 String(v) 显 "1" 不可读, 加 labelForDim 中文映射 + zone code → 中文 / DagHeader l3Status 强制 'ok' 洗掉 config_error, 改读 session.l3.status / config_error + skipped 视觉缺独立 callout 分支 / 空 session hint 真正空态不可达 (MOCK 总在)
+Phase 7: 1 个 — README config_error wording 误导 (说 profile JSON 解析失败, 实际是 LLM provider 配置错)
+Final PR: 2 个 — CSS 声明完整性 (Phase 5 加 mark.find-hit + .replay-btn 未在 review doc 列) / localStorage Safari 配额
+
+### 关键技术决定 (executed)
+
+- **adapter 纯函数边界** (`src/api/adapter.ts` 373 行): backend → frontend `Session` view-model. 所有字段重命名 / 合成 / fallback 都在这一层. Phase 2-7 任何 panel 都是 pure props-in.
+- **DIM_ORDER 显式列表** (`src/api/adapter.ts:144`): 16 维 score weights 顺序锁死为 `profile.yaml:148-166` 当前顺序. 防 Python dict insertion order 漂移. backend 未来加新维度走 append.
+- **race guard 用 seqRef** (`hooks/useSession.ts`): `++runSeqRef.current` 在 fetch 前递增, 完成后 `if (seq !== runSeqRef.current) return`. 防双击 stale-overwrites-fresh.
+- **deriveRefineSession seed = hash(refine_text)** (`mocks/refineSession.ts`): 相同输入相同 second-round (diff 徽章不闪), 不同输入不同结果 (用户能感知 refine 影响). Phase 4+ 真接 backend 后此文件可砍.
+- **trace 复用 `/api/debug_recommend` + trace_target**: 不加新端点. 后端已有 `_trace_target`, 只补 `nutrition_profile` 子集. 重跑 L1/L2 一次约 300ms (LLM 关闭), 可接受.
+- **labelForDim 数字→中文** (`constants/labels.ts`): oil 1..5 → 极少油/少油/中等/偏油/高油. wetness 1..3 → 干/卤水/汤底. 来源: `chisha/score.py:80-93, 240-281, 396-400`. PanelTrace 加 `(原数字)` 后缀方便对照.
+
+### Backend 补丁 (`chisha/debug_recommend.py`)
+
+- `_llm_rerank_traced` (line 425-460): 末尾加 `system_prompt_full` (重读 `SYSTEM_PROMPT_PATH` 并应用 `_patch_system_prompt_for_cli`) + `max_tokens: 4096 if is_cli else 2048` + `temperature: 0.0`. 异常吞掉 → `system_prompt_full=""`.
+- `_trace_target` matched dish (line 759-781): 加 `price` 和 `nutrition_profile: {oil_level, spicy_level, protein_grams_estimate, main_ingredient_type, cooking_method, wetness, grain_type, processed_meat_flag, sweet_sauce_level, vegetable_ratio_estimate}`. 全部 `.get()` 容错.
+
+ADD-only, 不动既有键 — 老 debug.html / web_api.py / prod recommend 路径不受影响.
+
+### 验证 (E2E live)
+
+worktree venv (`.claude/worktrees/debugger-web/.venv`) 起 debug_server:8765, Vite dev:5174 proxy:
+- `GET /api/profile` → 200
+- `POST /api/debug_recommend` (use_llm_rerank=false) → 200, 358KB, zone=shenzhen-bay, n_combos=2467, top=54, final=5
+- `POST /api/debug_recommend` + `trace_target` → 200, 50 matched dishes, nutrition_profile 10 字段 (`oil_level: 1 int`, `wetness: 1 int`, etc.)
+- `npm run typecheck` 0 警告
+- `npm run build` 246KB JS / 39KB CSS gzipped 78+8=86KB
+
+initial false-negative 教训: 智能查 `nutrition_profile=False` 时, 主仓库 venv 跑的旧 `chisha.debug_server` 在 :8765 已起, 新 worktree backend 端口冲突. 修法: `lsof -ti:8765 | xargs kill -9` 再起 worktree venv 的进程. uv editable install 不会自动重读跨 venv 文件.
+
+### 反 anti-pattern (这次没踩 + 这次踩了的)
+
+没踩:
+- 没引入 Tailwind/shadcn/antd (设计稿明确禁) — 全 CSS-var
+- 没改设计稿视觉系统 — 1:1 搬, 仅加 5 utility color var + 2 功能性 rule
+- 没写测试 (单用户工具 prompt 明确禁)
+- 没让 mock 数据写死在 UI 里 — Phase 1 完成后 mock 只在 `mocks/`, panels 全 pure props
+- 没在 App.tsx 引入 react-router/zustand/react-query
+- 没用 `any`/`as any`/`@ts-ignore` (Codex 验证零命中)
+
+踩了 (修了):
+- Phase 1 完成时 App.tsx / PanelL3 双双 404+ 超 400 行, Phase 7 才拆 (Codex 看到的时候已经溢出, 应该 phase 内即时拆)
+- Phase 1 后端 stale uv venv (主仓库 :8765 端口冲突) 浪费了 15min 排查
+- L2 hardcoded literals (60 top / 1207 combo / 38ms latency) Phase 1 我以为搬就行, Codex 指出后才知道必须从 session 数据 derive — Phase 4+ 真接后端时这种字面量都会错位
+
+### 下一步 (deferred 到 Phase X+ / V1.5)
+
+- `/api/debug_refine` 真后端接入 (Phase 3 现走 mock 派生)
+- `/api/sessions` + `/api/session/{id}` 后端持久化 (Phase 2 现走 localStorage)
+- per-dish trace rank 精确归属 (Codex Phase 4 指出, 当前 PanelTrace 所有 dish 用 first matched combo rank)
+- Web Notifications API fallback 桌面通知 (Phase 5 砍, 等真 fallback 链路打通)
+- 调试台 V1 整合到 apps/web `/debug` 路由 (ROADMAP line ~98) — 推翻为独立 `apps/debug-ui/` 已交付

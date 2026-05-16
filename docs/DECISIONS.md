@@ -3257,3 +3257,57 @@ D-编号占用:
 - Codex S2 (codex-rescue): 揭出 reset/disable 期间 L1 worker 写盘污染 prod
   路径 (High) + advance 期间 pending 绕过路径 (Medium) + 半态 transaction
   (Q1, 拍板保留 hard-fail)
+
+---
+
+## D-075: `apps/debug-ui/` 独立 SPA, 不并入 `apps/web/`
+
+日期: 2026-05-16
+状态: active (落地 commit)
+worktree: `.claude/worktrees/debugger-web` (branch on top of D-072.1 收尾 commit `3ed8411`)
+
+> 编号说明: worktree 内 draft 原计划用 D-073, 合并时让位给 recommand-debug worktree 占用 D-073 (refine 结构化意图) / D-074 (AI-friendly 接入草稿) / D-076 (L1 LLM 抽取) / D-077 (sandbox time-travel) / D-078 (sandbox 收尾修补), 本条编号锁定 D-075.
+
+背景: 用户在 Phase 0 收尾后让一份 debug 台高保真设计稿落地 — V12 DAG 流水线 + 5 套 palette + sticky 顶部 + L1/L2/L3/Final + Refine + Trace tab. 设计稿在 `~/chisha/design/` (非 git 跟踪). 已存在两个方向冲突:
+- `chisha/static/debug.html` 老调试台 (D-039), 单文件 HTML, 1500 行手写 vanilla JS, 不可维护扩展
+- `apps/web/` 用户视图 SPA (D-051, Vite + React + TS + Tailwind), 已稳定服役
+
+决定: 建独立 `apps/debug-ui/` Vite SPA (port 5174, proxy `/api → :8765`), **不并入 `apps/web/`**.
+
+理由:
+1. **CSS 视觉系统不同**: 设计稿用 CSS-var + 5 套 oklch palette, 视觉密度比 `apps/web/` 用户视图高 2-3 倍 (16 维 heatmap / 60 combo 全表). 强行并 = 两边 token 互相污染.
+2. **依赖分歧**: `apps/web/` 用 Tailwind + react-router. 设计稿明确禁用 Tailwind/shadcn/antd, 单页 tab 不要 router. 并入会强迫双向妥协.
+3. **受众不同**: `apps/web/` 是用户视图 (D-051 主交互), 设计语言克制. debug-ui 是开发自用工具, 每天 5-20 次访问, 信息密度优先.
+4. **耦合控制**: 独立项目只通过 `/api/*` 与 backend 联调, 双方独立演进. backend 也只动 `chisha/debug_recommend.py` 两处小补丁, 不动 user-view 端 (`web_api.py`).
+
+实现范围 (Phase 1-7, 全部 Codex-reviewed 闭环):
+- Phase 1: 搬设计稿 → Vite + React 18 + TS, 5 主题 + DAG sticky + 4 panel + Refine 上半区
+- Phase 2: 接 `/api/debug_recommend` + adapter 纯函数 + race guard + Toaster + localStorage history (cap 5)
+- Phase 3: refine 第二轮 trace (mock-derived, refine_text seeded) + diff 徽章 + tri-state final cards (新进/保持/踢出)
+- Phase 4: 追溯 Tab — 复用 `trace_target` 不加新端点, 后端补 `nutrition_profile` 子集到 `_trace_target`
+- Phase 5: ⌘Enter/⌘R 拦截 + IME guard + heatmap 列三态排序 + find-in-text + tool_use JSON 折叠 + 复刻 run + prefers-color-scheme
+- Phase 6: config_error/skipped 视觉 + 空 session hint + 数字→中文 label (oil/spicy/wetness/sweet) + zone code 中文 mapping
+- Phase 7: 拆分超 400 行文件 + README 全量重写
+
+backend 补丁 (`chisha/debug_recommend.py` — 非侵入, 仅 ADD 字段):
+- `_llm_rerank_traced`: 新增 `system_prompt_full / max_tokens / temperature` (前端 IO viewer 需要)
+- `_trace_target` matched dish: 新增 `price + nutrition_profile` 10 字段子集 (前端 detail panel 需要)
+- 两处都不动既有键, 不影响 prod 推荐路径 / apps/web 用户视图
+
+Codex 闭环 (跨 7 Phase + final PR, 8 轮 review):
+- BLOCKER: 4 (delta abs + dropped final + runTrace config + localStorage Safari 5MB) — 全修
+- FIX-NOW: 14 (跨 phase 各类) — 全修
+- DEFER: ~10 (per-dish trace rank 精确归属 / `/api/debug_refine` 后端真接 / `/api/sessions` 真持久化 / 桌面通知) — 推到 Phase X+
+
+依赖 / 影响:
+- 推翻: ROADMAP `Phase 0 · 调试台 V1 整合到 apps/web /debug 路由` (line ~98) — 改为独立 SPA, 不并 apps/web
+- 关联: D-039 老 debug.html 保留, 不删. 双轨过渡 — 老的稳定可用, 新的迭代
+- 后续 deferred 任务沉淀在 `apps/debug-ui/README.md` 「已知 defer」一节
+- 落地后 E2E 验收 (Playwright headless Chrome, 27 用例覆盖 5 主题 / 3 tab / ⌘Enter / heatmap 排序 / profile JSON 校验 / refine / trace / offline mock fallback / 主题持久化): 26/27 PASS, 唯一 fail 是浏览器探 `favicon.ico` 404 (非 bug)
+- 验收中发现 PanelFinal `rows` 与 `droppedRows` 用同一 `cmb_NNN` 命名空间 (L2 combo rank vs final combo_index+1) 可能撞 React key, 加 `keep-` / `drop-` 前缀根治 (`apps/debug-ui/src/panels/PanelFinal.tsx:174`)
+
+不做 (defer):
+- `/api/debug_refine` 真后端接入 — 当前 Phase 3 用 `mocks/refineSession.ts` deterministic 派生
+- `/api/sessions` 后端持久化 — 当前 localStorage cap 5 个 session × ~700KB
+- Web Notifications API fallback 桌面通知 — 真 LLM fallback 链路触发场景才补
+- L3 fallback 在 dev 模式下用 active-session=sess_a7f0 触发 mock 数据 demo, 不是真 fallback

@@ -14,7 +14,7 @@
 5. [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md) — 文档纪律(改任何文档前必读)
 
 改推荐链路前额外读 [docs/RECOMMEND_PRINCIPLES.md](docs/RECOMMEND_PRINCIPLES.md);改 L3 精排前必读 [docs/L3_RERANK_REDESIGN.md](docs/L3_RERANK_REDESIGN.md)。
-改 `apps/web/` 用户视图前必读 [docs/style-guide.md](docs/style-guide.md) (D-052~D-055 + D-060/D-066/D-067 锁定的交互不可重设计);改 `/api/*` 前必读 [docs/api.md](docs/api.md);改反馈链路前必读 DECISIONS D-056~D-068 信号框架与生命周期约束。
+改 `apps/web/` 用户视图前必读 [docs/style-guide.md](docs/style-guide.md) (D-052~D-055 + D-060/D-066/D-067 锁定的交互不可重设计);改 `apps/debug-ui/` debug 台 SPA 前必读 [apps/debug-ui/README.md](apps/debug-ui/README.md) (D-075, 独立 Vite SPA / V12 DAG / 5 主题, 不并入 apps/web);改 `/api/*` 前必读 [docs/api.md](docs/api.md);改反馈链路前必读 DECISIONS D-056~D-068 信号框架与生命周期约束。
 
 ## 文档纪律(强制)
 
@@ -38,8 +38,11 @@
 ## 常用命令
 
 ```bash
-# 调试台 (D-039)
-uv run python -m chisha.debug_server  # http://127.0.0.1:8765
+# 老调试台 (D-039 vanilla HTML) + 新 debug-ui (D-075 Vite SPA) 共用同一后端
+uv run python -m chisha.debug_server  # :8765 (老:/debug, SPA:/, swagger:/swagger)
+
+# 新 debug 台 SPA (D-075, 端口 5174, proxy /api → :8765)
+cd apps/debug-ui && npm install && npm run dev  # http://127.0.0.1:5174
 
 # 推荐 dry_run
 uv run python -m scripts.dry_run --n 5 --meal both
