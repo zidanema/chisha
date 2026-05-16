@@ -176,3 +176,35 @@ def test_refine_avoid_hard_filter(tmp_path, small_profile, tiny_zone):
         for d in c.get("dishes", []):
             cuisines.append(d.get("cuisine"))
     assert "日式" not in cuisines
+
+
+# D-078.2 Codex S2 FIX-NOW: refine 二轮必须 root 透传到 rerank, 否则
+# sandbox 启用时 _profile_block 走默认 (project root 兜底), L1 行为信号
+# 在 refine 链路静默缺失 / 跨 worktree 串数据.
+def test_refine_passes_root_to_rerank(tmp_path, small_profile, tiny_zone, monkeypatch):
+    """守门: refine() 调用 rerank() 必须显式传 root=root (与 api.recommend_meal 对齐)."""
+    rests, dishes = tiny_zone
+    sid = "sid_root_thread"
+    s = create_session(sid, "lunch", "test")
+    save_session(s, tmp_path)
+
+    captured: dict = {}
+    from chisha import refine as refine_module
+
+    original = refine_module.rerank
+
+    def spy_rerank(*args, **kwargs):
+        captured["root"] = kwargs.get("root")
+        captured["called"] = True
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(refine_module, "rerank", spy_rerank)
+
+    refine(sid, "想喝汤", small_profile, rests, dishes, [],
+            root=tmp_path, today=dt.date(2026, 5, 13), use_llm=False)
+
+    assert captured.get("called"), "rerank 必须被 refine 调用"
+    assert captured["root"] == tmp_path, (
+        "refine 必须把 root 透传给 rerank, 否则 _profile_block 读不到正确"
+        "long_term_prefs.json (sandbox / multi-worktree 串数据)"
+    )

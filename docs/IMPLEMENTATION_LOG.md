@@ -1656,6 +1656,61 @@ GET    /api/history?days=999                HTTP 400
 
 ---
 
+## D-078.2 Codex S2 修订 · refine 二轮链路漏 root threading
+
+日期: 2026-05-16
+形态: 1 commit (refine.py:122 加 `root=root` + 1 守门 test)
+状态: ✅ 589 测试 / baseline_l2 0 diff
+
+### S2 review
+
+D-036 dual-model audit S2 (Codex 审 Opus 出的 D-078.2 设计). Codex 输出:
+
+- BLOCKER: 0
+- FIX-NOW: 1 — `chisha/refine.py:119` 调 `rerank()` 没传 `root=root`, sandbox / 多
+  worktree 场景下 refine 二轮读错 long_term_prefs.json, L1 行为信号静默缺失或串
+  到真实仓库. 立场: 强.
+- DEFER: 0
+
+### S3 终审
+
+Opus 终审, **接受 FIX-NOW**. 漏的根因: D-078.2 改 rerank 链路时穷举了 `rerank()` 直接
+调用方 (api.py + debug_recommend.py), refine.py 用 `from chisha.rerank import rerank`
++ 裸调, grep 时看到了但没顺势同步. 跨模块 audit 是 dual-model 的核心价值.
+
+修法:
+- `chisha/refine.py:119-124`: 加 `root=root` 显式透传, 含 D-078.2 Codex S2 FIX-NOW
+  锚点注释
+- `tests/test_refine.py`: 加 `test_refine_passes_root_to_rerank` 守门 — monkeypatch
+  rerank 捕获 kwargs, 断言 `captured["root"] == tmp_path`
+
+### 严重度复盘
+
+prod 路径下 `_project_root()` 兜底碰巧等于真实仓库, /api/refine 在 sandbox 下也能
+读到正确 prefs (silent, 用户感知不到). 但:
+- 测试用 monkeypatched ROOT 时, refine 链路读真实仓库 prefs, 流水线不稳定
+- 多 worktree 场景: 其他 worktree /api/refine 会跨 root 读主仓库 prefs
+
+Codex 立场"强"对 — 不是 prod 直接报错, 但属于"会在测试和未来场景塌方"类 silent.
+
+### Codex 没触 + S3 复盘的 6 个 audit 重点
+
+详见 `tmp/codex_s3_response.md`. 摘要 (全部不改):
+
+1. rationale 截 80 字够 (实测 ~70 字内能放下完整因果)
+2. spicy boost 用 max() 不用 avg() — by design (偏好辣看 anchor 不看均值)
+3. sweet_sauce boost 复用 penalty helper 合理 (镜像语义)
+4. 不加 processed_meat/carb_heavy boost 边界 Phase 1 解耦, 现 Phase 0 不动
+5. prompt 反直觉规则 LLM 稳定性长期跟踪
+6. long_term_prefs vs long_term_prefs_raw 双字段 confuse — 前端切换留 Phase 1
+
+### 守门
+
+- 589 测试 (588 + 1 root threading 守门)
+- baseline_l2_snapshot 4 snap 0 diff
+
+---
+
 ## D-078.2 执行记录 · L1 → L3 prompt 漏桥修补 (L1 LLM 抽取产物注入 L3 系统提示)
 
 日期: 2026-05-16

@@ -116,8 +116,12 @@ def refine(
     top_k = ranked[:L3_INPUT_TOP_K]
 
     # 5. L3 LLM rerank (ctx 携带 refine_input + refine_intent)
+    # D-078.2 Codex S2 FIX-NOW: root 必须透传, 否则 refine 二轮 _profile_block
+    # 走默认 (project root 兜底), sandbox 启用时读不到沙盒 long_term_prefs.json
+    # (或反过来污染 prod), 行为信号在 refine 链路静默缺失.
     reranked = rerank(top_k, profile, context=ctx, meal_log=meal_log,
-                       n=n, n_explore=0, refine=True, use_llm=use_llm)
+                       n=n, n_explore=0, refine=True, use_llm=use_llm,
+                       root=root)
 
     # 6. 更新 session
     state.round += 1
