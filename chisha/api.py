@@ -107,8 +107,14 @@ def recommend_meal(
         root: 仓库根目录 (测试可注入), 默认 chisha/__file__.parent.parent.
     """
     root = root or _default_root()
-    profile = load_profile(Path(profile_path) if Path(profile_path).is_absolute()
-                           else root / profile_path)
+    # D-074 Codex S3 修复: 默认 profile_path 走 data_root.profile_path (sandbox
+    # 启用且副本存在时切到副本); 显式传入相对/绝对路径时保持兼容.
+    if profile_path == "profile.yaml":
+        from chisha import data_root
+        profile = load_profile(data_root.profile_path(root))
+    else:
+        profile = load_profile(Path(profile_path) if Path(profile_path).is_absolute()
+                               else root / profile_path)
     zone = _resolve_zone(profile, meal_type)
     rests, tagged = load_zone_data(zone, root)
     meal_log = load_meal_log(root)

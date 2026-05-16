@@ -88,7 +88,7 @@
 
 2. **少而稳**: 输出**不超过 2 个 boost + 2 个 penalty**。宁可漏, 不可错。模糊证据宁可放 `regularities_freetext`。
 
-3. **样本不足时返回空**: 如果 `based_on_meals < 5`, 直接返回 `{"boost": [], "penalty": [], ...}` (空信号, 不强行抽噪声)。
+3. **样本不足时返回空**: 如果 `based_on_meals < 3`, 直接返回 `{"boost": [], "penalty": [], ...}` (空信号, 不强行抽噪声)。注: 代码侧 `MIN_MEALS_FOR_EXTRACTION` 阈值也是 3 (`based_on_meals < 3` 不会调 LLM)。
 
 4. **每个 token 必须有 ≥ 2 个 evidence meal 支撑** (单次反馈不进 token)。
 
@@ -129,7 +129,7 @@
 
 ✅ **对** (空信号场景, 样本不足):
 ```json
-{"boost": [], "penalty": [], "signals_not_scored": {}, "evidence": [], "regularities_freetext": ["样本不足 (3/5), 暂不抽取"]}
+{"boost": [], "penalty": [], "signals_not_scored": {}, "evidence": [], "regularities_freetext": ["样本不足, 暂不抽取"]}
 ```
 
 ✅ **对** (单一强信号):
