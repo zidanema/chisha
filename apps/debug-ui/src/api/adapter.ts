@@ -5,12 +5,14 @@
 
 import type {
   BackendDebugRecommend,
+  BackendDebugTrace,
   BackendL1Recall,
   BackendL2Combo,
   BackendL2Score,
   BackendL3Llm,
   BackendL3Rerank,
   BackendFinalRow,
+  BackendTraceL3,
 } from "./backend-types";
 import { labelForDim } from "../constants/labels";
 import { zoneLabel } from "../constants/zones";
@@ -328,6 +330,87 @@ export type AdaptOptions = {
   startedAt: string;       // ISO or human time, frontend formats further
   totalLatencyMs: number;  // measured on client around the fetch
 };
+
+// Production trace.l3 is flat; debug_recommend's l3_rerank wraps under .llm.
+// Wrap so we can reuse adaptL3 without duplicating field maps.
+function wrapTraceL3(l3: BackendTraceL3): BackendL3Rerank {
+  if (!l3.used) {
+    return {
+      llm: { used: false, skipped_reason: l3.fallback_reason ?? "skipped" },
+      payload_to_llm: l3.payload_to_llm,
+      n_returned: l3.n_returned,
+    };
+  }
+  const llm: BackendL3Llm = {
+    status: (l3.status as BackendL3Llm["status"]) ?? "ok",
+    config_error: l3.status === "config_error",
+    resolved_provider: l3.resolved_provider,
+    used: true,
+    model: l3.model,
+    system_prompt_chars: l3.system_prompt_chars ?? 0,
+    system_prompt_full: "",
+    user_message_chars: l3.user_message_chars ?? 0,
+    user_message_preview: "",
+    user_message_full: l3.user_message_full ?? "",
+    raw_response: l3.raw_response ?? "",
+    raw_response_chars: l3.raw_response_chars ?? 0,
+    tool_input: l3.tool_input,
+    stop_reason: l3.stop_reason,
+    parsed_candidates: l3.parsed_candidates,
+    fallback_reason: l3.fallback_reason,
+    latency_ms: l3.latency_ms ?? null,
+    usage: l3.usage ?? null,
+    max_tokens: l3.max_tokens ?? 0,
+    temperature: l3.temperature ?? 0,
+  };
+  return { llm, payload_to_llm: l3.payload_to_llm, n_returned: l3.n_returned };
+}
+
+// Backend production trace → frontend Session (Replay / What-if 结果展示).
+export function traceToSession(trace: BackendDebugTrace): Session {
+  const meal: Meal = trace.__frozen?.meal_type === "dinner" ? "dinner" : "lunch";
+  const area = zoneLabel(trace.__frozen?.zone ?? "");
+  return {
+    session_id: trace.session_id,
+    started_at: trace.started_at,
+    total_latency_ms: trace.total_latency_ms,
+    ctx_latency_ms: trace.ctx_latency_ms,
+    final_latency_ms: trace.final_latency_ms,
+    l1: adaptL1(trace.l1, area, meal),
+    l2: adaptL2(trace.l2, trace.l1.summary.n_combos),
+    l3: adaptL3(wrapTraceL3(trace.l3)),
+    final: adaptFinal(trace.final),
+    refine: {
+      parent_session: trace.session_id,
+      refine_session: trace.refine?.applied ? trace.session_id : "—",
+      user_text: trace.refine?.user_input ?? "",
+      parse_feedback: {
+        llm_call: {
+          model: "—",
+          latency_ms: 0,
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+        chips_hit: [],
+        note: trace.refine?.applied
+          ? `refine round ${trace.refine?.round ?? "?"} applied`
+          : "(尚未触发 refine)",
+        rating_taste: null,
+        want_again: false,
+      },
+      chips_to_taste_hints: { boost: {}, penalty: {} },
+      infer_refine_mood: { triggered: false, hits: [], resolved_mood: {} },
+      diff: { new_in_top5: [], dropped_from_top5: [], moved_up: [], moved_down: [] },
+      summary_kpi: {
+        explore_n: 0,
+        total_latency_ms: 0,
+        candidates_returned: trace.refine?.n_returned ?? 0,
+        diff_top5: 0,
+      },
+    },
+  };
+}
 
 export function backendToSession(
   raw: BackendDebugRecommend,
