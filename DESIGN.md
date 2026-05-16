@@ -1011,6 +1011,13 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由
 | **51** | **Refine 历史从底部列表升级为顶部面包屑 + smooth-scroll；输入框置顶、chip-fallback** | **D-053** |
 | **52** | **Skip-meal escape hatch（6 reason chip + 兜底跳过，新增 `POST /api/skip`）** | **D-054** |
 | **53** | **同 session 抑制 unfed banner（避免"还没吃完"被催反馈）** | **D-055** |
+| 56~68 | V1.1 反馈系统（NavBar tab / inbox / snooze / E 头部 gut + 4 维 calibration / append-only timeline 等 13 条）| D-056~D-068 |
+| 69 | FastAPI 后端 13 端点联调 (V1+V1.1) | D-069 IMPL_LOG |
+| 70 | 产品定位收敛到「原则派点餐助手」+ 三层信号模型 (L0 方法论 / L1 长期反馈 / L2 当下 session) | D-070 |
+| 71 | 砍 mood picker + want_soup 关键词识别 | D-071 |
+| 72 | methodology spec 抽象 + L2 trace baseline 守门 | D-072 / D-072.1 |
+| **73** | **L1 长期反馈层重构 — 砍伪 L1 + LLM 抽取**（supersedes D-043 P3 反馈闭环）| **D-073** |
+| **74** | **Sandbox Time-Travel 模式**（虚拟时钟 + 数据落盘根隔离 + L1 异步抽取 + 6 sandbox 端点 + 前端 SandboxBar） | **D-074** |
 
 ---
 

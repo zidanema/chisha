@@ -157,7 +157,6 @@ chisha/
 │   ├── long_term_prefs.py     # D-043 旧伪 L1, DEPRECATED (D-073 PR-0.5)
 │   ├── debug_recommend.py     # 调试台 instrumented 管道 (D-039)
 │   ├── debug_server.py        # FastAPI server entry (D-039)
-│   ├── long_term_prefs.py     # 反馈闭环 P3 (D-043)
 │   └── static/                # 老调试台前端 (debug.html / logic.html)
 ├── apps/web/                  # V1 主交互 React 18 + Vite + TS SPA (D-051~D-068)
 ├── integrations/openclaw/     # 飞书推送通道骨架, V1.5 接入 (D-051 翻案)
