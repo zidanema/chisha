@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 import yaml
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field, model_validator
 
 from chisha import feedback_store
@@ -487,3 +488,83 @@ def api_feedback_session(session_id: str) -> dict:
         "accepted_rank": accepted.get("accepted_rank"),
         "candidates": session_payload.get("candidates") or [],
     }
+
+
+# ---------- /api/long_term_prefs/refresh (D-076 PR-0.9) ----------
+
+_LOCALHOST_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _is_localhost(request: Request) -> bool:
+    """请求来源是否本机 (LAN/外网拒绝, 单用户本机使用场景)."""
+    if request.client is None:
+        return False
+    return request.client.host in _LOCALHOST_HOSTS
+
+
+def _admin_token_ok(request: Request) -> bool:
+    """ENV CHISHA_ADMIN_TOKEN 设了的话, 校验 header X-Admin-Token 匹配."""
+    expected = os.environ.get("CHISHA_ADMIN_TOKEN", "").strip()
+    if not expected:
+        return True   # 未配置 token → 不强制
+    got = request.headers.get("x-admin-token", "").strip()
+    return got == expected
+
+
+class RefreshPrefsReq(BaseModel):
+    """触发 L1 抽取的请求体. 字段全可选, 默认行为 = 全量重抽."""
+    window_days: int | None = Field(default=None, ge=1, le=180)
+    force_run_without_llm: bool = False   # 强制走 bootstrap (deterministic, 无 LLM)
+
+
+@router.post("/long_term_prefs/refresh")
+def api_long_term_prefs_refresh(request: Request, req: RefreshPrefsReq) -> dict:
+    """D-076 PR-0.9: 手动触发 L1 LLM 抽取, 写入 data/long_term_prefs.json.
+
+    鉴权:
+    - localhost only (LAN/外网拒绝)
+    - 可选 X-Admin-Token header (env CHISHA_ADMIN_TOKEN 设了才检)
+
+    Flow:
+    1. force_run_without_llm=True → 走 bootstrap_l1_from_legacy (旧 jsonl + 频次)
+    2. 否则跑 l1_extractor.extract_and_save (V1.1 反馈 + LLM)
+
+    返回: prefs dict (含 boost/penalty/evidence/extracted_at/based_on_meals).
+    """
+    if not _is_localhost(request):
+        raise HTTPException(403, "refresh endpoint is localhost-only")
+    if not _admin_token_ok(request):
+        raise HTTPException(401, "invalid or missing X-Admin-Token")
+
+    if req.force_run_without_llm:
+        from scripts.bootstrap_l1_from_legacy import bootstrap
+        prefs = bootstrap(root=ROOT, force=True)
+        prefs.setdefault("path", "bootstrap_no_llm")
+        return prefs
+
+    # 走完整 LLM 抽取
+    from chisha.l1_extractor import extract_and_save
+
+    try:
+        store = feedback_store.load_store(ROOT)
+    except feedback_store.StoreCorruptError as e:
+        raise HTTPException(500, f"feedback store corrupt: {e}")
+
+    try:
+        profile = yaml.safe_load(PROFILE_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as e:
+        raise HTTPException(500, f"profile.yaml load failed: {type(e).__name__}: {e}")
+
+    window = req.window_days or 14
+    try:
+        prefs = extract_and_save(
+            store, profile,
+            root=ROOT,
+            window_days=window,
+            profile_llm=profile.get("llm"),
+        )
+    except RuntimeError as e:
+        # LLM 全 retry 失败 → 不写盘, 保留旧 prefs
+        raise HTTPException(503, f"L1 extract failed: {e}")
+    prefs.setdefault("path", "llm_extract")
+    return prefs
