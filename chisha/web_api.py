@@ -31,7 +31,13 @@ from chisha.recall import (
 from chisha.refine import refine as refine_session
 
 ROOT = Path(__file__).resolve().parent.parent
-PROFILE_PATH = ROOT / "profile.yaml"
+PROFILE_PATH = ROOT / "profile.yaml"  # prod default (legacy 兼容, refresh test 引用)
+
+
+def _profile_path() -> Path:
+    """D-074 PR-1c: 动态求值. sandbox 启用且有副本 → sandbox/profile.yaml; 否则 prod."""
+    from chisha import data_root
+    return data_root.profile_path(ROOT)
 
 router = APIRouter(prefix="/api", tags=["web"])
 
@@ -85,7 +91,7 @@ class RefineReq(BaseModel):
 @router.post("/refine")
 def api_refine(req: RefineReq) -> dict:
     """POST /api/refine → 同 session 二轮推荐 (round++)."""
-    profile = load_profile(PROFILE_PATH)
+    profile = load_profile(_profile_path())
     # session 决定 meal_type/zone, 客户端传的 meal_type/mood 仅作 fallback
     from chisha.session import load_session
     state = load_session(req.session_id, ROOT)
@@ -221,7 +227,7 @@ def api_skip(req: SkipReq) -> dict:
 
 @router.get("/profile")
 def api_get_profile() -> dict:
-    return yaml.safe_load(PROFILE_PATH.read_text(encoding="utf-8"))
+    return yaml.safe_load(_profile_path().read_text(encoding="utf-8"))
 
 
 def _write_profile_preserving_comments(new_profile: dict) -> None:
@@ -235,8 +241,16 @@ def _write_profile_preserving_comments(new_profile: dict) -> None:
     yaml_rt.preserve_quotes = True
     yaml_rt.indent(mapping=2, sequence=4, offset=2)
 
-    if PROFILE_PATH.exists():
-        with PROFILE_PATH.open("r", encoding="utf-8") as f:
+    # D-074 PR-1c: 走 sandbox 副本 (启用时) 或 prod profile.yaml
+    target = _profile_path()
+    # 如果 sandbox 启用但副本不存在, 先拷一份 (init 时也会拷, 这里兜底)
+    from chisha import sandbox as _sb
+    if _sb.is_enabled(ROOT) and not target.exists() and PROFILE_PATH.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(PROFILE_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+
+    if target.exists():
+        with target.open("r", encoding="utf-8") as f:
             current = yaml_rt.load(f)
         if current is None:
             current = {}
@@ -259,10 +273,10 @@ def _write_profile_preserving_comments(new_profile: dict) -> None:
 
     merged = _deep_merge(current, new_profile)
 
-    tmp = PROFILE_PATH.with_suffix(".yaml.tmp")
+    tmp = target.with_suffix(".yaml.tmp")
     with tmp.open("w", encoding="utf-8") as f:
         yaml_rt.dump(merged, f)
-    tmp.replace(PROFILE_PATH)
+    tmp.replace(target)
 
 
 @router.put("/profile")
@@ -553,7 +567,7 @@ def api_long_term_prefs_refresh(request: Request, req: RefreshPrefsReq) -> dict:
         raise HTTPException(500, f"feedback store corrupt: {e}")
 
     try:
-        profile = yaml.safe_load(PROFILE_PATH.read_text(encoding="utf-8")) or {}
+        profile = yaml.safe_load(_profile_path().read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError) as e:
         raise HTTPException(500, f"profile.yaml load failed: {type(e).__name__}: {e}")
 
@@ -570,3 +584,197 @@ def api_long_term_prefs_refresh(request: Request, req: RefreshPrefsReq) -> dict:
         raise HTTPException(503, f"L1 extract failed: {e}")
     prefs.setdefault("path", "llm_extract")
     return prefs
+
+
+# ---------- /api/sandbox/* (D-074 PR-1c) ----------
+
+import threading as _threading
+from chisha import sandbox as _sandbox
+
+
+class SandboxInitReq(BaseModel):
+    start_date: str | None = None      # ISO date YYYY-MM-DD; None = 真实 today
+    copy_real_data: bool = False        # 是否把 prod meal_log/feedback/prefs 拷一份
+
+
+class SandboxAdvanceReq(BaseModel):
+    days: int = Field(default=1, ge=1, le=30)
+
+
+def _require_localhost(request: Request) -> None:
+    if not _is_localhost(request):
+        raise HTTPException(403, "sandbox endpoints are localhost-only")
+
+
+def _copy_real_data_to_sandbox(root: Path) -> None:
+    """init(copy_real_data=True) 时把 prod 业务数据复制到 sandbox 子树."""
+    import shutil
+    from chisha import data_root
+
+    sandbox_dir = root / "logs" / "sandbox"
+    sandbox_dir.mkdir(parents=True, exist_ok=True)
+
+    # profile.yaml
+    if (root / "profile.yaml").exists():
+        shutil.copy2(root / "profile.yaml", sandbox_dir / "profile.yaml")
+
+    # meal_log / feedback_store / feedback_history / long_term_prefs / recommend_log
+    prod_meal_log = root / "logs" / "meal_log.jsonl"
+    if prod_meal_log.exists():
+        shutil.copy2(prod_meal_log, sandbox_dir / "meal_log.jsonl")
+
+    prod_feedback_store = root / "logs" / "feedback" / "store.json"
+    if prod_feedback_store.exists():
+        (sandbox_dir / "feedback").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(prod_feedback_store, sandbox_dir / "feedback" / "store.json")
+
+    prod_history = root / "data" / "feedback_history.jsonl"
+    if prod_history.exists():
+        shutil.copy2(prod_history, sandbox_dir / "feedback_history.jsonl")
+
+    prod_prefs = root / "data" / "long_term_prefs.json"
+    if prod_prefs.exists():
+        shutil.copy2(prod_prefs, sandbox_dir / "long_term_prefs.json")
+
+    prod_recommend_log = root / "logs" / "recommend_log.jsonl"
+    if prod_recommend_log.exists():
+        shutil.copy2(prod_recommend_log, sandbox_dir / "recommend_log.jsonl")
+
+
+def _trigger_l1_extraction_async(root: Path) -> None:
+    """后台抽取 L1 prefs. 标记 state.last_l1_extraction.
+
+    sandbox advance 后调用. 失败保留旧 prefs, 状态写 failed.
+    """
+    def _worker():
+        _sandbox.record_l1_extraction("pending", root=root)
+        try:
+            store = feedback_store.load_store(root)
+        except Exception as e:
+            _sandbox.record_l1_extraction("failed", error=str(e), root=root)
+            return
+        try:
+            profile_dict = yaml.safe_load(
+                _profile_path().read_text(encoding="utf-8")
+            ) or {}
+        except Exception as e:
+            _sandbox.record_l1_extraction("failed", error=str(e), root=root)
+            return
+        try:
+            from chisha.l1_extractor import extract_and_save
+            prefs = extract_and_save(
+                store, profile_dict,
+                root=root, window_days=14,
+                profile_llm=profile_dict.get("llm"),
+            )
+            _sandbox.record_l1_extraction(
+                "ok",
+                based_on_meals=prefs.get("based_on_meals", 0),
+                root=root,
+            )
+        except Exception as e:
+            _sandbox.record_l1_extraction("failed", error=str(e), root=root)
+
+    t = _threading.Thread(target=_worker, daemon=True)
+    t.start()
+
+
+@router.post("/sandbox/init")
+def api_sandbox_init(request: Request, req: SandboxInitReq) -> dict:
+    """开启 sandbox 模式. 默认 start_date = 真实 today, 空数据."""
+    _require_localhost(request)
+    s = _sandbox.init(
+        start_date=req.start_date,
+        root=ROOT,
+        copy_real_data=req.copy_real_data,
+    )
+    if req.copy_real_data:
+        try:
+            _copy_real_data_to_sandbox(ROOT)
+        except Exception as e:
+            raise HTTPException(500, f"copy_real_data failed: {type(e).__name__}: {e}")
+    return s
+
+
+@router.post("/sandbox/advance")
+def api_sandbox_advance(request: Request, req: SandboxAdvanceReq) -> dict:
+    """虚拟时钟前进 N 天, 异步触发 L1 抽取."""
+    _require_localhost(request)
+    try:
+        s = _sandbox.advance(days=req.days, root=ROOT)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    # 异步起 L1 抽取
+    _trigger_l1_extraction_async(ROOT)
+    return s
+
+
+@router.post("/sandbox/reset")
+def api_sandbox_reset(request: Request) -> dict:
+    """删干净 sandbox 目录, prod 零风险."""
+    _require_localhost(request)
+    return _sandbox.reset(root=ROOT)
+
+
+@router.post("/sandbox/disable")
+def api_sandbox_disable(request: Request) -> dict:
+    """退出 sandbox 但保留数据 (下次 init 可复用)."""
+    _require_localhost(request)
+    return _sandbox.disable(root=ROOT)
+
+
+@router.get("/sandbox/state")
+def api_sandbox_state(request: Request) -> dict:
+    _require_localhost(request)
+    return _sandbox.state(root=ROOT)
+
+
+@router.get("/sandbox/inspect")
+def api_sandbox_inspect(request: Request) -> dict:
+    """沉淀状态 (志丹原则 #4): 当前 L1 prefs + 最近反馈 + 最近 meal_log.
+
+    仅 sandbox 启用时返回数据, 关闭时返回 {enabled: false}.
+    """
+    _require_localhost(request)
+    if not _sandbox.is_enabled(ROOT):
+        return {"enabled": False}
+
+    state = _sandbox.state(root=ROOT)
+
+    # L1 prefs (当前生效)
+    from chisha.l1_prefs import load_prefs
+    prefs = load_prefs(root=ROOT) or {}
+
+    # 最近 10 条 V1.1 反馈
+    feedbacks_recent: list[dict] = []
+    try:
+        store = feedback_store.load_store(ROOT)
+        items = list((store.get("feedbacks") or {}).values())
+        items.sort(key=lambda x: x.get("submitted_at") or "", reverse=True)
+        feedbacks_recent = items[:10]
+    except Exception:
+        pass
+
+    # 最近 10 条 meal_log
+    meal_log_recent: list[dict] = []
+    try:
+        meal_log_recent = (load_meal_log(ROOT) or [])[-10:]
+    except Exception:
+        pass
+
+    # accepted 队列概览
+    accepted_count = 0
+    try:
+        accepted_count = len(store.get("accepted") or {})
+    except Exception:
+        pass
+
+    return {
+        "enabled": True,
+        "state": state,
+        "long_term_prefs": prefs or None,
+        "feedbacks_recent": feedbacks_recent,
+        "feedbacks_total": len(feedbacks_recent),
+        "meal_log_recent": meal_log_recent,
+        "accepted_count": accepted_count,
+    }
