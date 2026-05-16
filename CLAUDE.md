@@ -1,7 +1,7 @@
 # chisha · 项目级指令
 
 > 项目名:今天吃点啥 (chisha) · 个人 AI **原则派点餐执行外包**工具 (L0 方法论 spec / L1 数据 / L2 打分 / L3 LLM 精排)
-> 当前阶段:**Phase 0 工程侧收尾** — 推荐链路 + Web SPA + V1.1 反馈 + FastAPI 13 端点 + 砍 mood picker + methodology spec 抽象全部 ready (D-001~D-072, 2026-05-15)。剩 Step 2 用户自用一周采纳率验证, 不在代码范围。
+> 当前阶段:**Phase 0 工程侧收尾** — 推荐链路 + Web SPA + V1.1 反馈 + FastAPI 18 端点 + 砍 mood picker + methodology spec 抽象 + **D-070 L1 真兑现 (LLM 抽取)** + **D-074 sandbox time-travel 模式** 全部 ready (D-001~D-074, 2026-05-16)。Step 2 用户自用验证现在可走 sandbox 一次会话内压缩验证, 不必等真实日历日。
 > 主语言:Python (后端) + TypeScript (前端) · 包管理:uv / npm · 测试:pytest
 
 ## 必读(首次接触本项目)
@@ -59,12 +59,16 @@ uv run python -m scripts.baseline_l2_snapshot --out-dir tmp/baseline_traces_afte
 uv run python -m scripts.compare_traces                                            # 严格对比 (EPSILON=1e-6)
 ```
 
-## 推荐链路改动红线 (D-070/D-071/D-072 沉淀)
+## 推荐链路改动红线 (D-070~D-074 沉淀)
 
 - **不要让用户主动选 mood**: D-071 砍掉 mood picker. 新心情维度走 refine 文本或 L3 prompt, 绝不在前端加 chip
 - **`infer_refine_mood` 只服务 want_soup**: 不许扩为通用 mood parser (D-071 边界, 单测有守门 8 case)
 - **methodology spec 抽象只搬运不改逻辑**: 改打分逻辑 / 调权重 / 加新维度都不走 spec, 走 score.py + DECISIONS 修订. spec 是 yaml 化的 V2_DEFAULT_WEIGHTS, 不是新接口
 - **改 score.py / methodology / spec 前后必跑 baseline_l2_snapshot + compare_traces**: top60 顺序 + 16 维 breakdown |delta| < 1e-6 才允许 commit (D-072.1)
+- **L1 词表锁定**: `score.taste_match_bonus` 现支持 6 token (low_oil/wetness/sweet_sauce/processed_meat/carb_heavy/spicy), 扩词表 = 改打分逻辑, 违反 D-072 边界, Phase 1 独立决策 (D-073)
+- **L1 抽取走 claude_code_cli text 路径**: 不传 tools (CLI 不支持 tool_use). prompt 在 `prompts/l1_extract.md`, 改 prompt 走 D-036 dual-model audit (D-073)
+- **sandbox 是 user web 一个 mode**: 不允许做 CLI 替代或 fixture batch (D-074 原则 #1). 行为完全一致 prod (#2), 仅时钟 + 数据落盘根隔离 (#3)
+- **改时间相关逻辑前先看 11 处时间注入**: web_api/api/refine/feedback_store/session/long_term_prefs 已替换走 `chisha.clock.*`. 不注入: time.time latency / corrupt backup ts / comment id 毫秒 (D-074 PR-1a)
 - **Phase 1 (同事推广) 才考虑**: data zone 拆包 / OpenClaw 接入 / screener 设计 / 第二份 methodology spec — Phase 0 内不做
 
 ## 提醒(给未来的 Claude Code)

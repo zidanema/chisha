@@ -34,9 +34,9 @@
 
 ## 项目状态
 
-**Phase 0 工程侧已收尾**（2026-05-15）—— 「原则派点餐执行外包」定位收敛（[D-070](docs/DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)）+ 砍 mood picker（[D-071](docs/DECISIONS.md#d-071-砍-mood-picker--want_soup-关键词识别-v1)）+ methodology spec 抽象（[D-072](docs/DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)/[D-072.1](docs/DECISIONS.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)）+ 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + FastAPI 13 端点。
+**Phase 0 工程侧已收尾**（2026-05-16）—— 「原则派点餐执行外包」定位收敛（[D-070](docs/DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)）+ 砍 mood picker（[D-071](docs/DECISIONS.md#d-071-砍-mood-picker--want_soup-关键词识别-v1)）+ methodology spec 抽象（[D-072](docs/DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)/[D-072.1](docs/DECISIONS.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)）+ **L1 长期反馈层真兑现（[D-073](docs/DECISIONS.md#d-073-l1-长期反馈层重构--砍伪-l1--llm-抽取-v1x)）** + **Sandbox Time-Travel 模式（[D-074](docs/DECISIONS.md#d-074-sandbox-time-travel-模式-v1x)）** + 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + FastAPI 18 端点。
 
-剩下 **Step 2 用户自用一周**（采纳率验证, 不在代码范围）→ Phase 1 同事推广。
+Step 2 用户自用验证现在可走 sandbox 一次会话压缩到分钟级（开沙盒 → 点"下一天" → 真实写反馈 → inspect 看 L1 抽取产物），不必等真实日历日 → Phase 1 同事推广。
 
 > **V1 主交互**：本机 localhost Web SPA。`cd apps/web && npm install && npm run dev` → http://localhost:5173。详见 [`apps/web/README.md`](apps/web/README.md) + [`docs/style-guide.md`](docs/style-guide.md) + [`docs/api.md`](docs/api.md)。飞书延后到 V1.5 做推送通道。
 
@@ -70,6 +70,8 @@
 ### ✅ 工程侧（Phase 0 收尾）
 
 - **L0 方法论层**（[D-072](docs/DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)）：`profiles/methodologies/harvard_plate.yaml` + `chisha/methodology.py` 加载/严格 keyset 校验/merge；profile.yaml `methodology: harvard_plate` 引用
+- **L1 长期反馈层**（[D-073](docs/DECISIONS.md#d-073-l1-长期反馈层重构--砍伪-l1--llm-抽取-v1x)）：`chisha/l1_extractor.py`（V1.1 反馈预聚合 → claude_code_cli text + JSON prompt + parse/validate/retry） + `chisha/l1_prefs.py`（6 token enum 校验 + 损坏 fail-open）+ `prompts/l1_extract.md`（system prompt + 3 反例）+ `scripts/bootstrap_l1_from_legacy.py`（兜底冷启动）
+- **Sandbox Time-Travel 模式**（[D-074](docs/DECISIONS.md#d-074-sandbox-time-travel-模式-v1x)）：`chisha/clock.py`+`chisha/sandbox.py`（虚拟时钟 + state）+ `chisha/data_root.py`（7 路径派生隔离）+ `/api/sandbox/*` 6 端点 + 前端 `apps/web/src/components/SandboxBar.tsx` + ProfilePage 入口 + Inspect Drawer
 - **L1 召回**：`chisha/recall.py` 硬过滤双层 + combo 灵活组合（[D-040](docs/DECISIONS.md#d-040)/[D-041](docs/DECISIONS.md#d-041)）
 - **L2 打分**：`chisha/score.py` 16 维 + 4 层 cap（restaurant/brand/cuisine/food_form, [D-042](docs/DECISIONS.md#d-042)/[D-043](docs/DECISIONS.md#d-043)/[D-045](docs/DECISIONS.md#d-045)）+ 不可补偿惩罚
 - **L3 精排**：`chisha/rerank.py` LLM tool_use forced schema（[D-047](docs/DECISIONS.md#d-047)）+ 双路径分流 + 配置错 hard-fail（[D-048](docs/DECISIONS.md#d-048)）+ validate→retry→fallback（[D-050](docs/DECISIONS.md#d-050)）；prompt 注入方法论 rationale（D-072）

@@ -10,9 +10,9 @@
 
 ## 当前状态
 
-**Phase 0 工程侧已收尾**（2026-05-15）—— 「原则派点餐执行外包」定位收敛 + L0 方法论 spec 抽象 + 推荐 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈 + FastAPI 13 端点。剩下 Step 2 自用一周（用户行为侧）→ Phase 1 同事推广。
+**Phase 0 工程侧已收尾**（2026-05-16）—— 「原则派点餐执行外包」定位收敛 + L0 方法论 spec 抽象 + **L1 长期反馈层真兑现（LLM 抽取）** + **Sandbox Time-Travel 模式（一次会话压缩多日验证）** + 推荐 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈 + FastAPI 18 端点。Step 2 用户验证现在可走 sandbox → Phase 1 同事推广。
 
-**当前状态（2026-05-15）**：
+**当前状态（2026-05-16）**：
 
 - 打标：v3 全量重打两 zone 13,240 菜（D-032）；dual-model golden set 171 条（D-036, Opus+Codex 共创, 4 大字段一致率 99.27%）；6 模型横评后生产默认 `deepseek-v4-flash`（D-037, field acc 88.9%, 100万条 $100）。
 - 推荐 V2 链路端到端跑通：Context 注入 / score V2 ~12 维 / LLM 精排 top60→5（D-035/D-046）/ refine + session（D-033 V2.1）/ LLM 抽象 Phase 1 provider auto-detect（D-038, 商家去重兜底）。
@@ -35,7 +35,9 @@
 - **产品定位收敛**（[D-070](DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)，2026-05-15）：D-069 后端联调后，对首屏 mood picker 做产品复盘 → 定位明确为「原则派点餐执行外包」（已认定一套吃法但每天落地费力的用户），明确不服务目标缺失型。三层信号模型沉淀：L0 方法论层 (profile + spec) / L1 长期反馈层 (V1.1 已建) / L2 当下 session 层 (refine 文本)。Phase 路线改三段线性 (Phase 0 自用 → Phase 1 同事推广 → Phase 2 双向扩展)。
 - **砍 mood picker + want_soup 关键词识别**（[D-071](DECISIONS.md#d-071-砍-mood-picker--want_soup-关键词识别-v1)，2026-05-15，`e4db6e9`）：砍前端 4 chip mood picker（StatusBar/HomePage），`infer_refine_mood` 在 refine.py 做 want_soup 关键词识别（10 正向 + 6 否定 + 否定优先）；删 score.py 中 want_clean/want_light/want_indulgent/low_carb 4 条 mood 规则 + `infer_default_mood` 季节兜底；埋点 5 字段 + jsonl 5MB 轮转；Codex Round 1 闭 1 BLOCKER + 4 MAJOR（契约 contract test + 对抗负例 + jsonl schema + 边界守门）；新增 34 单测。
 - **methodology spec 抽象 + score.py 重构**（[D-072](DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)/[D-072.1](DECISIONS.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)，2026-05-15，`88b0ec7`）：L0 方法论从 score.py 硬编码抽到 `profiles/methodologies/harvard_plate.yaml`（7 必备字段 + 16 维 score_weights + 4 层 cap，严格 keyset 校验）；`chisha/methodology.py` 加载/校验/merge 接口，`load_profile` 自动 merge spec defaults（profile 显式 override）；rerank `_profile_block` 注入"方法论:"行让 L3 显式知道 baseline；D-072.1 修订：Phase B 不等 Step 2 数据，用 L2 trace baseline 替代采纳率门（`scripts/baseline_l2_snapshot.py` + `scripts/compare_traces.py` 严格 \|delta\| < 1e-6）；Codex Round 2+3 闭 3 BLOCKER + 6 MAJOR + 5 MINOR + 3 blindspot；新增 23 单测。
-- **下一步（Step 2，用户行为侧）**：自用一周，工作日 7 日采纳率 ≥ 50% 是 Phase 0 验收门。不在 Claude Code 代码范围。飞书接入推到 V1.5（integrations/openclaw/ 骨架保留）。
+- **L1 长期反馈层重构 — 砍伪 L1 + LLM 抽取**（[D-073](DECISIONS.md#d-073-l1-长期反馈层重构--砍伪-l1--llm-抽取-v1x)，2026-05-16，PR-0~0.9 共 5 commit）：志丹挑战揭出 D-070 L1 文档与代码脱节 — `long_term_prefs.py` 是把 refine chip (L2) 强行做跨 session 频次聚合的"伪 L1"，V1.1 反馈数据 (L1 真输入源) 在躺尸。修复：①砍 `refine.py` 写 `feedback_history.jsonl` 错位路径；②新增 `chisha/l1_extractor.py` (V1.1 反馈预聚合 → claude_code_cli text + JSON prompt + parse/validate/retry, 不用 tool_use 因 CLI 不支持) + `chisha/l1_prefs.py` (6 token enum 校验 + 损坏 fail-open)；③`score.rank_combos` 切到 `l1_prefs.load_prefs`，三态守门 (无文件/空/有 prefs)；④`scripts/bootstrap_l1_from_legacy.py` 兜底冷启动；⑤`/api/long_term_prefs/refresh` localhost-only 端点。Codex Round 2 闭 1 事实级阻塞 (CLI 不支持 tool_use) + 10 修正。baseline 0 diff，新增 56 单测。
+- **Sandbox Time-Travel 模式**（[D-074](DECISIONS.md#d-074-sandbox-time-travel-模式-v1x)，2026-05-16，PR-1a~1d 共 4 commit）：让 Step 2 自用验证一次会话内压缩到分钟级，不必等真实日历日。志丹原则：真实交互优先（不做 CLI 替代）/ 行为完全一致（不阉割）/ 仅时钟+数据落盘根隔离 / 沉淀必须可见 / 一键回到干净状态。架构：`chisha/clock.py` + `chisha/sandbox.py` (state + 虚拟时钟 + 11 处时间注入) / `chisha/data_root.py` (7 路径派生) / `/api/sandbox/*` 6 端点 (init/advance/reset/disable/state/inspect, localhost-only, advance 后异步 trigger L1 抽取) / `apps/web/src/components/SandboxBar.tsx` 顶栏 banner + Inspect Drawer + ProfilePage 入口。baseline 0 diff，新增 49 单测 + 10 e2e 验收锚点。
+- **下一步（Step 2，用户行为侧）**：开 sandbox 推进 7 天模拟一周使用（10 验证锚点已 e2e 自动跑过），看 L1 抽取产物 + cooldown 屏蔽行为是否符合预期。真实使用走 sandbox 验证算法机制后，再上真实日历日累积采纳率。飞书接入推到 V1.5（integrations/openclaw/ 骨架保留）。
 
 ---
 
