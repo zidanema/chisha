@@ -1609,6 +1609,55 @@ GET    /api/history?days=999                HTTP 400
 
 ---
 
+## D-078.1 执行记录 · sandbox + methodology spec 路径回归修补
+
+日期: 2026-05-16
+形态: 1 commit (3 行代码 + 2 regression test)
+状态: ✅ 583 测试全过 (581 + 2 新增) / baseline 0 diff
+触发: 用户视角真实 LLM 端到端演练第 2 次 (D-077/D-078 落地后), `/api/recommend` 在 sandbox 启用时 500 (FileNotFoundError: methodology spec not found).
+
+### 根因
+
+`recall.load_profile(path)` 默认 `root = path.parent` (Codex Round 3 M-1, 给测试 tmp_path 留的兼容口). sandbox 启用后 `data_root.profile_path(root)` 返回 `logs/sandbox/profile.yaml`, fallback root 变成 `logs/sandbox/`, 然后 `apply_methodology` 去 `logs/sandbox/profiles/methodologies/harvard_plate.yaml` 找 spec — 该路径不存在 (methodology 是静态配置, 不进 sandbox, 见 `data_root.py:20` docstring).
+
+D-077 / D-078 落地前 `load_profile` 只被传 prod profile 路径 (project_root/profile.yaml), `path.parent` = project root, 恰好 work. D-077 引入 sandbox profile 副本后 fallback 推断失效, 但所有单测都显式传 root 没暴露.
+
+### 修法 (api.py:114/116, web_api.py:94)
+
+3 个 caller 显式传 project root:
+
+```python
+# api.py:114
+profile = load_profile(data_root.profile_path(root), root=root)
+# api.py:116
+profile = load_profile(Path(...) if ... else root / profile_path, root=root)
+# web_api.py:94
+profile = load_profile(_profile_path(), root=ROOT)
+```
+
+不动 `recall.load_profile` 的 fallback 语义 (Codex 当时留的 tmp_path 兼容口仍生效).
+
+### Regression test (tests/test_web_api_sandbox.py)
+
+- `test_load_profile_finds_methodology_when_sandbox_enabled`: 启 sandbox + 拷副本 + 显式传 root → 成功 merge plate_rule; 不传 root → raise FileNotFoundError. 双向守门.
+- `test_web_api_recommend_under_sandbox_does_not_500_on_methodology`: 端到端 `/api/recommend` 在 sandbox 下不应 500 (会真调一次 LLM ~16s).
+
+### 验收
+
+| 验证项 | 状态 |
+|---|---|
+| sandbox 启用 + `/api/recommend` 200 | ✓ (Day 1 lunch 15.7s) |
+| `path.parent` fallback 仍 work (无 sandbox) | ✓ (581 旧测试不变) |
+| D-077/D-078 14 e2e anchor 全过 | ✓ |
+| baseline_l2_snapshot 0 diff | ✓ |
+
+### Phase 1 follow-up (不在本次范围)
+
+- sandbox inspect 在 `load_prefs` 返 None 时仍显示磁盘 `regularities_freetext` / `signals_not_scored` (现在被 hide, debug 反而看不到 LLM 抽取的非词表沉淀)
+- L1 词表只有 penalty 方向 spicy, 不支持 positive flavor preference (志丹是吃辣用户但词表只能记录"不耐辣"). Phase 1 扩词表候选, 不在 D-076 边界.
+
+---
+
 ## D-075 执行记录 · `apps/debug-ui/` Phase 1-7 build-out + 双轮 Codex review
 
 日期: 2026-05-16

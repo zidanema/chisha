@@ -91,7 +91,7 @@ class RefineReq(BaseModel):
 @router.post("/refine")
 def api_refine(req: RefineReq) -> dict:
     """POST /api/refine → 同 session 二轮推荐 (round++)."""
-    profile = load_profile(_profile_path())
+    profile = load_profile(_profile_path(), root=ROOT)
     # session 决定 meal_type/zone, 客户端传的 meal_type/mood 仅作 fallback
     from chisha.session import load_session
     state = load_session(req.session_id, ROOT)
