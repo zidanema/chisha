@@ -210,3 +210,13 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 后端是单一可信源，前端 localStorage 退为 7 天离线 fallback 永不参与列表合并；不动 L1/L2/L3/Final/Refine/Trace 6 个 panel 组件（what-if 是 overlay）
 - 改 trace schema 必 bump `TRACE_SCHEMA_VERSION`；改 score / methodology / spec 仍必跑 baseline_l2 守门（D-072.1 红线）
 - Codex 两轮 review 12 finding 全闭环（2 BLOCKER：`__frozen.l1_prefs_snapshot` + `l2_meal_log_view` 漏了 runtime read 漂移；7 FIX-NOW：failure matrix 固化 / `__source` 枚举 / 300→50MB trace size / Live `save-as-replay` 禁；1 push back: localhost 鉴权用 bind 替代端点 token；2 defer: schema upgrade policy + 文件分桶）
+
+
+## D-080
+**B-002 修复:refine ingredient_want 信号穿透 L1 + L2.** (2026-05-17) · 兑现 B-002 P0
+- 痛点:refine "湘菜+牛肉" top5 仅 1 道牛肉菜 (实测), 高销量非牛肉湘菜挤掉低销量目标牛肉菜
+- 根因三层:`contains_ingredient` path 2b 让"牛肉"→红肉污染猪/羊菜; `_INGREDIENT_BROAD` 含 7 个单字蛋白键 (牛/猪/羊/鸡/鸡肉/鱼/虾) 在 broad fallback 里泛化; `_intent_dish_score` ingredient name 权重只有 cuisine 的一半, 排不进 `proteins[:6]`
+- 决策:(1) 砍 `contains_ingredient` path 2b — 具体蛋白必须 name 子串命中, 不靠 `main_ingredient_type` 反推; (2) `_INGREDIENT_BROAD` 只留真正的类别词 (肉/海鲜/蛋/豆/豆制品/素/蔬菜); (3) `_intent_dish_score` ingredient name +1.0→+2.0, broad +0.5→+1.0
+- 没选的方向:改 prompt 让 LLM 抽更细的 ingredient (留 F-001), 或在 score.intent_match_bonus 加权 (P1, 与本次正交)
+- 守门:baseline_l2_snapshot 严格 0 diff (改动全在 intent 非空分支); 浏览器 /api/refine 实测 top5 5/5 含牛肉菜
+- Codex R1 catch: 漏了 `_INGREDIENT_BROAD` 仍含具体蛋白单字键, 已补

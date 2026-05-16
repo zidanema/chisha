@@ -463,11 +463,62 @@ def test_contains_ingredient_beef_matches_by_name():
     assert contains_ingredient(combo, "牛肉") is True
 
 
-def test_contains_ingredient_beef_fallback_to_redmeat():
-    """菜名不含'牛肉'但 main_ingredient=红肉, '牛' 走 PROTEIN_KEYWORDS fallback."""
+def test_contains_ingredient_beef_no_longer_falls_back_to_redmeat():
+    """B-002 修订 (D-080): 具体蛋白词 (牛肉) 不再走 main_ingredient_type 兜底.
+
+    旧语义: 菜名不含"牛肉"但 main_type=红肉 → 命中 (但会把猪/羊菜也算成牛肉).
+    新语义: 必须 name 子串命中. 夫妻肺片的牛肉应通过数据字段 (canonical_name 补全)
+    解决, 不靠 main_type 反推.
+    """
     combo = _combo([_dish(main_type="红肉", name="夫妻肺片")])
-    # "牛" 在 "牛肉" 中, _PROTEIN_KEYWORDS_TO_MTYPE["牛"]=红肉, 命中
-    assert contains_ingredient(combo, "牛肉") is True
+    assert contains_ingredient(combo, "牛肉") is False
+
+
+def test_contains_ingredient_beef_does_not_pollute_pork():
+    """B-002 修订 (D-080): 用户说"牛肉" 不应命中猪肉菜 (即便 main_type 同为红肉)."""
+    combo = _combo([_dish(main_type="红肉", name="蒜泥白肉")])  # 猪肉菜
+    assert contains_ingredient(combo, "牛肉") is False
+
+
+def test_contains_ingredient_bare_chinese_no_longer_broad():
+    """B-002 修订 (D-080, Codex R1 catch): 单字蛋白 "牛" 不再走 broad fallback.
+
+    旧 _INGREDIENT_BROAD 含 "牛"→{红肉}, 让用户输入单字"牛"把所有红肉菜命中.
+    新 broad 已剥离具体蛋白词, "牛" 必须 name 子串命中.
+    """
+    # 名字不含"牛"的红肉菜不应命中
+    combo_pork = _combo([_dish(main_type="红肉", name="梅菜扣肉")])
+    assert contains_ingredient(combo_pork, "牛") is False
+    # 名字含"牛"的菜走 name 子串, 仍命中
+    combo_beef = _combo([_dish(main_type="红肉", name="干煸牛肉丝")])
+    assert contains_ingredient(combo_beef, "牛") is True
+
+
+def test_intent_dish_score_ingredient_outweighs_sales():
+    """B-002 修订 (D-080): ingredient name 命中权重抬到 2.0 (与 cuisine 同级),
+    低销量目标食材菜在排序里能赢高销量非目标食材菜.
+
+    场景: 用户 refine "湘菜 + 牛肉". 池子里:
+      - 毛氏红烧肉 (湘菜, 销量 3000, 菜名不含"牛肉")
+      - 湖南小炒牛肉 (湘菜, 销量 200, 菜名含"牛肉")
+    旧 (ingredient +1.0): 后者 cuisine 2.0 + ingredient 1.0 = 3.0; 前者只 cuisine 2.0 = 2.0
+      → key 用销量+intent 后高销量仍占优 (sales 3.0 + intent 2.0 = 5.0 vs sales 0.2 + intent 3.0 = 3.2)
+    新 (ingredient +2.0): 后者 cuisine 2.0 + ingredient 2.0 = 4.0
+      → intent_dish_score 本身仍是 4.0 vs 2.0; 在 _key 里 intent×1.5=6.0 vs 3.0,
+        sales 3.0 vs 0.2, 总分 9.0 vs 3.2 — 牛肉菜显著靠前.
+
+    本测试聚焦 intent_dish_score 本身 (不掺销量), 验证权重抬高.
+    """
+    from chisha.recall import _intent_dish_score
+    intent = RefineIntent(cuisine_want=["湘菜"], ingredient_want=["牛肉"])
+    beef = _dish(cuisine="湘菜", name="湖南小炒牛肉")
+    nonbeef = _dish(cuisine="湘菜", name="毛氏红烧肉", main_type="红肉")
+    s_beef = _intent_dish_score(beef, intent)
+    s_nonbeef = _intent_dish_score(nonbeef, intent)
+    # cuisine +2.0 都有; 牛肉菜额外 +2.0 ingredient
+    assert s_beef == pytest.approx(4.0)
+    assert s_nonbeef == pytest.approx(2.0)
+    assert s_beef > s_nonbeef
 
 
 # ─────────────── Codex P1-2: cuisine_soft_match 单字白名单 ───────────────

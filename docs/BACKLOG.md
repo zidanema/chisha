@@ -19,6 +19,17 @@
 
 > 已知但当前不修的 bug。明确触发条件 + 优先级 + 绕过方法。
 
+### B-002 · refine ingredient_want 信号被三层稀释 + contains_ingredient 泛化
+
+- **状态**: **fixed, 2026-05-17** (D-080)
+- **现象**: refine "湘菜+牛肉" top5 仅 1 道牛肉菜 (目标 ≥3); 高销量非牛肉湘菜把低销量牛肉菜挤出
+- **根因**: (1) `score.contains_ingredient` path 2b 把"牛肉"→红肉, 让猪/羊菜也命中; (2) `_INGREDIENT_BROAD` 含"牛/猪/羊/鸡/鸡肉/鱼/虾" 单字键, 让 broad fallback 泛化; (3) `_intent_dish_score` ingredient name 权重 1.0 比 cuisine 2.0 弱一半, 低销量目标食材菜进不了 `proteins[:6]`
+- **修复**: 砍 path 2b + 剥 broad 具体蛋白键 + ingredient name 权重抬到 2.0 (cuisine 同级)
+- **实测**: dry_run + 浏览器 /api/refine top5 = 5/5 含牛肉菜
+- **守门**: baseline_l2_snapshot 严格 0 diff (intent=None 路径无影响)
+
+---
+
 ### B-001 · 近期反馈对推荐影响过弱 (短链路缺口)
 
 - **来源**: 2026-05-17 沙盒实测 (sandbox 8 天 / 11 顿 / 10 反馈, L1 抽取产物全空, 推荐不受任何反馈影响) + 志丹拍板"这是根本问题"

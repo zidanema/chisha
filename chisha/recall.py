@@ -366,10 +366,13 @@ def _intent_dish_score(d: dict, intent) -> float:
     Codex review §2: intent 必须进入 combo generation **前**, 不能等召回后过滤.
     "湖南老灶台"的招牌湘菜若没进每店前 6 protein, 后面再过滤也救不回.
 
-    返回 0.0~3.0 加权, 与 monthly_sales 在 sort key 中相加 (sales 通常 0-3000,
-    intent 加 0.0/1.0/2.0/3.0 对热度排序的影响约相当于"销量翻 1-3 倍").
+    返回 0.0~5.0+ 加权 (B-002 修订后, cuisine 2.0 + ingredient 2.0 + flavor 0.5×3
+    可达 5.5), 与 monthly_sales 在 sort key 中相加 (sales 通常 0-3000 → 归一到 0-3.0,
+    intent 加分约相当于"销量翻 1-5 倍"). cuisine_avoid 命中 -5.0 推入末尾.
 
     Codex 二审: 加 monthly_sales 归一化, 让 intent 加分有意义但不至于完全压过销量.
+    B-002 (D-080): ingredient name 命中权重从 1.0 抬到 2.0 与 cuisine 同级,
+      让低销量目标食材菜能进 proteins[:6] (refine 湘菜+牛肉场景必需).
     """
     if intent is None:
         return 0.0
@@ -392,16 +395,20 @@ def _intent_dish_score(d: dict, intent) -> float:
             score += 1.0
 
     # ingredient 命中: 复用 contains_ingredient 的逻辑 (但只看单 dish)
+    # B-002 修订 (2026-05-17, D-080): name 命中 +1.0→+2.0 (与 cuisine 精确同级),
+    # broad 兜底 +0.5→+1.0 (与 cuisine 软命中同级). 让低销量目标食材菜能进
+    # proteins[:6] (湘菜店所有菜都吃 cuisine +2.0, 牛肉菜额外吃 ingredient +2.0
+    # 才能从池子里浮出来; 旧的 +1.0 不够拉开差距).
     ingredient_want = getattr(intent, "ingredient_want", None) or []
     for ing in ingredient_want:
         if ing in full_name:
-            score += 1.0
+            score += 2.0
             break
         # 广义词命中 main_ingredient_type
         from chisha.score import _INGREDIENT_BROAD
         broad = _INGREDIENT_BROAD.get(ing)
         if broad and np_.get("main_ingredient_type") in broad:
-            score += 0.5
+            score += 1.0
             break
 
     # flavor 命中: spicy/soup/light
