@@ -161,10 +161,30 @@ export type FinalRow = {
   reason: string;
 };
 
+// D-079 PR-3.1 (Codex FIX-NOW #2): backend trace.refine 携带 D-073 RefineIntent
+// 结构化字段, traceToSession 必须 1:1 映射, 不能丢. PanelRefine 会读这些字段
+// 展示 intent 命中详情.
+export type RefineIntentLite = {
+  cuisine_want?: string | string[] | null;
+  cuisine_avoid?: string | string[] | null;
+  flavor_want?: string | string[] | null;
+  flavor_avoid?: string | string[] | null;
+  ingredient_want?: string | string[] | null;
+  ingredient_avoid?: string | string[] | null;
+  // 其它字段 RefineIntent 后续扩展时也透传 (open schema)
+  [k: string]: unknown;
+};
+
 export type RefineTrace = {
   parent_session: string;
   refine_session: string;
   user_text: string;
+  // D-079 PR-3.1 新增: 后端 trace.refine 透传字段 (backend RefineIntent + stats)
+  intent?: RefineIntentLite | null;
+  n_combos_recalled?: number | null;
+  n_after_l2?: number | null;
+  candidate_ids?: string[];
+  ts?: string;
   parse_feedback: {
     llm_call: {
       model: string;

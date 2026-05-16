@@ -238,6 +238,8 @@ export function App() {
 
   // D-079: Live 模式 — /api/debug_recommend 跑一次, 永不落 localStorage 也永不落
   // 后端 trace_store (debug_recommend 自身不调 write_trace).
+  // Codex NIT 修补: runMain 返回 fresh session, 直接从返值派生 llmCalled,
+  // 避免 await 后读 liveSession state (React state 异步, closure 是 stale).
   const handleRunLive = useCallback(async () => {
     if (!profileParse.ok) {
       pushToast({ kind: "warn", title: "profile JSON 不合法", detail: profileParse.error ?? "" });
@@ -250,7 +252,7 @@ export function App() {
     setMode("live");
     setWhatIfOpen(false);
     setLiveLlmCalled(null);
-    await runMain({
+    const fresh = await runMain({
       meal,
       today,
       llmAuto,
@@ -258,9 +260,10 @@ export function App() {
       profileOverrideRaw: profileOverride,
       live: true,
     });
-    // Live LLM 命中靠 session.l3.status 派生 (debug_recommend 已返).
-    setLiveLlmCalled(liveSession?.l3?.status === "ok");
-  }, [profileParse, meal, today, llmAuto, profileOverride, runMain, liveSession]);
+    if (fresh) {
+      setLiveLlmCalled(fresh.l3?.status === "ok");
+    }
+  }, [profileParse, meal, today, llmAuto, profileOverride, runMain]);
 
   function handleReplayConfig(id: string) {
     const cfg = loadConfig(id);

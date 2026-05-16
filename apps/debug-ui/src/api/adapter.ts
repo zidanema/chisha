@@ -384,6 +384,12 @@ export function traceToSession(trace: BackendDebugTrace): Session {
       parent_session: trace.session_id,
       refine_session: trace.refine?.applied ? trace.session_id : "—",
       user_text: trace.refine?.user_input ?? "",
+      // D-079 PR-3.1 (Codex FIX-NOW #2): 透传后端 trace.refine 全字段, 不丢.
+      intent: (trace.refine?.intent as Record<string, unknown> | null | undefined) ?? null,
+      n_combos_recalled: trace.refine?.n_combos_recalled ?? null,
+      n_after_l2: trace.refine?.n_after_l2 ?? null,
+      candidate_ids: trace.refine?.candidate_ids ?? [],
+      ts: trace.refine?.ts,
       parse_feedback: {
         llm_call: {
           model: "—",
