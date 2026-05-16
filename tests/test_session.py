@@ -77,10 +77,12 @@ def test_cleanup_expired(tmp_path):
     n = cleanup_expired(tmp_path, ttl_hours=24,
                          now=dt.datetime(2026, 5, 13, 13))
     assert n == 1
-    # fresh 还在
-    assert load_session("fresh", tmp_path) is not None
+    # fresh 还在 (显式 now 守门, 与硬编码日期一致, D-074 PR-1a 修)
+    assert load_session("fresh", tmp_path,
+                         now=dt.datetime(2026, 5, 13, 13)) is not None
     # old 没了
-    assert load_session("old", tmp_path) is None
+    assert load_session("old", tmp_path,
+                         now=dt.datetime(2026, 5, 13, 13)) is None
 
 
 def test_session_increment_round(tmp_path):

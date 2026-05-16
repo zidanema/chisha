@@ -113,7 +113,8 @@ def api_refine(req: RefineReq) -> dict:
 
     # 拼成与 recommend 一致的 RecommendResponse 形状 (前端 useChishaState 直接消费)
     from chisha.context import build_context
-    today = dt.date.today()
+    from chisha import clock
+    today = clock.today()
     ctx = build_context(
         profile=profile,
         meal_log=meal_log,
@@ -293,7 +294,8 @@ def api_history(days: int = 7) -> dict:
     if not log_path.exists():
         return {"items": []}
 
-    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
+    from chisha import clock
+    cutoff = clock.now_utc() - dt.timedelta(days=days)
     accepted_map: dict[str, dict] = {}
     try:
         accepted_map = feedback_store.load_store(ROOT).get("accepted", {}) or {}

@@ -114,9 +114,10 @@ def _build_mood_trace(
         source = "inferred"
     else:
         source = "none"
+    from chisha import clock
     return {
         "schema_version": MOOD_TRACE_SCHEMA_VERSION,
-        "timestamp": (now or dt.datetime.now(dt.timezone.utc)).isoformat(),
+        "timestamp": (now or clock.now_utc()).isoformat(),
         "session_id": session_id,
         "refine_text": user_input,
         "matched_keyword": matched_positive,
@@ -233,7 +234,8 @@ def refine(
             f"Session {session_id!r} 不存在或已过期, 请先调 recommend_meal"
         )
 
-    today = today or dt.date.today()
+    from chisha import clock
+    today = today or clock.today()
 
     # 1. parse_feedback: user_input → chips + note
     fb: FeedbackParsed = parse_feedback(
@@ -301,7 +303,7 @@ def refine(
         "meal_type": state.meal_type,
         "zone": state.zone,
         "round": state.round,
-        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "generated_at": clock.now_utc().isoformat(),
         "refine_input": user_input,
         "parsed_feedback": fb.to_log_dict(),
         "taste_hints": hints,
