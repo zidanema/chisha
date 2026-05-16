@@ -402,7 +402,7 @@ def _format_ranked_for_trace(
 
 def _llm_rerank_traced(
     top_combos: list[dict], profile: dict, context, n: int, n_explore: int,
-    model: str | None, n_max: int,
+    model: str | None, n_max: int, root: "Path | None" = None,
 ) -> dict:
     """调 LLM, 返回 trace dict (含 system/user prompt / tool_input / fallback).
 
@@ -418,6 +418,7 @@ def _llm_rerank_traced(
         top_combos, profile, context,
         n=n, n_explore=n_explore, n_max=n_max, model=model,
         profile_llm=profile.get("llm"),  # D-047: provider 路由
+        root=root,  # D-078.2: L1 prefs 注入到 _profile_block
     )
     llm_resp = res.get("llm_response") or {}
     # 兼容旧字段命名: raw_response / parsed_candidates / used / fallback_reason
@@ -621,7 +622,7 @@ def debug_recommend(
         l3_llm = _llm_rerank_traced(
             topk, profile, ctx,
             n=n_return, n_explore=n_explore,
-            model=None, n_max=n_return,
+            model=None, n_max=n_return, root=root,
         )
         if l3_llm.get("parsed_candidates"):
             mapped: list[dict] = []

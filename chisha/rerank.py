@@ -378,9 +378,14 @@ def _fmt_counts_or_none(d) -> str:
     return " ".join(f"{k}×{v}" for k, v in list(d.items())[:8])
 
 
-def _profile_block(profile: dict) -> str:
+def _profile_block(profile: dict, root: "Path | None" = None) -> str:
     """构造 [PROFILE] 段. D-072: 注入 methodology display_name + rationale 摘要,
     替代之前 L3 prompt 隐式靠 taste_description 传方法论, 防 L2/L3 描述漂移.
+
+    D-078.2: 注入 L1 LLM 抽取的行为信号 (boost/penalty + evidence 简述), 让 L3
+    LLM 显式看到 long_term_prefs.json — 否则 L1 只到 L2 打分顺序, L3 LLM 无从
+    知道 top60 里哪些 combo 是因 L1 boost 被排前. 演练实测: 4/4 oil=too_high
+    抽出 boost=['low_oil'] 后 L3 仍可能挑高油 combo, 因为 prompt 没透出信号.
 
     spec 缺失 (老 profile 没 load_profile 一致路径) 时回退老格式 (向后兼容).
     """
@@ -400,6 +405,26 @@ def _profile_block(profile: dict) -> str:
         f"avoid: {_fmt_list_or_none(prefs.get('avoid_dishes'))}",
         f"辣度耐受: {prefs.get('spicy_tolerance', 2)}",
     ])
+    # D-078.2: L1 行为信号
+    try:
+        from chisha.l1_prefs import load_prefs
+        l1 = load_prefs(root=root)
+        if l1 and (l1.get("boost") or l1.get("penalty")):
+            n_meals = l1.get("based_on_meals", 0)
+            evid = l1.get("evidence") or []
+            # 取第一条 evidence rationale 作为依据简述 (节省 token)
+            rationale = evid[0].get("rationale") if evid else ""
+            sig_parts = []
+            if l1.get("boost"):
+                sig_parts.append(f"boost={l1['boost']}")
+            if l1.get("penalty"):
+                sig_parts.append(f"penalty={l1['penalty']}")
+            sig_line = f"行为信号 (近 {n_meals} 餐): " + " ".join(sig_parts)
+            if rationale:
+                sig_line += f" — {rationale[:80]}"
+            lines.append(sig_line)
+    except Exception:
+        pass
     return "\n".join(lines)
 
 
@@ -450,11 +475,15 @@ def build_user_message(
     context: "ContextSnapshot | None",
     n: int,
     n_explore: int,
+    root: "Path | None" = None,
 ) -> str:
-    """拼 user message: CONFIG + PROFILE + CONTEXT + CANDIDATES, 紧凑符号化."""
+    """拼 user message: CONFIG + PROFILE + CONTEXT + CANDIDATES, 紧凑符号化.
+
+    D-078.2: root 透传给 _profile_block 注入 L1 prefs.
+    """
     blocks = [
         f"[CONFIG] n={n} n_explore={n_explore}",
-        _profile_block(profile),
+        _profile_block(profile, root=root),
         _context_block(context),
         "[CANDIDATES]",
     ]
@@ -890,6 +919,7 @@ def _run_llm_rerank(
     n_max: int = 5,
     model: str | None = None,
     profile_llm: dict | None = None,
+    root: "Path | None" = None,
 ) -> dict:
     """共享 LLM rerank 调用 helper (D-047 抽出, 同时给 prod _llm_rerank +
     debug _llm_rerank_traced 用, 解决双份代码漂移问题).
@@ -978,7 +1008,7 @@ def _run_llm_rerank(
         else:
             system_prompt = system_prompt_raw
         user_msg = build_user_message(top_combos, profile, context,
-                                       n=n, n_explore=n_explore)
+                                       n=n, n_explore=n_explore, root=root)
         out["system_prompt_chars"] = len(system_prompt)
         out["user_message_chars"] = len(user_msg)
         out["user_message_full"] = user_msg
@@ -1138,16 +1168,19 @@ def _run_llm_rerank(
 def _llm_rerank(top_combos: list[dict], profile: dict,
                 context: "ContextSnapshot | None", n: int, n_explore: int,
                 model: str | None = None,
-                n_max: int = 5) -> list[dict] | None:
+                n_max: int = 5,
+                root: "Path | None" = None) -> list[dict] | None:
     """调 LLM 返回 list of candidate dict, 失败返回 None (上游 fallback).
 
     D-047: 走 _run_llm_rerank 共享 helper + tool_use 强制 schema.
     profile.llm 透传到 call_text 控制 provider 路由.
+    D-078.2: root 透传给 build_user_message 注入 L1 prefs.
     """
     res = _run_llm_rerank(
         top_combos, profile, context,
         n=n, n_explore=n_explore, n_max=n_max, model=model,
         profile_llm=profile.get("llm"),
+        root=root,
     )
     if res["status"] == "config_error":
         # D-048 BLOCKER: provider 配置错误显式 ERROR 级日志, 不当普通 fallback.
@@ -1171,6 +1204,7 @@ def rerank(
     refine: bool = False,
     use_llm: bool | None = None,
     model: str | None = None,
+    root: "Path | None" = None,
 ) -> list[dict]:
     """主入口. LLM 精排 + fallback.
 
@@ -1181,6 +1215,8 @@ def rerank(
         n_explore: explore 候选数, 默认 2 (D-015).
         refine: True 时 n_explore=0 (D-015).
         use_llm: 强制开关. None=auto (看任何 provider 是否可用, D-047).
+        root: 项目根 (D-078.2). 透传到 _profile_block 让 L3 LLM 显式看到
+            L1 LLM 抽取的 long_term_prefs.json (boost/penalty + evidence).
     """
     if not top_combos:
         return []
@@ -1194,7 +1230,7 @@ def rerank(
         llm_out = _llm_rerank(top_combos=top_combos,
                                profile=profile, context=context,
                                n=n, n_explore=n_explore,
-                               model=model, n_max=n)
+                               model=model, n_max=n, root=root)
         if llm_out is not None:
             mapped: list[dict] = []
             for cand in llm_out[:n]:

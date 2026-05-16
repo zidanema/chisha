@@ -358,33 +358,91 @@ def test_rerank_profile_block_with_methodology():
     assert spec["display_name"] in block
 
 
-def test_rerank_profile_block_without_methodology_fallback():
-    """profile 缺 _methodology_spec → [PROFILE] 块不含 "方法论:" 行 (向后兼容)."""
+def test_rerank_profile_block_without_methodology_fallback(tmp_path):
+    """profile 缺 _methodology_spec → [PROFILE] 块不含 "方法论:" 行 (向后兼容).
+
+    D-078.2: 传 tmp_path 作 root 防 long_term_prefs.json 泄露污染 (load_prefs
+    在没文件时返 None, "行为信号" 行不会出现 → 6 行).
+    """
     from chisha.rerank import _profile_block
     profile_without = {
         "taste_description": "test",
         "preferences": {"liked_cuisines": ["湘菜"], "spicy_tolerance": 2},
     }
-    block = _profile_block(profile_without)
+    block = _profile_block(profile_without, root=tmp_path)
     assert "[PROFILE]" in block
     assert "方法论:" not in block
+    assert "行为信号" not in block
     # 老格式: 口味描述 / 喜欢 / 不喜欢 / avoid / 辣度耐受 5 行 + [PROFILE] 头 = 6 行
     lines = block.split("\n")
     assert len(lines) == 6
 
 
-def test_rerank_profile_block_diff_is_single_line():
-    """A/B 对比: with vs without 唯一差异是 1 行新增 (M-2 + B-spot)."""
+def test_rerank_profile_block_diff_is_single_line(tmp_path):
+    """A/B 对比: with vs without 唯一差异是 1 行新增 (M-2 + B-spot).
+
+    D-078.2: 传 tmp_path 作 root 防 long_term_prefs.json 泄露污染.
+    """
     from chisha.rerank import _profile_block
     spec = load_methodology("harvard_plate", REPO_ROOT)
     base = {
         "taste_description": "test",
         "preferences": {"liked_cuisines": ["湘菜"], "spicy_tolerance": 2},
     }
-    block_without = _profile_block(base)
-    block_with = _profile_block({**base, "_methodology_spec": spec})
+    block_without = _profile_block(base, root=tmp_path)
+    block_with = _profile_block({**base, "_methodology_spec": spec}, root=tmp_path)
     lines_without = block_without.split("\n")
     lines_with = block_with.split("\n")
     assert len(lines_with) == len(lines_without) + 1, (
         "methodology 注入应该只多 1 行, 不该改其他格式 (D-072 边界 + L3 A/B sanity)"
     )
+
+
+# ─────────────────────── D-078.2: L1 prefs 注入 L3 prompt
+def test_profile_block_injects_l1_prefs_when_available(tmp_path):
+    """D-078.2 守门: long_term_prefs.json 存在且有 boost/penalty 时, _profile_block
+    必须在 [PROFILE] 块加 "行为信号" 行让 L3 LLM 看见. 演练实测: 4/4 oil=too_high
+    抽出 boost=['low_oil'] 后 L3 仍可能挑高油 combo (因为 prompt 没透出信号), 此
+    fix 后 L3 reason 显式提"控油"且总油下降 ~7.4%.
+    """
+    import json
+    from chisha.rerank import _profile_block
+
+    # 在 tmp_path 写 long_term_prefs.json (默认 prod 路径 data/long_term_prefs.json)
+    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "data" / "long_term_prefs.json").write_text(json.dumps({
+        "boost": ["low_oil"],
+        "penalty": [],
+        "evidence": [{
+            "token": "low_oil",
+            "from_meals": ["s1", "s2", "s3", "s4"],
+            "rationale": "4/4 次反馈 oil_calibration=too_high",
+        }],
+        "version": 1,
+        "based_on_meals": 4,
+    }), encoding="utf-8")
+
+    profile = {
+        "taste_description": "test",
+        "preferences": {"liked_cuisines": ["湘菜"], "spicy_tolerance": 2},
+    }
+    block = _profile_block(profile, root=tmp_path)
+
+    assert "行为信号" in block, "L1 prefs 必须注入 [PROFILE] 让 L3 LLM 显式看到"
+    assert "boost=['low_oil']" in block
+    assert "近 4 餐" in block
+    # rationale 简述也应该带出 (前 80 chars)
+    assert "oil_calibration=too_high" in block
+
+
+def test_profile_block_no_l1_line_when_prefs_missing(tmp_path):
+    """守门: 无 long_term_prefs.json 或 boost+penalty 都空时, 不加 "行为信号" 行
+    (避免 L3 prompt 多无意义噪声)."""
+    from chisha.rerank import _profile_block
+    profile = {
+        "taste_description": "test",
+        "preferences": {"liked_cuisines": ["湘菜"], "spicy_tolerance": 2},
+    }
+    # tmp_path 无 prefs 文件
+    block = _profile_block(profile, root=tmp_path)
+    assert "行为信号" not in block

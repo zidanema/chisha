@@ -139,7 +139,8 @@ def recommend_meal(
     from chisha.rerank import L3_INPUT_TOP_K
     top_k = ranked[:L3_INPUT_TOP_K]
     reranked = v2_rerank(top_k, profile, context=ctx, meal_log=meal_log,
-                          n=5, n_explore=2, refine=False, use_llm=use_llm_rerank)
+                          n=5, n_explore=2, refine=False, use_llm=use_llm_rerank,
+                          root=root)
     # 5. 创建 session (供 refine 二轮用)
     state = create_session(session_id, meal_type, zone, daily_mood=daily_mood)
     state.last_candidates = [_minimize_candidate(c) for c in reranked]

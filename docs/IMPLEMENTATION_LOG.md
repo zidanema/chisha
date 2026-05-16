@@ -1609,6 +1609,75 @@ GET    /api/history?days=999                HTTP 400
 
 ---
 
+## D-078.2 执行记录 · L1 → L3 prompt 漏桥修补 (L1 LLM 抽取产物注入 L3 系统提示)
+
+日期: 2026-05-16
+形态: 1 commit (rerank/_profile_block + 4 处 root threading + 2 regression test)
+状态: ✅ 583 测试全过 (581+2 D-078.1+2 D-078.2) / baseline_l2 0 diff / 真实 LLM 演练实测有效
+
+### 触发
+
+D-078.1 修复后 4 天 sandbox 演练 (4/4 oil_calibration=too_high) 验证 D-076 L1 LLM 抽取闭环, 测出抽取产物正确 (boost=['low_oil'], 4 evidence) 且 L2 打分链路真生效 (`taste_match_bonus`(low_oil)=0.5, high_oil=0). **但 Day 5 重做推荐时 LLM 仍挑高油 combo (top1 油=2.7)**, 油值 5 道菜均值 2.44 仅微降, reason 中 0/5 提及"控油".
+
+排查发现 `rerank._profile_block(profile)` 只读 `profile.preferences` 静态字段, **完全不读 `long_term_prefs.json`**. L3 LLM rerank 看到的 user message [PROFILE] 段没有 L1 抽取产物 — LLM 只能从 L2 排序顺序"感受"用户偏好, 无法显式知道 boost=['low_oil'] 这个行为信号.
+
+### 修法 (chisha/rerank.py + 4 caller)
+
+`_profile_block(profile, root=None)` 加 root 参数, 末尾追加 1 段 L1 prefs 注入:
+
+```python
+try:
+    from chisha.l1_prefs import load_prefs
+    l1 = load_prefs(root=root)
+    if l1 and (l1.get("boost") or l1.get("penalty")):
+        n_meals = l1.get("based_on_meals", 0)
+        evid = l1.get("evidence") or []
+        rationale = evid[0].get("rationale") if evid else ""
+        sig_parts = []
+        if l1.get("boost"): sig_parts.append(f"boost={l1['boost']}")
+        if l1.get("penalty"): sig_parts.append(f"penalty={l1['penalty']}")
+        sig_line = f"行为信号 (近 {n_meals} 餐): " + " ".join(sig_parts)
+        if rationale: sig_line += f" — {rationale[:80]}"
+        lines.append(sig_line)
+except Exception:
+    pass
+```
+
+`root` 透传链: `chisha.api.recommend_meal` / `debug_recommend._llm_rerank_traced`
+→ `rerank.rerank` → `_llm_rerank` → `_run_llm_rerank` → `build_user_message`
+→ `_profile_block` (5 处签名同步加 `root: Path | None = None` kwarg).
+
+### 实测前后对比 (Day 5 lunch, 真实 LLM, 同一 sandbox 状态)
+
+| | v1 (无 bridge) | v2 (有 bridge) |
+|---|---|---|
+| 总油 (top 5) | 12.2 | **11.3** (-7.4%) |
+| 最低油 combo | 1.8 | **1.3** (Super Model 超模厨房) |
+| Reason 提"控油"次数 | 0/5 | **3/5** |
+| Top1 combo | 印象长沙 油=2.7 | 印象长沙 油=2.7 (top1 同) |
+| Top2 combo | 荣姐家常菜 油=2.3 | **Super Model 油=1.3** (主动挑低油) |
+
+v2 #2 LLM reason 显式提"卤牛肉+黑米饭油2最低, 撑到下顿不反弹" — LLM 在看到行为信号后, 主动从 top60 里挑出低油 combo 并写出 controled-oil reasoning.
+
+### Regression test (tests/test_methodology.py)
+
+- `test_profile_block_injects_l1_prefs_when_available`: 写 prefs json 到 tmp_path/data, 调 `_profile_block(profile, root=tmp_path)` 必须含 "行为信号" + "boost=['low_oil']" + "近 4 餐" + rationale 简述.
+- `test_profile_block_no_l1_line_when_prefs_missing`: 无 prefs 文件 → 不加 "行为信号" 行 (避 noisy prompt).
+- 修旧 fragile test `test_rerank_profile_block_without_methodology_fallback` / `test_rerank_profile_block_diff_is_single_line`: 显式传 `root=tmp_path` 防 prod prefs 文件 leak 进 test (D-078.2 前老测试假定 `data/long_term_prefs.json` 不存在, 现在沙盒演练会写真实文件, 不传 root 测试 flaky).
+
+### 守门
+
+- 583 测试 (581 + D-078.1 2 + D-078.2 2) 全过
+- `baseline_l2_snapshot` + `compare_traces` 4 snap 0 diff (改的是 L3 prompt 注入, 不影响 L2)
+- Day 5 真实 LLM 重测前后对比可量化 (-7.4% 油 + 3/5 reason 提控油)
+
+### Phase 1 follow-up
+
+- L3 prompt 注入扩展: penalty token (sweet_sauce/processed_meat/spicy/carb_heavy) 也同样会注入, 但目前没演练充分验证多 token 行为. 等真实使用累积更多 evidence.
+- L3 prompt 注入与 D-072 methodology 段的关系: 方法论说控油 + 行为信号也说控油 → 双重信号是否过强需观察. 现实测看 LLM 没明显矫枉过正, 暂留观察.
+
+---
+
 ## D-078.1 执行记录 · sandbox + methodology spec 路径回归修补
 
 日期: 2026-05-16
