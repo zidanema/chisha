@@ -1,5 +1,8 @@
 """D-076: L1 长期偏好层 (LLM 抽取产物) 读写.
 
+异常约定 (D-077 Codex S3): L1 prefs 是派生数据, 损坏不阻塞推荐链路 —
+load_prefs 损坏静默 rename .corrupt.bak + return None. 不抛 raise.
+
 数据流:
     chisha/l1_extractor.py (LLM 抽取)
         ↓ save_prefs()
@@ -61,11 +64,6 @@ SIGNALS_NOT_SCORED_DIMS = frozenset(["reason_match", "fullness", "repurchase_int
 _PREFS_REL = "data/long_term_prefs.json"
 
 
-class PrefsCorruptError(RuntimeError):
-    """long_term_prefs.json 损坏. 静默改名 backup, 返回 None (与 feedback_store 风格不同:
-    L1 prefs 是派生数据, 损坏不应阻塞推荐链路, 直接 fallback 到无 prefs)."""
-
-
 def _prefs_path(root: Path | None = None) -> Path:
     """D-077 PR-1b: 走 data_root.long_term_prefs_path, sandbox 启用时落 logs/sandbox/."""
     from chisha import data_root
@@ -79,13 +77,16 @@ def canonicalize_token(token: str) -> str | None:
 
 
 def validate_prefs(prefs: dict) -> dict:
-    """schema 校验 + canonicalize + 去重. 返回 sanitized prefs.
+    """schema 校验 + canonicalize + 去重 + maxItems 限制. 返回 sanitized prefs.
 
-    严格规则:
-    - boost 项必须在 BOOST_TOKENS (canonical 后)
-    - penalty 项必须在 PENALTY_TOKENS (canonical 后)
-    - 不在词表的 token 丢弃 (不抛错, LLM retry 由调用方处理)
-    - boost 与 penalty 不交叉 (同 token 不能同时是 boost 和 penalty)
+    严格规则 (D-076 + Codex S3 review):
+    - boost 项必须在 BOOST_TOKENS (canonical 后), 不在词表的 token 丢弃
+    - penalty 项必须在 PENALTY_TOKENS (canonical 后), 同上
+    - **最多 2 个 boost + 2 个 penalty** (prompt 也约束 ≤2, 代码侧守门)
+    - boost 与 penalty 不交叉 (同 token 不能同时是 boost 和 penalty, penalty 优先)
+    - evidence: list of dict, 项里 token 必须在词表 (非法项丢)
+    - signals_not_scored: dict
+    - regularities_freetext: list of str (非字符串项丢)
     """
     if not isinstance(prefs, dict):
         raise ValueError(f"prefs must be dict, got {type(prefs).__name__}")
@@ -114,15 +115,45 @@ def validate_prefs(prefs: dict) -> dict:
     # boost ∩ penalty 矛盾时, penalty 优先 (LLM 不能同时说"想要" + "不想要")
     boost -= penalty
 
+    # maxItems=2 守门: prompt 要求 ≤2, 超出的话排序后截前 2 (deterministic)
+    boost_list = sorted(boost)[:2]
+    penalty_list = sorted(penalty)[:2]
+
+    # evidence 校验
+    raw_evidence = prefs.get("evidence") or []
+    evidence: list[dict] = []
+    if isinstance(raw_evidence, list):
+        for item in raw_evidence:
+            if not isinstance(item, dict):
+                continue
+            tok = item.get("token")
+            if tok is not None and isinstance(tok, str):
+                c = canonicalize_token(tok)
+                if c is None:
+                    continue  # token 不在词表丢
+                item = {**item, "token": c}
+            evidence.append(item)
+
+    # signals_not_scored / regularities_freetext 类型校验
+    sns = prefs.get("signals_not_scored")
+    if not isinstance(sns, dict):
+        sns = {}
+
+    raw_regs = prefs.get("regularities_freetext") or []
+    if isinstance(raw_regs, list):
+        regs = [s for s in raw_regs if isinstance(s, str)]
+    else:
+        regs = []
+
     out = {
         **prefs,
-        "boost": sorted(boost),
-        "penalty": sorted(penalty),
+        "boost": boost_list,
+        "penalty": penalty_list,
+        "evidence": evidence,
+        "signals_not_scored": sns,
+        "regularities_freetext": regs,
     }
     out.setdefault("version", 1)
-    out.setdefault("signals_not_scored", {})
-    out.setdefault("evidence", [])
-    out.setdefault("regularities_freetext", [])
     return out
 
 

@@ -277,9 +277,10 @@ def extract_prefs(
     """
     # 数据不足: 直接返回空, 不调 LLM
     if summary.get("based_on_meals", 0) < MIN_MEALS_FOR_EXTRACTION:
+        from chisha import clock
         return {
             "version": 1,
-            "extracted_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "extracted_at": clock.now_utc().isoformat(),
             "based_on_days": summary.get("based_on_days", DEFAULT_WINDOW_DAYS),
             "based_on_meals": summary.get("based_on_meals", 0),
             "boost": [],
@@ -302,16 +303,25 @@ def extract_prefs(
 
     last_err: Exception | None = None
     for attempt in range(max_retries + 1):
+        # 1. LLM 调用 (网络/订阅/CLI 异常)
         try:
             raw = caller(user_prompt, system, profile_llm)
+        except Exception as e:
+            last_err = RuntimeError(f"LLM call failed: {type(e).__name__}: {e}")
+            if attempt >= max_retries:
+                break
+            continue
+
+        # 2. JSON 解析 (LLM 输出格式异常)
+        try:
             parsed = _extract_json_from_text(raw)
-        except (ValueError, Exception) as e:
+        except ValueError as e:
             last_err = e
             if attempt >= max_retries:
                 break
             continue
 
-        # 代码侧 enum 校验 + canonicalize (lazy import 防循环)
+        # 3. enum schema 校验 + canonicalize (代码侧 lazy import 防循环)
         from chisha.l1_prefs import validate_prefs
         try:
             validated = validate_prefs(parsed)
@@ -321,8 +331,9 @@ def extract_prefs(
                 break
             continue
 
-        # 注入元数据
-        validated["extracted_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        # 注入元数据 (D-077 Codex S3: extracted_at 走虚拟时钟)
+        from chisha import clock
+        validated["extracted_at"] = clock.now_utc().isoformat()
         validated["based_on_days"] = summary.get("based_on_days", DEFAULT_WINDOW_DAYS)
         validated["based_on_meals"] = summary.get("based_on_meals", 0)
         return validated

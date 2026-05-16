@@ -1487,3 +1487,59 @@ GET    /api/history?days=999                HTTP 400
   - L3 命中率观察: 当前 60% 强命中, 若稳定 <50% 考虑 prompt 更强制 (cuisine_want 命中必须 >= 4 条)
   - sour/sweet/heavy 走 dish 名子串不稳, 按需打 dish tagging 加 sour_level / sweet_level 字段
   - portion / staple / price 当前都进 ingredient 通道, 若 std 不足可单独拆维度
+
+## D-076 + D-077 执行记录: L1 LLM 抽取层 + Sandbox Time-Travel 模式
+
+**Status**: implemented (2026-05-16, 10 PRs + 1 修补 PR)
+**关联**: [docs/DECISIONS.md D-076](DECISIONS.md#d-073-l1-长期反馈层重构--砍伪-l1--llm-抽取-v1x) / [D-077](DECISIONS.md#d-074-sandbox-time-travel-模式-v1x)
+
+### 触发与决策过程
+
+志丹挑战 D-070 三层信号模型代码落地, 揭出"伪 L1" (refine chip 跨 session 频次聚合) 和 V1.1 反馈数据躺尸. 走 D-036 dual-model audit:
+- S1 Opus 提案 → S2 Codex review 揭出"web 反馈不进 long_term_prefs / claude_code_cli 不支持 tool_use / PR-0.7 切 score 非等价重构" → S2 二次 review 揭出 10 项修正 → 志丹拍板 1A (text+JSON) + "一波到位 + bootstrap_from_legacy" → 全部实现 + S3 Codex 端到端 review 发现 2 ship-blocker MED (recommend_meal 读 prod profile / api_history 读 prod log) → PR-3 修补.
+
+### 提交序列 (11 commits)
+
+| Commit | PR | 范围 | 单测 |
+|--------|----|------|------|
+| 2403c2e | PR-0 | l1_extractor + l1_prefs + prompt + 3 golden fixtures | 38 ✓ |
+| 7b2692c | PR-0.5 | 砍 refine→feedback_history + 拆 legacy | 26 旧测试保留 |
+| 5fbed85 | PR-0.6 | bootstrap_from_legacy 脚本 | 4 ✓ |
+| bf50e68 | PR-0.7 | score 切 l1_prefs.load_prefs (baseline 0 diff) | 6 + 3 旧改造 |
+| 3cf1a53 | PR-0.9 | /api/long_term_prefs/refresh + 鉴权 | 4 ✓ |
+| d2f88c0 | PR-1a | clock.py + sandbox.py + 11 处时间注入 | 18 ✓ |
+| 22fc03b | PR-1b | data_root.py + 7 路径派生 | 9 ✓ |
+| 876e38d | PR-1c | FastAPI 6 sandbox 端点 + 异步 L1 trigger | 12 ✓ |
+| 31d4a6d | PR-1d | 前端 SandboxBar + ProfilePage 入口 + Drawer | (build pass) |
+| e1b71e5 | PR-2 | DECISIONS + 10 验收锚点 + ROADMAP/README/CLAUDE.md | 10 e2e ✓ |
+| (本条目) | PR-3 | Codex S3 修补 (profile/history sandbox path + L1 lock + schema 严格化) | TBD |
+
+### 关键经验
+
+1. **文件名误导**: `long_term_prefs.py` 命名带 "long_term" 但实际是单次 chip 跨 session 频次聚合, 让 Opus 误判 D-070 L1 已建. 教训: 命名要反映行为, 不是意图; review 时要验证 "文档说 X 已建" 是否真的指代码层 X 而不是同名别物.
+2. **Codex S2 二次 review 揭出 tool_use 矛盾**: D-047 原则 "tool_use 优于 json_mode" 对 L3 rerank 是对的, 但对 L1 抽取错位 — L3 高频实时, L1 低频 + 可降级, text+JSON+retry 更适合且能用 Max 订阅免费.
+3. **三态等价性必须可证**: Codex Q3 "compare_traces 只能证当前机器无旧信号, 不能证迁移等价" 是关键洞察, 启发 bootstrap_from_legacy 兜底.
+4. **Profile 路径 + history 路径** (Codex S3 揭出): 仅"业务数据落盘"换 path 还不够, **业务数据读路径**也必须走 data_root. 否则 sandbox 内 PUT profile 写副本但下次推荐仍读 prod, 形成"假沙盒".
+
+### Codex S3 ship-blocker 修补 (PR-3)
+
+1. **chisha/api.py:110** `recommend_meal` 默认 profile_path 改走 `data_root.profile_path(root)` — 解决"sandbox PUT profile 写副本但读 prod"
+2. **chisha/web_api.py:307** `/api/history` 改走 `data_root.recommend_log_path(ROOT)` — sandbox 内 history 读 sandbox log
+3. **prompts/l1_extract.md** 阈值 `< 5` → `< 3` 与代码 `MIN_MEALS_FOR_EXTRACTION` 统一
+4. **chisha/l1_extractor.py** extracted_at 走 `clock.now_utc()` (虚拟时钟一致性)
+5. **chisha/l1_extractor.py** `except (ValueError, Exception)` 拆成 LLM call err / JSON parse err / schema err 三阶段
+6. **chisha/l1_prefs.py** 删 `PrefsCorruptError` 未用类; validate_prefs 加 maxItems=2 / evidence schema / regularities 字符串过滤
+7. **chisha/web_api.py** L1 异步 trigger 加 `_L1_EXTRACTION_LOCK` trylock 防多 tab 并发覆盖 state
+8. **README.md / CLAUDE.md / ROADMAP.md** 端点数字 "18" → "20" 统一
+
+### 守门记录
+
+- baseline_l2_snapshot 在 PR-0.7 / PR-1a / PR-1b / PR-1c / PR-2 / PR-3 各跑一次, 4 snap |delta| < 1e-6 全程通过
+- 全测试 (含 26 legacy + 18 sandbox/clock + 9 data_root + 12 sandbox endpoint + 4 refresh + 38 l1_extractor + 24 l1_prefs + 9 score_l1_switch + 4 bootstrap + 10 e2e 锚点) → 526~536 pass, 0 fail, 1 skipped
+- 前端 (Vite + TypeScript strict mode) build 通过
+
+### 已知 V1 gap (不在本次范围)
+
+- `logs/meal_log.jsonl` 没有写入端 (PR-1c accept 只写 feedback_store.accepted), diversity_filter cooldown 实际不工作 — Phase 1 单独修
+- L1 抽取 prompt 在真实 LLM 上的稳定性还没跑过 (单测全 mock), 真跑时如果 LLM 不听话需 fixture 训练
+- sandbox 切回 prod 后 in-flight 请求行为未守门 — 当前用户一次会话只切一次, 暂不补

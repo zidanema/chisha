@@ -304,7 +304,10 @@ def api_history(days: int = 7) -> dict:
     """
     if days < 1 or days > 90:
         raise HTTPException(400, "days must be in [1, 90]")
-    log_path = ROOT / "logs" / "recommend_log.jsonl"
+    # D-077 Codex S3 修复: 走 data_root.recommend_log_path, sandbox 启用时
+    # history 读 sandbox log 而非 prod log.
+    from chisha import data_root
+    log_path = data_root.recommend_log_path(ROOT)
     if not log_path.exists():
         return {"items": []}
 
@@ -591,6 +594,10 @@ def api_long_term_prefs_refresh(request: Request, req: RefreshPrefsReq) -> dict:
 import threading as _threading
 from chisha import sandbox as _sandbox
 
+# D-077 Codex S3 修复: L1 抽取串行锁, 防多 tab 并发 advance 同时跑多个 LLM 抽取
+# 互相覆盖 last_l1_extraction. trylock 模式: 已有 worker 跑则跳过, 不堆队列.
+_L1_EXTRACTION_LOCK = _threading.Lock()
+
 
 class SandboxInitReq(BaseModel):
     start_date: str | None = None      # ISO date YYYY-MM-DD; None = 真实 today
@@ -645,35 +652,45 @@ def _trigger_l1_extraction_async(root: Path) -> None:
     """后台抽取 L1 prefs. 标记 state.last_l1_extraction.
 
     sandbox advance 后调用. 失败保留旧 prefs, 状态写 failed.
+
+    并发保护 (D-077 Codex S3): 用 trylock 模式 — 已有 worker 跑时直接跳过,
+    避免多 tab 连点 advance 触发多个并发 LLM 抽取互相覆盖 state.
     """
+    if not _L1_EXTRACTION_LOCK.acquire(blocking=False):
+        # 已有抽取在跑, 跳过 (state 仍是上次的 pending/ok/failed)
+        return
+
     def _worker():
-        _sandbox.record_l1_extraction("pending", root=root)
         try:
-            store = feedback_store.load_store(root)
-        except Exception as e:
-            _sandbox.record_l1_extraction("failed", error=str(e), root=root)
-            return
-        try:
-            profile_dict = yaml.safe_load(
-                _profile_path().read_text(encoding="utf-8")
-            ) or {}
-        except Exception as e:
-            _sandbox.record_l1_extraction("failed", error=str(e), root=root)
-            return
-        try:
-            from chisha.l1_extractor import extract_and_save
-            prefs = extract_and_save(
-                store, profile_dict,
-                root=root, window_days=14,
-                profile_llm=profile_dict.get("llm"),
-            )
-            _sandbox.record_l1_extraction(
-                "ok",
-                based_on_meals=prefs.get("based_on_meals", 0),
-                root=root,
-            )
-        except Exception as e:
-            _sandbox.record_l1_extraction("failed", error=str(e), root=root)
+            _sandbox.record_l1_extraction("pending", root=root)
+            try:
+                store = feedback_store.load_store(root)
+            except Exception as e:
+                _sandbox.record_l1_extraction("failed", error=str(e), root=root)
+                return
+            try:
+                profile_dict = yaml.safe_load(
+                    _profile_path().read_text(encoding="utf-8")
+                ) or {}
+            except Exception as e:
+                _sandbox.record_l1_extraction("failed", error=str(e), root=root)
+                return
+            try:
+                from chisha.l1_extractor import extract_and_save
+                prefs = extract_and_save(
+                    store, profile_dict,
+                    root=root, window_days=14,
+                    profile_llm=profile_dict.get("llm"),
+                )
+                _sandbox.record_l1_extraction(
+                    "ok",
+                    based_on_meals=prefs.get("based_on_meals", 0),
+                    root=root,
+                )
+            except Exception as e:
+                _sandbox.record_l1_extraction("failed", error=str(e), root=root)
+        finally:
+            _L1_EXTRACTION_LOCK.release()
 
     t = _threading.Thread(target=_worker, daemon=True)
     t.start()

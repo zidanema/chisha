@@ -1,7 +1,7 @@
 # chisha · 项目级指令
 
 > 项目名:今天吃点啥 (chisha) · 个人 AI **原则派点餐执行外包**工具 (L0 方法论 spec / L1 数据 / L2 打分 / L3 LLM 精排)
-> 当前阶段:**Phase 0 工程侧收尾** — 推荐链路 + Web SPA + V1.1 反馈 + FastAPI 18 端点 + 砍 mood picker + methodology spec 抽象 + **D-070 L1 真兑现 (LLM 抽取)** + **D-077 sandbox time-travel 模式** 全部 ready (D-001~D-077, 2026-05-16)。Step 2 用户自用验证现在可走 sandbox 一次会话内压缩验证, 不必等真实日历日。
+> 当前阶段:**Phase 0 工程侧收尾** — 推荐链路 + Web SPA + V1.1 反馈 + FastAPI 20 端点 + 砍 mood picker + methodology spec 抽象 + **D-070 L1 真兑现 (LLM 抽取)** + **D-077 sandbox time-travel 模式** 全部 ready (D-001~D-077, 2026-05-16)。Step 2 用户自用验证现在可走 sandbox 一次会话内压缩验证, 不必等真实日历日。
 > 主语言:Python (后端) + TypeScript (前端) · 包管理:uv / npm · 测试:pytest
 
 ## 必读(首次接触本项目)
