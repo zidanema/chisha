@@ -52,7 +52,7 @@
         },
         "taste_match": null,
         "risk_flags": [],
-        "id": "c_-1_r1"
+        "id": "c_0_r1"
       },
       {
         "rank": 2,
@@ -96,7 +96,7 @@
         },
         "taste_match": null,
         "risk_flags": [],
-        "id": "c_-1_r2"
+        "id": "c_1_r2"
       }
     ]
   },
@@ -130,23 +130,23 @@
     "frozen_zone": "test",
     "frozen_restaurants_sorted": [
       {
-        "rating": 4.5,
-        "name": "潮汕汤店",
-        "office_zone": "test",
         "monthly_orders": 500,
-        "category": "潮汕",
+        "office_zone": "test",
+        "rating": 4.5,
         "id": "r1",
+        "category": "潮汕",
+        "name": "潮汕汤店",
         "distance_m": 500,
         "delivery_eta_min": 20,
         "brand": "潮汕汤店"
       },
       {
-        "rating": 4.5,
-        "name": "湘菜店",
-        "office_zone": "test",
         "monthly_orders": 500,
-        "category": "湘菜",
+        "office_zone": "test",
+        "rating": 4.5,
         "id": "r2",
+        "category": "湘菜",
+        "name": "湘菜店",
         "distance_m": 500,
         "delivery_eta_min": 20,
         "brand": "湘菜店"

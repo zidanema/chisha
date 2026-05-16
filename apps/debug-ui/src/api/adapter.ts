@@ -62,7 +62,8 @@ function classifyDropLayer(reason: string): "hard" | "diversity" | "price" {
   return "hard";
 }
 
-function adaptL1(l1: BackendL1Recall, area: string, meal: Meal): L1Trace {
+function adaptL1(l1: BackendL1Recall, area: string, meal: Meal,
+                 latencyMs: number = 0): L1Trace {
   const dishDrops: { reason: string; count: number; layer: "hard" | "diversity" | "price" }[] = [];
   for (const [reason, count] of Object.entries(l1.dropped_hard_by_reason)) {
     dishDrops.push({ reason, count, layer: classifyDropLayer(reason) });
@@ -108,8 +109,9 @@ function adaptL1(l1: BackendL1Recall, area: string, meal: Meal): L1Trace {
     ban_reason_agg,
     dish_drops: dishDrops,
     top_restaurants,
-    // 后端目前未单独记 L1 latency, 总 latency 在 client 端测量, 这里给 0
-    latency_ms: 0,
+    // D-079: 后端 trace 顶层有 recall_latency_ms; debug_recommend 老链路没此值,
+    // 默认 0 (DagHeader 显示 "0ms" 而非 undefined).
+    latency_ms: latencyMs,
   };
 }
 
@@ -188,12 +190,14 @@ function adaptL2KPI(l2: BackendL2Score): L2KPI {
   };
 }
 
-function adaptL2(l2: BackendL2Score, combosBeforeL2: number): L2Trace {
+function adaptL2(l2: BackendL2Score, combosBeforeL2: number,
+                 latencyMs: number = 0): L2Trace {
   return {
     weights: adaptL2Weights(l2.summary.weights),
     combos: l2.top.map(adaptL2Combo),
     kpi: adaptL2KPI(l2),
-    latency_ms: 0,
+    // D-079: 从 trace.score_latency_ms 传; debug_recommend 链路缺时为 0.
+    latency_ms: latencyMs,
     candidates_to_l3: l2.summary.topk_window,
     combos_before_l2: combosBeforeL2,
   };
@@ -303,7 +307,13 @@ function adaptFinal(rows: BackendFinalRow[]): FinalRow[] {
   return rows.map((c) => ({
     rank: c.rank,
     kind: c.is_explore ? "explore" : "exploit",
-    combo_id: `cmb_${String(c.combo_index + 1).padStart(3, "0")}`,
+    // D-079 followup: combo_index < 0 时 (老 What-if rehydrate / 部分 fallback
+    // 路径漏填) 用 rank 兜底, 保证 5 行 cmb_xxx 互不重复, 避免 React duplicate
+    // key. 后端已在 fallback_rerank 补 setdefault(combo_index, i), 此处是前端
+    // 防御性 fallback, 别真的让前端崩.
+    combo_id: c.combo_index != null && c.combo_index >= 0
+      ? `cmb_${String(c.combo_index + 1).padStart(3, "0")}`
+      : `cmb_r${String(c.rank).padStart(3, "0")}`,
     restaurant: c.restaurant?.name ?? "—",
     distance_km: c.restaurant?.distance_m != null && c.restaurant.distance_m >= 0
       ? Math.round((c.restaurant.distance_m / 100)) / 10 : 0,
@@ -333,7 +343,11 @@ export type AdaptOptions = {
 
 // Production trace.l3 is flat; debug_recommend's l3_rerank wraps under .llm.
 // Wrap so we can reuse adaptL3 without duplicating field maps.
-function wrapTraceL3(l3: BackendTraceL3): BackendL3Rerank {
+// D-079 followup: rerankLatencyFallback 是 trace 顶层 rerank_latency_ms, 旧 trace
+// 的 trace.l3.latency_ms 是 None (写盘漏字段, 已修但历史 trace 仍存在), 这时用
+// 顶层 rerank_latency_ms 兜底, 让 DagHeader 不显示 0ms.
+function wrapTraceL3(l3: BackendTraceL3,
+                     rerankLatencyFallback: number = 0): BackendL3Rerank {
   if (!l3.used) {
     return {
       llm: { used: false, skipped_reason: l3.fallback_reason ?? "skipped" },
@@ -341,6 +355,37 @@ function wrapTraceL3(l3: BackendTraceL3): BackendL3Rerank {
       n_returned: l3.n_returned,
     };
   }
+  // D-079 followup: 把 provider 统一后的 OpenAI 风格 usage (prompt_tokens 等)
+  // 映射成前端 view-model 的 Anthropic 风格 (input_tokens 等). 语义差异:
+  //   - Anthropic: input_tokens = prompt 总 tokens (含 cache 部分),
+  //     cache_read_input_tokens 是其中命中 cache 的 tokens; billable = 二者之差.
+  //   - OpenAI (provider 内部统一后): prompt_tokens 是 *扣除 cache 后的 billable*,
+  //     cached_tokens 是 cache 命中部分; 总 prompt size = prompt_tokens + cached_tokens.
+  // DagHeader 的 cache_hit% = cache_read / input_tokens 必须基于"总 prompt size",
+  // 否则 cached_tokens / billable_prompt 会爆 100%+ (实测 56450%).
+  // 老 trace 已是 Anthropic 命名时, input_tokens 直接是 raw 总数, 不做加法.
+  const rawUsage = l3.usage ?? null;
+  const usage = rawUsage
+    ? (() => {
+        const cacheRead =
+          rawUsage.cache_read_input_tokens ?? rawUsage.cached_tokens ?? 0;
+        const cacheCreate =
+          rawUsage.cache_creation_input_tokens
+          ?? rawUsage.cache_write_tokens ?? 0;
+        // Anthropic 风格直接拿 input_tokens; OpenAI 风格需要加回 cached_tokens
+        // 才能得到 prompt 总 size.
+        const inputTotal =
+          rawUsage.input_tokens
+          ?? ((rawUsage.prompt_tokens ?? 0) + (rawUsage.cached_tokens ?? 0));
+        return {
+          input_tokens: inputTotal,
+          output_tokens:
+            rawUsage.output_tokens ?? rawUsage.completion_tokens ?? 0,
+          cache_read_input_tokens: cacheRead,
+          cache_creation_input_tokens: cacheCreate,
+        };
+      })()
+    : null;
   const llm: BackendL3Llm = {
     status: (l3.status as BackendL3Llm["status"]) ?? "ok",
     config_error: l3.status === "config_error",
@@ -358,8 +403,8 @@ function wrapTraceL3(l3: BackendTraceL3): BackendL3Rerank {
     stop_reason: l3.stop_reason,
     parsed_candidates: l3.parsed_candidates,
     fallback_reason: l3.fallback_reason,
-    latency_ms: l3.latency_ms ?? null,
-    usage: l3.usage ?? null,
+    latency_ms: l3.latency_ms ?? rerankLatencyFallback,
+    usage,
     max_tokens: l3.max_tokens ?? 0,
     temperature: l3.temperature ?? 0,
   };
@@ -376,9 +421,9 @@ export function traceToSession(trace: BackendDebugTrace): Session {
     total_latency_ms: trace.total_latency_ms,
     ctx_latency_ms: trace.ctx_latency_ms,
     final_latency_ms: trace.final_latency_ms,
-    l1: adaptL1(trace.l1, area, meal),
-    l2: adaptL2(trace.l2, trace.l1.summary.n_combos),
-    l3: adaptL3(wrapTraceL3(trace.l3)),
+    l1: adaptL1(trace.l1, area, meal, trace.recall_latency_ms ?? 0),
+    l2: adaptL2(trace.l2, trace.l1.summary.n_combos, trace.score_latency_ms ?? 0),
+    l3: adaptL3(wrapTraceL3(trace.l3, trace.rerank_latency_ms ?? 0)),
     final: adaptFinal(trace.final),
     refine: {
       parent_session: trace.session_id,

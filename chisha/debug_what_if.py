@@ -260,6 +260,7 @@ def what_if_rerun(
     # 4. 组装 What-if response trace
     return _build_what_if_trace(
         base=base,
+        ranked_raw=ranked_raw,
         ranked=ranked,
         reranked=reranked,
         profile=profile,
@@ -280,6 +281,7 @@ def what_if_rerun(
 def _build_what_if_trace(
     *,
     base: dict,
+    ranked_raw: list[dict],
     ranked: list[dict],
     reranked: list[dict],
     profile: dict,
@@ -295,7 +297,7 @@ def _build_what_if_trace(
 ) -> dict:
     """组装 What-if response trace, shape 对齐 production trace (供前端复用渲染)."""
     from chisha.debug_recommend import (
-        _format_ranked_for_trace, _format_final_candidate,
+        _build_l2_cap_stats, _format_ranked_for_trace, _format_final_candidate,
     )
     from chisha.rerank import L3_INPUT_TOP_K
     from chisha.score import resolve_caps
@@ -317,6 +319,9 @@ def _build_what_if_trace(
                 "mean": round(sum(vals) / len(vals), 3),
                 "std": round(statistics.pstdev(vals) if len(vals) > 1 else 0, 3),
             }
+    # D-079 followup: 补 cap 前后 unique restaurants/brands/cuisines/food_forms
+    # 统计, 前端 DagHeader L2 摘要要这些字段 (production trace 同步补).
+    cap_stats = _build_l2_cap_stats(ranked_raw, ranked)
     l2_trace = {
         "summary": {
             "n_scored": len(ranked),
@@ -326,6 +331,7 @@ def _build_what_if_trace(
             "caps": caps,
             "topk_window": L3_INPUT_TOP_K,
             "dim_stats_topk": dim_stats,
+            **cap_stats,
         },
         "top": _format_ranked_for_trace(ranked, top=L3_INPUT_TOP_K),
     }

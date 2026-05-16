@@ -357,7 +357,8 @@ def _build_trace(
     """
     from chisha import trace_store
     from chisha.debug_recommend import (
-        _build_l1_trace, _format_ranked_for_trace, _format_final_candidate,
+        _build_l1_trace, _build_l2_cap_stats,
+        _format_ranked_for_trace, _format_final_candidate,
     )
     from chisha.rerank import L3_INPUT_TOP_K, build_payload
     from chisha.score import combo_food_form, resolve_caps
@@ -384,6 +385,10 @@ def _build_trace(
                 "mean": round(sum(vals) / len(vals), 3),
                 "std": round(statistics.pstdev(vals) if len(vals) > 1 else 0, 3),
             }
+    # D-079 followup: 补 cap 前后 unique restaurants/brands/cuisines/food_forms
+    # 统计 (之前漏写, 前端 DagHeader 显示 "undefined rest"). 复用 debug_recommend
+    # 的 helper 保持口径一致.
+    cap_stats = _build_l2_cap_stats(ranked_raw, ranked)
     l2_trace = {
         "summary": {
             "n_scored": len(ranked),
@@ -393,6 +398,7 @@ def _build_trace(
             "caps": caps,
             "topk_window": L3_INPUT_TOP_K,
             "dim_stats_topk": dim_stats,
+            **cap_stats,
         },
         "top": _format_ranked_for_trace(ranked, top=L3_INPUT_TOP_K),
     }
@@ -416,6 +422,13 @@ def _build_trace(
         "payload_to_llm": payload,
         "n_returned": len(reranked),
         "used_fallback": bool(l3_collector.get("used_fallback")),
+        # D-079 followup: 写入 LLM 真实 latency / usage / sampling 让 DagHeader
+        # 能渲染 cache_hit% / token 概览 (BackendTraceL3 早已声明这些 optional
+        # 字段, 但之前的 _build_trace 漏拷). 旧 trace 这些字段不存在, adapter 兜底.
+        "latency_ms": l3_collector.get("latency_ms"),
+        "usage": l3_collector.get("usage"),
+        "max_tokens": l3_collector.get("max_tokens"),
+        "temperature": l3_collector.get("temperature"),
     }
 
     final_view = [_format_final_candidate(i + 1, c) for i, c in enumerate(reranked)]

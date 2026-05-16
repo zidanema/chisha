@@ -543,6 +543,12 @@ def fallback_rerank(
     """
     if not top_combos:
         return []
+    # D-079 followup: 给 combo 补 combo_index = 在 top_combos 里的位置. LLM 主路径
+    # 由 schema 强制 combo_index ∈ [0, len(top_combos)), fallback / What-if rehydrate
+    # 路径之前没填 → final[].combo_index 全是 -1 → 前端 adapter 生成 cmb_000 5 行重
+    # 复 React key (PR-3 已修, 这里是源头补字段). setdefault 不覆盖既有值.
+    for _i, _c in enumerate(top_combos):
+        _c.setdefault("combo_index", _i)
     from chisha.score import diversify_top
     n_exploit = max(1, n - n_explore)
     # D-049: max_per_brand=1 — fallback 路径不走 _enforce_brand_unique,
@@ -977,6 +983,12 @@ def _run_llm_rerank(
         "user_message_full": "",
         "model": expected_trace_model,
         "latency_ms": None,
+        # D-079 followup: 把 LLM 实际 usage/温度/上限 stash 到 out, 让 trace 能落
+        # input_tokens / cache_read 给 DagHeader 算 cache_hit%. 真值在 call_text
+        # 返回后填 (out["usage"]/max_tokens/temperature 见 line 1013 附近).
+        "usage": None,
+        "max_tokens": None,
+        "temperature": None,
     }
     is_cli = (resolved_provider == "claude_code_cli")
     try:
@@ -1012,6 +1024,13 @@ def _run_llm_rerank(
         resp = call_text(user_msg, **kwargs)
         out["latency_ms"] = int((time.time() - t0) * 1000)
         out["llm_response"] = resp
+        # D-079 followup: stash usage + max_tokens/temperature 到 trace, 让前端
+        # DagHeader 能算 cache_hit% (input_tokens / cache_read_input_tokens 之比).
+        # CLI 路径目前 resp 也带 usage (provider 透传), 没拿到就给 None.
+        if isinstance(resp, dict):
+            out["usage"] = resp.get("usage")
+        out["max_tokens"] = kwargs.get("max_tokens")
+        out["temperature"] = kwargs.get("temperature")
         # D-048: trace.model 用 provider 真实报告值覆盖 (expected_trace_model
         # 只是预测, llm_response.model 是 provider/CLI 真返回的, 更可信).
         if isinstance(resp, dict) and resp.get("model"):
@@ -1250,6 +1269,13 @@ def rerank(
             )
             trace_collector["fallback_reason"] = res.get("fallback_reason")
             trace_collector["parsed_candidates"] = res.get("candidates")
+            # D-079 followup: 透传 latency/usage/sampling 进 trace, 让 DagHeader
+            # 能渲染 L3 latency_ms / cache_hit% / token 概览; 旧 trace 这些字段
+            # 仍是 None, adapter 已兜底.
+            trace_collector["latency_ms"] = res.get("latency_ms")
+            trace_collector["usage"] = res.get("usage")
+            trace_collector["max_tokens"] = res.get("max_tokens")
+            trace_collector["temperature"] = res.get("temperature")
             if res.get("status") == "ok":
                 llm_out = res.get("candidates")
                 llm_called = True

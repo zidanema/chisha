@@ -276,9 +276,20 @@ export type BackendTraceL3 = {
   payload_to_llm: unknown;
   n_returned: number;
   used_fallback: boolean;
-  // optional new fields (not always present, but adapter tolerates)
+  // optional new fields (not always present, but adapter tolerates).
+  // D-079 followup: usage shape 是 provider 统一后的 OpenAI 风格
+  // (prompt_tokens/completion_tokens/cached_tokens/cache_write_tokens, 见
+  // chisha/llm_providers/*.py); adapter.wrapTraceL3 做字段名映射到前端的
+  // Anthropic 命名 (input_tokens/cache_read_input_tokens) — 两种命名都兼容.
   latency_ms?: number;
   usage?: {
+    // OpenAI 风格 (provider 实际返回)
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    cached_tokens?: number;
+    cache_write_tokens?: number;
+    cost?: number;
+    // Anthropic 风格 (兼容老 trace)
     input_tokens?: number;
     output_tokens?: number;
     cache_read_input_tokens?: number;

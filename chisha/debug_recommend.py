@@ -327,6 +327,76 @@ def _build_l1_trace(
     return trace, combos
 
 
+def _compute_l2_cap_keysets(
+    ranked_raw: list[dict],
+    ranked: list[dict],
+) -> tuple[dict, dict, dict, dict, dict, dict, dict, dict]:
+    """计算 cap 前后 topk 的 rest/brand/cuisine/food_form 计数字典.
+
+    D-079 followup: 抽出来给 chisha.api._build_trace 和 chisha.debug_what_if.
+    _build_what_if_trace 复用, 之前 production trace l2.summary 漏 topk_unique_*
+    系列字段, 导致前端 DagHeader 显示 "undefined rest".
+    """
+    from chisha.score import combo_food_form
+
+    def _count_keys(combos: list[dict], key_fn) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for c in combos:
+            k = key_fn(c) or "<未知>"
+            counts[k] = counts.get(k, 0) + 1
+        return counts
+
+    def _rest_key(c):
+        rest = c.get("restaurant") or {}
+        return rest.get("id") or rest.get("name")
+
+    def _brand_key(c):
+        rest = c.get("restaurant") or {}
+        return rest.get("brand") or rest.get("id") or rest.get("name")
+
+    def _cuisine_key(c):
+        dishes = c.get("dishes") or []
+        return dishes[0].get("cuisine") if dishes else None
+
+    return (
+        _count_keys(ranked_raw[:L3_INPUT_TOP_K], _rest_key),
+        _count_keys(ranked[:L3_INPUT_TOP_K], _rest_key),
+        _count_keys(ranked_raw[:L3_INPUT_TOP_K], _brand_key),
+        _count_keys(ranked[:L3_INPUT_TOP_K], _brand_key),
+        _count_keys(ranked_raw[:L3_INPUT_TOP_K], _cuisine_key),
+        _count_keys(ranked[:L3_INPUT_TOP_K], _cuisine_key),
+        _count_keys(ranked_raw[:L3_INPUT_TOP_K], combo_food_form),
+        _count_keys(ranked[:L3_INPUT_TOP_K], combo_food_form),
+    )
+
+
+def _build_l2_cap_stats(
+    ranked_raw: list[dict],
+    ranked: list[dict],
+) -> dict:
+    """汇总 cap 前后多维度统计, 直接附加到 l2.summary. 与上面 keysets helper 配套."""
+    rest_b, rest_a, brand_b, brand_a, cuisine_b, cuisine_a, form_b, form_a = \
+        _compute_l2_cap_keysets(ranked_raw, ranked)
+    return {
+        "topk_unique_restaurants_before_cap": len(rest_b),
+        "topk_unique_restaurants_after_cap": len(rest_a),
+        "topk_max_per_restaurant_before_cap": max(rest_b.values(), default=0),
+        "topk_max_per_restaurant_after_cap": max(rest_a.values(), default=0),
+        "topk_unique_brands_before_cap": len(brand_b),
+        "topk_unique_brands_after_cap": len(brand_a),
+        "topk_max_per_brand_before_cap": max(brand_b.values(), default=0),
+        "topk_max_per_brand_after_cap": max(brand_a.values(), default=0),
+        "topk_unique_cuisines_before_cap": len(cuisine_b),
+        "topk_unique_cuisines_after_cap": len(cuisine_a),
+        "topk_max_per_cuisine_before_cap": max(cuisine_b.values(), default=0),
+        "topk_max_per_cuisine_after_cap": max(cuisine_a.values(), default=0),
+        "topk_unique_food_forms_before_cap": len(form_b),
+        "topk_unique_food_forms_after_cap": len(form_a),
+        "topk_max_per_food_form_before_cap": max(form_b.values(), default=0),
+        "topk_max_per_food_form_after_cap": max(form_a.values(), default=0),
+    }
+
+
 def _group_drops_by_reason(dropped: list[dict]) -> dict[str, int]:
     counter: dict[str, int] = {}
     for d in dropped:
@@ -511,33 +581,9 @@ def debug_recommend(
     caps = resolve_caps(profile)
     ranked = apply_caps(ranked_raw, profile)
 
-    def _count_keys(combos: list[dict], key_fn):
-        counts: dict[str, int] = {}
-        for c in combos:
-            k = key_fn(c) or "<未知>"
-            counts[k] = counts.get(k, 0) + 1
-        return counts
-
-    def _rest_key(c):
-        rest = c.get("restaurant") or {}
-        return rest.get("id") or rest.get("name")
-
-    def _brand_key(c):
-        rest = c.get("restaurant") or {}
-        return rest.get("brand") or rest.get("id") or rest.get("name")
-
-    def _cuisine_key(c):
-        dishes = c.get("dishes") or []
-        return dishes[0].get("cuisine") if dishes else None
-
-    rest_before = _count_keys(ranked_raw[:L3_INPUT_TOP_K], _rest_key)
-    rest_after = _count_keys(ranked[:L3_INPUT_TOP_K], _rest_key)
-    brand_before = _count_keys(ranked_raw[:L3_INPUT_TOP_K], _brand_key)
-    brand_after = _count_keys(ranked[:L3_INPUT_TOP_K], _brand_key)
-    cuisine_before = _count_keys(ranked_raw[:L3_INPUT_TOP_K], _cuisine_key)
-    cuisine_after = _count_keys(ranked[:L3_INPUT_TOP_K], _cuisine_key)
-    form_before = _count_keys(ranked_raw[:L3_INPUT_TOP_K], combo_food_form)
-    form_after = _count_keys(ranked[:L3_INPUT_TOP_K], combo_food_form)
+    rest_before, rest_after, brand_before, brand_after, \
+        cuisine_before, cuisine_after, form_before, form_after = \
+        _compute_l2_cap_keysets(ranked_raw, ranked)
 
     # 统计每维度 std (区分度) — 帮助看是否仍有死分
     import statistics
