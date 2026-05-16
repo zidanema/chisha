@@ -3311,3 +3311,138 @@ Codex 闭环 (跨 7 Phase + final PR, 8 轮 review):
 - `/api/sessions` 后端持久化 — 当前 localStorage cap 5 个 session × ~700KB
 - Web Notifications API fallback 桌面通知 — 真 LLM fallback 链路触发场景才补
 - L3 fallback 在 dev 模式下用 active-session=sess_a7f0 触发 mock 数据 demo, 不是真 fallback
+
+
+## D-079: 推荐链路 trace 持久化 + Debug 三模式 (Replay / What-if / Live)
+
+日期: 2026-05-16
+状态: **active · PR-1 已落地 (Codex 二轮 review 全 CORRECT)** · PR-2/3/4 待实施
+worktree: `.claude/worktrees/debugger-attach` (branch on top of D-078.1 收尾 commit `e4565e1`)
+配套文档: [docs/DEBUG_REPLAY_PRD.md](DEBUG_REPLAY_PRD.md) · [docs/DEBUG_REPLAY_DESIGN.md](DEBUG_REPLAY_DESIGN.md)
+
+背景:
+当前 debug 链路是"每次开 debug 台都现场新跑一次"模式 (`/api/debug_recommend` 全链路跑包含 LLM 调用). 生产链路 `logs/recommend_log.jsonl` 只存 final 5 候选, 不含 L1 drops / L2 完整 ranked breakdown / L3 LLM payload. 导致两个核心问题:
+1. **差评事后无法回溯**: 收到反馈差评后没办法看"为什么推这 5 个", 中间状态全黑盒
+2. **改参数实验混杂时间变量**: 改 weight 想 A/B 时, ctx (now/last_meal/refine) 也会变, 不可隔离归因
+
+Phase 0 Step 2 自用一周验证强需求, 没有 trace = 链路是黑盒, 闭环跑不动.
+
+D-075 已落 debug-ui SPA 但明确把 `/api/sessions 后端持久化` 列为 defer (localStorage cap 5). 本 D-079 就是兑现这两个 defer + 给生产链路写真 trace.
+
+决定 (产品三模式 / 技术 8 分支):
+
+**产品三模式** (PRD §4):
+| 模式 | 入口 | 数据源 | LLM | 写历史 |
+|---|---|---|---|---|
+| Replay (默认) | Sidebar 列表 | 读 `logs/recommend_trace/{sid}.json` | 否,读历史 | 不写 (只读) |
+| What-if | Replay 详情"重跑"按钮 | 冻结 ctx + L1 combos, 改下游 | 默认否 | 不写 (临时) |
+| Live | 右上角次要按钮 | 现场全链路跑 | 是 | 不写 (临时) |
+
+**技术决策** (DESIGN §3-7):
+1. 新增 `chisha/trace_store.py`, 复用 `data_root._maybe_sandbox` 模式落 `logs/recommend_trace/` (sandbox 派生 `logs/sandbox/recommend_trace/`)
+2. trace schema 顶层与前端 `apps/debug-ui/Session` type 对齐 + 后端 only 字段 `__version / __frozen / __config / __feedback_link / __source / __parent_session_id`
+3. `__frozen.l1_combos` 存完整 dish 字段 (非 dish_id refs), 让 trace 自包含, What-if 重跑零 zone 数据依赖
+4. `compute_recommendation()` 重构: 生产 + debug 共用一个底层函数, traced 函数复用 `chisha/debug_recommend.py` 现有的 `_traced_*` 系列 (D-049/D-075 双 review 稳定)
+5. What-if 冻结 ctx + L1 combos, 允许改 scoring_weights / plate_rule / recall / scoring / use_llm_rerank / n_explore / n_return (白名单严格校验), L2/L3 重算无 LLM (除非显式打开)
+6. 新增 3 端点: `GET /api/debug/sessions` + `GET /api/debug/sessions/{sid}` + `POST /api/debug/what_if`
+7. debug-ui Sidebar 主源切后端 (limit 5 → 30), localStorage 退为 7 天离线 fallback. 不动 L1/L2/L3/Final/Refine/Trace 6 个 panel 组件
+8. trace 写盘失败仅 `logger.warning`, **不阻断** recommend (best-effort, 同 feedback_store 路径); 读盘损坏 fail-closed (备份 .corrupt.{ts}.bak, 同 D-066/067 feedback_store MED-3)
+9. **Frozen 自包含原则** (Codex review 升级): `__frozen` 必须包含所有 runtime-load 漂移点 — L1 prefs snapshot (D-076 抽取层) + L2 meal_log view (variety_bonus 看 7 天切片) + frozen today (fallback explore 看 7 天). What-if 严禁 `load_prefs(root)` / `dt.date.today()` / 任何 runtime read
+10. **实际代码改动 (本 D-079 实施 scope 内)**: `chisha/rerank.py:_pick_explore` 接 `today` 参数 + `chisha/score.py:rank_combos` 接 `l1_prefs_override` kwarg + `chisha/v2_rerank` 透传 today. 这两处改动**必跑 baseline_l2_snapshot + compare_traces** (CLAUDE.md 红线)
+
+边界:
+- **What-if 不动 L1**: L1 召回结果已冻结, 改 plate_rule 不重跑 hard_filter (改 L1 = 改场景 = 走 Live)
+- **What-if 不写盘**: 临时实验, 不污染历史. 想保留 → 走 Live 真链路
+- **不动 score.py / methodology.py / rerank.py 核心逻辑**: 仅在 api.py 外层加 trace hook. baseline_l2_snapshot + compare_traces 必须 0 diff (CLAUDE.md 红线守门)
+- **Live 模式不能 save-as-replay**: 违反 Live 定义 (临时探索, 不持久)
+
+依赖 / 影响:
+- 兑现 D-075 deferred: localStorage cap 5 → 后端持久化 cap 30
+- 兑现 D-075 deferred: `/api/debug_refine` mock → trace 真后端 (refine 二轮也写同一 sid trace 的 `refine` 字段)
+- 复用 D-077 `chisha/data_root.py` `_maybe_sandbox` 模式 + `chisha/clock.py` 时间注入
+- 不动 D-076 L1 LLM 抽取链路 (L1 prefs 写盘是另一层, 不在 trace 内)
+- 守门: 改前后 `scripts/baseline_l2_snapshot` 4 snap 全 0 diff
+- 单测: ≥11 个新单测 (trace_store roundtrip / failure / isolation / corruption + ctx roundtrip + what_if 4 case + list 2 case)
+
+风险与对策 (DESIGN §10):
+1. trace 写盘 IO 拖慢 recommend P99 → 加耗时日志, P99 > 200ms 告警, 必要时 trace_to_file 改默认 False
+2. 反序列化 ctx 精度误差 → `test_ctx_roundtrip` 单测守门
+3. sandbox.reset 漏删 trace → 加 `test_sandbox_reset_clears_trace` 守门
+4. 新 schema 版本不兼容老 trace → `__version=1` 字段 + 409 错误 + 老 trace 不能 What-if 但能 Replay
+
+落地 PR 分割 (DESIGN §11):
+- PR-1: trace_store 模块 + api.py 加 hook + 6 unit + baseline_l2 (~300 行)
+- PR-2: 3 端点 + What-if 算法 + 5 unit (~250 行)
+- PR-3: debug-ui Sidebar 切后端 + WhatIfPanel + LiveBanner + e2e (~400 行)
+- PR-4: sandbox.reset 联动 + refine 端点 trace + 文档同步 (~100 行)
+
+每 PR Codex 单独 review.
+
+不在 D-079 内 (defer 到 V2 / Phase 1):
+- trace 自动归档/压缩 (30 天后压精简版)
+- trace 跨 session 批量聚合分析 ("这周低油菜 hit 率")
+- trace 上 OpenClaw / 云端同步
+- What-if 改 L3 prompt (涉及 spec, 挪到 D-080+)
+- Replay 重发 LLM (Live 模式覆盖了)
+- trace 加密 / 脱敏 (个人自用, profile 已经在落盘里)
+
+成功标准 (PRD §9 一周内全满足):
+1. 推荐链路任意一次调用必有完整 trace 文件
+2. Sidebar 自动列出 30 条, 点任意一条 200ms 内渲染完成
+3. What-if 改 weight 500ms 内出双栏对比
+4. Live 模式按钮工作 + Banner 提示明显
+5. 一周内至少 5 次真实差评回溯 + 2 次定位到具体环节 (L1/L2/L3)
+6. baseline_l2_snapshot 0 diff
+7. 文档收尾 (DECISIONS/README/ROADMAP/CLAUDE.md/api.md/DESIGN.md/debug-ui README) 全部同步
+
+Codex review 闭环 (2026-05-16 完成, 12 条 finding 全部协商定稿):
+
+**BLOCKER (2 条, 全吃)**:
+- #1: `__frozen` 漏 L1 prefs runtime-load → 加 `__frozen.l1_prefs_snapshot` + `rank_combos(l1_prefs_override=...)` kwarg
+- #4: `meal_log=[]` 给 L2 会归零 `variety_bonus` → 加 `__frozen.l2_meal_log_view` (score.variety_bonus_score 看的最近 7 天切片)
+
+**FIX-NOW (7 条, 全吃)**:
+- #3: baseline_l2 守不住 compute_recommendation 重构等价性 → 加 `tests/test_recommend_meal_pre_post_refactor_golden.py` 永久回归基线
+- #5: read_trace 错误码冲突 → 固化 failure matrix (missing=404, mismatch=409, corrupt=500+backup, list 跳损坏返 corrupt_count)
+- #6: localStorage migration 合同冲突 → deprecate 不 migrate, 后端可达时 mute, 不可达时降级展示 + banner, 7 天 TTL
+- +1: Live `__source` 字段矛盾 → `__source` 枚举只 `"production" | "what_if_preview"`, Live 永不写盘
+- +2: trace size 200KB vs 300KB 不一致 → 统一 **300KB 硬上限** + 4 级裁剪顺序 (LLM raw → L1 drops cap → profile 子集 → dish 非 scoring 字段)
+- +3: refine base trace missing 没合同 → missing/corrupt 时 logger.warn + refine 响应正常返但不持久化
+- +4: What-if use_llm 默认模糊 → 合同写死 default false + response 加 `__llm_called` 字段
+- Q3 (Codex 协商新发现): `chisha/rerank.py:576 _pick_explore` 用 wall-clock `dt.date.today()` → fallback 路径日期漂移, 必须接 `today` 参数透传 frozen today
+
+**Push back (1 条, Codex 接受)**:
+- #7 localhost 鉴权: `debug_server.py:177` 已 bind 127.0.0.1, 不加端点级 token/Origin 检查; doc 写明合同 + 启动断言
+
+**DEFER (2 条, 写明边界)**:
+- #2: schema upgrade policy → 加 DESIGN §2.4, additive=no bump, semantic=bump, Replay best-effort, What-if exact version
+- #8: trace 文件分桶 → V1 flat dir, 阈值 <10k traces, 超过引入 YYYY/MM/ 或 sqlite
+
+详细修订点见 DESIGN.md 各节标注 "(Codex #N)" / "(Codex Q3)" 锚点.
+
+---
+
+### PR-1 落地记录 (2026-05-16)
+
+实施范围:
+- `chisha/trace_store.py` 新模块 (~290 行): write/read/list + sandbox 派生 + failure matrix (404/409/500) + truncation 兜底
+- `chisha/api.py` recommend_meal 加 trace hook + `_build_trace` + `_normalize_combos` (combos table 去重防 6MB+ 膨胀)
+- `chisha/rerank.py` _pick_explore / fallback_rerank / rerank 透传 today (Codex Q3 修 wall clock 漂移) + rerank 加 trace_collector kwarg
+- `chisha/score.py` rank_combos 加 l1_prefs_override (`_UNSET_L1_PREFS` sentinel 区分"未传"与"显式 None"); 防 What-if 静默 fallback live state
+- `chisha/data_root.py` recommend_trace_dir (第 8 个落盘点)
+- 16 unit + 1 golden snapshot test
+
+实测调整:
+1. **trace size 硬限 300KB → 50MB sanity bound** — 用户决策"调试完整性优先, 不省空间", Phase 0 单 zone 实测 trace ~1.3MB 是常态. 仅超 50MB 才触发兜底裁剪
+2. trace 字段补全: ctx/recall/score/rerank/final 5 段 latency_ms 都填齐, 无占位
+3. session_id 随机熵从 16-bit (4hex) → 64-bit (16hex), tmp 文件名加 pid+token_hex(4) 后缀 (Codex FIX-NOW #7 防并发撞名)
+
+Codex review 两轮闭环:
+- 第一轮 review 8 点提了 4 个 must-fix (BLOCKER #4/#8 sentinel / FIX-NOW #1 trace_collector 早期 return / #5 golden 内容快照 / #6 行为断言 / #7 session_id 熵)
+- 全部吸收, 第二轮 review 5/5 CORRECT, 无剩余问题
+
+验收:
+- 599 tests pass, 0 fail, 1 skipped
+- baseline_l2_snapshot + compare_traces 0 diff (CLAUDE.md 红线)
+- 真实 recommend_meal('lunch') 写 trace 1.3MB 落 logs/recommend_trace/{sid}.json
+- golden snapshot fixture 290 行, 内容级 (非 count) 守门

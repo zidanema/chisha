@@ -86,6 +86,16 @@ def long_term_prefs_path(root: Optional[Path] = None) -> Path:
     )
 
 
+def recommend_trace_dir(root: Optional[Path] = None) -> Path:
+    """D-079: 推荐链路 trace 落盘目录. 一次推荐一个 {sid}.json 文件.
+
+    sandbox 启用 → logs/sandbox/recommend_trace/, prod → logs/recommend_trace/.
+    复用 _maybe_sandbox 模式, 与其他 7 个落盘点一致.
+    """
+    r = _resolve_root(root)
+    return _maybe_sandbox(r, "recommend_trace", "logs/recommend_trace")
+
+
 def profile_path(root: Optional[Path] = None) -> Path:
     """sandbox 启用且副本存在时返沙盒副本; 否则 prod profile.yaml.
 

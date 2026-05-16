@@ -532,6 +532,8 @@ def build_payload(
 def fallback_rerank(
     top_combos: list[dict],
     n: int = 5,
+    *,
+    today: "dt.date | None" = None,
     n_explore: int = 2,
     meal_log: list[dict] | None = None,
 ) -> list[dict[str, Any]]:
@@ -550,7 +552,7 @@ def fallback_rerank(
     used_ids = {id(c) for c in exploit}
     rest = [c for c in top_combos if id(c) not in used_ids]
     if rest and n_explore > 0:
-        explore = _pick_explore(rest, exploit, meal_log or [], n_explore)
+        explore = _pick_explore(rest, exploit, meal_log or [], n_explore, today=today)
     else:
         explore = []
 
@@ -570,10 +572,17 @@ def _pick_explore(
     already_used: list[dict],
     meal_log: list[dict],
     n_explore: int,
+    *,
+    today: "dt.date | None" = None,
 ) -> list[dict]:
-    """explore 候选: 优先打分中段 + 最近 7 天没吃过的 cuisine/cooking_method."""
+    """explore 候选: 优先打分中段 + 最近 7 天没吃过的 cuisine/cooking_method.
+
+    D-079 (Codex Q3): today 显式注入支持 What-if frozen replay. None=向后兼容
+    用 wall clock dt.date.today(), 生产链路保持 0 行为变化.
+    """
     import datetime as dt2
-    cutoff = dt2.date.today() - dt2.timedelta(days=7)
+    today = today or dt2.date.today()
+    cutoff = today - dt2.timedelta(days=7)
     used_cuisines: set[str] = set()
     used_methods: set[str] = set()
     for log in meal_log:
@@ -1171,6 +1180,9 @@ def rerank(
     refine: bool = False,
     use_llm: bool | None = None,
     model: str | None = None,
+    *,
+    today: "dt.date | None" = None,
+    trace_collector: dict | None = None,
 ) -> list[dict]:
     """主入口. LLM 精排 + fallback.
 
@@ -1182,7 +1194,25 @@ def rerank(
         refine: True 时 n_explore=0 (D-015).
         use_llm: 强制开关. None=auto (看任何 provider 是否可用, D-047).
     """
+    # D-079 Codex FIX-NOW #1: trace_collector 必须在所有 return 前填齐核心字段,
+    # 避免 early-return / fallback / skipped 路径漏字段导致 UI/replay 失数据.
+    # llm_attempted = "是否调过 LLM" (含失败); llm_called = "LLM 成功返回 candidates"
+    def _ensure_collector_filled(
+        status: str, attempted: bool, called: bool, used_fb: bool,
+        reason: str = "",
+    ) -> None:
+        if trace_collector is None:
+            return
+        trace_collector.setdefault("status", status)
+        trace_collector["llm_attempted"] = attempted
+        trace_collector["llm_called"] = called
+        trace_collector["used_fallback"] = used_fb
+        if reason:
+            trace_collector.setdefault("fallback_reason", reason)
+
     if not top_combos:
+        _ensure_collector_filled("skipped", attempted=False, called=False,
+                                  used_fb=False, reason="empty top_combos")
         return []
     if refine:
         n_explore = 0
@@ -1190,11 +1220,48 @@ def rerank(
         from chisha.llm_client import has_llm_key
         use_llm = has_llm_key()
 
+    llm_attempted = False
+    llm_called = False
     if use_llm:
-        llm_out = _llm_rerank(top_combos=top_combos,
-                               profile=profile, context=context,
-                               n=n, n_explore=n_explore,
-                               model=model, n_max=n)
+        llm_attempted = True
+        # D-079: 直接调 _run_llm_rerank 拿 res, 把中间状态写进 trace_collector
+        if trace_collector is not None:
+            res = _run_llm_rerank(
+                top_combos, profile, context,
+                n=n, n_explore=n_explore, n_max=n,
+                model=model, profile_llm=profile.get("llm"),
+            )
+            llm_resp = res.get("llm_response") or {}
+            raw_text = (llm_resp.get("raw_text") or "") if isinstance(llm_resp, dict) else ""
+            trace_collector["status"] = res.get("status")
+            trace_collector["config_error"] = res.get("config_error", False)
+            trace_collector["resolved_provider"] = res.get("resolved_provider")
+            trace_collector["model"] = res.get("model")
+            trace_collector["system_prompt_chars"] = res.get("system_prompt_chars")
+            trace_collector["user_message_chars"] = res.get("user_message_chars")
+            trace_collector["user_message_full"] = res.get("user_message_full")
+            trace_collector["raw_response"] = raw_text
+            trace_collector["raw_response_chars"] = len(raw_text)
+            trace_collector["tool_input"] = (
+                llm_resp.get("tool_input") if isinstance(llm_resp, dict) else None
+            )
+            trace_collector["stop_reason"] = (
+                llm_resp.get("stop_reason") if isinstance(llm_resp, dict) else None
+            )
+            trace_collector["fallback_reason"] = res.get("fallback_reason")
+            trace_collector["parsed_candidates"] = res.get("candidates")
+            if res.get("status") == "ok":
+                llm_out = res.get("candidates")
+                llm_called = True
+            else:
+                llm_out = None
+        else:
+            llm_out = _llm_rerank(top_combos=top_combos,
+                                   profile=profile, context=context,
+                                   n=n, n_explore=n_explore,
+                                   model=model, n_max=n)
+            if llm_out is not None:
+                llm_called = True
         if llm_out is not None:
             mapped: list[dict] = []
             for cand in llm_out[:n]:
@@ -1208,10 +1275,21 @@ def rerank(
             mapped = _enforce_brand_unique(mapped, top_combos, n=n)
             if mapped:
                 _log_selection_metrics(mapped, top_combos)
+                _ensure_collector_filled(
+                    status=(trace_collector or {}).get("status") or "ok",
+                    attempted=llm_attempted, called=llm_called, used_fb=False,
+                )
                 return mapped
 
+    # 走 fallback 路径: use_llm=False / LLM 失败 / mapped 为空
+    _ensure_collector_filled(
+        status=(trace_collector or {}).get("status") or "skipped",
+        attempted=llm_attempted, called=llm_called, used_fb=True,
+        reason=(trace_collector or {}).get("fallback_reason")
+                 or ("use_llm=False" if not use_llm else "llm result unusable"),
+    )
     return fallback_rerank(top_combos, n=n, n_explore=n_explore,
-                            meal_log=meal_log)
+                            meal_log=meal_log, today=today)
 
 
 def _log_selection_metrics(

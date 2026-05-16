@@ -946,6 +946,11 @@ def score_combo(
     return sum(parts.values()), parts
 
 
+# D-079 Codex BLOCKER #4/#8: 区分 "未传 override" 与 "传了 None (= 当时无 prefs)".
+# sentinel object 让 l1_prefs_override=None 也走 override 路径 (不读 live prefs).
+_UNSET_L1_PREFS = object()
+
+
 def rank_combos(
     combos: list[dict],
     profile: dict,
@@ -956,6 +961,8 @@ def rank_combos(
     meal_type: str | None = None,
     root=None,
     intent=None,  # D-073: RefineIntent | None, refine 二轮启用
+    *,
+    l1_prefs_override=_UNSET_L1_PREFS,  # D-079: 不传=load_prefs(root); 显式 dict 或 None=用之 (含 None 表示当时无 prefs)
 ) -> list[dict]:
     """对 combos 打分排序, 返回带 score/breakdown 的列表 (降序).
 
@@ -969,9 +976,16 @@ def rank_combos(
       scripts/bootstrap_l1_from_legacy.py 兜底
     - prefs.json 存在 → 走 LLM 抽取产物 (旧 jsonl 不再被读)
 
+    D-079 (Codex #1 + sentinel 修订): l1_prefs_override 注入 — What-if 重跑时
+    传入冻结的 prefs snapshot 替代 load_prefs(root). 显式传 None 表示"当时无
+    prefs (= load_prefs 返 None)", 也不读 runtime state.
+    不传 → 走 load_prefs(root), 生产链路向后兼容.
+
     Args:
       root: 项目根 (透传给 l1_prefs.load_prefs).
         Codex Q3 修复: 三态等价性必须由 bootstrap 脚本保证.
+      l1_prefs_override: 不传=load_prefs(root) 路径; 显式 dict 或 None=用之
+        (Codex BLOCKER #4/#8: None 当时无 prefs, 严禁 fallback 到 live).
     """
     # D-043: rank-based popularity, 就地修改 combos (加 _popularity_rank)
     attach_popularity_ranks(combos)
@@ -981,7 +995,11 @@ def rank_combos(
     from chisha.long_term_prefs import merge_hints
     static_hints = extract_static_taste_hints(profile)
     try:
-        prefs = load_prefs(root=root)
+        # D-079: override 优先 (含 None), 不读 runtime state 防 What-if 漂移
+        if l1_prefs_override is _UNSET_L1_PREFS:
+            prefs = load_prefs(root=root)
+        else:
+            prefs = l1_prefs_override
         runtime_hints = to_runtime_hints(prefs)
     except Exception:
         runtime_hints = None
