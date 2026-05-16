@@ -205,6 +205,8 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 痛点：`logs/recommend_log.jsonl` 只存 final 5，没 L1 drops / L2 完整 breakdown / L3 LLM payload。差评事后无法回溯；改 weight A/B 时 ctx 也变，不可隔离归因
 - 三模式：Replay（读 `logs/recommend_trace/{sid}.json` 默认）/ What-if（冻结 ctx + L1 combos，改下游 weights/rules，默认无 LLM）/ Live（现场全链路，永不写盘）
 - 自包含原则：`__frozen` 必须含 `ctx + today + l1_combos + l1_prefs_snapshot + l2_meal_log_view + profile_snapshot`，What-if 严禁任何 runtime read
-- 写盘失败仅 warning 不阻断；读盘损坏 fail-closed（备份 `.corrupt.{ts}.bak` 同 D-066/067）；trace size 改 50MB sanity bound（实测单 zone ~1.3MB 是常态，"调试完整性优先"）
+- 写盘失败仅 warning 不阻断；读盘损坏 fail-closed（备份 `.corrupt.{ts}.bak` 同 D-066/067）；trace size 原拍 300KB 硬上限,实测单 zone ~1.3MB 是常态后改 50MB sanity bound（"调试完整性优先"，志丹决策）
+- What-if response 必带 `__llm_called` 字段（默认 use_llm=false，强制透传是否真发了 LLM），`__source` 枚举只 `"production" | "what_if_preview"`，Live 永不写盘
 - 后端是单一可信源，前端 localStorage 退为 7 天离线 fallback 永不参与列表合并；不动 L1/L2/L3/Final/Refine/Trace 6 个 panel 组件（what-if 是 overlay）
 - 改 trace schema 必 bump `TRACE_SCHEMA_VERSION`；改 score / methodology / spec 仍必跑 baseline_l2 守门（D-072.1 红线）
+- Codex 两轮 review 12 finding 全闭环（2 BLOCKER：`__frozen.l1_prefs_snapshot` + `l2_meal_log_view` 漏了 runtime read 漂移；7 FIX-NOW：failure matrix 固化 / `__source` 枚举 / 300→50MB trace size / Live `save-as-replay` 禁；1 push back: localhost 鉴权用 bind 替代端点 token；2 defer: schema upgrade policy + 文件分桶）

@@ -5,7 +5,7 @@
 > **当前结论**: 生产打标默认 `deepseek/deepseek-v4-flash` (字段 acc 88.9%, 距 sonnet 冠军 -0.5pp, 100万条 $100, 见 D-037)
 >
 > 任务规范:`../dish_tagging_model_eval_spec.md`
-> 决策记录:`docs/DECISIONS.md` D-031 / D-032 (prompt) / **D-036** (dual-model golden set 重建) / **D-037** (生产默认切 deepseek-flash)
+> 决策记录:`docs/archive/DECISIONS_phase0.md` D-031 / D-032 (prompt) / **D-036** (dual-model golden set 重建) / **D-037** (生产默认切 deepseek-flash)
 
 ## Golden set (171 条, 2026-05-12 Opus + Codex 双模型共创)
 

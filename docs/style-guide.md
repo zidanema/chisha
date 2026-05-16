@@ -2,7 +2,7 @@
 
 > 本文档约束 `apps/web` 用户视图的所有 UI 输出（文案 + 视觉系统）。LLM 产出的字段（reason_one_line / summary）也必须遵守 §1 文案规则。
 >
-> 原型沉淀于 `chisha-user.zip / DESIGN_NOTES.md` §3 §4；正式约束写入本文档 + [DECISIONS.md](DECISIONS.md) D-052~D-055。
+> 原型沉淀于 `chisha-user.zip / DESIGN_NOTES.md` §3 §4；正式约束写入本文档 + [DECISIONS](archive/DECISIONS_phase0.md) D-052~D-055。
 
 ---
 

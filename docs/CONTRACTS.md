@@ -66,7 +66,7 @@
 
 - **L1 抽取走 `claude_code_cli` text + JSON 路径，不传 tools。** CLI 不支持 tool_use，prompt 在 `prompts/l1_extract.md`；改 prompt 走 D-036 dual-model audit。
 - **词表锁定 = BOOST {low_oil, wetness, spicy, sweet_sauce} / PENALTY {sweet_sauce, processed_meat, carb_heavy, spicy}。** spicy / sweet_sauce 双向有意；`processed_meat / carb_heavy` 不许 boost（违反 harvard_plate baseline）。守门测试 `test_token_vocabulary_unchanged`。进一步扩词表 = 新决策 + baseline_l2 守门。
-- **`score.taste_match_bonus` 走 `l1_prefs.load_prefs`，旧 `load_runtime_hints` 已 deprecated。** `rank_combos(l1_prefs_override=...)` 区分"未传" vs "显式 None"，What-if 不许静默 fallback 到 live state。
+- **`score.taste_match_bonus` 走 `l1_prefs.load_prefs`，旧 `load_runtime_hints` 已 deprecated。** `rank_combos(l1_prefs_override=...)` 用 `_UNSET_L1_PREFS` sentinel 区分"未传"（默认 → `load_prefs(root)`）vs "显式 None"（What-if 明确禁用 L1），不许静默 fallback 到 live state（D-079 Codex BLOCKER #4 锚点）。
 - **L1 → L3 prompt 桥 `root` 必须透传。** `rerank()` 主入口 + `refine.py` 调 rerank 都得显式 `root=root`。`_profile_block` 默认 root=None 时走 `_project_root` 兜底——测试用 monkeypatched ROOT 或多 worktree 场景下会跨 root 串数据。守门：`test_refine_passes_root_to_rerank`（参 D-078.2）。
 
 ---

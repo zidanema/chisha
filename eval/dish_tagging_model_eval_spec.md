@@ -3,7 +3,7 @@
 > 给 Claude Code (ralph 模式) 的独立小需求
 > 目标:在 OpenRouter 上横评 5-6 个主流模型在「菜品打标 v3」这个结构化抽取任务上的字段级准确率,产出可决策的报告(选哪个模型跑生产数据冲刷)。
 
-> **状态更新 (2026-05-12, D-036)**: Step 1 (golden set 构造) **已升级**为 Opus 4.7 + Codex GPT-5.4 双模型共创流程,产物从初始规划的 **150 条扩为 171 条** (加 21 条 adversarial case)。详见 `eval/dish_tagging_eval/README.md` 和 `docs/DECISIONS.md` D-036。下文 Step 1 的"调 Sonnet 生成 + 150 条"描述属历史规划,Step 2-5 仍有效但跑批基数改为 171。
+> **状态更新 (2026-05-12, D-036)**: Step 1 (golden set 构造) **已升级**为 Opus 4.7 + Codex GPT-5.4 双模型共创流程,产物从初始规划的 **150 条扩为 171 条** (加 21 条 adversarial case)。详见 `eval/dish_tagging_eval/README.md` 和 `docs/archive/DECISIONS_phase0.md` D-036。下文 Step 1 的"调 Sonnet 生成 + 150 条"描述属历史规划,Step 2-5 仍有效但跑批基数改为 171。
 
 ---
 

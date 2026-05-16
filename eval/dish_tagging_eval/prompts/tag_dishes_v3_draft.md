@@ -42,7 +42,7 @@ r2 changelog (spike 50 audit, 12/50 violation 修补):
   - grain_type: 商业燕麦棒/能量棒 → 精制面 (修 d_184_048 边界)
   - dish_role: 汉堡/三明治 = 主食 (与盖饭对齐, 即使含肉饼+菜+酱)
   - main_ingredient_type: 热狗/简易三明治 = 主食 (载体), 不归"其他" (修 d_104_009)
-see: docs/DECISIONS.md D-032
+see: docs/archive/DECISIONS_phase0.md D-032
 -->
 
 你是营养标签助手。给以下外卖菜品打营养画像。**输出必须严格 JSON 数组, 字段顺序固定, 不要任何解释文字。**
