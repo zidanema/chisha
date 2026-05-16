@@ -3010,3 +3010,160 @@ L2 端 `apply_caps` 后 top60 日式 combo: **6 → 16** (`换日料`场景).
   - `baseline_l2_snapshot` + `compare_traces` 0 diff 通过 (首轮场景 intent=None 行为不变, 满足 D-072.1 红线)
   - pytest 471 passed (`test_session::test_cleanup_expired` 因硬编码 2026-05-13 与当前日期相对漂移, 与本改动无关)
 - 推翻: 无 (D-073 设计语义保持, 仅修一个 cap 边界缺陷)
+
+## D-076: L1 长期反馈层重构 — 砍伪 L1 + LLM 抽取 (V1.x)
+
+日期: 2026-05-16
+状态: active · 落地: 2026-05-16 PR-0/0.5/0.6/0.7/0.9 (5 个 commit)
+
+背景:
+2026-05-16 志丹挑战 D-070 三层信号模型在代码层的落地, 揭出代码与文档脱节:
+- D-070 文档说 "L1 长期反馈层 V1.1 已建", 实际代码层并不存在.
+- `chisha/long_term_prefs.py` 是**伪 L1** — 把 `refine.py:244` 写入的
+  refine chip (D-070 L2 当下 session 信号) 当跨 session 信号做频次
+  统计 + 半衰期 + 拉普拉斯 ≥2 平滑, 概念错位.
+- V1.1 反馈 schema (D-063~D-065 `rating + 4 维 calibration + note`)
+  落 `feedback_store.json` 只为反馈页回放, 没有任何机制汇成长期偏好.
+  ← 真正的 L1 输入源在躺尸.
+
+Codex S2 dual-model audit (D-036) 揭出更深一层: `claude_code_cli`
+provider 不支持 tool_use forced schema, 走 text + JSON parse/validate/
+retry 才能用 Max 订阅免费.
+
+决策 (志丹拍板, 拍板 1A + 拍板 2 "一波到位 + bootstrap_from_legacy"):
+1. **砍 refine 写 feedback_history.jsonl 错位路径**.
+   refine chip 是 L2 单次 session 信号, 不允许跨 session 累加.
+2. **新增最小 L1 LLM 抽取层** (`chisha/l1_extractor.py` +
+   `chisha/l1_prefs.py`):
+   - 输入: V1.1 反馈 + accepted meal 上下文 + profile methodology
+   - 预聚合 deterministic summary (Codex Q7): 4 维 calibration 直方图
+     + ingredient_frequency + recent_complaints/positive 各最多 5 条,
+     不喂 raw feedback_store
+   - LLM 调用 (Codex Q6): claude_code_cli text mode + system prompt
+     强制 JSON schema + 代码侧 parse_json (markdown / preamble 容忍)
+     + validate_prefs (enum + 别名 canonicalize) + retry 1 次
+   - 输出 schema: `data/long_term_prefs.json`
+3. **score.rank_combos 切到 l1_prefs.load_prefs** (PR-0.7):
+   旧 `load_runtime_hints` 弃用 (deprecated stub 保留供 bootstrap),
+   新 `to_runtime_hints(load_prefs())` 替代.
+4. **bootstrap_from_legacy 兜底**: PR-0.6 一次性脚本读 D-043 旧 jsonl
+   → 生成首版 prefs.json, 标 `bootstrap_from_legacy=true`. 解决
+   Codex Q4 揭出的"切 score 瞬间丢旧信号"问题.
+5. **localhost-only refresh 端点** (PR-0.9): POST
+   `/api/long_term_prefs/refresh` 手动 trigger L1 抽取, 鉴权
+   `_is_localhost(request)` + 可选 `CHISHA_ADMIN_TOKEN`.
+
+LLM 词表锁定 (Phase 0 边界, Codex Q1):
+- `score.taste_match_bonus` 现支持 6 维度 7 兼容 token:
+  - boost: `low_oil`, `wetness` (`soup_or_broth` 别名)
+  - penalty: `sweet_sauce`, `processed_meat`, `carb_heavy`, `spicy`
+- 扩词表 = 改打分逻辑 = 违反 D-072 边界, Phase 1 独立决策.
+- V1.1 4 维 calibration 中 `oil_calibration` 直接映射 `low_oil`;
+  其余 3 维 (`reason_match` / `fullness` / `repurchase_intent`) 进
+  `signals_not_scored` 仅展示, 不打分.
+
+降级:
+- prefs.json 不存在 / 损坏 → load_prefs None (LLM 失败 fallback)
+- 损坏 → backup `.corrupt.{ts}.bak`, 不阻塞推荐
+- LLM 全 retry 失败 → 不写盘, 保留上次 prefs
+
+数据脱节兼容:
+- `feedback_history.jsonl` 文件保留, 但 prod 不再写入 (refine 砍掉)
+- bootstrap 脚本仍可读它, 用户切换前主动跑 `bootstrap_l1_from_legacy`
+- 函数 `append_feedback / load_runtime_hints` 保留为 deprecated stub
+- 单测 `tests/test_legacy_long_term_prefs.py` 保留, 标 legacy
+
+守门 (D-072.1):
+- baseline_l2_snapshot + compare_traces 4 snap, 关 sandbox 时 L2
+  trace |delta| < 1e-6 严格通过.
+- `tests/test_score_l1_switch.py` 三态守门: 无 prefs / 空 prefs /
+  有 prefs 三种状态行为 + 损坏 prefs fall-open + rank_combos 端到端.
+- 全测试 514 → 526 pass, 0 fail.
+
+依赖 / 影响:
+- 兑现 D-070 L1 文档承诺 (此前过度乐观)
+- 推翻: D-043 "refine chip → load_runtime_hints" 闭环
+- 关联: D-077 sandbox 模式提供真实场景验证 L1 抽取链路
+- Phase 1 待办: token 词表扩展 / LLM 抽取调度 cron / 多 profile
+
+讨论存档:
+- D-036 dual-model audit 共两轮 Codex S2 review (tmp/sandbox_design.md
+  v2 → v3 + 第二轮 review 输出 10 项修正)
+
+
+## D-077: Sandbox Time-Travel 模式 (V1.x)
+
+日期: 2026-05-16
+状态: active · 落地: 2026-05-16 PR-1a/1b/1c/1d (4 个 commit)
+
+背景:
+推荐链路有多层"时间累积"行为 (D-043 旧伪 L1 半衰期 / cooldown 7d
+不重店 / 3d 不重蛋白 / snooze 24h / session ttl 24h / D-076 新 L1
+LLM 抽取). 自用验证这些行为需要等真实日历日推进, 至少一周才能跑通
+一轮闭环, 这个节奏阻塞 Phase 0 收尾. 志丹要求**真实交互式 sandbox**
+压缩到 user web 一次会话内完成.
+
+决策 (志丹原则, 不可动摇):
+1. **真实交互优先**: sandbox 是 user web 的一个 mode, 不是 CLI
+   替代 / 离线 dry-run / fixture batch. Codex 反驳建议被拒.
+2. **行为完全一致**: sandbox 走真实端点 / 真实 L3 LLM / 真实链路.
+   禁止任何"沙盒专属阉割" (fake LLM / 跳过 cooldown 等).
+3. **仅在两处隔离**: 数据落盘根 + 虚拟时钟. 其它完全同 prod.
+4. **沉淀必须能被看到**: inspect 端点 + 前端 Drawer 展示 L1 prefs
+   抽取产物 + 最近反馈, 让用户能验证 "我昨天投诉了今天它真生效了".
+5. **一键回到干净状态**: reset 删 logs/sandbox/ 整目录, prod 零风险.
+
+架构:
+- **时钟层** (`chisha/clock.py` + `chisha/sandbox.py`): state.json
+  落 logs/sandbox/, threading.Lock 防并发 advance/reset 互写. 11 处
+  时间调用注入 (Codex Q1 grep 校对), 6 处明确排除 (time.time
+  latency / corrupt backup 时间戳 / comment id 毫秒).
+- **数据隔离层** (`chisha/data_root.py`): 7 个落盘点全部派生 —
+  meal_log / sessions / feedback_store / recommend_log /
+  feedback_history (deprecated) / long_term_prefs / profile (副本
+  fallback 到 prod).
+- **API 层** (`chisha/web_api.py:/api/sandbox/*`): 5 + 1 端点 (init/
+  advance/reset/disable/state/inspect), advance 后异步 threading
+  trigger L1 抽取 + record_l1_extraction 写状态. localhost only 鉴权.
+- **前端层** (`apps/web/src/`): SandboxBar (banner + 操作) + Inspect
+  Drawer (沉淀状态可视化) + ProfilePage 底部入口. sandbox 关闭时
+  完全不渲染, 启用后顶栏接管. mock 模式不调.
+
+advance 节奏:
+- 异步 L1 抽取, 不阻塞 advance 返回. state.last_l1_extraction 字段
+  记录 pending → ok | failed | skipped, 前端 badge 显示.
+- L1 失败保留旧 prefs (extract_and_save 内部降级).
+- 推荐链路读 prefs 时, 即使 L1 状态 pending 也用旧 prefs (Codex Q2
+  stale 风险 — 暂以"badge 标明" 替代"同步等待", Phase 1 可加).
+
+LLM 成本:
+- claude_code_cli + Max 订阅 (拍板 1A), sandbox 一周 ~14 次推荐 +
+  7 次 L1 抽取 = 21 次 LLM 调用, Max 配额充裕, 不烧 OpenRouter token.
+
+failure modes:
+- snooze 24h: sandbox advance 一天后立即解 snooze (虚拟时钟比较),
+  行为正确, 文档明确.
+- profile 切换: sandbox 启用时 PUT /api/profile 写副本, 不污染 prod.
+- 多 tab 并发 advance/reset: state.json 文件锁防 race.
+- LLM 失败: 保留上次 prefs, state 标 failed.
+
+D-编号占用:
+- D-077 此前 memory 占位 "AI-friendly 接入共识" (chisha_ai_friendly_
+  consensus_d074.md). 该草稿未落 DECISIONS.md, 实际编号未发, 让位
+  给 sandbox; AI-friendly 真正落条目时改用 D-078+.
+
+依赖 / 影响:
+- 配套 D-076 L1 LLM 抽取层 (sandbox 验证它的核心场景)
+- 复用 chisha/data_root.py (PR-1b) 给 PR-1c API 端点 / PR-1d 前端
+- 守门: baseline_l2_snapshot 4 snap, 全程 L2 trace 0 diff
+- 单测: 18 sandbox/clock + 9 data_root 隔离 + 12 web_api 端点
+
+不在 D-077 内:
+- LLM fake / 阉割模式 (违反原则 #2)
+- CLI 脚本 dry-run (违反原则 #1)
+- meal_log.jsonl 写入端 (V1 现有 gap, accept 只写 feedback_store,
+  diversity cooldown 实际不工作) — PR-2 备注, Phase 1 单独修
+
+讨论存档:
+- D-036 dual-model audit: Codex S2 第二轮 review 揭出 tool_use 矛盾
+  + PR-0.7 等价性风险, 引出 bootstrap_from_legacy + 三态守门
