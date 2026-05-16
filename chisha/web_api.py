@@ -146,6 +146,61 @@ def api_refine(req: RefineReq) -> dict:
         "refine_intent": raw.get("refine_intent"),  # D-073: 替代 parsed_feedback/taste_hints
     }
     _remember_session_safe(out["session_id"], out)
+
+    # D-079 PR-4: refine 同 session 二轮 → 把 refine 信息 merge 进同一 trace 文件
+    # (Sidebar 一条 session 一行, 不分裂). DESIGN §3.5.
+    #
+    # base trace 缺失/损坏分支:
+    #   - read_trace 返 None (首轮 trace 写盘失败 best-effort 降级了)
+    #     → logger.warning + 不持久化 refine trace (没 base 可附着, 也不创 refine-only 孤儿)
+    #   - read_trace 抛 TraceCorrupt → logger.error + 同上不持久化
+    #   - 都不阻断 refine 自身响应
+    try:
+        from chisha import trace_store
+        base_trace = trace_store.read_trace(req.session_id, root=ROOT)
+        if base_trace is None:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "refine trace skip persist: base trace %s missing (recommend write "
+                "may have best-effort failed); refine response unaffected",
+                req.session_id,
+            )
+        else:
+            refine_field = {
+                "applied": True,
+                "user_input": req.refine_text or "",
+                "intent": raw.get("refine_intent"),
+                "round": raw.get("round"),
+                "n_combos_recalled": raw.get("stats", {}).get("n_combos_recalled"),
+                "n_after_l2": raw.get("stats", {}).get("n_combos_after_score"),
+                "n_returned": raw.get("stats", {}).get("n_returned"),
+                "ts": raw.get("generated_at"),
+                "candidate_ids": [
+                    f"{(c.get('restaurant') or {}).get('name', '')}|"
+                    f"{','.join((d.get('name') or '') for d in (c.get('dishes') or [])[:2])}"
+                    for c in (raw.get("candidates") or [])[:5]
+                ],
+            }
+            base_trace["refine"] = refine_field
+            # __config 也同步标 refine_text (Sidebar/Replay 展示)
+            cfg = base_trace.get("__config") or {}
+            cfg["refine_text"] = req.refine_text or ""
+            base_trace["__config"] = cfg
+            trace_store.write_trace(req.session_id, base_trace, root=ROOT)
+    except trace_store.TraceCorrupt as e:
+        import logging as _logging
+        _logging.getLogger(__name__).error(
+            "refine trace skip persist: base trace %s corrupt: %s",
+            req.session_id, e,
+        )
+    except Exception as e:
+        # 任何 trace 写盘失败都不阻断 refine response (best-effort 原则).
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "refine trace persist failed (non-fatal): %s: %s",
+            type(e).__name__, e,
+        )
+
     return out
 
 

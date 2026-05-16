@@ -81,6 +81,21 @@ def test_reset_clears_data(tmp_root: Path):
     assert not (tmp_root / "logs" / "sandbox").exists()
 
 
+def test_reset_clears_trace_dir(tmp_root: Path):
+    """D-079 PR-4 守门: sandbox.reset 必须删 logs/sandbox/recommend_trace.
+
+    DESIGN §6.1 — sandbox.reset 一刀切 logs/sandbox, trace 自然带走. 此测试
+    防止以后误把 reset 改成增量删 (漏掉 trace 子目录 → Replay 列表残留 stale).
+    """
+    sandbox.init(start_date="2026-05-20", root=tmp_root)
+    trace_dir = tmp_root / "logs" / "sandbox" / "recommend_trace"
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    (trace_dir / "sess_dummy.json").write_text("{}", encoding="utf-8")
+    assert trace_dir.exists()
+    sandbox.reset(root=tmp_root)
+    assert not trace_dir.exists()
+
+
 def test_disable_preserves_data(tmp_root: Path):
     sandbox.init(start_date="2026-05-20", root=tmp_root)
     sandbox.advance(days=2, root=tmp_root)

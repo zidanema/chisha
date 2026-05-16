@@ -3316,7 +3316,7 @@ Codex 闭环 (跨 7 Phase + final PR, 8 轮 review):
 ## D-079: 推荐链路 trace 持久化 + Debug 三模式 (Replay / What-if / Live)
 
 日期: 2026-05-16
-状态: **active · PR-1 已落地 (Codex 二轮 review 全 CORRECT)** · PR-2/3/4 待实施
+状态: **active · PR-1/2/3/4 全部落地** · 2026-05-16 D-079 实施完成
 worktree: `.claude/worktrees/debugger-attach` (branch on top of D-078.1 收尾 commit `e4565e1`)
 配套文档: [docs/DEBUG_REPLAY_PRD.md](DEBUG_REPLAY_PRD.md) · [docs/DEBUG_REPLAY_DESIGN.md](DEBUG_REPLAY_DESIGN.md)
 
@@ -3446,3 +3446,63 @@ Codex review 两轮闭环:
 - baseline_l2_snapshot + compare_traces 0 diff (CLAUDE.md 红线)
 - 真实 recommend_meal('lunch') 写 trace 1.3MB 落 logs/recommend_trace/{sid}.json
 - golden snapshot fixture 290 行, 内容级 (非 count) 守门
+
+### PR-2 落地记录 (2026-05-16, commit `4a31891`)
+
+实施范围:
+- `chisha/debug_what_if.py` 新模块 (~280 行): `what_if_rerun` + `rehydrate_combos` + `deep_merge` + `validate_overrides` + `InvalidBaseTrace` / `InvalidOverrides` 异常分型
+- `chisha/web_api.py` 加 3 端点: `GET /api/debug/sessions` + `GET /api/debug/sessions/{sid}` + `POST /api/debug/what_if` + `WhatIfReq` / `WhatIfOverrides` pydantic (extra='forbid' 严格 schema)
+- `chisha/trace_store.py` 裁剪字段同步 `api._SCORING_NUTRITION_KEYS`, 目标改 `__frozen.dishes` 表 (PR-1 normalized schema 对齐)
+- 47/47 D-079 测试 + 628/628 全套绿 + baseline_l2 0 diff
+
+Codex S1 8 条 finding 全闭环:
+- BLOCKER: `__llm_called` 误报 (Codex #1) — fallback 路径 LLM 已发但状态错算 → 修
+- FIX-NOW: ValueError 过宽 catch 兜底 + 测试强化 (Codex #2) — 拆 InvalidOverrides vs InvalidBaseTrace
+- DEFER: 字段名一致性 + 旧 trace 兼容测试 (Codex #5)
+- NIT: 422 vs 400 文档边界 (PR-2 NIT #7) — REST 标准分开, 不强行翻
+
+S2 因 thread context 受限未跑, 用户选 C 直接 commit (全绿 + 0 diff 已是强信号).
+
+### PR-3 落地记录 (2026-05-16)
+
+实施范围 (`apps/debug-ui/`):
+- `src/api/backend-types.ts`: 加 `BackendDebugTrace` / `BackendSessionMeta` / `BackendSessionsResp` / `BackendWhatIfReq` 等 D-079 trace shape
+- `src/api/client.ts`: `fetchSessions` / `fetchSession` / `postWhatIf` 三个 fetcher
+- `src/api/adapter.ts`: `traceToSession` + `wrapTraceL3` — 把后端 production trace shape 转成前端 `Session` view-model (l3 flat → l3_rerank.llm 包一层复用 adaptL3)
+- `src/hooks/useSession.ts`: 进入页面 fetch `/api/debug/sessions` 切后端主源; 后端可达 → 用后端列表 + 缓存 trace; 不可达 → 降级 localStorage + warn (Codex #6 deprecate 不 migrate)
+- `src/components/Sidebar.tsx`: 每行展示 feedback badge (⭐ acc rank / ❤×N rating / 🚫 stopped); Live / What-if 入口按钮; offline / corrupt 红字提示
+- `src/components/LiveBanner.tsx` (新增): 金色 banner 提示 Live 模式 (永不写盘), 带 `__llm_called` 状态 + 退出按钮
+- `src/components/WhatIfPanel.tsx` (新增): 双栏 final 5 对比 (新进绿 / 踢出红 / 升↑降↓中性) + KPI summary (new/dropped/up/down) + JSON overrides 编辑 + use_llm_rerank 开关 (default false 守 Codex +4)
+- `src/App.tsx`: mode 三态 (replay / live / whatif) + URL state (`?sid` `?mode=live` `?what_if=1`) + 点击 history 默认回 Replay + Live 入口透传 `live=true`
+- `src/types/trace.ts`: `RunHistoryRow` 加 `feedback?: FeedbackBadge` + `source?: "backend" | "local"`
+- `src/styles.css`: 加 D-079 节 (fb-badges / live-banner / what-if 双栏 / wif-final 三态)
+
+红线守住:
+- 不动 L1/L2/L3/Final/Refine/Trace 6 个 panel 组件 (DESIGN §3.4 — what-if 是 overlay)
+- 后端是单一可信源, localStorage 只作离线 fallback, 永不参与后端列表合并 (DESIGN §8.2)
+- Live 模式 `runMain({ live: true })` 不落 localStorage 也不调 backend trace_store (debug_recommend 自身不写 trace)
+- URL state 持久化用 `replaceState` 不 push, 不污染浏览历史
+
+验收:
+- `npm run typecheck` 0 error
+- `npm run build` clean (66 modules, 259KB gzip 81KB)
+- 全套 632 test pass + baseline_l2 0 diff
+
+### PR-4 落地记录 (2026-05-16)
+
+实施范围:
+- `chisha/web_api.py` `/api/refine`: refine 成功后 `read_trace(sid)` → merge `trace.refine` 字段 → `write_trace` 覆盖, 同 session_id 不分裂 (Sidebar 一条 session 一行)
+- missing 分支: `read_trace` 返 None → logger.warning + 不持久化 (DESIGN §3.5 不创 refine-only 孤儿)
+- corrupt 分支: `read_trace` 抛 `TraceCorrupt` → logger.error + 同上不持久化; 损坏文件已被 `_backup_corrupt` 改名 `.corrupt.{ts}.bak`
+- 任何分支都不阻断 refine 自身响应 (best-effort 原则与 D-066/067 trace_store 写盘一致)
+- `chisha/sandbox.py` `reset`: **零改动** — 当前 `shutil.rmtree(_sandbox_dir(root))` 已经一刀切 `logs/sandbox/`, 派生的 `logs/sandbox/recommend_trace/` 自然带走 (DESIGN §6.1)
+- `tests/test_sandbox_clock.py` 加 `test_reset_clears_trace_dir` 守门: 防止以后误改成增量删
+- `tests/test_refine_trace_persist.py` 新增 3 case (~210 行):
+  - `test_refine_merges_into_base_trace`: 正常路径 → refine.applied=True + user_input/intent/round 透传 + 不分裂
+  - `test_refine_with_missing_base_trace_warns_not_persists`: base 缺失 → 200 + warn log + 不创 orphan
+  - `test_refine_with_corrupt_base_trace_warns_not_persists`: base 损坏 → 200 + error log + 不创 healthy trace
+
+验收:
+- 632 + 4 = 636 tests pass (D-079 全套含 PR-1/2 + PR-4 新增 4 = 51 case)
+- baseline_l2_snapshot + compare_traces 0 diff (CLAUDE.md 红线)
+- 文档同步: README / ROADMAP / CLAUDE.md / api.md / DESIGN.md / debug-ui README 已更新
