@@ -51,7 +51,9 @@ class SessionState:
 
 
 def _sessions_dir(root: Path) -> Path:
-    p = root / SESSIONS_DIRNAME
+    """D-074 PR-1b: 走 data_root.sessions_dir, sandbox 启用时落 logs/sandbox/sessions/."""
+    from chisha import data_root
+    p = data_root.sessions_dir(root)
     p.mkdir(parents=True, exist_ok=True)
     return p
 

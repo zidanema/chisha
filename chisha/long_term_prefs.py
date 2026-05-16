@@ -69,8 +69,9 @@ DEFAULT_MAX_HISTORY_DAYS = 180
 
 
 def _default_history_path(root: Path | None = None) -> Path:
-    root = root or Path(__file__).resolve().parent.parent
-    return root / "data" / "feedback_history.jsonl"
+    """D-074 PR-1b: 走 data_root.feedback_history_path, sandbox 启用时落 logs/sandbox/."""
+    from chisha import data_root
+    return data_root.feedback_history_path(root)
 
 
 def append_feedback(

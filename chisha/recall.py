@@ -55,8 +55,12 @@ def load_zone_data(zone: str, root: Path) -> tuple[list[dict], list[dict]]:
 
 
 def load_meal_log(root: Path) -> list[dict]:
-    """读 meal_log.jsonl，不存在返回空."""
-    p = root / "logs" / "meal_log.jsonl"
+    """读 meal_log.jsonl，不存在返回空.
+
+    D-074 PR-1b: 走 data_root.meal_log_path, sandbox 启用时落 logs/sandbox/.
+    """
+    from chisha import data_root
+    p = data_root.meal_log_path(root)
     if not p.exists():
         return []
     out = []
