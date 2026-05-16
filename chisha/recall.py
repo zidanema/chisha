@@ -55,8 +55,12 @@ def load_zone_data(zone: str, root: Path) -> tuple[list[dict], list[dict]]:
 
 
 def load_meal_log(root: Path) -> list[dict]:
-    """读 meal_log.jsonl，不存在返回空."""
-    p = root / "logs" / "meal_log.jsonl"
+    """读 meal_log.jsonl，不存在返回空.
+
+    D-077 PR-1b: 走 data_root.meal_log_path, sandbox 启用时落 logs/sandbox/.
+    """
+    from chisha import data_root
+    p = data_root.meal_log_path(root)
     if not p.exists():
         return []
     out = []
@@ -65,6 +69,76 @@ def load_meal_log(root: Path) -> list[dict]:
         if line:
             out.append(json.loads(line))
     return out
+
+
+def append_meal_log_entry(
+    root: Path,
+    session_id: str,
+    meal_type: str,
+    restaurant_id: str,
+    restaurant_name: str,
+    dishes: list[dict],
+    *,
+    zone: str | None = None,
+    accepted_rank: int | None = None,
+    combo_index: int | None = None,
+    candidate_id: str | None = None,
+) -> dict:
+    """D-078: accept 时往 meal_log.jsonl 追加一条记录, 让 diversity_filter 闭环.
+
+    Schema 与 load_meal_log / diversity_filter 已有期望一致, 并加审计字段:
+      {timestamp, session_id, meal_type, zone, restaurant_id, restaurant_name,
+       accepted_rank, combo_index, candidate_id,
+       dishes: [{main_ingredient_type, canonical_name}, ...]}
+
+    时钟走 chisha.clock.now_utc(root), sandbox 启用时自动用虚拟时钟.
+
+    dishes 接受两种形态:
+      - flat (chisha.api._format_candidate 输出): {main_ingredient_type, oil_level}
+      - nested (raw tagged): {nutrition_profile: {main_ingredient_type, ...}}
+    两种都规范化成 flat main_ingredient_type 落盘.
+
+    并发: append 模式无锁, 与 recommend_log.jsonl 同等约束 (单进程单后端). 多 tab
+    高频 accept 在同一秒内的极端情况下可能行交错, 当前 V1 自用单后端不补锁.
+    """
+    from chisha import clock, data_root
+    p = data_root.meal_log_path(root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    flat_dishes: list[dict] = []
+    for d in dishes or []:
+        ing = d.get("main_ingredient_type")
+        if ing is None:
+            np_ = d.get("nutrition_profile") or {}
+            ing = np_.get("main_ingredient_type")
+        entry_d = {}
+        if ing is not None:
+            entry_d["main_ingredient_type"] = ing
+        name = d.get("canonical_name") or d.get("name")
+        if name:
+            entry_d["canonical_name"] = name
+        flat_dishes.append(entry_d)
+
+    entry: dict = {
+        "timestamp": clock.now_utc(root=root).isoformat(),
+        "session_id": session_id,
+        "meal_type": meal_type,
+        "restaurant_id": restaurant_id,
+        "restaurant_name": restaurant_name,
+        "dishes": flat_dishes,
+    }
+    if zone is not None:
+        entry["zone"] = zone
+    if accepted_rank is not None:
+        entry["accepted_rank"] = accepted_rank
+    if combo_index is not None:
+        entry["combo_index"] = combo_index
+    if candidate_id is not None:
+        entry["candidate_id"] = candidate_id
+
+    with p.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return entry
 
 
 def compute_extra_banned_restaurants(
@@ -286,10 +360,76 @@ def combo_passes_plate_rule(combo_dishes: list[dict], profile: dict) -> bool:
     return True
 
 
+def _intent_dish_score(d: dict, intent) -> float:
+    """D-073: 单菜对 intent 的命中度, 用于 combo 生成前的池子排序加权.
+
+    Codex review §2: intent 必须进入 combo generation **前**, 不能等召回后过滤.
+    "湖南老灶台"的招牌湘菜若没进每店前 6 protein, 后面再过滤也救不回.
+
+    返回 0.0~3.0 加权, 与 monthly_sales 在 sort key 中相加 (sales 通常 0-3000,
+    intent 加 0.0/1.0/2.0/3.0 对热度排序的影响约相当于"销量翻 1-3 倍").
+
+    Codex 二审: 加 monthly_sales 归一化, 让 intent 加分有意义但不至于完全压过销量.
+    """
+    if intent is None:
+        return 0.0
+    score = 0.0
+    np_ = d.get("nutrition_profile") or {}
+    name = d.get("canonical_name") or ""
+    raw_name = d.get("raw_name") or ""
+    full_name = name + " " + raw_name
+
+    # cuisine 命中: 用 score.normalize_cuisine 复用归一表
+    cuisine_want = getattr(intent, "cuisine_want", None) or []
+    if cuisine_want:
+        from chisha.score import normalize_cuisine
+        targets = {normalize_cuisine(c) for c in cuisine_want}
+        targets.discard(None)
+        if d.get("cuisine") in targets:
+            score += 2.0
+        # 软命中: 菜名子串
+        elif any(c in full_name for c in cuisine_want if c):
+            score += 1.0
+
+    # ingredient 命中: 复用 contains_ingredient 的逻辑 (但只看单 dish)
+    ingredient_want = getattr(intent, "ingredient_want", None) or []
+    for ing in ingredient_want:
+        if ing in full_name:
+            score += 1.0
+            break
+        # 广义词命中 main_ingredient_type
+        from chisha.score import _INGREDIENT_BROAD
+        broad = _INGREDIENT_BROAD.get(ing)
+        if broad and np_.get("main_ingredient_type") in broad:
+            score += 0.5
+            break
+
+    # flavor 命中: spicy/soup/light
+    flavor_tags = getattr(intent, "flavor_tags", None) or []
+    if "spicy" in flavor_tags and np_.get("spicy_level", 0) >= 1:
+        score += 0.5
+    if "soup" in flavor_tags and (np_.get("wetness", 1) >= 2 or "汤" in name):
+        score += 0.5
+    if "light" in flavor_tags and np_.get("oil_level", 3) <= 2:
+        score += 0.5
+
+    # cuisine_avoid 命中 → 负分, 把它压到池子末尾 (硬过滤在 recall 层做; 这里保留 sort 顺位)
+    cuisine_avoid = getattr(intent, "cuisine_avoid", None) or []
+    if cuisine_avoid:
+        from chisha.score import normalize_cuisine
+        targets = {normalize_cuisine(c) for c in cuisine_avoid}
+        targets.discard(None)
+        if d.get("cuisine") in targets:
+            score -= 5.0  # 把它推到候选池末尾
+
+    return score
+
+
 def build_combos_for_restaurant(
     rest_dishes: list[dict],
     profile: dict,
     per_rest_max: int,
+    intent=None,  # D-073: RefineIntent | None
 ) -> list[list[dict]]:
     """单家餐厅内构建若干 combo.
 
@@ -297,6 +437,9 @@ def build_combos_for_restaurant(
       - combo 阶段只过营养合规 (弱约束三件套 plate_rule)
       - 数量上限 (几个蛋白/几个蔬菜/总菜数) 由 profile.recall.* 显式注入
       - 价格/距离等约束推迟到打分/排序阶段
+
+    D-073 (Codex §2): 传 intent 时, 各菜池排序先按 intent 命中度加权 (intent 命中分
+      与 monthly_sales 在 sort key 中相加), 让目标菜不被 [:N] 截断扔掉.
 
     路线:
       A. 完整套餐 (complete_meal) 单菜 / +1 蔬菜
@@ -317,11 +460,18 @@ def build_combos_for_restaurant(
     proteins = [d for d in rest_dishes if is_protein_dish(d)]
     carbs = [d for d in rest_dishes if is_carb_dish(d)]
 
-    # 各池按月销降序, [:N] 取热门的 (避免组合爆炸)
-    proteins = sorted(proteins, key=lambda x: -x.get("monthly_sales", 0))[:6]
-    vegs = sorted(vegs, key=lambda x: -x.get("monthly_sales", 0))[:5]
-    carbs = sorted(carbs, key=lambda x: -x.get("monthly_sales", 0))[:3]
-    completes = sorted(completes, key=lambda x: -x.get("monthly_sales", 0))[:5]
+    # D-073: 排序 key = -(monthly_sales/1000 + intent_score × intent_weight)
+    # intent_weight 给 1.5: 命中 +2.0 cuisine + 1.0 ingredient ≈ 销量翻 4500 倍, 显著
+    # 但完全无销量的冷门菜仍不会被强推 (有销量基础的命中菜会先于冷门菜).
+    def _key(d):
+        sales = (d.get("monthly_sales", 0) or 0) / 1000.0
+        intent_s = _intent_dish_score(d, intent) * 1.5
+        return -(sales + intent_s)
+
+    proteins = sorted(proteins, key=_key)[:6]
+    vegs = sorted(vegs, key=_key)[:5]
+    carbs = sorted(carbs, key=_key)[:3]
+    completes = sorted(completes, key=_key)[:5]
 
     combos: list[list[dict]] = []
     if max_n <= 0:
@@ -389,10 +539,20 @@ def recall(
     meal_log: list[dict] | None = None,
     today: dt.date | None = None,
     meal_type: str | None = None,
+    intent=None,  # D-073: RefineIntent | None, refine 二轮启用
+    n: int = 5,
 ) -> list[dict]:
     """主入口. 返回候选 combos: [{restaurant, dishes, meta}, ...].
 
     meal_type 传入则启用 combo 总价硬过滤 (D-041).
+    D-073 (Codex §2/§3): intent 非空时:
+      - combo 生成层注入 intent boost (build_combos_for_restaurant)
+      - 召回后做三桶拼合: exact / soft / 全集兜底
+      - cuisine_avoid + ingredient_avoid 做硬过滤
+      - Q1 决策: cuisine_want 严过滤后 < 阈值时回落全集 (let L2 boost 顶上目标)
+
+    Args:
+      n: 期望最终输出候选数 (用于计算三桶配额阈值; refine 时下游默认 5).
     """
     meal_log = meal_log or []
 
@@ -416,13 +576,13 @@ def recall(
     rest_idx = {r["id"]: r for r in restaurants}
     per_rest_max = profile.get("recall", {}).get("per_restaurant_max", 3)
 
-    # 5. 每家餐厅生成 combos
+    # 5. 每家餐厅生成 combos (intent 进入排序)
     combos: list[dict] = []
     for rid, rest_dishes in by_rest.items():
         if rid not in rest_idx:
             continue
         rcombos = build_combos_for_restaurant(
-            rest_dishes, profile, per_rest_max
+            rest_dishes, profile, per_rest_max, intent=intent
         )
         for cd in rcombos:
             combos.append({
@@ -432,7 +592,75 @@ def recall(
 
     # 6. combo 总价硬过滤 (D-041)
     combos = combo_price_filter(combos, profile, meal_type)
+
+    # 7. D-073: intent 三桶拼合 + avoid 硬过滤 (仅 refine 二轮)
+    if intent is not None:
+        combos = _apply_intent_buckets(combos, intent, n=n)
+
     return combos
+
+
+def _apply_intent_buckets(
+    combos: list[dict],
+    intent,
+    n: int = 5,
+) -> list[dict]:
+    """D-073 (Codex §2): 三桶拼合 + Q1 回落.
+
+    流程:
+      1. 硬过滤: cuisine_avoid + ingredient_avoid (用户明确不要)
+      2. 三桶分级:
+         - bucket_exact: cuisine_exact_match
+         - bucket_soft: cuisine_soft_match (店名/菜名子串) 或 ingredient 命中
+         - bucket_rest: 全集兜底
+      3. 阈值 max(n*2, L3_INPUT_TOP_K*0.15) ≈ max(10, 9) = 10:
+         - exact 桶 >= 阈值 → 优先保留 [:threshold] + soft + rest
+         - exact 桶 < 阈值 → Q1 回落: 不严过滤, 让 L2 intent_match 自然顶上
+    """
+    from chisha.score import cuisine_exact_match, cuisine_soft_match, contains_ingredient
+    from chisha.rerank import L3_INPUT_TOP_K
+
+    # 硬过滤 avoid
+    def _not_avoided(c):
+        cu_av = getattr(intent, "cuisine_avoid", None) or []
+        ing_av = getattr(intent, "ingredient_avoid", None) or []
+        if cu_av and cuisine_exact_match(c, cu_av):
+            return False
+        if cu_av and cuisine_soft_match(c, cu_av):
+            return False
+        for ing in ing_av:
+            if contains_ingredient(c, ing):
+                return False
+        return True
+
+    combos = [c for c in combos if _not_avoided(c)]
+
+    cuisine_want = getattr(intent, "cuisine_want", None) or []
+    ingredient_want = getattr(intent, "ingredient_want", None) or []
+
+    if not cuisine_want and not ingredient_want:
+        # 用户未表达 want, 不做桶过滤 (avoid 已处理), 全集走 L2
+        return combos
+
+    bucket_exact: list[dict] = []
+    bucket_soft: list[dict] = []
+    bucket_rest: list[dict] = []
+    for c in combos:
+        if cuisine_want and cuisine_exact_match(c, cuisine_want):
+            bucket_exact.append(c)
+        elif (cuisine_want and cuisine_soft_match(c, cuisine_want)) or \
+             any(contains_ingredient(c, ing) for ing in ingredient_want):
+            bucket_soft.append(c)
+        else:
+            bucket_rest.append(c)
+
+    threshold = max(n * 2, int(L3_INPUT_TOP_K * 0.15))
+    # Q1 回落: 若 exact 桶 < 阈值, 不严过滤 (回落全集), 让 L2 boost 自然顶上
+    if len(bucket_exact) >= threshold:
+        # 命中桶充足, 让命中桶在前, soft + rest 兜底 (依然让 L2 重排)
+        return bucket_exact + bucket_soft + bucket_rest
+    # Q1 回落场景: exact < 阈值, 全集保留多样性
+    return bucket_exact + bucket_soft + bucket_rest
 
 
 if __name__ == "__main__":

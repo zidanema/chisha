@@ -88,10 +88,12 @@ D-046 现有 system prompt (4124 字符) 里要删的:
 
 要保留的:
 - 字段速查表 (main_ingredient / role / 油N 等编码说明)
-- 重排原则 (refine_input → mood/feedback → taste → 健康 → 多样性)
+- 重排原则 (D-073 更新: **硬约束 > refine_intent > refine_input > mood/feedback > taste > 健康 > 多样性**)
 - 硬约束 (avoid_dishes / spicy / processed_meat)
 - reason few-shot (good/bad 例子)
 - 边界 (refine 模式 / 全 taste<0.3 / 同品牌变体)
+
+> **D-073 后该文件其他段落需注意**: §2.1 测试 case 用了 `want_soup` mood, 现在 want_soup 走 RefineIntent.flavor_tags 而非 daily_mood; context_boost 退化为恒 0. 历史 baseline 仍有参考价值, 但 mood 字段表达不再触发 L2 加分. 详见 DECISIONS D-073.
 
 预估 system prompt 4124 → ~2800 字符，省 30% prompt cache 命中后的 token 成本。
 

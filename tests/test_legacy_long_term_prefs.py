@@ -1,4 +1,14 @@
-"""D-043 P3: 反馈闭环单测."""
+"""D-043 P3: 反馈闭环单测 (DEPRECATED, 标 legacy 保留).
+
+D-076 PR-0.5 状态:
+- refine.py 不再调 long_term_prefs.append_feedback (砍错位写入,
+  refine chip 是 D-070 L2 单次 session 信号, 不该跨 session 累加).
+- long_term_prefs.{append_feedback, load_runtime_hints, ...} 函数保留为
+  deprecated stub, 让 bootstrap_l1_from_legacy 脚本 (PR-0.6) 可读取旧数据.
+- 本文件单测保证 deprecated 路径仍 work, 不验证新行为.
+
+新 L1 抽取层单测见: tests/test_l1_extractor.py + tests/test_l1_prefs.py.
+"""
 from __future__ import annotations
 
 import datetime as dt

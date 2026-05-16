@@ -10,9 +10,9 @@
 
 ## 当前状态
 
-**Phase 0 工程侧已收尾**（2026-05-15）—— 「原则派点餐执行外包」定位收敛 + L0 方法论 spec 抽象 + 推荐 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈 + FastAPI 13 端点。剩下 Step 2 自用一周（用户行为侧）→ Phase 1 同事推广。
+**Phase 0 工程侧已收尾**（2026-05-16）—— 「原则派点餐执行外包」定位收敛 + L0 方法论 spec 抽象 + **L1 长期反馈层真兑现（LLM 抽取）** + **Sandbox Time-Travel 模式** + **D-076.1/D-078.1/2/3 + Codex S2 闭环修补（L1→L3 prompt 桥 + positive boost 词表扩 + inspect raw + refine root threading）** + 推荐 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈 + FastAPI 20 端点（D-069 13 + D-076/074 7）。L1 (LLM 抽取) → L2 (taste_match_bonus) → L3 (prompt 注入"行为信号") **三层贯通**, 真实 LLM 两轮演练 (low_oil + spicy boost) 验. Step 2 用户验证现在可走 sandbox → Phase 1 同事推广。
 
-**当前状态（2026-05-15）**：
+**当前状态（2026-05-16）**：
 
 - 打标：v3 全量重打两 zone 13,240 菜（D-032）；dual-model golden set 171 条（D-036, Opus+Codex 共创, 4 大字段一致率 99.27%）；6 模型横评后生产默认 `deepseek-v4-flash`（D-037, field acc 88.9%, 100万条 $100）。
 - 推荐 V2 链路端到端跑通：Context 注入 / score V2 ~12 维 / LLM 精排 top60→5（D-035/D-046）/ refine + session（D-033 V2.1）/ LLM 抽象 Phase 1 provider auto-detect（D-038, 商家去重兜底）。
@@ -33,9 +33,14 @@
 - **V1.1 反馈系统落地**（[D-056~D-068](DECISIONS.md#d-056-navbar-加反馈-tab--角标-v11)，2026-05-15）：第二轮设计迭代，反馈链路从 placeholder 改成完整 7 步 user journey。13 条新决策分三组：①入口架构（D-056 NavBar tab + 角标 / D-057 banner 升级 stack + 多条堆叠 / D-058 `/feedback` 反馈中心三段 / D-059 history 行可点 / D-060 snooze vs stop 两态语义），②表单内容（D-061 5 变体方法论 → D-062 选 E 渐进披露 + 借 D 复盘卡 / D-063 calibration·behavior·gut 三类信号框架 / D-064 头部 gut 跟 behavior 分离 / D-065 展开 4 维 + 每行对齐 prediction），③生命周期（D-066 一次提交永久 readonly / D-067 append-only timeline / D-068 V2 砍单清）。schema 全量改写：砍 `rating_taste`/`rating_satisfaction`/`feedbackChips`，加 `rating: -1\|0\|1` + 4 维 calibration/behavior + comments[] timeline。新增 5 文件 / 改写 10 文件 / 删 FeedbackPlaceholder。mockApi 7 个端点全实现。详见 [IMPL_LOG D-056~D-068](IMPLEMENTATION_LOG.md#d-056d-068-执行记录--v11-反馈系统落地-appsweb)。
 - **FastAPI 后端 13 端点联调完成**（[IMPL_LOG D-069](IMPLEMENTATION_LOG.md#d-069-执行记录--fastapi-v1--v11-后端-13-端点联调--codex-review-修复)，2026-05-15）：兑现 D-051~D-068 + `docs/api.md` §5 契约，V1 推荐链路 6 个（recommend/refine/accept/skip/profile/history）+ V1.1 反馈链路 7 个全部装上，单 JSON 文件 `logs/feedback/store.json` 落盘（用户决策走单文件 v.s. SQLite，V1 单用户够用），apps/web SPA 静态托管在 `/`，老调试台挪 `/debug`。Codex review（D-036 dual-model audit 模式）发现 4 MED（写盘失败静默 / SPA path traversal / corrupt store 静默清空 / feedback schema 未约束）+ 6 LOW（debug 边界 / today 4xx / comment ID 碰撞 / naive datetime / limit 边界 / quick default），全修后验证通过。前后端真接口全链路 ready。
 - **产品定位收敛**（[D-070](DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)，2026-05-15）：D-069 后端联调后，对首屏 mood picker 做产品复盘 → 定位明确为「原则派点餐执行外包」（已认定一套吃法但每天落地费力的用户），明确不服务目标缺失型。三层信号模型沉淀：L0 方法论层 (profile + spec) / L1 长期反馈层 (V1.1 已建) / L2 当下 session 层 (refine 文本)。Phase 路线改三段线性 (Phase 0 自用 → Phase 1 同事推广 → Phase 2 双向扩展)。
-- **砍 mood picker + want_soup 关键词识别**（[D-071](DECISIONS.md#d-071-砍-mood-picker--want_soup-关键词识别-v1)，2026-05-15，`e4db6e9`）：砍前端 4 chip mood picker（StatusBar/HomePage），`infer_refine_mood` 在 refine.py 做 want_soup 关键词识别（10 正向 + 6 否定 + 否定优先）；删 score.py 中 want_clean/want_light/want_indulgent/low_carb 4 条 mood 规则 + `infer_default_mood` 季节兜底；埋点 5 字段 + jsonl 5MB 轮转；Codex Round 1 闭 1 BLOCKER + 4 MAJOR（契约 contract test + 对抗负例 + jsonl schema + 边界守门）；新增 34 单测。
+- **砍 mood picker + want_soup 关键词识别**（D-071 **已 superseded by [D-073](DECISIONS.md#d-073-refine-走结构化意图-refineintent--重召回-让用户主动表达诉求真正生效)**, 2026-05-15 `e4db6e9` → 2026-05-16 整体改 D-073）：D-071 砍前端 mood picker 的产品决策仍生效, 但后端 `infer_refine_mood` want_soup 关键词识别已被 D-073 `RefineIntent.flavor_tags=["soup"]` 取代; `logs/refine_mood_trace.jsonl` 归档为 `.legacy.jsonl`.
+- **refine 结构化意图链路**（[D-073](DECISIONS.md#d-073-refine-走结构化意图-refineintent--重召回-让用户主动表达诉求真正生效)，2026-05-16）：用户实测"想吃点湖南菜，然后肉多一点"暴露 CHIP_VOCAB 封闭词表 + chip 死映射 + refine 不重召回 3 个结构性约束. 拆 parse_feedback (餐后) / parse_refine_intent (餐中); 开放 RefineIntent schema (cuisine/ingredient/flavor_tags/portion/staple/price); recall 重做 (intent 进 combo 生成排序 + 三桶 + avoid 硬过滤); L2 加 intent_match_bonus 三档 (cuisine 0.50 / ingredient 0.20 / flavor 0.10) + 健康 guardrail × 0.4 + spicy_tolerance-aware; 砍 D-071 全套代码; 断 refine 端 append_feedback. Opus 设计 + Codex review 5 修订点 + 用户拍板 Q1/Q2/Q3 → 3 天工程节奏; 68 新单测, 0 回归.
 - **methodology spec 抽象 + score.py 重构**（[D-072](DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)/[D-072.1](DECISIONS.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)，2026-05-15，`88b0ec7`）：L0 方法论从 score.py 硬编码抽到 `profiles/methodologies/harvard_plate.yaml`（7 必备字段 + 16 维 score_weights + 4 层 cap，严格 keyset 校验）；`chisha/methodology.py` 加载/校验/merge 接口，`load_profile` 自动 merge spec defaults（profile 显式 override）；rerank `_profile_block` 注入"方法论:"行让 L3 显式知道 baseline；D-072.1 修订：Phase B 不等 Step 2 数据，用 L2 trace baseline 替代采纳率门（`scripts/baseline_l2_snapshot.py` + `scripts/compare_traces.py` 严格 \|delta\| < 1e-6）；Codex Round 2+3 闭 3 BLOCKER + 6 MAJOR + 5 MINOR + 3 blindspot；新增 23 单测。
-- **下一步（Step 2，用户行为侧）**：自用一周，工作日 7 日采纳率 ≥ 50% 是 Phase 0 验收门。不在 Claude Code 代码范围。飞书接入推到 V1.5（integrations/openclaw/ 骨架保留）。
+- **L1 长期反馈层重构 — 砍伪 L1 + LLM 抽取**（[D-076](DECISIONS.md#d-073-l1-长期反馈层重构--砍伪-l1--llm-抽取-v1x)，2026-05-16，PR-0~0.9 共 5 commit）：志丹挑战揭出 D-070 L1 文档与代码脱节 — `long_term_prefs.py` 是把 refine chip (L2) 强行做跨 session 频次聚合的"伪 L1"，V1.1 反馈数据 (L1 真输入源) 在躺尸。修复：①砍 `refine.py` 写 `feedback_history.jsonl` 错位路径；②新增 `chisha/l1_extractor.py` (V1.1 反馈预聚合 → claude_code_cli text + JSON prompt + parse/validate/retry, 不用 tool_use 因 CLI 不支持) + `chisha/l1_prefs.py` (6 token enum 校验 + 损坏 fail-open)；③`score.rank_combos` 切到 `l1_prefs.load_prefs`，三态守门 (无文件/空/有 prefs)；④`scripts/bootstrap_l1_from_legacy.py` 兜底冷启动；⑤`/api/long_term_prefs/refresh` localhost-only 端点。Codex Round 2 闭 1 事实级阻塞 (CLI 不支持 tool_use) + 10 修正。baseline 0 diff，新增 56 单测。
+- **Sandbox Time-Travel 模式**（[D-077](DECISIONS.md#d-074-sandbox-time-travel-模式-v1x)，2026-05-16，PR-1a~1d 共 4 commit）：让 Step 2 自用验证一次会话内压缩到分钟级，不必等真实日历日。志丹原则：真实交互优先（不做 CLI 替代）/ 行为完全一致（不阉割）/ 仅时钟+数据落盘根隔离 / 沉淀必须可见 / 一键回到干净状态。架构：`chisha/clock.py` + `chisha/sandbox.py` (state + 虚拟时钟 + 11 处时间注入) / `chisha/data_root.py` (7 路径派生) / `/api/sandbox/*` 6 端点 (init/advance/reset/disable/state/inspect, localhost-only, advance 后异步 trigger L1 抽取) / `apps/web/src/components/SandboxBar.tsx` 顶栏 banner + Inspect Drawer + ProfilePage 入口。baseline 0 diff，新增 49 单测 + 10 e2e 验收锚点。
+- **Sandbox 收尾修补**（[D-078](DECISIONS.md#d-075-sandbox-时钟漏注入修补--acceptmeal_log-闭环-cooldown-v1x)，2026-05-16）：用户视角真实 LLM 5 日演练抓到 D-077 落地后的 3 个连带 bug（L1 时钟第 12 处漏注入 / accept 不写 meal_log 导致 cooldown 实际失效 / llm_client.call 改名漂移），Codex 二轮 audit 又抓到 reset/disable 期间 L1 worker 写盘可能污染 prod long_term_prefs.json。全修，新增 4 e2e anchor (11/12/13/14) + 2 单测，542 测试通过，baseline 0 drift。ROADMAP「7 天模拟 cooldown 屏蔽」承诺现在实际可兑现。
+- **推荐链路 trace 持久化 + Debug 三模式**（[D-079](DECISIONS.md#d-079-推荐链路-trace-持久化--debug-三模式-replay--what-if--live)，2026-05-16，PR-1~PR-4 全落）：差评事后无法回溯 + LLM 输出每次不同导致 debug 台只能现场重跑 → 在 `recommend_meal` 加 trace_store hook 一次推荐一个 JSON 文件落 `logs/recommend_trace/{sid}.json`，含 L1 全 drops + L2 16 维 breakdown + L3 LLM raw + `__frozen` 冻结上下文（What-if 重跑零 runtime read）。FastAPI 加 3 端点 (`/api/debug/sessions` GET list + GET detail + `/api/debug/what_if` POST)，apps/debug-ui SPA 加 Replay / What-if / Live 三模式 + feedback badge + URL state。Codex 两轮 review 12 finding 全闭环 + baseline 0 diff + 636 tests 全过。
+- **下一步（Step 2，用户行为侧）**：开 sandbox 推进 7 天模拟一周使用（14 e2e 锚点已自动跑过 + 真实 LLM 5 日演练 1 轮已绿），看 L1 抽取产物 + cooldown 屏蔽行为是否符合预期。差评回溯走 `:5174/?sid=…` Replay + What-if 验证。真实使用走 sandbox 验证算法机制后，再上真实日历日累积采纳率。飞书接入推到 V1.5（integrations/openclaw/ 骨架保留）。
 
 ---
 
@@ -95,7 +100,7 @@ Phase 2 · 双向扩展 (顺序后议)
 - [x] **L2 打分体系重设计**（[D-043](DECISIONS.md#d-043)）：删死权重 + 改活 popularity/variety/taste/context + unforgivable penalty
 - [x] **反馈闭环 P3 最小实现**（[D-043](DECISIONS.md#d-043)）：`long_term_prefs.py` 反馈历史 → boost/penalty hints（取代旧 V2.0 计划，留 V2.0 待真采集数据补完）
 - [x] **Web 用户视图 SPA**（[D-051](DECISIONS.md#d-051) + [D-052~D-055](DECISIONS.md#d-052) + [D-056~D-068](DECISIONS.md#d-056-navbar-加反馈-tab--角标-v11)，2026-05-15）：`apps/web/`（Vite + React 18 + TS + React Router + Tailwind），HomePage/ProfilePage/HistoryPage/FeedbackPage/FeedbackInbox 全量；mock + 真接口双模式（`VITE_USE_MOCK`）。V1.1 反馈系统（progressive form + readonly snapshot + append-only timeline + inbox 三段 + banner stack + snooze/stop）已落地。文案规范 + 视觉系统沉淀到 [`docs/style-guide.md`](style-guide.md)；前后端契约见 [`docs/api.md`](api.md)。
-- [ ] **调试台 V1 整合到 apps/web `/debug` 路由**（D-051）：把 `chisha/static/debug.html` 改写成 React 子页面，与用户视图共享组件
+- [x] ~~**调试台 V1 整合到 apps/web `/debug` 路由**~~ (D-051) → 推翻为 **独立 `apps/debug-ui/` SPA** ([D-075](DECISIONS.md#d-075-apps-debug-ui-独立-spa-不并入-apps-web), 2026-05-16): 7 phase Codex-reviewed build-out, Vite + React + TS, 端口 5174, proxy `/api → :8765`. 老 `chisha/static/debug.html` 保留双轨过渡. apps/web 不动.
 - [x] **FastAPI 后端扩展为 Web 服务**（D-051 + D-056~D-068 + [IMPL_LOG D-069](IMPLEMENTATION_LOG.md#d-069-执行记录--fastapi-v1--v11-后端-13-端点联调--codex-review-修复)，2026-05-15）：沿用 8765 端口，推荐链路 6 个（`/api/recommend` `/api/refine` `/api/accept` `/api/skip` `/api/profile` `/api/history`）+ V1.1 反馈链路 7 个（`/api/feedback/inbox` `/api/feedback/snooze` `/api/feedback/stop` `/api/feedback/recent` `/api/feedback/<sid>` `/api/feedback/<sid>/record` `/api/feedback` + `/api/feedback/<sid>/comments`）全部装上；apps/web SPA 托管在 `/`，老调试台 `/debug`，保留 `/api/debug_recommend` `/api/compare_moods`。落盘走单 JSON `logs/feedback/store.json`。Codex review (D-036) 修了 4 MED + 6 LOW (写盘失败暴露 / SPA path traversal 守卫 / corrupt store fail-closed / feedback schema Literal+cross-field validator / debug 边界 / today 4xx / comment ID 碰撞 / naive datetime / limit 边界 / quick default)。
 - [ ] **macOS 本机定时拉起服务**（D-051）：launchd / cron 工作日 11:00 / 17:30 自动启动 chisha.web，自用周期内零摩擦
 - [ ] ~~接入 OpenClaw + 飞书卡片~~ → 推迟到 V1.5（[D-051](DECISIONS.md#d-051) 翻案 D-022）
@@ -113,9 +118,9 @@ Phase 2 · 双向扩展 (顺序后议)
 - ~~session 状态管理~~ ★（24h TTL + logs/sessions/，[fix f6e16d0](#) 已修路径）
 - 反馈系统 personal_offsets 写入 → V2.0 验收（chips/rating 字段骨架已在 chisha/feedback.py）
 - learned_profile 统计聚合 → V2.2（不再做 LLM 蒸馏 insights，[D-026](DECISIONS.md#d-026)）
-- LLM 抽象 Phase 2 callable 注入点 → 等 OpenClaw/Hermes 真接入触发（[D-038](DECISIONS.md#d-038)；D-047 已落地多 provider 路由 + profile 配置, 仅剩"外部 agent 传自己的 LLM closure"未做）
-- MCP Server 包装 → V2.3
-- SKILL.md 完整化 → V2.3（D-022 推迟，integrations/openclaw/SKILL.md 已占位）
+- LLM 抽象 Phase 2 callable 注入点 → **方案 2026-05-16 已被 D-074 共识改方向**（[D-038](DECISIONS.md#d-038) closure 注入 → `llm_request_spec` machine-readable 数据契约，详见 [design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md](design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md)）
+- ~~MCP Server 包装 → V2.3~~ → **方向 2026-05-16 已改**：按 CLI + Skill 模式（同款飞书 CLI），**不做 MCP Server**，待 D-074 落
+- SKILL.md 完整化 → V2.3（D-022 推迟，integrations/openclaw/SKILL.md 已占位）— D-074 落后按 CLI + Skill 模式重写为 `manifest.json` + `openapi.yaml` + `AGENT_ONBOARDING.md` 三件套
 - pip 包发布（按工区拆子包）→ V2.4
 - CLI 包装 → V2.4 视情况
 
@@ -141,7 +146,7 @@ Phase 2 · 双向扩展 (顺序后议)
 
 - [ ] 把 `~/waimai_data` 接管进 `chisha/collector/`（真机采集 / uiautomator2 / 美团）
 - [ ] 把现有 `chisha/loader.py` + `scripts/tag_dishes.py` + `scripts/tag_via_subagent.py` 收拢到 `chisha/cleaning/`（raw → §5.2 + 打标）
-- [ ] 新建 `chisha/data_service/`：清洗后数据对外的统一入口（list_restaurants / list_dishes / get_restaurant / search_by_tags），后续 V2.3 的 CLI / MCP 都从这里包
+- [ ] 新建 `chisha/data_service/`：清洗后数据对外的统一入口（list_restaurants / list_dishes / get_restaurant / search_by_tags），后续 V2.3 的 CLI 都从这里包（MCP 方向 2026-05-16 已砍，走 CLI + Skill 模式）
 - [ ] 三个子模块之间靠 §5.2 schema 契约解耦，不互相 import 内部细节
 - [ ] 推荐层（现有 `chisha/recall.py` / `score.py` / `api.py`）只消费 `chisha.data_service`，不再读 `data/{zone}/*.json` 文件路径
 - [ ] schema 修正 D-027：sister project 方向作废，本仓单仓三子模块
@@ -192,15 +197,17 @@ Phase 2 · 双向扩展 (顺序后议)
 
 成功标准：top/bottom_preferences 中至少有 5 条维度的统计 N ≥ 10，且与用户实际感受一致。
 
-### V2.3 · Claude Code 接入 + MCP 化
+### V2.3 · ~~Claude Code 接入 + MCP 化~~ → CLI + Skill 模式接入
 
-- [ ] 写完整 SKILL.md（Claude Code 接入入口，用户主动 query 场景）
-- [ ] `chisha/mcp_server.py`（开放给其他长程 Agent）
-- [ ] INSTALL.md（OpenClaw / HappyClaw / Claude Code 三种接入说明）
-- [ ] LLM 抽象（添加 OpenAI / Ollama adapter）
-- [ ] 打分权重外部化到 config.yaml
+> **2026-05-16 方向已改**：不做 MCP Server 包装，改按 **CLI + Skill 模式**（同款飞书 CLI）。详见 [design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md](design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md)。下面旧任务清单待 D-074 落后按新方向重写。
 
-成功标准：Claude Code、OpenClaw、HappyClaw 三种 Agent 至少跑通两种端到端。
+- [ ] ~~写完整 SKILL.md~~ → 改写 `manifest.json` + `openapi.yaml` + `AGENT_ONBOARDING.md` 三件套
+- [ ] ~~`chisha/mcp_server.py`~~ → 改做 `chisha init --agent <type>` CLI + `chisha doctor` + `chisha schedule install`
+- [ ] ~~INSTALL.md (OpenClaw / HappyClaw / Claude Code 三种)~~ → 改做 Phase 0 单个 reference adapter (Claude Code)，Phase 1 再扩多 Agent
+- [ ] LLM 抽象 → 走 `llm_request_spec` 数据契约（chisha 不调 LLM，把 prompt + tool_schema 还给 Agent）
+- [ ] 打分权重外部化到 config.yaml（仍保留）
+
+成功标准（新）：本机用 Claude Code reference adapter 端到端跑通"装包 / 提取口味 / 配触发 / 接推送 / 接反馈"五步，自用一周采纳率 ≥ 50%。
 
 ### V2.4 · 数据层按工区拆包
 

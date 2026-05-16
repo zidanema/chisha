@@ -138,18 +138,23 @@ if has_unforgivable_penalty(combo):  # 如 sweet_sauce ≥ 3 且 processed_meat 
 - 哪些 cuisine_preference 是用户真实偏好，哪些是写在 profile 里但实际不爱
 - 哪些时段/天气真的对应 want_light vs want_indulgent
 
-**最小可行实现（D-043 P3 已落地）**：
-1. `refine.py` 调用 `parse_feedback` 后 append 到 `data/feedback_history.jsonl`（append-only JSONL）
-2. `rank_combos` 调 `long_term_prefs.load_runtime_hints` 聚合（半衰期 30 天 + 拉普拉斯 min_count=2.0 平滑）
-3. 三源合并 `merge_hints`：profile 静态 hints + runtime 学习 hints + 显式 taste_hints
-4. **不**做权重在线更新（P4，数据量需求）
-5. **不**做 RL（数据量不足，过早复杂化）
+**当前实现（D-076 LLM 抽取层，2026-05-16）**：
+1. **L2 当下 session 信号**：`refine.py` 调用 `parse_feedback` 解析 chip + note，仅本 session 影响 L3 prompt，**不**写入跨 session 文件
+2. **L1 长期反馈层**：V1.1 反馈页（rating + 4 维 calibration + note）落 `logs/feedback/store.json` → `chisha/l1_extractor.py` LLM 抽取（`claude_code_cli` text + JSON prompt + parse/validate/retry）→ 写 `data/long_term_prefs.json`
+3. **L2 打分读取**：`rank_combos` 调 `l1_prefs.load_prefs()` → `to_runtime_hints()` → 三源合并 `merge_hints`：profile 静态 hints + L1 prefs + 显式 taste_hints
+4. **抽取阈值**：`based_on_meals < 3` 不调 LLM；boost/penalty 各 ≤ 2 个 token；6 token enum 严格校验（low_oil / wetness / sweet_sauce / processed_meat / carb_heavy / spicy）
+5. **不**做权重在线更新；**不**做 RL（数据量不足，过早复杂化）
 
-代码：`chisha/long_term_prefs.py`；写入：`chisha/refine.py`；读取：`chisha/score.py` `rank_combos`。
+**❌ 已废弃路径（D-043 P3 → D-076 PR-0.5 砍掉）**：
+- `refine.py` 写 `data/feedback_history.jsonl` 频次累加（refine chip 是 L2 单次信号，不应跨 session 累加成"伪长期偏好"）
+- `long_term_prefs.load_runtime_hints` 半衰期 30d + 拉普拉斯 ≥2 次平滑（模块标 DEPRECATED stub，仅 bootstrap 脚本读旧数据）
+
+代码：`chisha/l1_extractor.py` + `chisha/l1_prefs.py`；写入：`chisha/web_api.py:/api/long_term_prefs/refresh` + `/api/sandbox/advance` 异步触发；读取：`chisha/score.py` `rank_combos`。
 
 **反馈数据稀疏的应对**：
-- Bayesian 先验（拉普拉斯平滑），避免 1-2 次反馈就漂移
-- 时间衰减（远期反馈衰减为弱信号）
+- LLM 抽取规则要求 ≥2 evidence 才出 token，避免单次反馈触发
+- D-077 sandbox time-travel 模式可一次会话压缩多日累积，快速测试机制
+- `scripts/bootstrap_l1_from_legacy.py` 冷启动兜底（读 D-043 旧 jsonl 生成首版 prefs，标 `bootstrap_from_legacy=true`）
 
 ---
 
@@ -273,3 +278,57 @@ if has_unforgivable_penalty(combo):  # 如 sweet_sauce ≥ 3 且 processed_meat 
 - 不要把"个人化微调" 写进 spec（如 `min_protein_g: 40` 是志丹个人 override，不该写进 `harvard_plate.yaml`）
 - 不要扩 spec 字段来"调"打分行为；调权重就改 profile.scoring_weights，不要绕道改 spec
 - spec 必须能用 `baseline_l2_snapshot + compare_traces` 严格回归（重构前后 L2 trace |delta| < 1e-6, D-072.1）
+
+---
+
+## 15 · 用户当下意图优先（D-073）
+
+> 来源：D-073 触发事件 — 用户实测"想吃点湖南菜，然后肉多一点"后, 系统响应弱.
+> 推翻方向：CHIP_VOCAB 封闭词表 + chip 死映射 + refine 不重召回 → 让开放表达真正影响推荐.
+
+### 原则
+
+**优先级**：
+
+```
+硬约束 (avoid/spicy_tolerance/unforgivable) > 用户当下意图 (refine_intent) > 长期偏好 (taste_description/cuisine_preference) > 多样性约束
+```
+
+当用户在 refine 阶段主动表达诉求时, 系统的默认行为是**尽力满足**, 而不是用约束词表过滤掉用户的话. **约束只用在用户没表达的维度上**.
+
+### 三个具体边界
+
+1. **硬约束永远不能被意图覆盖**:
+   - 用户说"想吃辣" + profile `spicy_tolerance=1` → spicy_level > 1 仍由 L1 硬过滤
+   - 用户说"想吃日料" + profile `banned_cuisines=[日料]` → 日料仍硬过滤
+   - **意图在安全边界内优化, 不是替代 profile**
+
+2. **长期偏好让位给当下意图**:
+   - intent_cuisine 权重 (0.50) > cuisine_preference 权重 (0.30)
+   - 这是 D-073 实测校准结论 (2026-05-16): 初版 0.20 被 popularity 单维压过, 调高到 0.50 后用户意图才真正 dominant
+
+3. **健康 guardrail 兜底, 防"意图压过营养结构"**:
+   - oil_avg > prefer+1 或 unforgivable penalty 共享条件触发 → intent 三档加分 × 0.4
+   - 防止"用户说想吃辣 → 全是麻辣火锅" 这种极端结果
+
+### 推荐链路接入点
+
+| 层 | intent 影响方式 |
+|---|---|
+| L1 recall | cuisine_avoid / ingredient_avoid 硬过滤; 三桶拼合 (exact / soft / 全集); combo 生成前 dish 池排序加权 |
+| L2 score | `intent_match_bonus` 三档 (cuisine 0.50 / ingredient 0.20 / flavor 0.10), 健康 guardrail × 0.4 |
+| L3 rerank | ContextSnapshot.refine_intent 进 prompt, 优先级表第 2 位 (仅次于硬约束) |
+
+### 反 anti-pattern
+
+- 不要用封闭词表 (CHIP_VOCAB / `_CHIP_TO_HINT`) 限制用户表达 → "湖南菜" / "想吃面" 这类正常表达进不来
+- 不要在 refine 端把"当下意图"沉淀进"长期偏好" → "今天想吃湖南菜" 不等于"长期喜欢湘菜"; D-043 P3 在 refine 端的 append_feedback 已断
+- 不要让 intent 加分太低 → 实测低于长期偏好维度 (cuisine_preference 0.30) 时用户意图被淹没; 权重必须经实测校准
+- 不要让 intent 完全 dominant → 健康 guardrail + 优先级表保留多样性/营养结构的发声空间
+
+### 与 §1 分层职责的关系
+
+D-073 没推翻分层. intent 在每层都做事, 但严格遵守边界:
+- L1: intent 只做硬过滤 (avoid) 和"排序前置" (不打分)
+- L2: intent 进 `intent_match_bonus` 打分, 不重复 L1 已做的过滤
+- L3: intent 进 prompt 让 LLM 做最后的多样性平衡, 不替 L2 修偏置

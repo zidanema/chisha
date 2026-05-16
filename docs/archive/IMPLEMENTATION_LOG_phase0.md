@@ -1356,3 +1356,567 @@ GET    /api/history?days=999                HTTP 400
 - 修订: D-072 触发条件 (走 D-072.1, L2 trace baseline 替代采纳率门)
 - 关联: D-070 三层信号模型 L0 工程化; D-071 context_boost 接口位预留生效
 - 下一步 (Phase 1): 第二份 spec (减脂 / 增肌 / 糖控) 走 `profiles/methodologies/{name}.yaml` 接入; 若需要新字段类型 → 走 `extra_rules: []` 逃逸口先临时, 再走 D-072.M 修订把字段升正
+
+---
+
+## D-073 执行记录 · refine 走结构化意图 + 重召回 + 砍 D-071 + sanity sweep
+
+**2026-05-16** · 推翻 V1 refine chip 词表链路, 让"用户主动表达诉求"真正生效
+
+### 改了什么
+
+**新增 `chisha/refine_intent.py` (~280 行)**:
+- `RefineIntent` dataclass 12 字段: cuisine_want/avoid (自由字符串) + ingredient_want/avoid + cooking_method + flavor_tags (8 归一枚举) + raw_flavor + portion (4 枚举) + staple_preference (3 枚举) + price_band (3 枚举) + freeform_note + raw_text
+- `parse_refine_intent(text, use_llm, profile_llm)`: LLM 优先 + rule fallback, 输出严格清洗 (枚举校验 / 去重 / strip)
+- `rule_parse(text)`: 关键词 + 否定窗口 (Codex P1-1 修订 `_is_negated_near` 4-char 前缀检查, 覆盖"不要牛肉/不想吃肉"分流 avoid)
+- `_FLAVOR_SYNONYMS` / `_PORTION_SYNONYMS` / `_CUISINE_KEYWORDS` 归一表
+
+**新增 `prompts/parse_refine_intent.md`**:
+- LLM prompt 含 10 few-shot 示例 (主 case + 否定 + 多目标 + 冲突 + 程度 + cuisine alias + 空文本 + 反联想边界 + 价格)
+- 规则: 不限词表 (cuisine/ingredient 开放) + 不主观联想 + 冲突优先精确 (`flavor_tags` 留空, raw_flavor 带原文给 L3)
+
+**`chisha/refine.py` 大改**:
+- 用 `parse_refine_intent` 取代 `parse_feedback`
+- 砍 `chips_to_taste_hints` + `_CHIP_TO_HINT` + `infer_refine_mood` + `_match_*_keyword` + `_build_mood_trace` + `_append_mood_trace` (D-071 superseded)
+- 砍 `append_feedback` 调用 (Codex §7: refine 端不沉淀长期偏好, 仅写 `logs/refine_intent_trace.jsonl` 观测)
+- 返回响应字段从 `parsed_feedback / taste_hints / mood_inference` 改成 `refine_intent`
+
+**`chisha/recall.py` 加 intent 链路** (Codex §2 关键修订):
+- `_intent_dish_score(d, intent)`: 单菜对 intent 命中度, 进 `build_combos_for_restaurant` 的 dish 池排序 key (intent_score × 1.5 + monthly_sales/1000), 防被 `proteins[:6]` / `vegs[:5]` 截断扔掉
+- `recall(intent=)` 主入口: 末尾调 `_apply_intent_buckets` 做三桶 (exact / soft / 全集兜底) + `cuisine_avoid / ingredient_avoid` 硬过滤; Q1 决策 exact < 阈值 max(n×2, L3_INPUT_TOP_K×0.15) 时回落全集
+
+**`chisha/score.py` 加 L2 意图加分**:
+- `CUISINE_ALIASES` (15 个常用别名归一: 湖南菜→湘菜, 日料→日式, ...) + `normalize_cuisine()`
+- `_PROTEIN_KEYWORDS_TO_MTYPE` (Codex P0-2 修订, 取代旧的 `_INGREDIENT_BROAD` 遍历 fallback): 牛/猪/羊→红肉, 鸡/鸭→白肉, 鱼/虾/蟹/贝→海鲜
+- `cuisine_exact_match` / `cuisine_soft_match` (Codex P1-2 修订: ≥2 字才匹配 + 1 字白名单, 避 "西"→"广西米粉" 误中)
+- `contains_ingredient`: 广义词走 `_INGREDIENT_BROAD` + 具体词走菜名子串 + 蛋白关键词精确 fallback
+- `intent_match_bonus(combo, intent, profile) → {cuisine, ingredient, flavor}`: 三档拆分 (Codex §3), 各 ∈ [0, 1]; portion/staple/price 经 ingredient/cuisine 通道
+- `health_guardrail(combo, profile)`: oil_avg > prefer+1 或 unforgivable 共享条件触发 → intent 三档 × 0.4 折扣 (防"全是麻辣火锅")
+- `intent_match_bonus.spicy` 走 `min(profile.spicy_tolerance, 2)` 安全边界 (Codex §5: intent 不能覆盖 profile)
+- `context_boost` 退化为恒返 0.0 (D-071 残留 want_soup 通道彻底砍, Codex P0-1)
+- `rank_combos(intent=)` 透传; `V2_DEFAULT_WEIGHTS` 加 intent_cuisine 0.50 / intent_ingredient 0.20 / intent_flavor 0.10
+
+**`chisha/context.py`**:
+- `ContextSnapshot` + `build_context` 加 `refine_intent: dict | None` 字段
+- `DAILY_MOODS` 字面值保留 want_soup 等 (前端兼容), 加注释明确 D-073 后非 neutral 值**不产生 L2 加分**
+
+**`chisha/rerank.py` `_context_block`**:
+- 新增 "refine 意图 (结构化)" 段, 渲染 intent 非空字段
+
+**`chisha/web_api.py` /api/refine**:
+- response 顶层 `parsed_feedback / taste_hints` 改 `refine_intent`
+- `build_context` 调用透传 `refine_intent=raw.get("refine_intent")`
+
+**`prompts/rerank_system.md` §1-7 优先级表更新**:
+```
+1. 硬约束 > 2. refine_intent (结构化) > 3. refine_input (原文)
+> 4. daily_mood + chips > 5. taste_description > 6. 健康结构 > 7. 多样性
+```
+
+**`profile.yaml`**:
+- 加 3 个权重 intent_cuisine 0.50 / intent_ingredient 0.20 / intent_flavor 0.10
+- 注释明确"临时校准, 待自用一周后用 baseline_l2_snapshot 跑 std 二审" (Codex P1-3)
+
+**前端 sanity sweep (与 D-073 后端解耦但同 commit 收口)**:
+- `apps/web/src/lib/api.ts` `useMock` 默认从 `mock-first` 改 `real-first` (Vite dev 不再默认 mock, mock 须显式 `VITE_USE_MOCK=1` 开)
+- `apps/web/src/components/NavBar.tsx` 加红色 `MOCK` 角标 (走 mock 时 UI 提示, 防同类"对着 mock 看不到 backend 实测差异"的 debug 浪费)
+- `apps/web/dist/` 重建 (旧 build May 15 19:29 落后于 D-071 砍 mood picker May 15 23:49)
+
+**测试**:
+- 新增 `tests/test_refine_intent_parser.py` (41 测试覆盖 LLM/rule fallback + 否定 + 冲突 + 多目标 + 空文本 + alias)
+- 新增 `tests/test_intent_score.py` (27 + 9 测试覆盖 intent_match_bonus + 三桶 + combo 截断前排序 + 牛肉≠白肉 + soft match 1 字阻断)
+- 改 `tests/test_refine.py` (砍 chips_to_taste_hints 测试 → refine_intent 断言)
+- 改 `tests/test_score_v2.py` (`test_context_boost_want_soup_*` 改为 D-073 锁定恒 0 + `test_score_combo_soup_boost_*` 改为通过 RefineIntent.flavor_tags=["soup"] 触发)
+- 删 `tests/test_refine_mood_inference.py` (D-071 整文件)
+- 归档 `logs/refine_mood_trace.jsonl` → `.legacy.jsonl`
+- 全测套: 460 passed, 1 skipped, 5 deselected, 0 回归 (test_cleanup_expired pre-existing flaky)
+
+### 验证
+
+**端到端实测** (POST /api/refine, 真后端):
+
+| 输入 | intent 抽取 | 二轮 5 候选变化 |
+|---|---|---|
+| "想吃点湖南菜，然后肉多一点。" | cuisine_want=[湖南菜], ingredient_want=[肉], portion=[more_meat] | 5 条里 4 条湘菜 + 1 川菜亲缘辣味 |
+| "今天想吃点重口味的，吃湘菜吧，辣一点，肉多一点。" | + flavor_tags=[heavy, spicy] + raw_flavor=[重口味, 辣一点] | 4/5 大幅变化, 全部命中湘菜+辣+肉 |
+| "不要日料，想吃湘菜" | cuisine_want=[湖南菜], cuisine_avoid=[日料] | 0 日料 + top3 全湘菜 |
+| "想吃牛肉" | ingredient_want=[牛肉] | 3 家含牛肉相关菜 |
+| "不要牛肉" | ingredient_avoid=[牛肉] | 避开牛肉 (P1-1 否定正则生效) |
+
+**单 case 详诊** (湖南老灶台位置):
+- 调权前 (intent_cuisine: 0.20): 湖南老灶台 best combo score=2.05, 排 #129, 不进 top60 ❌
+- 调权后 (intent_cuisine: 0.50): score=2.41, 排 #50, 进 top60 ✓
+- 调权依据: 0.20 加分被 popularity 单维 (0.30+) 压过, 违反"用户当下意图 > 长期偏好" 原则; 0.50 让 intent_cuisine 命中加 0.50, 超过 cuisine_preference (0.30)
+
+### 踩到的坑
+
+1. **`VITE_USE_MOCK` 默认 mock-first 让 sanity sweep 之前的"E2E 测试通过"全是假阳性**: D-073 开发期 5 次 E2E 都是浏览器对着 mockApi 看, 完全不调真 backend. 用户实测点击 refine 看到"几乎没变" 才暴露. 教训: 任何"前端 mock 默认"必须有视觉 cue (MOCK badge) + 真接口必须是 dev 默认, 否则迭代时永远在自欺
+2. **`.env.*` 被 .gitignore 吃掉**: 临时创建 `apps/web/.env.development` 覆盖默认值, 提交不进 git → 重启 / 换机器后默认值又生效, bug 复发. 教训: 别用 .env 覆盖默认值, 改源码默认才是持久解
+3. **`build_combos_for_restaurant` 的 `proteins[:6]` 截断是隐藏陷阱**: Codex review v1 拍砖时指出"intent 必须进 combo generation 前", 我一开始只在 recall 末尾加三桶 (实际是 noop 排序), L2 重排立刻打乱. 修正后让 intent_score 进 dish 池排序 key, 才真正让冷门湘菜不被销量截断. 教训: 后置过滤永远救不回早期截断, 排序 hint 必须在最早决策点注入
+4. **L2 权重单点校准 vs 跑 std**: Codex review v1 §3 明确要求"实装前跑 top60 breakdown std 再决定权重", 我跑了一次单 case 实测 (湖南老灶台位置) 就调高了, 严格意义不算 std 校准. 注释里标"临时校准, 自用一周后跑 baseline_l2_snapshot 二审" 留账, 不假装是定论
+5. **`_INGREDIENT_BROAD` 子串 fallback 引发"牛肉命中白肉"**: 旧逻辑 `for short, mtypes in _INGREDIENT_BROAD.items(): if short in ing:` — "牛肉" 含 "肉", `_INGREDIENT_BROAD["肉"]={"红肉","白肉"}` → 鸡肉 dish 也命中"牛肉". Codex implementation review 拍出. 修正用单一映射 `_PROTEIN_KEYWORDS_TO_MTYPE` (牛→红肉, 鸡→白肉)
+6. **D-071 没砍干净**: 主流程 `infer_refine_mood` 等都删了, 但 `chisha/score.py:context_boost` 里 want_soup 通道还活着 (旧 D-071 后保留作"未来 soft_rules 接口位"). Codex implementation review 拍砖 — 跟 D-073 spec §6 验收"grep want_soup|infer_refine_mood|mood_trace 返空" 冲突. 改成 `context_boost` 退化为恒返 0.0
+
+### 反 anti-pattern (这次没踩)
+
+- **没扩 CHIP_VOCAB 凑乎修**: 用户原本可以"加'湖南菜'/'想吃肉' chip" 临时解决, 但这是治标. 走"开放 schema + 重做 recall" 彻底解决
+- **没把 intent 等同 chip 处理**: 拆 parse_feedback / parse_refine_intent 两条路, 餐后反馈 (chip 词表稳定) 和餐中 refine (开放) 边界严格隔离
+- **没让 intent 覆盖硬约束**: spicy 意图走 `min(profile.spicy_tolerance, 2)` 安全边界, profile 是 final say; "想吃辣" + `spicy_tolerance=1` 仍由 L1 硬过滤拦截 max_spicy > 1 的 dish
+- **没在 refine 端做长期偏好沉淀**: 断 `append_feedback` 调用, refine 只写 `logs/refine_intent_trace.jsonl` 用于观测, 不污染 D-043 long_term_prefs
+
+### Codex review 闭环
+
+- v1 设计稿 → Codex review (`codex-rescue` ~270s) 拍砖 5 个必改点 → v2 spec
+- v2 实现 → Codex implementation review (`codex-rescue` ~300s) 拍砖 2 P0 + 4 P1 + 6 P2 → 6 项 must-fix 全修, P2 全部归类 pre-existing 或自用一周观察
+- 关键 P0/P1 修订:
+  - P0-1 `context_boost want_soup` 残留 → 退化恒 0
+  - P0-2 `contains_ingredient` 牛肉命中白肉 → PROTEIN_KEYWORDS 单一映射
+  - P1-1 `rule_parse` 否定正则不全 → `_is_negated_near` 4-char 前缀窗口
+  - P1-2 `cuisine_soft_match` 1 字裸匹配 → ≥2 字 + 白名单
+  - P1-3 profile.yaml 注释过头 → 改"临时校准"
+  - P1-4 缺 combo generation 截断前排序测试 → 加 9 测试
+
+### 依赖与影响
+
+- 推翻 (强): D-071 (砍 want_soup 关键词识别全套), D-035 在 refine 端 (CHIP_VOCAB 仍服务餐后反馈)
+- 推翻 (软): D-043 P3 在 refine 端的 `append_feedback` 调用 (餐后反馈写入路径保留)
+- 修订: D-072.1 严格回归协议 (D-073 加了 3 个权重 key, breakdown 字段层数变化, `compare_traces.py` 需更新 allowlist; 不在本次 commit 内, 自用一周后处理)
+- 关联: D-070 三层信号模型 L2 当下 session 层强化 (intent 是其结构化形态), D-049 双路径收口 (LLM 调用 fallback 路径仍生效)
+- 下一步 (自用一周后):
+  - L2 权重二审: 用 `scripts/baseline_l2_snapshot.py` 跑 intent_cuisine std, 看是否落在 0.05-0.20
+  - L3 命中率观察: 当前 60% 强命中, 若稳定 <50% 考虑 prompt 更强制 (cuisine_want 命中必须 >= 4 条)
+  - sour/sweet/heavy 走 dish 名子串不稳, 按需打 dish tagging 加 sour_level / sweet_level 字段
+  - portion / staple / price 当前都进 ingredient 通道, 若 std 不足可单独拆维度
+
+## D-076 + D-077 执行记录: L1 LLM 抽取层 + Sandbox Time-Travel 模式
+
+**Status**: implemented (2026-05-16, 10 PRs + 1 修补 PR)
+**关联**: [docs/DECISIONS.md D-076](DECISIONS.md#d-073-l1-长期反馈层重构--砍伪-l1--llm-抽取-v1x) / [D-077](DECISIONS.md#d-074-sandbox-time-travel-模式-v1x)
+
+### 触发与决策过程
+
+志丹挑战 D-070 三层信号模型代码落地, 揭出"伪 L1" (refine chip 跨 session 频次聚合) 和 V1.1 反馈数据躺尸. 走 D-036 dual-model audit:
+- S1 Opus 提案 → S2 Codex review 揭出"web 反馈不进 long_term_prefs / claude_code_cli 不支持 tool_use / PR-0.7 切 score 非等价重构" → S2 二次 review 揭出 10 项修正 → 志丹拍板 1A (text+JSON) + "一波到位 + bootstrap_from_legacy" → 全部实现 + S3 Codex 端到端 review 发现 2 ship-blocker MED (recommend_meal 读 prod profile / api_history 读 prod log) → PR-3 修补.
+
+### 提交序列 (11 commits)
+
+| Commit | PR | 范围 | 单测 |
+|--------|----|------|------|
+| 2403c2e | PR-0 | l1_extractor + l1_prefs + prompt + 3 golden fixtures | 38 ✓ |
+| 7b2692c | PR-0.5 | 砍 refine→feedback_history + 拆 legacy | 26 旧测试保留 |
+| 5fbed85 | PR-0.6 | bootstrap_from_legacy 脚本 | 4 ✓ |
+| bf50e68 | PR-0.7 | score 切 l1_prefs.load_prefs (baseline 0 diff) | 6 + 3 旧改造 |
+| 3cf1a53 | PR-0.9 | /api/long_term_prefs/refresh + 鉴权 | 4 ✓ |
+| d2f88c0 | PR-1a | clock.py + sandbox.py + 11 处时间注入 | 18 ✓ |
+| 22fc03b | PR-1b | data_root.py + 7 路径派生 | 9 ✓ |
+| 876e38d | PR-1c | FastAPI 6 sandbox 端点 + 异步 L1 trigger | 12 ✓ |
+| 31d4a6d | PR-1d | 前端 SandboxBar + ProfilePage 入口 + Drawer | (build pass) |
+| e1b71e5 | PR-2 | DECISIONS + 10 验收锚点 + ROADMAP/README/CLAUDE.md | 10 e2e ✓ |
+| (本条目) | PR-3 | Codex S3 修补 (profile/history sandbox path + L1 lock + schema 严格化) | TBD |
+
+### 关键经验
+
+1. **文件名误导**: `long_term_prefs.py` 命名带 "long_term" 但实际是单次 chip 跨 session 频次聚合, 让 Opus 误判 D-070 L1 已建. 教训: 命名要反映行为, 不是意图; review 时要验证 "文档说 X 已建" 是否真的指代码层 X 而不是同名别物.
+2. **Codex S2 二次 review 揭出 tool_use 矛盾**: D-047 原则 "tool_use 优于 json_mode" 对 L3 rerank 是对的, 但对 L1 抽取错位 — L3 高频实时, L1 低频 + 可降级, text+JSON+retry 更适合且能用 Max 订阅免费.
+3. **三态等价性必须可证**: Codex Q3 "compare_traces 只能证当前机器无旧信号, 不能证迁移等价" 是关键洞察, 启发 bootstrap_from_legacy 兜底.
+4. **Profile 路径 + history 路径** (Codex S3 揭出): 仅"业务数据落盘"换 path 还不够, **业务数据读路径**也必须走 data_root. 否则 sandbox 内 PUT profile 写副本但下次推荐仍读 prod, 形成"假沙盒".
+
+### Codex S3 ship-blocker 修补 (PR-3)
+
+1. **chisha/api.py:110** `recommend_meal` 默认 profile_path 改走 `data_root.profile_path(root)` — 解决"sandbox PUT profile 写副本但读 prod"
+2. **chisha/web_api.py:307** `/api/history` 改走 `data_root.recommend_log_path(ROOT)` — sandbox 内 history 读 sandbox log
+3. **prompts/l1_extract.md** 阈值 `< 5` → `< 3` 与代码 `MIN_MEALS_FOR_EXTRACTION` 统一
+4. **chisha/l1_extractor.py** extracted_at 走 `clock.now_utc()` (虚拟时钟一致性)
+5. **chisha/l1_extractor.py** `except (ValueError, Exception)` 拆成 LLM call err / JSON parse err / schema err 三阶段
+6. **chisha/l1_prefs.py** 删 `PrefsCorruptError` 未用类; validate_prefs 加 maxItems=2 / evidence schema / regularities 字符串过滤
+7. **chisha/web_api.py** L1 异步 trigger 加 `_L1_EXTRACTION_LOCK` trylock 防多 tab 并发覆盖 state
+8. **README.md / CLAUDE.md / ROADMAP.md** 端点数字 "18" → "20" 统一
+
+### 守门记录
+
+- baseline_l2_snapshot 在 PR-0.7 / PR-1a / PR-1b / PR-1c / PR-2 / PR-3 各跑一次, 4 snap |delta| < 1e-6 全程通过
+- 全测试 (含 26 legacy + 18 sandbox/clock + 9 data_root + 12 sandbox endpoint + 4 refresh + 38 l1_extractor + 24 l1_prefs + 9 score_l1_switch + 4 bootstrap + 10 e2e 锚点) → 526~536 pass, 0 fail, 1 skipped
+- 前端 (Vite + TypeScript strict mode) build 通过
+
+### 已知 V1 gap (不在本次范围)
+
+- `logs/meal_log.jsonl` 没有写入端 (PR-1c accept 只写 feedback_store.accepted), diversity_filter cooldown 实际不工作 — Phase 1 单独修
+- L1 抽取 prompt 在真实 LLM 上的稳定性还没跑过 (单测全 mock), 真跑时如果 LLM 不听话需 fixture 训练
+- sandbox 切回 prod 后 in-flight 请求行为未守门 — 当前用户一次会话只切一次, 暂不补
+
+
+## D-078 执行记录 · sandbox 时钟漏注入 + accept→meal_log 闭环 cooldown
+
+日期: 2026-05-16
+形态: 1 commit (含 Codex S1 + S2 两轮 review 修订)
+状态: ✅ 全测试 542 pass / baseline 0 diff / 用户视角真实 LLM 5 日演练全通
+
+### 提交单
+
+| commit | 内容 | 测试 |
+|---|---|---|
+| (待) | D-078 全量 (P0-1/P0-2/P1/P2 + S2 Codex 修补) | 542 ✓ |
+
+### 用户视角验收 (主路径)
+
+跑法: `uv run python -m chisha.debug_server` + `uv run python tmp/user_drive.py` (真实 LLM via claude_code_cli Max 订阅).
+
+| 步骤 | 期望 | 实测 |
+|---|---|---|
+| Day 1 accept 湖南老灶台 + 反馈 oil=2 repurchase=0 | accept 200 + meal_log.jsonl 写一条 | ✓ |
+| Day 2 advance → L1 触发 | state.last_l1_extraction.status: pending→ok, based_on_meals=1 (< MIN=3, skipped) | ✓ |
+| Day 2 候选 | 不含湖南老灶台 (cooldown 7d) | ✓ |
+| Day 3 advance → L1 触发 | based_on_meals=2, skipped_extraction=true | ✓ |
+| Day 4 advance → L1 真打 LLM (12s) | based_on_meals=3, boost=["low_oil"], evidence: "4/4 oil_calibration=too_high" | ✓ |
+| Day 12 (7d 后) | 湖南老灶台重回候选, cooldown 解锁 | ✓ |
+| taste_match_bonus(低油 combo, hints={boost:[low_oil]}) | 0.5 | ✓ |
+| taste_match_bonus(高油 combo, hints={boost:[low_oil]}) | 0.0 | ✓ |
+| reset → state.enabled=false + logs/sandbox 消失 + prod profile.yaml md5 不变 | ✓ | ✓ |
+
+### 关键技术点
+
+- **L1 时钟修补**: `aggregate_inputs(today=None, root=None)` 默认走 `clock.today(root)`. extract_and_save 透传 root. 测试 `test_aggregate_default_today_uses_chisha_clock` 用 monkeypatch sandbox._project_root 模拟虚拟时钟下 ts=05-30 > real today=05-16 但 < virtual today=06-01 仍计入.
+- **llm_client.call_text 重接**: `_default_llm_call` 从 `import call as llm_call` 改为 `import call_text`, 调用走位置参数 prompt (call_text 第一个参数 prompt 是 positional). 测试 `test_default_llm_call_uses_existing_llm_client_symbol` 守门符号存在.
+- **append_meal_log_entry**: 走 data_root.meal_log_path(root) + clock.now_utc(root). dishes 接受 flat (chisha.api._format_candidate) 和 nested (raw tagged) 两种形态, 落盘只保留 main_ingredient_type + canonical_name. 可选 zone/accepted_rank/combo_index/candidate_id 写满审计字段. 失败 hard-fail (web_api 层捕获 → 500).
+- **reset/disable 抢 L1 锁**: `_block_until_l1_idle_or_409` 抢 30s 超时则 409. anchor 13 用 monkeypatch + threading.Event 控制 worker 慢函数 + 并发触发 reset 验证 prod 路径不污染.
+- **advance pending → 409**: api_sandbox_advance 在 state.last_l1_extraction.status==pending 时直接 raise 409. anchor 14 守门.
+- **三态 inspect drawer**: SandboxBar.tsx React IIFE 分支 (null / skipped_extraction / 正常). meal_log_recent 真实条目渲染.
+
+### Codex audit 两轮
+
+- **S1**: 7 个 issue (P1×3 含 zone 缺失 / hard-fail 评估 / advance race; P2×4 含审计字段 / append 锁 / wait_l1_settle conftest / D-078 编号). 落地: zone + 审计字段 ✓, hard-fail 保留 ✓, conftest 提 wait_l1_settle ✓.
+- **S2**: 反馈一轮修复后 3 个新 issue (Q1 半态 transaction 拍板保留 hard-fail; Q2 advance pending 409 落 ✓; Q3-High reset/disable 抢锁防污染 prod 落 ✓; 其它 Medium/Low 留 backlog).
+
+### 新加测试 (4 anchor + 2 单测)
+
+- `test_aggregate_default_today_uses_chisha_clock`: 沙盒虚拟时钟下 ts 在 real today 未来但 virtual today 内的反馈正确计入
+- `test_default_llm_call_uses_existing_llm_client_symbol`: llm_client.call_text 存在 + _default_llm_call 调用 OK
+- anchor 11: 5 日推进 4 反馈 → based_on_meals=4 + prefs.boost=["low_oil"]
+- anchor 12: accept 写 meal_log + diversity_filter 屏蔽 + 8d 后解锁
+- anchor 13: reset 期间 L1 worker 跑慢 → reset 阻塞 → worker 完成后 reset 200 + prod 路径 long_term_prefs.json 不存在
+- anchor 14: advance 在 pending 时返 409
+
+### wait_l1_settle 共享 fixture
+
+`tests/conftest.py` 提供 `wait_l1_settle(client, prev_at, timeout=4.0)`. 关键点: 监 last_l1_extraction.at 翻新, 不监 status, 防 ok→ok 瞬间被 stale 状态误判 settle.
+
+### 已知 V1 gap (不在 D-078 范围, 候补 D-078.1+)
+
+- diversity_filter 按 zone 过滤 (跨 zone 污染概率低)
+- reset/disable 抢锁失败后的 dirty-flag 补跑 (现在只 409, 用户重试)
+- meal_log 多 tab 并发 append 文件锁 (与 recommend_log 同级)
+- L1 prompt 在真实 LLM 上稳定性 (本次真跑 1 次 12s ok, 长期需 fixture 训练防漂移)
+
+---
+
+## D-076.1 执行记录 · L1 词表扩 positive 方向 + D-078.3 sandbox inspect raw 字段
+
+日期: 2026-05-16
+形态: 1 commit (词表扩 + score 分支 + prompt 词表段 + inspect raw + 7 新增 test)
+状态: ✅ 588 测试全过 / baseline_l2 0 diff / 真实 LLM 4 餐 spicy boost 抽出实测
+
+### D-076.1: BOOST_TOKENS 加 spicy + sweet_sauce
+
+战略决策见 `docs/DECISIONS.md#d-0761`. 工程改动:
+
+| 文件 | 改动 |
+|---|---|
+| `chisha/l1_prefs.py` | `BOOST_TOKENS = frozenset(["low_oil", "wetness", "spicy", "sweet_sauce"])` (2→4) |
+| `chisha/score.py taste_match_bonus` | 加 spicy boost (max spicy_level>=2 → +0.5) + sweet_sauce boost (复用 sweet_sauce_penalty helper → +0.5) |
+| `prompts/l1_extract.md` | boost 段从 "(可用 2 个)" 改 "(可用 4 个)", 加 spicy/sweet_sauce 描述 + "主动追辣"判定 + "不加 processed_meat/carb_heavy boost 因违反 methodology baseline" 说明 |
+| `tests/test_l1_prefs.py` | `test_token_vocabulary_unchanged` 更新到新词表 + 加 "processed_meat/carb_heavy 不许 boost" 守门 + `test_validate_drops_wrong_bucket` 改用单向 token (processed_meat/low_oil) |
+| `tests/test_score_v2.py` | 5 个新 case: spicy boost hit / spicy boost zero / sweet_sauce boost / spicy boost+penalty cancel / sweet_sauce boost+penalty cancel |
+
+### 真实 LLM 演练 (4 餐 → boost=['spicy'])
+
+`tmp/spicy_boost_drill.py` driver:
+- 4 day sandbox lunch accept + feedback rating=1 repurchase=2 note="day{N}: 辣得真爽,这种重辣度正合胃口"
+- 手动 L1 抽取 → `boost=['spicy']` + evidence: "4/4 重辣餐 repurchase_intent=2 且 note 主动追辣..."
+- Day 5 lunch recommend → L3 prompt 含 `行为信号 (近 4 餐): boost=['spicy']`, top 5 reason 4/5 提"辣2/辣3", #4 直接说 "顶格命中追辣 boost"
+
+成本: 5 次 LLM (4 day recommend + 1 L1 extract + 1 Day 5 recommend) ≈ $0.08, ~85s.
+
+### D-078.3: sandbox inspect 露 raw 文件内容
+
+`chisha/web_api.py api_sandbox_inspect`: 在 `long_term_prefs` (走 load_prefs, 空时返 None) 之外加 `long_term_prefs_raw` (直接读磁盘 json). 用途: load_prefs 在 boost+penalty 都空时返 None (L2 等价语义对), 但 inspect 必须显示 `regularities_freetext` / `signals_not_scored` / `evidence` 这些 LLM 抽取的非词表沉淀 — 不能被"L2 等价 None"语义藏掉.
+
+实现 ~15 行, frontend SandboxBar 后续会读 `long_term_prefs_raw` 优先于 `long_term_prefs` 渲染. 现有 inspect 调用方 (老 SandboxBar) 仍可读旧 `long_term_prefs` 字段, 向后兼容.
+
+### 守门
+
+- 588 测试 (583 D-078.2 + 5 new spicy/sweet boost score) 全过
+- `baseline_l2_snapshot` + `compare_traces` 4 snap 0 diff (现存 prefs 不含新 token, 老行为不变)
+- 真实 LLM 演练: spicy boost 抽出 + L3 reason 显式 "顶格命中追辣 boost"
+
+### Phase 1 follow-up (留待 D-076.2+ / 同事推广后)
+
+- 更多 boost token (cuisine 偏好? cooking method 偏好?) — 等真实信号需求, 不盲扩
+- LLM 双重信号 (methodology 控油 + L1 low_oil) 长期观察是否塌方式低油 (现实测 -7.4% 健康量级)
+- SandboxBar.tsx 前端切换读 `long_term_prefs_raw` 渲染 (后端字段已加, 前端可分批改)
+
+---
+
+## D-078.2 Codex S2 修订 · refine 二轮链路漏 root threading
+
+日期: 2026-05-16
+形态: 1 commit (refine.py:122 加 `root=root` + 1 守门 test)
+状态: ✅ 589 测试 / baseline_l2 0 diff
+
+### S2 review
+
+D-036 dual-model audit S2 (Codex 审 Opus 出的 D-078.2 设计). Codex 输出:
+
+- BLOCKER: 0
+- FIX-NOW: 1 — `chisha/refine.py:119` 调 `rerank()` 没传 `root=root`, sandbox / 多
+  worktree 场景下 refine 二轮读错 long_term_prefs.json, L1 行为信号静默缺失或串
+  到真实仓库. 立场: 强.
+- DEFER: 0
+
+### S3 终审
+
+Opus 终审, **接受 FIX-NOW**. 漏的根因: D-078.2 改 rerank 链路时穷举了 `rerank()` 直接
+调用方 (api.py + debug_recommend.py), refine.py 用 `from chisha.rerank import rerank`
++ 裸调, grep 时看到了但没顺势同步. 跨模块 audit 是 dual-model 的核心价值.
+
+修法:
+- `chisha/refine.py:119-124`: 加 `root=root` 显式透传, 含 D-078.2 Codex S2 FIX-NOW
+  锚点注释
+- `tests/test_refine.py`: 加 `test_refine_passes_root_to_rerank` 守门 — monkeypatch
+  rerank 捕获 kwargs, 断言 `captured["root"] == tmp_path`
+
+### 严重度复盘
+
+prod 路径下 `_project_root()` 兜底碰巧等于真实仓库, /api/refine 在 sandbox 下也能
+读到正确 prefs (silent, 用户感知不到). 但:
+- 测试用 monkeypatched ROOT 时, refine 链路读真实仓库 prefs, 流水线不稳定
+- 多 worktree 场景: 其他 worktree /api/refine 会跨 root 读主仓库 prefs
+
+Codex 立场"强"对 — 不是 prod 直接报错, 但属于"会在测试和未来场景塌方"类 silent.
+
+### Codex 没触 + S3 复盘的 6 个 audit 重点
+
+详见 `tmp/codex_s3_response.md`. 摘要 (全部不改):
+
+1. rationale 截 80 字够 (实测 ~70 字内能放下完整因果)
+2. spicy boost 用 max() 不用 avg() — by design (偏好辣看 anchor 不看均值)
+3. sweet_sauce boost 复用 penalty helper 合理 (镜像语义)
+4. 不加 processed_meat/carb_heavy boost 边界 Phase 1 解耦, 现 Phase 0 不动
+5. prompt 反直觉规则 LLM 稳定性长期跟踪
+6. long_term_prefs vs long_term_prefs_raw 双字段 confuse — 前端切换留 Phase 1
+
+### 守门
+
+- 589 测试 (588 + 1 root threading 守门)
+- baseline_l2_snapshot 4 snap 0 diff
+
+---
+
+## D-078.2 执行记录 · L1 → L3 prompt 漏桥修补 (L1 LLM 抽取产物注入 L3 系统提示)
+
+日期: 2026-05-16
+形态: 1 commit (rerank/_profile_block + 4 处 root threading + 2 regression test)
+状态: ✅ 583 测试全过 (581+2 D-078.1+2 D-078.2) / baseline_l2 0 diff / 真实 LLM 演练实测有效
+
+### 触发
+
+D-078.1 修复后 4 天 sandbox 演练 (4/4 oil_calibration=too_high) 验证 D-076 L1 LLM 抽取闭环, 测出抽取产物正确 (boost=['low_oil'], 4 evidence) 且 L2 打分链路真生效 (`taste_match_bonus`(low_oil)=0.5, high_oil=0). **但 Day 5 重做推荐时 LLM 仍挑高油 combo (top1 油=2.7)**, 油值 5 道菜均值 2.44 仅微降, reason 中 0/5 提及"控油".
+
+排查发现 `rerank._profile_block(profile)` 只读 `profile.preferences` 静态字段, **完全不读 `long_term_prefs.json`**. L3 LLM rerank 看到的 user message [PROFILE] 段没有 L1 抽取产物 — LLM 只能从 L2 排序顺序"感受"用户偏好, 无法显式知道 boost=['low_oil'] 这个行为信号.
+
+### 修法 (chisha/rerank.py + 4 caller)
+
+`_profile_block(profile, root=None)` 加 root 参数, 末尾追加 1 段 L1 prefs 注入:
+
+```python
+try:
+    from chisha.l1_prefs import load_prefs
+    l1 = load_prefs(root=root)
+    if l1 and (l1.get("boost") or l1.get("penalty")):
+        n_meals = l1.get("based_on_meals", 0)
+        evid = l1.get("evidence") or []
+        rationale = evid[0].get("rationale") if evid else ""
+        sig_parts = []
+        if l1.get("boost"): sig_parts.append(f"boost={l1['boost']}")
+        if l1.get("penalty"): sig_parts.append(f"penalty={l1['penalty']}")
+        sig_line = f"行为信号 (近 {n_meals} 餐): " + " ".join(sig_parts)
+        if rationale: sig_line += f" — {rationale[:80]}"
+        lines.append(sig_line)
+except Exception:
+    pass
+```
+
+`root` 透传链: `chisha.api.recommend_meal` / `debug_recommend._llm_rerank_traced`
+→ `rerank.rerank` → `_llm_rerank` → `_run_llm_rerank` → `build_user_message`
+→ `_profile_block` (5 处签名同步加 `root: Path | None = None` kwarg).
+
+### 实测前后对比 (Day 5 lunch, 真实 LLM, 同一 sandbox 状态)
+
+| | v1 (无 bridge) | v2 (有 bridge) |
+|---|---|---|
+| 总油 (top 5) | 12.2 | **11.3** (-7.4%) |
+| 最低油 combo | 1.8 | **1.3** (Super Model 超模厨房) |
+| Reason 提"控油"次数 | 0/5 | **3/5** |
+| Top1 combo | 印象长沙 油=2.7 | 印象长沙 油=2.7 (top1 同) |
+| Top2 combo | 荣姐家常菜 油=2.3 | **Super Model 油=1.3** (主动挑低油) |
+
+v2 #2 LLM reason 显式提"卤牛肉+黑米饭油2最低, 撑到下顿不反弹" — LLM 在看到行为信号后, 主动从 top60 里挑出低油 combo 并写出 controled-oil reasoning.
+
+### Regression test (tests/test_methodology.py)
+
+- `test_profile_block_injects_l1_prefs_when_available`: 写 prefs json 到 tmp_path/data, 调 `_profile_block(profile, root=tmp_path)` 必须含 "行为信号" + "boost=['low_oil']" + "近 4 餐" + rationale 简述.
+- `test_profile_block_no_l1_line_when_prefs_missing`: 无 prefs 文件 → 不加 "行为信号" 行 (避 noisy prompt).
+- 修旧 fragile test `test_rerank_profile_block_without_methodology_fallback` / `test_rerank_profile_block_diff_is_single_line`: 显式传 `root=tmp_path` 防 prod prefs 文件 leak 进 test (D-078.2 前老测试假定 `data/long_term_prefs.json` 不存在, 现在沙盒演练会写真实文件, 不传 root 测试 flaky).
+
+### 守门
+
+- 583 测试 (581 + D-078.1 2 + D-078.2 2) 全过
+- `baseline_l2_snapshot` + `compare_traces` 4 snap 0 diff (改的是 L3 prompt 注入, 不影响 L2)
+- Day 5 真实 LLM 重测前后对比可量化 (-7.4% 油 + 3/5 reason 提控油)
+
+### Phase 1 follow-up
+
+- L3 prompt 注入扩展: penalty token (sweet_sauce/processed_meat/spicy/carb_heavy) 也同样会注入, 但目前没演练充分验证多 token 行为. 等真实使用累积更多 evidence.
+- L3 prompt 注入与 D-072 methodology 段的关系: 方法论说控油 + 行为信号也说控油 → 双重信号是否过强需观察. 现实测看 LLM 没明显矫枉过正, 暂留观察.
+
+---
+
+## D-078.1 执行记录 · sandbox + methodology spec 路径回归修补
+
+日期: 2026-05-16
+形态: 1 commit (3 行代码 + 2 regression test)
+状态: ✅ 583 测试全过 (581 + 2 新增) / baseline 0 diff
+触发: 用户视角真实 LLM 端到端演练第 2 次 (D-077/D-078 落地后), `/api/recommend` 在 sandbox 启用时 500 (FileNotFoundError: methodology spec not found).
+
+### 根因
+
+`recall.load_profile(path)` 默认 `root = path.parent` (Codex Round 3 M-1, 给测试 tmp_path 留的兼容口). sandbox 启用后 `data_root.profile_path(root)` 返回 `logs/sandbox/profile.yaml`, fallback root 变成 `logs/sandbox/`, 然后 `apply_methodology` 去 `logs/sandbox/profiles/methodologies/harvard_plate.yaml` 找 spec — 该路径不存在 (methodology 是静态配置, 不进 sandbox, 见 `data_root.py:20` docstring).
+
+D-077 / D-078 落地前 `load_profile` 只被传 prod profile 路径 (project_root/profile.yaml), `path.parent` = project root, 恰好 work. D-077 引入 sandbox profile 副本后 fallback 推断失效, 但所有单测都显式传 root 没暴露.
+
+### 修法 (api.py:114/116, web_api.py:94)
+
+3 个 caller 显式传 project root:
+
+```python
+# api.py:114
+profile = load_profile(data_root.profile_path(root), root=root)
+# api.py:116
+profile = load_profile(Path(...) if ... else root / profile_path, root=root)
+# web_api.py:94
+profile = load_profile(_profile_path(), root=ROOT)
+```
+
+不动 `recall.load_profile` 的 fallback 语义 (Codex 当时留的 tmp_path 兼容口仍生效).
+
+### Regression test (tests/test_web_api_sandbox.py)
+
+- `test_load_profile_finds_methodology_when_sandbox_enabled`: 启 sandbox + 拷副本 + 显式传 root → 成功 merge plate_rule; 不传 root → raise FileNotFoundError. 双向守门.
+- `test_web_api_recommend_under_sandbox_does_not_500_on_methodology`: 端到端 `/api/recommend` 在 sandbox 下不应 500 (会真调一次 LLM ~16s).
+
+### 验收
+
+| 验证项 | 状态 |
+|---|---|
+| sandbox 启用 + `/api/recommend` 200 | ✓ (Day 1 lunch 15.7s) |
+| `path.parent` fallback 仍 work (无 sandbox) | ✓ (581 旧测试不变) |
+| D-077/D-078 14 e2e anchor 全过 | ✓ |
+| baseline_l2_snapshot 0 diff | ✓ |
+
+### Phase 1 follow-up (不在本次范围)
+
+- sandbox inspect 在 `load_prefs` 返 None 时仍显示磁盘 `regularities_freetext` / `signals_not_scored` (现在被 hide, debug 反而看不到 LLM 抽取的非词表沉淀)
+- L1 词表只有 penalty 方向 spicy, 不支持 positive flavor preference (志丹是吃辣用户但词表只能记录"不耐辣"). Phase 1 扩词表候选, 不在 D-076 边界.
+
+---
+
+## D-075 执行记录 · `apps/debug-ui/` Phase 1-7 build-out + 双轮 Codex review
+
+日期: 2026-05-16
+worktree: `.claude/worktrees/debugger-web` (branch on top of `3ed8411`)
+战略决策见 `docs/DECISIONS.md` D-075.
+
+### Codex 双轮 review pattern (8 轮)
+
+每个 Phase 走 plan review + diff review 闭环 (变种 D-036 dual-model audit):
+1. 写 plan markdown 到 `.codex-review/phase-N-plan.md`, 含 Open Questions
+2. Codex 给 N 个 BLOCKER / FIX-NOW / DEFER + 立场
+3. 修方案 / 砍范围, 实现代码
+4. typecheck + build + E2E live smoke
+5. 写 diff review markdown 到 `.codex-review/phase-N-diff-review.md`
+6. Codex 验证 FIX 真落地 + 找新 bug
+7. 修剩余 FIX-NOW, 推进 Phase N+1
+
+最终 final-pr-review 走第 8 轮整 PR 终审, 修 2 FIX-NOW (CSS 声明完整性 + Safari 5MB 配额) 后 ship.
+
+### Phase 1-7 工程量
+
+- 56 files, ~10k 行落地 (合并 commit `feat(D-075)`)
+- 全部 TS/TSX 组件 ≤ 400 行 (`App.tsx` 379, `PanelL3.tsx` 335, `api/adapter.ts` 373)
+- 数据文件豁免: `styles.css` 1562 (1:1 搬自 design canvas + Phase 5 mark.find-hit + .replay-btn 功能扩展), `mocks/session.ts` 457 (LCG seed=42 deterministic)
+
+### Codex 跨 phase BLOCKER 全清单 (4 个全修)
+
+1. **delta abs() 在 comboDiffBadge** (Phase 3): `↑ -3` / `↓ -3` 这种 UI 文案 bug, 一行修
+2. **dropped final cards 必须可见** (Phase 3): 三态本来 dropped 不渲染. 在 `PanelFinal` 加 `droppedRows` prop, `PanelRefine` 传 `diff.droppedFinals`
+3. **runTrace 必须传齐 meal/today/profileOverride** (Phase 4): 否则 trace 是不同上下文的 recommendation, 结果错位
+4. **localStorage MAX_ITEMS Safari 5MB 配额** (final review): 原 8 个 × 700KB = 5.6MB 爆 iOS 硬限. 砍到 5 个 (3.5MB)
+
+### Codex 跨 phase FIX-NOW 全清单 (14 个全修)
+
+Phase 1: 5 个 — `--blue/--red/...` color var 缺定义 / `panel-l2:165` 用未定义 var / `breakdown[k].toFixed` 缺字段崩 / DAG header 14ms/18ms/1207 硬编码 / PanelL2 210 行 Phase 2 会超 400, Phase 1 顺手拆 KpiBar/Heatmap/ComboTable
+Phase 2: 3 个 — localStorage 容量泄漏 (orphan key 不清) / runMain 无 race guard / L2 weights dict→array 必须显式 DIM_ORDER 不靠 Python dict insertion order
+Phase 4: 1 个 — `_trace_target` 缺 nutrition_profile, detail panel 需要
+Phase 5: 2 个 — CollapsedJson 递归无 maxDepth 可爆栈 / App.tsx 404 > 400 行
+Phase 6: 4 个 — oil 1..5 / sweet 0..3 / wetness 1..3 / spicy 0..N 非 string 是 number, 前端 String(v) 显 "1" 不可读, 加 labelForDim 中文映射 + zone code → 中文 / DagHeader l3Status 强制 'ok' 洗掉 config_error, 改读 session.l3.status / config_error + skipped 视觉缺独立 callout 分支 / 空 session hint 真正空态不可达 (MOCK 总在)
+Phase 7: 1 个 — README config_error wording 误导 (说 profile JSON 解析失败, 实际是 LLM provider 配置错)
+Final PR: 2 个 — CSS 声明完整性 (Phase 5 加 mark.find-hit + .replay-btn 未在 review doc 列) / localStorage Safari 配额
+
+### 关键技术决定 (executed)
+
+- **adapter 纯函数边界** (`src/api/adapter.ts` 373 行): backend → frontend `Session` view-model. 所有字段重命名 / 合成 / fallback 都在这一层. Phase 2-7 任何 panel 都是 pure props-in.
+- **DIM_ORDER 显式列表** (`src/api/adapter.ts:144`): 16 维 score weights 顺序锁死为 `profile.yaml:148-166` 当前顺序. 防 Python dict insertion order 漂移. backend 未来加新维度走 append.
+- **race guard 用 seqRef** (`hooks/useSession.ts`): `++runSeqRef.current` 在 fetch 前递增, 完成后 `if (seq !== runSeqRef.current) return`. 防双击 stale-overwrites-fresh.
+- **deriveRefineSession seed = hash(refine_text)** (`mocks/refineSession.ts`): 相同输入相同 second-round (diff 徽章不闪), 不同输入不同结果 (用户能感知 refine 影响). Phase 4+ 真接 backend 后此文件可砍.
+- **trace 复用 `/api/debug_recommend` + trace_target**: 不加新端点. 后端已有 `_trace_target`, 只补 `nutrition_profile` 子集. 重跑 L1/L2 一次约 300ms (LLM 关闭), 可接受.
+- **labelForDim 数字→中文** (`constants/labels.ts`): oil 1..5 → 极少油/少油/中等/偏油/高油. wetness 1..3 → 干/卤水/汤底. 来源: `chisha/score.py:80-93, 240-281, 396-400`. PanelTrace 加 `(原数字)` 后缀方便对照.
+
+### Backend 补丁 (`chisha/debug_recommend.py`)
+
+- `_llm_rerank_traced` (line 425-460): 末尾加 `system_prompt_full` (重读 `SYSTEM_PROMPT_PATH` 并应用 `_patch_system_prompt_for_cli`) + `max_tokens: 4096 if is_cli else 2048` + `temperature: 0.0`. 异常吞掉 → `system_prompt_full=""`.
+- `_trace_target` matched dish (line 759-781): 加 `price` 和 `nutrition_profile: {oil_level, spicy_level, protein_grams_estimate, main_ingredient_type, cooking_method, wetness, grain_type, processed_meat_flag, sweet_sauce_level, vegetable_ratio_estimate}`. 全部 `.get()` 容错.
+
+ADD-only, 不动既有键 — 老 debug.html / web_api.py / prod recommend 路径不受影响.
+
+### 验证 (E2E live)
+
+worktree venv (`.claude/worktrees/debugger-web/.venv`) 起 debug_server:8765, Vite dev:5174 proxy:
+- `GET /api/profile` → 200
+- `POST /api/debug_recommend` (use_llm_rerank=false) → 200, 358KB, zone=shenzhen-bay, n_combos=2467, top=54, final=5
+- `POST /api/debug_recommend` + `trace_target` → 200, 50 matched dishes, nutrition_profile 10 字段 (`oil_level: 1 int`, `wetness: 1 int`, etc.)
+- `npm run typecheck` 0 警告
+- `npm run build` 246KB JS / 39KB CSS gzipped 78+8=86KB
+
+initial false-negative 教训: 智能查 `nutrition_profile=False` 时, 主仓库 venv 跑的旧 `chisha.debug_server` 在 :8765 已起, 新 worktree backend 端口冲突. 修法: `lsof -ti:8765 | xargs kill -9` 再起 worktree venv 的进程. uv editable install 不会自动重读跨 venv 文件.
+
+### 反 anti-pattern (这次没踩 + 这次踩了的)
+
+没踩:
+- 没引入 Tailwind/shadcn/antd (设计稿明确禁) — 全 CSS-var
+- 没改设计稿视觉系统 — 1:1 搬, 仅加 5 utility color var + 2 功能性 rule
+- 没写测试 (单用户工具 prompt 明确禁)
+- 没让 mock 数据写死在 UI 里 — Phase 1 完成后 mock 只在 `mocks/`, panels 全 pure props
+- 没在 App.tsx 引入 react-router/zustand/react-query
+- 没用 `any`/`as any`/`@ts-ignore` (Codex 验证零命中)
+
+踩了 (修了):
+- Phase 1 完成时 App.tsx / PanelL3 双双 404+ 超 400 行, Phase 7 才拆 (Codex 看到的时候已经溢出, 应该 phase 内即时拆)
+- Phase 1 后端 stale uv venv (主仓库 :8765 端口冲突) 浪费了 15min 排查
+- L2 hardcoded literals (60 top / 1207 combo / 38ms latency) Phase 1 我以为搬就行, Codex 指出后才知道必须从 session 数据 derive — Phase 4+ 真接后端时这种字面量都会错位
+
+### 下一步 (deferred 到 Phase X+ / V1.5)
+
+- `/api/debug_refine` 真后端接入 (Phase 3 现走 mock 派生)
+- `/api/sessions` + `/api/session/{id}` 后端持久化 (Phase 2 现走 localStorage)
+- per-dish trace rank 精确归属 (Codex Phase 4 指出, 当前 PanelTrace 所有 dish 用 first matched combo rank)
+- Web Notifications API fallback 桌面通知 (Phase 5 砍, 等真 fallback 链路打通)
+- 调试台 V1 整合到 apps/web `/debug` 路由 (ROADMAP line ~98) — 推翻为独立 `apps/debug-ui/` 已交付

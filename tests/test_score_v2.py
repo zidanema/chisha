@@ -196,6 +196,42 @@ def test_taste_match_sweet_penalty():
     assert taste_match_bonus(c, hints) == -0.5
 
 
+# D-076.1: positive direction tokens (spicy / sweet_sauce boost)
+def test_taste_match_spicy_boost_hits_when_max_spicy_high():
+    """boost=['spicy']: max(spicy_level)>=2 → +0.5 (用户主动追辣)."""
+    c = _combo([make_dish(spicy_level=2), make_dish(spicy_level=0)])
+    hints = {"boost": ["spicy"], "penalty": []}
+    assert taste_match_bonus(c, hints) == 0.5
+
+
+def test_taste_match_spicy_boost_zero_when_all_mild():
+    """boost=['spicy'] 但全 combo spicy_level<2 → 0."""
+    c = _combo([make_dish(spicy_level=1), make_dish(spicy_level=0)])
+    hints = {"boost": ["spicy"], "penalty": []}
+    assert taste_match_bonus(c, hints) == 0.0
+
+
+def test_taste_match_sweet_sauce_boost():
+    """boost=['sweet_sauce']: combo 有甜口菜 → +0.5."""
+    c = _combo([make_dish(sweet_sauce_level=3), make_dish(sweet_sauce_level=0)])
+    hints = {"boost": ["sweet_sauce"], "penalty": []}
+    assert taste_match_bonus(c, hints) == 0.5
+
+
+def test_taste_match_spicy_boost_and_penalty_cancel():
+    """validate_prefs 不允许 boost+penalty 同 token, 但若调用方硬塞两边都有,
+    score 自然抵消 (+0.5 -0.5 = 0). 守门防 ad-hoc 调用产生意外."""
+    c = _combo([make_dish(spicy_level=3)])
+    hints = {"boost": ["spicy"], "penalty": ["spicy"]}
+    assert taste_match_bonus(c, hints) == 0.0
+
+
+def test_taste_match_sweet_sauce_boost_and_penalty_cancel():
+    c = _combo([make_dish(sweet_sauce_level=3)])
+    hints = {"boost": ["sweet_sauce"], "penalty": ["sweet_sauce"]}
+    assert taste_match_bonus(c, hints) == 0.0
+
+
 # ─────────────────────── context_boost
 def _ctx(daily_mood):
     return ContextSnapshot(
@@ -221,14 +257,13 @@ def test_context_boost_neutral():
     assert context_boost(c, ctx) == 0.0
 
 
-def test_context_boost_want_soup_with_soup():
-    c = _combo([make_dish(wetness=3)])
-    assert context_boost(c, _ctx("want_soup")) == 0.5
-
-
-def test_context_boost_want_soup_without_soup():
-    c = _combo([make_dish(wetness=1)])
-    assert context_boost(c, _ctx("want_soup")) == 0.0
+def test_context_boost_want_soup_superseded_by_d073():
+    """D-073: want_soup 走 RefineIntent.flavor_tags=['soup'] + intent_match_bonus,
+    context_boost 退化为恒 0.0. 锁定行为防止 D-071 残留复活."""
+    c_with_soup = _combo([make_dish(wetness=3)])
+    c_dry = _combo([make_dish(wetness=1)])
+    assert context_boost(c_with_soup, _ctx("want_soup")) == 0.0
+    assert context_boost(c_dry, _ctx("want_soup")) == 0.0
 
 
 # ─────────────────────── D-071: 已废 mood 分支 deprecated-behavior 断言
@@ -294,16 +329,21 @@ def test_score_combo_processed_meat_lowers_total(basic_profile):
     assert s_bad < s_clean
 
 
-def test_score_combo_soup_boost_with_context(basic_profile):
-    """同 combo, daily_mood=want_soup 且含汤水 → 更高分."""
+def test_score_combo_soup_boost_via_refine_intent_d073(basic_profile):
+    """D-073: 汤水加分链路从 daily_mood=want_soup 迁移到 RefineIntent.flavor_tags=['soup'].
+
+    锁定: 同 combo 带 intent (flavor_tags=['soup']) → 比无 intent 更高分.
+    """
+    from chisha.refine_intent import RefineIntent
     soup = make_dish(wetness=3, dish_role="主菜",
                      protein_grams_estimate=30)
     veg = make_dish(dish_id="dv", main_ingredient_type="纯素",
                     vegetable_ratio_estimate=0.9, dish_role="配菜")
     c = _combo([soup, veg])
-    s_no_ctx, _ = score_combo(c, basic_profile)
-    s_with_ctx, _ = score_combo(c, basic_profile, context=_ctx("want_soup"))
-    assert s_with_ctx > s_no_ctx
+    s_no_intent, _ = score_combo(c, basic_profile)
+    intent = RefineIntent(flavor_tags=["soup"])
+    s_with_intent, _ = score_combo(c, basic_profile, intent=intent)
+    assert s_with_intent > s_no_intent
 
 
 def test_v2_default_weights_complete():
@@ -905,22 +945,18 @@ def test_apply_caps_regression_against_naive_chain():
 
 
 def test_rank_combos_end_to_end_root_closes_feedback_loop(tmp_path, monkeypatch):
-    """Codex 二审 WARN 修复: 端到端验证 rank_combos(root=...) 透传到 load_runtime_hints.
+    """D-076 PR-0.7 后: 验证 rank_combos(root=...) 透传到 l1_prefs.load_prefs.
 
-    不 mock 底层, 直接走完整 rank_combos 路径: 用 tmp root 写反馈 → rank_combos
-    传同一 tmp root 读 → taste_match 命中, 证明 root 闭合.
+    旧 D-043: append_feedback 写 jsonl → load_runtime_hints 读 → hints
+    新 D-076: l1_extractor 抽取 → save_prefs 写 → load_prefs 读 → hints
     """
-    from chisha.long_term_prefs import append_feedback
+    from chisha.l1_prefs import save_prefs
     import datetime as dt2
-    # 写 3 条"想喝汤" feedback 到 tmp_path
-    for i in range(3):
-        append_feedback(
-            chips=["想喝汤"], rating_taste=4,
-            timestamp=dt2.datetime(2026, 5, 13 - i),
-            root=tmp_path,
-        )
-    # 让 long_term_prefs 默认 path 解析到 tmp_path
-    # 但这里我们走 rank_combos(root=tmp_path), 内部应当透传, 不需要 monkeypatch
+    save_prefs(
+        {"boost": ["wetness"], "penalty": [],
+         "based_on_meals": 5, "extracted_at": "2026-05-13T00:00:00"},
+        root=tmp_path,
+    )
     profile = {
         "basics": {}, "plate_rule": {"min_protein_g": 0, "must_have_vegetable": False},
         "preferences": {}, "scoring_weights": {"taste_match": 1.0},
@@ -934,30 +970,29 @@ def test_rank_combos_end_to_end_root_closes_feedback_loop(tmp_path, monkeypatch)
     out = rank_combos([combo], profile, today=dt2.date(2026, 5, 13),
                        root=tmp_path)
     br = out[0]["score_breakdown"]
-    # taste_match 必须 > 0 (wetness boost 命中, 来自 tmp_path 反馈)
+    # taste_match 必须 > 0 (wetness boost 命中, 来自 tmp_path prefs)
     assert br["taste_match"] > 0.0
 
 
 def test_rank_combos_default_root_does_not_pick_up_custom_root_feedback(
     tmp_path, monkeypatch
 ):
-    """端到端验证: rank_combos 默认 root 不会读到 tmp_path 写入的反馈."""
-    from chisha.long_term_prefs import append_feedback
+    """D-076 PR-0.7 后: 默认 root 不会读到 tmp_path prefs.json."""
+    from chisha.l1_prefs import save_prefs
     import datetime as dt2
-    # 在 tmp_path 写 (默认根读不到)
-    for i in range(3):
-        append_feedback(
-            chips=["想喝汤"], rating_taste=4,
-            timestamp=dt2.datetime(2026, 5, 13 - i),
-            root=tmp_path,
-        )
-    # monkeypatch 默认根指向另一个空目录, 避免污染真实 data/
+    # 在 tmp_path 写 prefs (默认根读不到)
+    save_prefs(
+        {"boost": ["wetness"], "penalty": [],
+         "based_on_meals": 5, "extracted_at": "2026-05-13T00:00:00"},
+        root=tmp_path,
+    )
+    # monkeypatch _prefs_path 让默认根指向另一个空目录
     other = tmp_path / "other_root"
     other.mkdir()
-    from chisha import long_term_prefs as ltp
+    from chisha import l1_prefs as lp
     monkeypatch.setattr(
-        ltp, "_default_history_path",
-        lambda root=None: (root or other) / "data" / "feedback_history.jsonl",
+        lp, "_prefs_path",
+        lambda root=None: (root or other) / "data" / "long_term_prefs.json",
     )
     profile = {
         "basics": {}, "plate_rule": {"min_protein_g": 0, "must_have_vegetable": False},
@@ -969,7 +1004,7 @@ def test_rank_combos_default_root_does_not_pick_up_custom_root_feedback(
                               vegetable_ratio_estimate=0.8, spicy_level=0,
                               oil_level=5)],
     }
-    # rank_combos 不传 root → 走 monkeypatched 默认根 (other, 空目录) → 读不到 hint
+    # rank_combos 不传 root → 走 patched 默认根 (other, 空) → 读不到 hint
     out = rank_combos([combo], profile, today=dt2.date(2026, 5, 13))
     br = out[0]["score_breakdown"]
     # taste_match 应为 0 (没读到任何 hints)
@@ -1042,24 +1077,23 @@ def test_food_form_powder_noodle_still_noodle():
 # ─────────────────────── D-043 Codex review fix: hints 三源合并
 def test_rank_combos_merges_explicit_static_runtime_hints(basic_profile, tmp_path,
                                                             monkeypatch):
-    """Codex MAJOR 修复: 显式 taste_hints 也要 merge static + runtime, 不再短路.
+    """D-076 PR-0.7 后: 显式 taste_hints 也要 merge static + L1 prefs.
 
-    设计: combo 命中 wetness 但 oil 高 → 显式 hints 不含 wetness → 只有 runtime
-    含 wetness 时 taste_match 才能命中. 这样断言确切证明 runtime hints 合并生效.
+    设计: combo 命中 wetness 但 oil 高 → 显式 hints 不含 wetness → 只有 L1 prefs
+    含 wetness 时 taste_match 才能命中. 这样断言确切证明 L1 prefs 合并生效.
     """
-    from chisha.long_term_prefs import append_feedback
+    from chisha.l1_prefs import save_prefs
     import datetime as dt2
-    for i in range(3):
-        append_feedback(
-            chips=["想喝汤"], rating_taste=4,
-            timestamp=dt2.datetime(2026, 5, 13 - i),
-            root=tmp_path,
-        )
-    # monkey-patch _default_history_path 让 long_term_prefs 读 tmp_path
-    from chisha import long_term_prefs as ltp
+    save_prefs(
+        {"boost": ["wetness"], "penalty": [],
+         "based_on_meals": 5, "extracted_at": "2026-05-13T00:00:00"},
+        root=tmp_path,
+    )
+    # monkey-patch _prefs_path 让 l1_prefs 读 tmp_path
+    from chisha import l1_prefs as lp
     monkeypatch.setattr(
-        ltp, "_default_history_path",
-        lambda root=None: tmp_path / "data" / "feedback_history.jsonl"
+        lp, "_prefs_path",
+        lambda root=None: tmp_path / "data" / "long_term_prefs.json"
     )
     basic_profile.pop("taste_description", None)  # 排除 static 干扰
     # 显式 hints 不含 wetness (只含 spicy penalty, 与 wetness 无关)
@@ -1073,7 +1107,7 @@ def test_rank_combos_merges_explicit_static_runtime_hints(basic_profile, tmp_pat
     out = rank_combos([combo], basic_profile, today=dt2.date(2026, 5, 13),
                        taste_hints=explicit)
     br = out[0]["score_breakdown"]
-    # 必须 > 0: 因为 runtime hints 注入了 wetness boost, combo wetness=3 → +0.5 × 0.4
+    # 必须 > 0: 因为 L1 prefs 注入了 wetness boost, combo wetness=3 → +0.5 × 0.4
     assert br["taste_match"] > 0.0
 
 

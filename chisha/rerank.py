@@ -378,9 +378,28 @@ def _fmt_counts_or_none(d) -> str:
     return " ".join(f"{k}×{v}" for k, v in list(d.items())[:8])
 
 
-def _profile_block(profile: dict) -> str:
+# D-079 BLOCKER fix: sentinel 区分"未传 l1_prefs_override (走默认 load_prefs)"
+# vs "显式传 None (frozen 时 L1 抽取无产物)". 不能用 None 当默认 —— frozen
+# snapshot 里 l1_prefs_snapshot 本来就允许是 None (那餐没抽出 prefs).
+_UNSET_L1_PREFS: Any = object()
+
+
+def _profile_block(
+    profile: dict,
+    root: "Path | None" = None,
+    l1_prefs_override: Any = _UNSET_L1_PREFS,
+) -> str:
     """构造 [PROFILE] 段. D-072: 注入 methodology display_name + rationale 摘要,
     替代之前 L3 prompt 隐式靠 taste_description 传方法论, 防 L2/L3 描述漂移.
+
+    D-078.2: 注入 L1 LLM 抽取的行为信号 (boost/penalty + evidence 简述), 让 L3
+    LLM 显式看到 long_term_prefs.json — 否则 L1 只到 L2 打分顺序, L3 LLM 无从
+    知道 top60 里哪些 combo 是因 L1 boost 被排前. 演练实测: 4/4 oil=too_high
+    抽出 boost=['low_oil'] 后 L3 仍可能挑高油 combo, 因为 prompt 没透出信号.
+
+    D-079 BLOCKER fix: l1_prefs_override 传入 (非 sentinel) 时用 override 而非
+    runtime load. What-if frozen replay 必须走这条路径, 否则 _profile_block 会
+    `load_prefs(root)` 读 live disk, 违反 D-079 "What-if 零 runtime read" 红线.
 
     spec 缺失 (老 profile 没 load_profile 一致路径) 时回退老格式 (向后兼容).
     """
@@ -400,6 +419,29 @@ def _profile_block(profile: dict) -> str:
         f"avoid: {_fmt_list_or_none(prefs.get('avoid_dishes'))}",
         f"辣度耐受: {prefs.get('spicy_tolerance', 2)}",
     ])
+    # D-078.2: L1 行为信号
+    try:
+        if l1_prefs_override is _UNSET_L1_PREFS:
+            from chisha.l1_prefs import load_prefs
+            l1 = load_prefs(root=root)
+        else:
+            l1 = l1_prefs_override
+        if l1 and (l1.get("boost") or l1.get("penalty")):
+            n_meals = l1.get("based_on_meals", 0)
+            evid = l1.get("evidence") or []
+            # 取第一条 evidence rationale 作为依据简述 (节省 token)
+            rationale = evid[0].get("rationale") if evid else ""
+            sig_parts = []
+            if l1.get("boost"):
+                sig_parts.append(f"boost={l1['boost']}")
+            if l1.get("penalty"):
+                sig_parts.append(f"penalty={l1['penalty']}")
+            sig_line = f"行为信号 (近 {n_meals} 餐): " + " ".join(sig_parts)
+            if rationale:
+                sig_line += f" — {rationale[:80]}"
+            lines.append(sig_line)
+    except Exception:
+        pass
     return "\n".join(lines)
 
 
@@ -431,6 +473,16 @@ def _context_block(context: "ContextSnapshot | None") -> str:
         f"上次反馈 chips: {chips or '(无)'}",
         f"refine 输入: {cd.get('refine_input') or '(无)'}",
     ]
+    # D-073: 结构化意图段 (refine 二轮才有)
+    intent = cd.get("refine_intent")
+    if intent:
+        non_empty = {k: v for k, v in intent.items()
+                     if v and k not in ("raw_text", "freeform_note")}
+        if non_empty:
+            intent_str = "; ".join(
+                f"{k}={v}" for k, v in non_empty.items()
+            )
+            lines.append(f"refine 意图 (结构化): {intent_str}")
     return "\n".join(lines)
 
 
@@ -440,11 +492,18 @@ def build_user_message(
     context: "ContextSnapshot | None",
     n: int,
     n_explore: int,
+    root: "Path | None" = None,
+    l1_prefs_override: Any = _UNSET_L1_PREFS,
 ) -> str:
-    """拼 user message: CONFIG + PROFILE + CONTEXT + CANDIDATES, 紧凑符号化."""
+    """拼 user message: CONFIG + PROFILE + CONTEXT + CANDIDATES, 紧凑符号化.
+
+    D-078.2: root 透传给 _profile_block 注入 L1 prefs.
+    D-079 BLOCKER fix: l1_prefs_override 透传, What-if 路径必须走 frozen 而非
+    runtime load (违反 "What-if 零 runtime read" 红线).
+    """
     blocks = [
         f"[CONFIG] n={n} n_explore={n_explore}",
-        _profile_block(profile),
+        _profile_block(profile, root=root, l1_prefs_override=l1_prefs_override),
         _context_block(context),
         "[CANDIDATES]",
     ]
@@ -522,6 +581,8 @@ def build_payload(
 def fallback_rerank(
     top_combos: list[dict],
     n: int = 5,
+    *,
+    today: "dt.date | None" = None,
     n_explore: int = 2,
     meal_log: list[dict] | None = None,
 ) -> list[dict[str, Any]]:
@@ -531,6 +592,12 @@ def fallback_rerank(
     """
     if not top_combos:
         return []
+    # D-079 followup: 给 combo 补 combo_index = 在 top_combos 里的位置. LLM 主路径
+    # 由 schema 强制 combo_index ∈ [0, len(top_combos)), fallback / What-if rehydrate
+    # 路径之前没填 → final[].combo_index 全是 -1 → 前端 adapter 生成 cmb_000 5 行重
+    # 复 React key (PR-3 已修, 这里是源头补字段). setdefault 不覆盖既有值.
+    for _i, _c in enumerate(top_combos):
+        _c.setdefault("combo_index", _i)
     from chisha.score import diversify_top
     n_exploit = max(1, n - n_explore)
     # D-049: max_per_brand=1 — fallback 路径不走 _enforce_brand_unique,
@@ -540,7 +607,7 @@ def fallback_rerank(
     used_ids = {id(c) for c in exploit}
     rest = [c for c in top_combos if id(c) not in used_ids]
     if rest and n_explore > 0:
-        explore = _pick_explore(rest, exploit, meal_log or [], n_explore)
+        explore = _pick_explore(rest, exploit, meal_log or [], n_explore, today=today)
     else:
         explore = []
 
@@ -560,10 +627,17 @@ def _pick_explore(
     already_used: list[dict],
     meal_log: list[dict],
     n_explore: int,
+    *,
+    today: "dt.date | None" = None,
 ) -> list[dict]:
-    """explore 候选: 优先打分中段 + 最近 7 天没吃过的 cuisine/cooking_method."""
+    """explore 候选: 优先打分中段 + 最近 7 天没吃过的 cuisine/cooking_method.
+
+    D-079 (Codex Q3): today 显式注入支持 What-if frozen replay. None=向后兼容
+    用 wall clock dt.date.today(), 生产链路保持 0 行为变化.
+    """
     import datetime as dt2
-    cutoff = dt2.date.today() - dt2.timedelta(days=7)
+    today = today or dt2.date.today()
+    cutoff = today - dt2.timedelta(days=7)
     used_cuisines: set[str] = set()
     used_methods: set[str] = set()
     for log in meal_log:
@@ -880,6 +954,8 @@ def _run_llm_rerank(
     n_max: int = 5,
     model: str | None = None,
     profile_llm: dict | None = None,
+    root: "Path | None" = None,
+    l1_prefs_override: Any = _UNSET_L1_PREFS,
 ) -> dict:
     """共享 LLM rerank 调用 helper (D-047 抽出, 同时给 prod _llm_rerank +
     debug _llm_rerank_traced 用, 解决双份代码漂移问题).
@@ -958,6 +1034,12 @@ def _run_llm_rerank(
         "user_message_full": "",
         "model": expected_trace_model,
         "latency_ms": None,
+        # D-079 followup: 把 LLM 实际 usage/温度/上限 stash 到 out, 让 trace 能落
+        # input_tokens / cache_read 给 DagHeader 算 cache_hit%. 真值在 call_text
+        # 返回后填 (out["usage"]/max_tokens/temperature 见 line 1013 附近).
+        "usage": None,
+        "max_tokens": None,
+        "temperature": None,
     }
     is_cli = (resolved_provider == "claude_code_cli")
     try:
@@ -968,7 +1050,8 @@ def _run_llm_rerank(
         else:
             system_prompt = system_prompt_raw
         user_msg = build_user_message(top_combos, profile, context,
-                                       n=n, n_explore=n_explore)
+                                       n=n, n_explore=n_explore, root=root,
+                                       l1_prefs_override=l1_prefs_override)
         out["system_prompt_chars"] = len(system_prompt)
         out["user_message_chars"] = len(user_msg)
         out["user_message_full"] = user_msg
@@ -993,6 +1076,13 @@ def _run_llm_rerank(
         resp = call_text(user_msg, **kwargs)
         out["latency_ms"] = int((time.time() - t0) * 1000)
         out["llm_response"] = resp
+        # D-079 followup: stash usage + max_tokens/temperature 到 trace, 让前端
+        # DagHeader 能算 cache_hit% (input_tokens / cache_read_input_tokens 之比).
+        # CLI 路径目前 resp 也带 usage (provider 透传), 没拿到就给 None.
+        if isinstance(resp, dict):
+            out["usage"] = resp.get("usage")
+        out["max_tokens"] = kwargs.get("max_tokens")
+        out["temperature"] = kwargs.get("temperature")
         # D-048: trace.model 用 provider 真实报告值覆盖 (expected_trace_model
         # 只是预测, llm_response.model 是 provider/CLI 真返回的, 更可信).
         if isinstance(resp, dict) and resp.get("model"):
@@ -1128,16 +1218,23 @@ def _run_llm_rerank(
 def _llm_rerank(top_combos: list[dict], profile: dict,
                 context: "ContextSnapshot | None", n: int, n_explore: int,
                 model: str | None = None,
-                n_max: int = 5) -> list[dict] | None:
+                n_max: int = 5,
+                root: "Path | None" = None,
+                l1_prefs_override: Any = _UNSET_L1_PREFS) -> list[dict] | None:
     """调 LLM 返回 list of candidate dict, 失败返回 None (上游 fallback).
 
     D-047: 走 _run_llm_rerank 共享 helper + tool_use 强制 schema.
     profile.llm 透传到 call_text 控制 provider 路由.
+    D-078.2: root 透传给 build_user_message 注入 L1 prefs.
+    D-079 BLOCKER fix: l1_prefs_override 透传到 _run_llm_rerank, What-if frozen
+    路径用 snapshot 而非 load_prefs(root).
     """
     res = _run_llm_rerank(
         top_combos, profile, context,
         n=n, n_explore=n_explore, n_max=n_max, model=model,
         profile_llm=profile.get("llm"),
+        root=root,
+        l1_prefs_override=l1_prefs_override,
     )
     if res["status"] == "config_error":
         # D-048 BLOCKER: provider 配置错误显式 ERROR 级日志, 不当普通 fallback.
@@ -1161,6 +1258,11 @@ def rerank(
     refine: bool = False,
     use_llm: bool | None = None,
     model: str | None = None,
+    root: "Path | None" = None,
+    *,
+    today: "dt.date | None" = None,
+    trace_collector: dict | None = None,
+    l1_prefs_override: Any = _UNSET_L1_PREFS,
 ) -> list[dict]:
     """主入口. LLM 精排 + fallback.
 
@@ -1171,8 +1273,33 @@ def rerank(
         n_explore: explore 候选数, 默认 2 (D-015).
         refine: True 时 n_explore=0 (D-015).
         use_llm: 强制开关. None=auto (看任何 provider 是否可用, D-047).
+        root: 项目根 (D-078.2). 透传到 _profile_block 让 L3 LLM 显式看到
+            L1 LLM 抽取的 long_term_prefs.json (boost/penalty + evidence).
+        today: D-079, 透传给 fallback_rerank 防 wall-clock 漂移.
+        trace_collector: D-079, 注入 dict 时把 L3 LLM 中间状态写入供 trace 持久化.
+        l1_prefs_override: D-079 BLOCKER fix. 默认 _UNSET → _profile_block 走
+            load_prefs(root) 原路径; 显式传 (包括 None) → 用 override, What-if
+            frozen replay 必须传, 否则违反 "What-if 零 runtime read" 红线.
     """
+    # D-079 Codex FIX-NOW #1: trace_collector 必须在所有 return 前填齐核心字段,
+    # 避免 early-return / fallback / skipped 路径漏字段导致 UI/replay 失数据.
+    # llm_attempted = "是否调过 LLM" (含失败); llm_called = "LLM 成功返回 candidates"
+    def _ensure_collector_filled(
+        status: str, attempted: bool, called: bool, used_fb: bool,
+        reason: str = "",
+    ) -> None:
+        if trace_collector is None:
+            return
+        trace_collector.setdefault("status", status)
+        trace_collector["llm_attempted"] = attempted
+        trace_collector["llm_called"] = called
+        trace_collector["used_fallback"] = used_fb
+        if reason:
+            trace_collector.setdefault("fallback_reason", reason)
+
     if not top_combos:
+        _ensure_collector_filled("skipped", attempted=False, called=False,
+                                  used_fb=False, reason="empty top_combos")
         return []
     if refine:
         n_explore = 0
@@ -1180,11 +1307,58 @@ def rerank(
         from chisha.llm_client import has_llm_key
         use_llm = has_llm_key()
 
+    llm_attempted = False
+    llm_called = False
     if use_llm:
-        llm_out = _llm_rerank(top_combos=top_combos,
-                               profile=profile, context=context,
-                               n=n, n_explore=n_explore,
-                               model=model, n_max=n)
+        llm_attempted = True
+        # D-079: 直接调 _run_llm_rerank 拿 res, 把中间状态写进 trace_collector
+        if trace_collector is not None:
+            res = _run_llm_rerank(
+                top_combos, profile, context,
+                n=n, n_explore=n_explore, n_max=n,
+                model=model, profile_llm=profile.get("llm"),
+                root=root,
+                l1_prefs_override=l1_prefs_override,
+            )
+            llm_resp = res.get("llm_response") or {}
+            raw_text = (llm_resp.get("raw_text") or "") if isinstance(llm_resp, dict) else ""
+            trace_collector["status"] = res.get("status")
+            trace_collector["config_error"] = res.get("config_error", False)
+            trace_collector["resolved_provider"] = res.get("resolved_provider")
+            trace_collector["model"] = res.get("model")
+            trace_collector["system_prompt_chars"] = res.get("system_prompt_chars")
+            trace_collector["user_message_chars"] = res.get("user_message_chars")
+            trace_collector["user_message_full"] = res.get("user_message_full")
+            trace_collector["raw_response"] = raw_text
+            trace_collector["raw_response_chars"] = len(raw_text)
+            trace_collector["tool_input"] = (
+                llm_resp.get("tool_input") if isinstance(llm_resp, dict) else None
+            )
+            trace_collector["stop_reason"] = (
+                llm_resp.get("stop_reason") if isinstance(llm_resp, dict) else None
+            )
+            trace_collector["fallback_reason"] = res.get("fallback_reason")
+            trace_collector["parsed_candidates"] = res.get("candidates")
+            # D-079 followup: 透传 latency/usage/sampling 进 trace, 让 DagHeader
+            # 能渲染 L3 latency_ms / cache_hit% / token 概览; 旧 trace 这些字段
+            # 仍是 None, adapter 已兜底.
+            trace_collector["latency_ms"] = res.get("latency_ms")
+            trace_collector["usage"] = res.get("usage")
+            trace_collector["max_tokens"] = res.get("max_tokens")
+            trace_collector["temperature"] = res.get("temperature")
+            if res.get("status") == "ok":
+                llm_out = res.get("candidates")
+                llm_called = True
+            else:
+                llm_out = None
+        else:
+            llm_out = _llm_rerank(top_combos=top_combos,
+                                   profile=profile, context=context,
+                                   n=n, n_explore=n_explore,
+                                   model=model, n_max=n, root=root,
+                                   l1_prefs_override=l1_prefs_override)
+            if llm_out is not None:
+                llm_called = True
         if llm_out is not None:
             mapped: list[dict] = []
             for cand in llm_out[:n]:
@@ -1198,10 +1372,21 @@ def rerank(
             mapped = _enforce_brand_unique(mapped, top_combos, n=n)
             if mapped:
                 _log_selection_metrics(mapped, top_combos)
+                _ensure_collector_filled(
+                    status=(trace_collector or {}).get("status") or "ok",
+                    attempted=llm_attempted, called=llm_called, used_fb=False,
+                )
                 return mapped
 
+    # 走 fallback 路径: use_llm=False / LLM 失败 / mapped 为空
+    _ensure_collector_filled(
+        status=(trace_collector or {}).get("status") or "skipped",
+        attempted=llm_attempted, called=llm_called, used_fb=True,
+        reason=(trace_collector or {}).get("fallback_reason")
+                 or ("use_llm=False" if not use_llm else "llm result unusable"),
+    )
     return fallback_rerank(top_combos, n=n, n_explore=n_explore,
-                            meal_log=meal_log)
+                            meal_log=meal_log, today=today)
 
 
 def _log_selection_metrics(

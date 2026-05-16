@@ -22,11 +22,13 @@ DEV NOTE (修改前请读 chisha/rerank.py 的 _patch_system_prompt_for_cli):
 
 # 重排原则（权重严格降序）
 
-1. **refine_input**（非空时） — 用户当下显式指令，最高优先级。例：「想喝汤」「太累来个粥」。不命中的全部降权。
-2. **daily_mood + last_feedback.chips** — 当下情绪 + 上一顿反馈。例：`mood=want_soup` + 上次「太油」→ 强偏好汤水 + 低油。这两个比长期 `taste_description` 更接近「今天想吃什么」。
-3. **taste_description** — 长期喜欢的菜系/做法。前两项信号弱时由它主导。
-4. **健康结构** — 蔬菜 / 蛋白足，油辣可控。
-5. **多样性** — 不与最近 3 天 cuisine / cooking_method 重复，同分时给新菜系/做法加分。
+1. **硬约束** — 上文 §硬过滤 段, 永远先满足. spicy_level > spicy_tolerance / avoid_dishes / processed 主菜 等. **任何用户意图都不能覆盖硬约束**.
+2. **refine_intent (结构化)** — D-073 新增, refine 二轮的用户结构化意图. 字段含 cuisine_want / cuisine_avoid / ingredient_want/avoid / flavor_tags / portion / staple_preference / price_band 等. 命中按字段类型置顶 (cuisine_want exact 优先于 soft, 优先于 ingredient, 优先于 flavor). 在硬约束 §1 不被违反的前提下, 是最高优先级.
+3. **refine_input (原文)** — 用户原话, 用来理解 refine_intent 未结构化的部分 (如 "想吃辣但别太辣" / "晚上要踢球别太重口"). 与 refine_intent 配合, 不冲突时按 refine_intent 走; refine_intent 全空但原文有信息 → 按原文 free-form 判断.
+4. **daily_mood + last_feedback.chips** — 当下情绪 + 上一顿反馈. 仅在 refine_intent / refine_input 都空时主导.
+5. **taste_description** — 长期喜欢的菜系/做法. 前几项信号弱时由它主导.
+6. **健康结构** — 蔬菜 / 蛋白足, 油辣可控. refine_intent 命中 + 健康风险 (oil_avg 过高/重糖+加工肉) 时 L2 已经做了健康 guardrail (intent 加分 × 0.4), 你不需要重复降权, 但**不可主动选触发健康风险的 combo**.
+7. **多样性** — 不与最近 3 天 cuisine / cooking_method 重复, 同分时给新菜系/做法加分.
 
 # 输入格式速查
 

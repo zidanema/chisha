@@ -327,6 +327,76 @@ def _build_l1_trace(
     return trace, combos
 
 
+def _compute_l2_cap_keysets(
+    ranked_raw: list[dict],
+    ranked: list[dict],
+) -> tuple[dict, dict, dict, dict, dict, dict, dict, dict]:
+    """计算 cap 前后 topk 的 rest/brand/cuisine/food_form 计数字典.
+
+    D-079 followup: 抽出来给 chisha.api._build_trace 和 chisha.debug_what_if.
+    _build_what_if_trace 复用, 之前 production trace l2.summary 漏 topk_unique_*
+    系列字段, 导致前端 DagHeader 显示 "undefined rest".
+    """
+    from chisha.score import combo_food_form
+
+    def _count_keys(combos: list[dict], key_fn) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for c in combos:
+            k = key_fn(c) or "<未知>"
+            counts[k] = counts.get(k, 0) + 1
+        return counts
+
+    def _rest_key(c):
+        rest = c.get("restaurant") or {}
+        return rest.get("id") or rest.get("name")
+
+    def _brand_key(c):
+        rest = c.get("restaurant") or {}
+        return rest.get("brand") or rest.get("id") or rest.get("name")
+
+    def _cuisine_key(c):
+        dishes = c.get("dishes") or []
+        return dishes[0].get("cuisine") if dishes else None
+
+    return (
+        _count_keys(ranked_raw[:L3_INPUT_TOP_K], _rest_key),
+        _count_keys(ranked[:L3_INPUT_TOP_K], _rest_key),
+        _count_keys(ranked_raw[:L3_INPUT_TOP_K], _brand_key),
+        _count_keys(ranked[:L3_INPUT_TOP_K], _brand_key),
+        _count_keys(ranked_raw[:L3_INPUT_TOP_K], _cuisine_key),
+        _count_keys(ranked[:L3_INPUT_TOP_K], _cuisine_key),
+        _count_keys(ranked_raw[:L3_INPUT_TOP_K], combo_food_form),
+        _count_keys(ranked[:L3_INPUT_TOP_K], combo_food_form),
+    )
+
+
+def _build_l2_cap_stats(
+    ranked_raw: list[dict],
+    ranked: list[dict],
+) -> dict:
+    """汇总 cap 前后多维度统计, 直接附加到 l2.summary. 与上面 keysets helper 配套."""
+    rest_b, rest_a, brand_b, brand_a, cuisine_b, cuisine_a, form_b, form_a = \
+        _compute_l2_cap_keysets(ranked_raw, ranked)
+    return {
+        "topk_unique_restaurants_before_cap": len(rest_b),
+        "topk_unique_restaurants_after_cap": len(rest_a),
+        "topk_max_per_restaurant_before_cap": max(rest_b.values(), default=0),
+        "topk_max_per_restaurant_after_cap": max(rest_a.values(), default=0),
+        "topk_unique_brands_before_cap": len(brand_b),
+        "topk_unique_brands_after_cap": len(brand_a),
+        "topk_max_per_brand_before_cap": max(brand_b.values(), default=0),
+        "topk_max_per_brand_after_cap": max(brand_a.values(), default=0),
+        "topk_unique_cuisines_before_cap": len(cuisine_b),
+        "topk_unique_cuisines_after_cap": len(cuisine_a),
+        "topk_max_per_cuisine_before_cap": max(cuisine_b.values(), default=0),
+        "topk_max_per_cuisine_after_cap": max(cuisine_a.values(), default=0),
+        "topk_unique_food_forms_before_cap": len(form_b),
+        "topk_unique_food_forms_after_cap": len(form_a),
+        "topk_max_per_food_form_before_cap": max(form_b.values(), default=0),
+        "topk_max_per_food_form_after_cap": max(form_a.values(), default=0),
+    }
+
+
 def _group_drops_by_reason(dropped: list[dict]) -> dict[str, int]:
     counter: dict[str, int] = {}
     for d in dropped:
@@ -402,7 +472,7 @@ def _format_ranked_for_trace(
 
 def _llm_rerank_traced(
     top_combos: list[dict], profile: dict, context, n: int, n_explore: int,
-    model: str | None, n_max: int,
+    model: str | None, n_max: int, root: "Path | None" = None,
 ) -> dict:
     """调 LLM, 返回 trace dict (含 system/user prompt / tool_input / fallback).
 
@@ -418,10 +488,23 @@ def _llm_rerank_traced(
         top_combos, profile, context,
         n=n, n_explore=n_explore, n_max=n_max, model=model,
         profile_llm=profile.get("llm"),  # D-047: provider 路由
+        root=root,  # D-078.2: L1 prefs 注入到 _profile_block
     )
     llm_resp = res.get("llm_response") or {}
     # 兼容旧字段命名: raw_response / parsed_candidates / used / fallback_reason
     raw_text = (llm_resp.get("raw_text") or "") if isinstance(llm_resp, dict) else ""
+    # debug-ui Phase 2: 额外暴露 system_prompt_full / max_tokens / temperature
+    # 让前端 I/O viewer 能展示真实 prompt 内容 (chars-only 无法 review).
+    is_cli = res.get("resolved_provider") == "claude_code_cli"
+    try:
+        from chisha.rerank import SYSTEM_PROMPT_PATH, _patch_system_prompt_for_cli
+        _sys_raw = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        system_prompt_full = (
+            _patch_system_prompt_for_cli(_sys_raw) if is_cli else _sys_raw
+        )
+    except Exception:
+        system_prompt_full = ""
+
     return {
         # D-048: status 三态 — "ok" (L3 真跑通) / "fallback" (LLM 调了但出问题)
         # / "config_error" (provider 路由配置错根本没跑). UI 应分开标记.
@@ -431,6 +514,7 @@ def _llm_rerank_traced(
         "used": res["status"] == "ok" or llm_resp != {},
         "model": res.get("model"),
         "system_prompt_chars": res["system_prompt_chars"],
+        "system_prompt_full": system_prompt_full,
         "user_message_chars": res["user_message_chars"],
         "user_message_preview": (res["user_message_full"] or "")[:2000],
         "user_message_full": res["user_message_full"],  # D-047 实验用, 后续可去
@@ -442,6 +526,9 @@ def _llm_rerank_traced(
         "fallback_reason": res.get("fallback_reason"),
         "latency_ms": res.get("latency_ms"),
         "usage": llm_resp.get("usage") if isinstance(llm_resp, dict) else None,
+        # 同步 rerank.py 的实际取值 (D-048 占位 + cli 4096 / others 2048).
+        "max_tokens": 4096 if is_cli else 2048,
+        "temperature": 0.0,
     }
 
 
@@ -495,33 +582,9 @@ def debug_recommend(
     caps = resolve_caps(profile)
     ranked = apply_caps(ranked_raw, profile)
 
-    def _count_keys(combos: list[dict], key_fn):
-        counts: dict[str, int] = {}
-        for c in combos:
-            k = key_fn(c) or "<未知>"
-            counts[k] = counts.get(k, 0) + 1
-        return counts
-
-    def _rest_key(c):
-        rest = c.get("restaurant") or {}
-        return rest.get("id") or rest.get("name")
-
-    def _brand_key(c):
-        rest = c.get("restaurant") or {}
-        return rest.get("brand") or rest.get("id") or rest.get("name")
-
-    def _cuisine_key(c):
-        dishes = c.get("dishes") or []
-        return dishes[0].get("cuisine") if dishes else None
-
-    rest_before = _count_keys(ranked_raw[:L3_INPUT_TOP_K], _rest_key)
-    rest_after = _count_keys(ranked[:L3_INPUT_TOP_K], _rest_key)
-    brand_before = _count_keys(ranked_raw[:L3_INPUT_TOP_K], _brand_key)
-    brand_after = _count_keys(ranked[:L3_INPUT_TOP_K], _brand_key)
-    cuisine_before = _count_keys(ranked_raw[:L3_INPUT_TOP_K], _cuisine_key)
-    cuisine_after = _count_keys(ranked[:L3_INPUT_TOP_K], _cuisine_key)
-    form_before = _count_keys(ranked_raw[:L3_INPUT_TOP_K], combo_food_form)
-    form_after = _count_keys(ranked[:L3_INPUT_TOP_K], combo_food_form)
+    rest_before, rest_after, brand_before, brand_after, \
+        cuisine_before, cuisine_after, form_before, form_after = \
+        _compute_l2_cap_keysets(ranked_raw, ranked)
 
     # 统计每维度 std (区分度) — 帮助看是否仍有死分
     import statistics
@@ -605,7 +668,7 @@ def debug_recommend(
         l3_llm = _llm_rerank_traced(
             topk, profile, ctx,
             n=n_return, n_explore=n_explore,
-            model=None, n_max=n_return,
+            model=None, n_max=n_return, root=root,
         )
         if l3_llm.get("parsed_candidates"):
             mapped: list[dict] = []
@@ -740,12 +803,28 @@ def _trace_target(
             name = _normalize(d.get("canonical_name", ""))
             if not any(q in name for q in dish_qs):
                 continue
+        # debug-ui Phase 4: 暴露 nutrition_profile 子集让前端 detail panel
+        # 不用再二次 fetch dish 元数据.
+        np = d.get("nutrition_profile") or {}
         matched_dishes.append({
             "dish_id": d.get("dish_id"),
             "name": d.get("canonical_name"),
             "restaurant_id": d.get("restaurant_id"),
             "restaurant_name":
                 rest_idx.get(d.get("restaurant_id", ""), {}).get("name"),
+            "price": d.get("price"),
+            "nutrition_profile": {
+                "oil_level": np.get("oil_level"),
+                "spicy_level": np.get("spicy_level"),
+                "protein_grams_estimate": np.get("protein_grams_estimate"),
+                "main_ingredient_type": np.get("main_ingredient_type"),
+                "cooking_method": np.get("cooking_method"),
+                "wetness": np.get("wetness"),
+                "grain_type": np.get("grain_type"),
+                "processed_meat_flag": np.get("processed_meat_flag"),
+                "sweet_sauce_level": np.get("sweet_sauce_level"),
+                "vegetable_ratio_estimate": np.get("vegetable_ratio_estimate"),
+            },
         })
     # 限制结果太多刷屏
     matched_dishes = matched_dishes[:50]

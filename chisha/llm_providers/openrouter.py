@@ -71,8 +71,12 @@ def call(
             "HTTP-Referer": "https://github.com/chisha-private",
             "X-Title": "chisha recommend",
         },
-        extra_body={"provider": _OR_PROVIDER_LOCK},
     )
+    # provider lock 只对 anthropic/* 生效 — 强制走 Anthropic 自家 endpoint 防被
+    # 路由到 Bedrock/Google 等不支持 tool_use 的 endpoint. 用 deepseek/* 等其他
+    # 厂商 model 时上这个 lock 会 "No endpoints found", 走 OR 默认路由即可.
+    if final_model.startswith("anthropic/"):
+        kwargs["extra_body"] = {"provider": _OR_PROVIDER_LOCK}
     if json_mode and not tools:
         kwargs["response_format"] = {"type": "json_object"}
     if tools:

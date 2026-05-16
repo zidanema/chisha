@@ -34,9 +34,11 @@
 
 ## 项目状态
 
-**Phase 0 工程侧已收尾**（2026-05-15）—— 「原则派点餐执行外包」定位收敛（[D-070](docs/archive/DECISIONS_phase0.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)）+ 砍 mood picker（[D-071](docs/archive/DECISIONS_phase0.md#d-071-砍-mood-picker--want_soup-关键词识别-v1)）+ methodology spec 抽象（[D-072](docs/archive/DECISIONS_phase0.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)/[D-072.1](docs/archive/DECISIONS_phase0.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)）+ 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + FastAPI 13 端点。
+**Phase 0 工程侧已收尾**（2026-05-17，D-001~D-079）—— 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + **L1 长期反馈层真兑现（LLM 抽取）** + **Sandbox Time-Travel 模式** + **推荐链路 trace 持久化 + Debug 三模式（Replay / What-if / Live）** + FastAPI 23 端点（推荐 6 + V1.1 反馈 7 + L1 刷新 1 + sandbox 6 + trace 3）。
 
-剩下 **Step 2 用户自用一周**（采纳率验证, 不在代码范围）→ Phase 1 同事推广。
+历史背景（D-001~D-072）在 [docs/archive/DECISIONS_phase0.md](docs/archive/DECISIONS_phase0.md)；活决策 + D-073~D-079 提炼中，落 [docs/decisions.md](docs/decisions.md)；Agent 跨文件约束在 [docs/CONTRACTS.md](docs/CONTRACTS.md)。
+
+Step 2 用户自用验证可走 sandbox 一次会话压缩到分钟级（开沙盒 → 点"下一天" → 真实写反馈 → inspect 看 L1 抽取产物），不必等真实日历日 → Phase 1 同事推广。L1 (LLM 抽取) → L2 (taste_match_bonus) → L3 (prompt 注入"行为信号") 三层贯通，真实 LLM 两轮演练已绿（low_oil + spicy boost）。
 
 > **V1 主交互**：本机 localhost Web SPA。`cd apps/web && npm install && npm run dev` → http://localhost:5173。详见 [`apps/web/README.md`](apps/web/README.md) + [`docs/style-guide.md`](docs/style-guide.md) + [`docs/api.md`](docs/api.md)。飞书延后到 V1.5 做推送通道。
 
@@ -46,31 +48,35 @@
 
 ## 文档体系
 
-> **📋 整理中（2026-05-16）**：Phase 0 收尾，文档体系按"读者分层"重构（参见 [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md)）。
-> 旧的 `DECISIONS.md` / `IMPLEMENTATION_LOG.md` / `DESIGN.md` 已归档到 `docs/archive/`，不再维护。
-> 活决策正在提炼到 `docs/decisions.md`（单文件，≤ 15 行/条），Agent 跨文件约束在 `docs/CONTRACTS.md`（待建）。
+> **📋 整理中（2026-05-16 重构）**：文档体系按"读者分层"分四桶（详见 [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md)）。
+> 旧的 `DECISIONS.md` / `IMPLEMENTATION_LOG.md` / `DESIGN.md` / `L3_RERANK_REDESIGN.md` / `RECOMMEND_PRINCIPLES.md` 已归档到 `docs/archive/`，不再维护。
 
 | 文档 | 主读者 | 内容 |
 |---|---|---|
 | [docs/PRD.md](docs/PRD.md) | 你 | 产品需求 · 为什么做、做给谁 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 你 | 路线图 · V1/V2/V3 边界，已砍清单 |
-| `docs/decisions.md` | 你 · agent 偶尔 grep | 活决策日志（单文件，提炼中） |
+| [docs/decisions.md](docs/decisions.md) | 你 · agent 偶尔 grep | 活决策日志（单文件，≤ 15 行/条，提炼中） |
+| [docs/BACKLOG.md](docs/BACKLOG.md) | 你 | 待办池 · 已知但当前不解决的 bug / feature / idea |
 | [CLAUDE.md](CLAUDE.md) | Coding agent 每次会话 | 项目红线 / 常用命令 / avoid 清单 |
-| `docs/CONTRACTS.md` | Coding agent 每次会话 | 跨文件隐含约束（待建） |
-| [docs/api.md](docs/api.md) | agent | 前后端 API 契约（V1） |
-| [docs/style-guide.md](docs/style-guide.md) | agent | `apps/web/` UI 文案 + 视觉系统 + 反模式 |
+| [docs/CONTRACTS.md](docs/CONTRACTS.md) | Coding agent 每次会话 | 跨文件隐含约束 / 反直觉规则 / 系统级 invariant |
+| [docs/api.md](docs/api.md) | agent | 前后端 API 契约（V1 + V1.1） |
+| [docs/style-guide.md](docs/style-guide.md) | agent | `apps/web/` UI 文案 + 视觉系统 + 反模式（D-052~D-068 锁定） |
+| [apps/debug-ui/README.md](apps/debug-ui/README.md) | agent | `apps/debug-ui/` SPA 设计（D-075 独立 Vite SPA / V12 DAG / 5 主题） |
+| [docs/intro-for-colleagues.md](docs/intro-for-colleagues.md) | 同事 | 给同事的产品 sale 文档（750 字） |
+| [docs/agent-integration-approach.md](docs/agent-integration-approach.md) | 同行 | "CLI + Skill" 模式技术交流文档 |
+| [docs/design_briefs/](docs/design_briefs/) | 你 · 历史 | 设计草稿（如 D-074 AI-friendly 接入共识） |
 | [eval/dish_tagging_eval/](eval/dish_tagging_eval/) | 复评 prompt 时 | 打标评测框架（171 条 golden set） |
-| `docs/archive/` | 历史考古 | Phase 0 旧 DECISIONS / IMPL_LOG / DESIGN，**不再维护** |
+| [docs/archive/](docs/archive/) | 历史考古 | Phase 0 旧 DECISIONS / IMPL_LOG / DESIGN / L3_REDESIGN / RECOMMEND_PRINCIPLES，**不再维护** |
 
 ---
 
 ## 当前进度
 
-**Phase 0 工程侧 ✅ 收尾**（2026-05-15）。详细 phase 状态、里程碑、已砍清单见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+**Phase 0 工程侧 ✅ 收尾**（2026-05-17）。详细 phase 状态、里程碑、已砍清单见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 **接下来**：Step 2 自用一周（用户行为，不在代码范围）→ Phase 1 同事推广（启动条件：自己愿意每天用 + ≥ 3 同事自发持续使用）。
 
-实现新功能前先查 [ROADMAP](docs/ROADMAP.md) 当前版本范围；想推翻已有设计先查 [decisions.md](docs/decisions.md)；改代码前查 [CONTRACTS.md](docs/CONTRACTS.md) 跨文件约束。
+实现新功能前先查 [ROADMAP](docs/ROADMAP.md) 当前版本范围；想推翻已有设计先查 [decisions.md](docs/decisions.md) + [archive/DECISIONS_phase0.md](docs/archive/DECISIONS_phase0.md)；改代码前查 [CONTRACTS.md](docs/CONTRACTS.md) 跨文件约束。
 
 ---
 
@@ -99,51 +105,34 @@ chisha/
 ├── docs/
 │   ├── PRD.md                 # 产品需求
 │   ├── ROADMAP.md             # Phase 路线 (Phase 0 自用 → Phase 1 同事 → Phase 2 扩展)
-│   ├── decisions.md           # 活决策日志 (~25 条, 你看的)
+│   ├── decisions.md           # 活决策日志 (≤ 15 行/条, 提炼中)
 │   ├── CONTRACTS.md           # Agent 跨文件隐含约束 (Coding agent 看的)
+│   ├── BACKLOG.md             # 已知但当前不解决的 bug / feature / idea
 │   ├── api.md                 # 前后端 API 契约 (V1 + V1.1)
 │   ├── style-guide.md         # UI 文案规范 + 视觉系统
 │   ├── CONTRIBUTING_DOCS.md   # 文档维护准则 (四桶分层)
+│   ├── design_briefs/         # 设计草稿 (D-074 AI-friendly 接入共识等)
 │   └── archive/               # Phase 0 旧 DECISIONS / IMPL_LOG / DESIGN / L3_REDESIGN / RECOMMEND_PRINCIPLES (不再维护)
 ├── data/
 │   ├── shenzhen-bay/          # office zone, 139 家 7256 菜
 │   └── home/           # home zone, 38 家 2117 菜
-├── chisha/                    # L1~L3 推荐链路 Python 包
-│   ├── api.py                 # recommend_meal 主入口 (D-033 单一 V2 路径, D-049 后)
-│   ├── methodology.py         # L0 spec 加载/校验/merge (D-072)
-│   ├── recall.py              # L1 召回 + 硬过滤双层 + combo 组合 (D-040/041)
-│   ├── score.py               # L2 打分 16 维 + 4 层 cap (D-042/043/045)
-│   ├── rerank.py              # L3 LLM 精排 top60→5 (D-035/046/047/048/050)
-│   ├── context.py             # ContextSnapshot (D-034)
-│   ├── refine.py              # refine 二轮 + want_soup 关键词识别 (D-033/071)
-│   ├── feedback.py            # chip 反馈解析员 (D-035)
-│   ├── feedback_store.py      # V1.1 反馈系统单 JSON 落盘 (D-068/069)
-│   ├── llm_client.py          # provider 路由层 (D-047)
-│   ├── llm_providers/         # anthropic_api / openrouter / claude_code_cli (D-047/048)
-│   ├── web_api.py             # FastAPI 13 端点 (apps/web 服务端, D-069)
-│   ├── debug_recommend.py     # 调试台 instrumented 管道 (D-039)
-│   ├── debug_server.py        # FastAPI server entry (D-039)
-│   ├── long_term_prefs.py     # 反馈闭环 P3 (D-043)
-│   └── static/                # 老调试台前端 (debug.html / logic.html)
+├── chisha/                    # L1~L3 推荐链路 Python 包 (api / recall / score / rerank / refine / l1_extractor / l1_prefs / sandbox / clock / data_root / trace_store / debug_what_if / web_api / ...)
 ├── apps/web/                  # V1 主交互 React 18 + Vite + TS SPA (D-051~D-068)
+├── apps/debug-ui/             # V12 DAG 调试台 SPA (D-075, 端口 5174)
 ├── integrations/openclaw/     # 飞书推送通道骨架, V1.5 接入 (D-051 翻案)
-├── scripts/                   # 数据维护 + 回归工具
-│   ├── tag_via_api.py         # LLM 打标 (D-037 OpenRouter)
-│   ├── dry_run.py             # 推荐空跑
-│   ├── inspect_candidates.py  # 召回审计
-│   ├── baseline_l2_snapshot.py # L2 trace 回归基线 (D-072.1)
-│   ├── compare_traces.py      # 严格回归对比 |delta| < 1e-6 (D-072.1)
-│   └── baseline_l3_prompt_ab.py # L3 prompt A/B 对照 (Codex Round 2 M-2)
-├── prompts/                   # LLM prompt 模板 (rerank_system.md 等)
-└── tests/                     # 435 单测 (全链路 + methodology + refine mood + contract)
+├── scripts/                   # 数据维护 + 回归工具 (tag_via_api / dry_run / inspect_candidates / baseline_l2_snapshot / compare_traces / bootstrap_l1_from_legacy / ...)
+├── prompts/                   # LLM prompt 模板 (rerank_system / l1_extract / parse_refine_intent 等)
+└── tests/                     # pytest 全链路 + 单元 (435+)
 ```
 
-### 启调试台（D-039）
+### 启调试台（D-039 + D-075）
 
 ```bash
+# 老调试台 + 后端 (vanilla HTML, :8765/debug)
 uv run python -m chisha.debug_server
-# → http://127.0.0.1:8765
-# 浏览器看 L1 召回 / L2 16 维打分 / L3 LLM 精排 payload / Final 5 卡片
+
+# 新 debug-ui SPA (Vite, :5174, proxy /api → :8765)
+cd apps/debug-ui && npm install && npm run dev
 ```
 
 ### L2 trace 严格回归（D-072.1）

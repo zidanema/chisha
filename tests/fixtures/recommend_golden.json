@@ -1,0 +1,291 @@
+{
+  "response": {
+    "meal_type": "lunch",
+    "zone": "test",
+    "version": "v2",
+    "stats": {
+      "n_dishes_total": 4,
+      "n_combos_recalled": 2,
+      "n_combos_after_score": 2,
+      "n_returned": 2
+    },
+    "candidates": [
+      {
+        "rank": 1,
+        "is_explore": false,
+        "summary": "潮汕牛肉汤 + 蒜蓉空心菜",
+        "restaurant": {
+          "id": "r1",
+          "name": "潮汕汤店",
+          "distance_m": 500,
+          "eta_min": 20
+        },
+        "dishes": [
+          {
+            "dish_id": "d1_1",
+            "canonical_name": "潮汕牛肉汤",
+            "price": 30.0,
+            "main_ingredient_type": "红肉",
+            "oil_level": 2
+          },
+          {
+            "dish_id": "d1_2",
+            "canonical_name": "蒜蓉空心菜",
+            "price": 30.0,
+            "main_ingredient_type": "纯素",
+            "oil_level": 2
+          }
+        ],
+        "total_price": 60.0,
+        "vegetable_dish_count": 1,
+        "estimated_total_oil": 2.0,
+        "estimated_total_protein_g": 38,
+        "score": 2.487,
+        "fit_score": 2.487,
+        "health_flags": {
+          "veg_ok": true,
+          "protein_ok": true,
+          "oil_ok": true,
+          "processed_meat": false,
+          "sweet_sauce": false,
+          "wetness": true
+        },
+        "taste_match": null,
+        "risk_flags": [],
+        "id": "c_0_r1"
+      },
+      {
+        "rank": 2,
+        "is_explore": false,
+        "summary": "辣椒炒肉 + 炒油麦菜",
+        "restaurant": {
+          "id": "r2",
+          "name": "湘菜店",
+          "distance_m": 500,
+          "eta_min": 20
+        },
+        "dishes": [
+          {
+            "dish_id": "d2_1",
+            "canonical_name": "辣椒炒肉",
+            "price": 30.0,
+            "main_ingredient_type": "白肉",
+            "oil_level": 4
+          },
+          {
+            "dish_id": "d2_2",
+            "canonical_name": "炒油麦菜",
+            "price": 30.0,
+            "main_ingredient_type": "纯素",
+            "oil_level": 3
+          }
+        ],
+        "total_price": 60.0,
+        "vegetable_dish_count": 1,
+        "estimated_total_oil": 3.5,
+        "estimated_total_protein_g": 33,
+        "score": 1.038,
+        "fit_score": 1.038,
+        "health_flags": {
+          "veg_ok": true,
+          "protein_ok": true,
+          "oil_ok": false,
+          "processed_meat": false,
+          "sweet_sauce": false,
+          "wetness": false
+        },
+        "taste_match": null,
+        "risk_flags": [],
+        "id": "c_1_r2"
+      }
+    ]
+  },
+  "trace": {
+    "__version": 1,
+    "__source": "production",
+    "__llm_called": false,
+    "__parent_session_id": null,
+    "l1_summary": {
+      "total_dishes": 4,
+      "total_restaurants": 2,
+      "n_banned_rests_by_eta": 0,
+      "n_banned_rests_by_name": 0,
+      "n_diversity_avoid_rests": 0,
+      "after_hard_filter": 4,
+      "after_diversity_filter": 4,
+      "n_restaurants_with_combos": 2,
+      "n_combos_before_price_filter": 2,
+      "n_combos_dropped_by_price": 0,
+      "n_combos": 2,
+      "n_avoid_rests": 0
+    },
+    "l2_summary_score_min": 1.038,
+    "l2_summary_score_max": 2.487,
+    "l2_n_scored": 2,
+    "l3_status": "skipped",
+    "l3_used_fallback": true,
+    "final_n": 2,
+    "frozen_meal_type": "lunch",
+    "frozen_today": "2026-05-13",
+    "frozen_zone": "test",
+    "frozen_restaurants_sorted": [
+      {
+        "monthly_orders": 500,
+        "office_zone": "test",
+        "rating": 4.5,
+        "id": "r1",
+        "category": "潮汕",
+        "name": "潮汕汤店",
+        "distance_m": 500,
+        "delivery_eta_min": 20,
+        "brand": "潮汕汤店"
+      },
+      {
+        "monthly_orders": 500,
+        "office_zone": "test",
+        "rating": 4.5,
+        "id": "r2",
+        "category": "湘菜",
+        "name": "湘菜店",
+        "distance_m": 500,
+        "delivery_eta_min": 20,
+        "brand": "湘菜店"
+      }
+    ],
+    "frozen_dishes_sorted": [
+      {
+        "dish_id": "d1_1",
+        "restaurant_id": "r1",
+        "canonical_name": "潮汕牛肉汤",
+        "raw_name": "潮汕牛肉汤",
+        "price": 30.0,
+        "monthly_sales": 200,
+        "cuisine": "潮汕",
+        "nutrition_profile": {
+          "main_ingredient_type": "红肉",
+          "cooking_method": "煮",
+          "oil_level": 2,
+          "protein_grams_estimate": 35,
+          "vegetable_ratio_estimate": 0.1,
+          "is_complete_meal": false,
+          "spicy_level": 1,
+          "tags": [],
+          "dish_role": "主菜",
+          "processed_meat_flag": false,
+          "sweet_sauce_level": 0,
+          "wetness": 3,
+          "grain_type": "无"
+        }
+      },
+      {
+        "dish_id": "d1_2",
+        "restaurant_id": "r1",
+        "canonical_name": "蒜蓉空心菜",
+        "raw_name": "蒜蓉空心菜",
+        "price": 30.0,
+        "monthly_sales": 180,
+        "cuisine": "潮汕",
+        "nutrition_profile": {
+          "main_ingredient_type": "纯素",
+          "cooking_method": "煮",
+          "oil_level": 2,
+          "protein_grams_estimate": 3,
+          "vegetable_ratio_estimate": 0.95,
+          "is_complete_meal": false,
+          "spicy_level": 1,
+          "tags": [],
+          "dish_role": "配菜",
+          "processed_meat_flag": false,
+          "sweet_sauce_level": 0,
+          "wetness": 1,
+          "grain_type": "无"
+        }
+      },
+      {
+        "dish_id": "d2_1",
+        "restaurant_id": "r2",
+        "canonical_name": "辣椒炒肉",
+        "raw_name": "辣椒炒肉",
+        "price": 30.0,
+        "monthly_sales": 150,
+        "cuisine": "湘菜",
+        "nutrition_profile": {
+          "main_ingredient_type": "白肉",
+          "cooking_method": "煮",
+          "oil_level": 4,
+          "protein_grams_estimate": 30,
+          "vegetable_ratio_estimate": 0.2,
+          "is_complete_meal": false,
+          "spicy_level": 1,
+          "tags": [],
+          "dish_role": "主菜",
+          "processed_meat_flag": false,
+          "sweet_sauce_level": 0,
+          "wetness": 1,
+          "grain_type": "无"
+        }
+      },
+      {
+        "dish_id": "d2_2",
+        "restaurant_id": "r2",
+        "canonical_name": "炒油麦菜",
+        "raw_name": "炒油麦",
+        "price": 30.0,
+        "monthly_sales": 100,
+        "cuisine": "湘菜",
+        "nutrition_profile": {
+          "main_ingredient_type": "纯素",
+          "cooking_method": "煮",
+          "oil_level": 3,
+          "protein_grams_estimate": 3,
+          "vegetable_ratio_estimate": 0.9,
+          "is_complete_meal": false,
+          "spicy_level": 1,
+          "tags": [],
+          "dish_role": "配菜",
+          "processed_meat_flag": false,
+          "sweet_sauce_level": 0,
+          "wetness": 1,
+          "grain_type": "无"
+        }
+      }
+    ],
+    "frozen_combo_refs": [
+      {
+        "restaurant_id": "r1",
+        "dish_ids": [
+          "d1_1",
+          "d1_2"
+        ]
+      },
+      {
+        "restaurant_id": "r2",
+        "dish_ids": [
+          "d2_1",
+          "d2_2"
+        ]
+      }
+    ],
+    "frozen_ctx_keys": [
+      "daily_mood",
+      "last_feedback",
+      "last_meal",
+      "meal_type",
+      "now",
+      "recent_3d_cuisines",
+      "recent_3d_ingredients",
+      "refine_input",
+      "refine_intent",
+      "weekday",
+      "zone"
+    ],
+    "config": {
+      "use_llm_rerank": false,
+      "n_return": 5,
+      "n_explore": 2,
+      "daily_mood": null,
+      "refine_text": null,
+      "profile_overrides": null
+    }
+  }
+}

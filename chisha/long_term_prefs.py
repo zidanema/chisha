@@ -1,21 +1,24 @@
-"""D-043 P3: 反馈闭环最小实现.
+"""D-043 P3: 反馈闭环最小实现 (DEPRECATED, D-076 PR-0.5 标记).
 
-数据流:
-    user 反馈 → feedback.parse_feedback → FeedbackParsed (chips/rating)
-                  ↓
-              append_feedback(...) → data/feedback_history.jsonl 累加一条
-                  ↓
-    next recommend → load_runtime_hints(today) → boost/penalty tags
-                  ↓
-              merge with profile static hints → taste_match (D-043)
+⚠️ 状态: 此模块是**伪 L1** — 把 refine chip (D-070 L2 单次 session 信号)
+        当跨 session 信号做频次统计 + 半衰期, 概念错位 (志丹 2026-05-16
+        review 揭出). 真正的 L1 长期反馈层走 LLM 抽取, 见
+        chisha/l1_extractor.py + chisha/l1_prefs.py.
 
-关键设计:
-- 反馈不直接改 profile.yaml (那是用户配的); 学习结果落独立文件
-- 时间衰减 (半衰期 30 天), 远期反馈衰减为弱信号
-- 拉普拉斯平滑 (prior=1): 单次反馈不直接转 hint, 累计 ≥2 次才计
-- chip → boost/penalty 映射表是 conservative 的 (只映射明确的食物属性 chip)
+D-076 PR-0.5 后:
+- refine.py 不再调 append_feedback (砍错位写入)
+- score.rank_combos 仍读 load_runtime_hints (等 PR-0.7 切到 l1_prefs.load_prefs)
+- 函数保留为 deprecated stub, 让 PR-0.6 bootstrap 脚本可读旧 jsonl
+- Phase 1 真正删除整个模块
 
-文件格式 (data/feedback_history.jsonl) 每行:
+数据流 (DEPRECATED):
+    append_feedback → data/feedback_history.jsonl
+        ↓
+    load_runtime_hints(today) → boost/penalty (半衰期 30d + ≥2 次平滑)
+        ↓ (PR-0.7 后切到 l1_prefs)
+    score.rank_combos taste_match
+
+文件格式 (data/feedback_history.jsonl, deprecated 但保留):
     {"ts": "2026-05-13T20:00:00", "meal_type": "dinner",
      "chips": ["太油", "想喝汤"], "rating": 3, "want_again": false,
      "session_id": "...", "combo_signature": "店X | 菜A+菜B"}
@@ -66,8 +69,9 @@ DEFAULT_MAX_HISTORY_DAYS = 180
 
 
 def _default_history_path(root: Path | None = None) -> Path:
-    root = root or Path(__file__).resolve().parent.parent
-    return root / "data" / "feedback_history.jsonl"
+    """D-077 PR-1b: 走 data_root.feedback_history_path, sandbox 启用时落 logs/sandbox/."""
+    from chisha import data_root
+    return data_root.feedback_history_path(root)
 
 
 def append_feedback(
@@ -85,8 +89,9 @@ def append_feedback(
         return  # 空反馈不落盘
     path = _default_history_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
+    from chisha import clock
     entry = {
-        "ts": (timestamp or dt.datetime.now()).isoformat(),
+        "ts": (timestamp or clock.now()).isoformat(),
         "meal_type": meal_type,
         "chips": list(chips or []),
         "rating": rating_taste,

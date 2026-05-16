@@ -45,7 +45,9 @@ _STORE_REL = "logs/feedback/store.json"
 
 
 def _store_path(root: Path) -> Path:
-    return root / _STORE_REL
+    """D-077 PR-1b: 走 data_root.feedback_store_path, sandbox 落 logs/sandbox/feedback/."""
+    from chisha import data_root
+    return data_root.feedback_store_path(root)
 
 
 def _empty_store() -> dict:
@@ -100,7 +102,8 @@ def save_store(root: Path, data: dict) -> None:
 
 
 def _now_iso() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat()
+    from chisha import clock
+    return clock.now_utc().isoformat()
 
 
 # ---------- 写路径 ----------
@@ -172,7 +175,8 @@ def set_snooze(root: Path, session_id: str, hours: int = 24) -> None:
         data = load_store(root)
         item = data["accepted"].get(session_id)
         if item:
-            until = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=hours)
+            from chisha import clock
+            until = clock.now_utc() + dt.timedelta(hours=hours)
             item["snoozed_until"] = until.isoformat()
             save_store(root, data)
 
@@ -237,7 +241,8 @@ def _is_snoozed_now(snoozed_until: str | None) -> bool:
         until = until.replace(tzinfo=dt.timezone.utc)
     else:
         until = until.astimezone(dt.timezone.utc)
-    return dt.datetime.now(dt.timezone.utc) < until
+    from chisha import clock
+    return clock.now_utc() < until
 
 
 def inbox_items(data: dict, include_snoozed: bool = True) -> list[dict]:

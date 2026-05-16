@@ -16,6 +16,12 @@ DEFAULT_TTL_HOURS = 24
 SESSIONS_DIRNAME = "logs/sessions"
 
 
+def _wall_now() -> dt.datetime:
+    """业务 wall-clock 时间. sandbox 启用时走虚拟时钟, 否则 datetime.now()."""
+    from chisha import clock
+    return clock.now()
+
+
 @dataclass
 class SessionState:
     session_id: str
@@ -45,7 +51,9 @@ class SessionState:
 
 
 def _sessions_dir(root: Path) -> Path:
-    p = root / SESSIONS_DIRNAME
+    """D-077 PR-1b: 走 data_root.sessions_dir, sandbox 启用时落 logs/sandbox/sessions/."""
+    from chisha import data_root
+    p = data_root.sessions_dir(root)
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -65,7 +73,7 @@ def create_session(
         session_id=session_id,
         meal_type=meal_type,
         zone=zone,
-        created_at=(now or dt.datetime.now()).isoformat(timespec="seconds"),
+        created_at=(now or _wall_now()).isoformat(timespec="seconds"),
         round=1,
         last_candidates=[],
         daily_mood=daily_mood,
@@ -111,7 +119,7 @@ def is_expired(state: SessionState, ttl_hours: int = DEFAULT_TTL_HOURS,
         created = dt.datetime.fromisoformat(state.created_at)
     except ValueError:
         return True
-    now = now or dt.datetime.now()
+    now = now or _wall_now()
     return (now - created).total_seconds() > ttl_hours * 3600
 
 
