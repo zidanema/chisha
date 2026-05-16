@@ -155,9 +155,10 @@ def recommend_meal(
     }
 
     if log_to_file:
-        log_dir = root / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / "recommend_log.jsonl"
+        # D-077 PR-1b: 走 data_root.recommend_log_path, sandbox 启用时落 logs/sandbox/
+        from chisha import data_root
+        log_path = data_root.recommend_log_path(root)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(out, ensure_ascii=False) + "\n")
     return out

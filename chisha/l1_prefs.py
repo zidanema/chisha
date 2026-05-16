@@ -67,9 +67,9 @@ class PrefsCorruptError(RuntimeError):
 
 
 def _prefs_path(root: Path | None = None) -> Path:
-    """默认路径. sandbox 模式下由 data_root.py 派生覆盖 (PR-1b)."""
-    base = root or Path(__file__).resolve().parent.parent
-    return base / _PREFS_REL
+    """D-077 PR-1b: 走 data_root.long_term_prefs_path, sandbox 启用时落 logs/sandbox/."""
+    from chisha import data_root
+    return data_root.long_term_prefs_path(root)
 
 
 def canonicalize_token(token: str) -> str | None:

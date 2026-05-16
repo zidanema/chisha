@@ -45,7 +45,9 @@ _STORE_REL = "logs/feedback/store.json"
 
 
 def _store_path(root: Path) -> Path:
-    return root / _STORE_REL
+    """D-077 PR-1b: 走 data_root.feedback_store_path, sandbox 落 logs/sandbox/feedback/."""
+    from chisha import data_root
+    return data_root.feedback_store_path(root)
 
 
 def _empty_store() -> dict:
