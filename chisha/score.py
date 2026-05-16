@@ -959,22 +959,30 @@ def rank_combos(
 ) -> list[dict]:
     """对 combos 打分排序, 返回带 score/breakdown 的列表 (降序).
 
-    D-043: 入口先 attach_popularity_ranks (rank-based popularity),
-    把 D-043 default mood/taste hints 兜底信号注入 context/hints.
+    D-043 → D-076 PR-0.7 切换:
+    runtime_hints 来源从 long_term_prefs.load_runtime_hints (D-043 旧 chip 频次)
+    切换到 l1_prefs.load_prefs (D-076 LLM 抽取产物).
+
+    等价性约束 (D-072.1 baseline 守门):
+    - prefs.json 不存在 + jsonl 不存在 → 旧/新均 None ✓
+    - prefs.json 不存在 + jsonl 存在 → 语义改变 ⚠️ 调用方必须先跑
+      scripts/bootstrap_l1_from_legacy.py 兜底
+    - prefs.json 存在 → 走 LLM 抽取产物 (旧 jsonl 不再被读)
+
     Args:
-      root: 项目根 (透传给 long_term_prefs.load_runtime_hints,
-        让 refine 写入和 rank_combos 读取共用同一份 feedback_history.jsonl).
-        Codex 二审修复: 之前 refine 写 root, rank_combos 读默认根, 闭环不合拢.
+      root: 项目根 (透传给 l1_prefs.load_prefs).
+        Codex Q3 修复: 三态等价性必须由 bootstrap 脚本保证.
     """
     # D-043: rank-based popularity, 就地修改 combos (加 _popularity_rank)
     attach_popularity_ranks(combos)
-    # D-043: taste_hints 始终合并 static (profile) + runtime (反馈闭环) + 显式传入
-    # Codex review 修复: 之前显式 taste_hints 时直接跳过 static/runtime, refine
-    # 二轮调用就丢了长期偏好兜底, 现在三源合并 (并集).
-    from chisha.long_term_prefs import load_runtime_hints, merge_hints
+    # D-043 → D-076: taste_hints 始终合并 static (profile) + runtime (L1 LLM 抽取
+    # 产物) + 显式传入. 旧 D-043 jsonl 频次聚合在 PR-0.7 后不再被读, 走 l1_prefs.
+    from chisha.l1_prefs import load_prefs, to_runtime_hints
+    from chisha.long_term_prefs import merge_hints
     static_hints = extract_static_taste_hints(profile)
     try:
-        runtime_hints = load_runtime_hints(today=today, root=root)
+        prefs = load_prefs(root=root)
+        runtime_hints = to_runtime_hints(prefs)
     except Exception:
         runtime_hints = None
     effective_hints = merge_hints(static_hints, runtime_hints, taste_hints)
