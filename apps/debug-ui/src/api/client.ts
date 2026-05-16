@@ -1,6 +1,12 @@
 // Thin fetch wrappers. ALL backend rename / shape coercion happens in adapter.ts.
 
-import type { BackendDebugRecommend, BackendDebugRecommendReq } from "./backend-types";
+import type {
+  BackendDebugRecommend,
+  BackendDebugRecommendReq,
+  BackendDebugTrace,
+  BackendSessionsResp,
+  BackendWhatIfReq,
+} from "./backend-types";
 
 export class ApiError extends Error {
   status: number;
@@ -53,4 +59,32 @@ export type ProfileResponse = Record<string, unknown>;
 
 export function getProfile(): Promise<ProfileResponse> {
   return fetchJson<ProfileResponse>("/api/profile");
+}
+
+// ---------- D-079: trace replay ----------
+
+export function fetchSessions(params: {
+  limit?: number;
+  meal_type?: "lunch" | "dinner" | null;
+} = {}): Promise<BackendSessionsResp> {
+  const q = new URLSearchParams();
+  if (params.limit != null) q.set("limit", String(params.limit));
+  if (params.meal_type) q.set("meal_type", params.meal_type);
+  const qs = q.toString();
+  return fetchJson<BackendSessionsResp>(
+    `/api/debug/sessions${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export function fetchSession(sid: string): Promise<BackendDebugTrace> {
+  return fetchJson<BackendDebugTrace>(
+    `/api/debug/sessions/${encodeURIComponent(sid)}`,
+  );
+}
+
+export function postWhatIf(req: BackendWhatIfReq): Promise<BackendDebugTrace> {
+  return fetchJson<BackendDebugTrace>("/api/debug/what_if", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
 }

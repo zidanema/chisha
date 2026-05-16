@@ -1024,6 +1024,11 @@ LLM 调用走 [chisha/llm_client.py](../chisha/llm_client.py) `call_text` 路由
 | 72 | methodology spec 抽象 + L2 trace baseline 守门 | D-072 / D-072.1 |
 | **73** | **L1 长期反馈层重构 — 砍伪 L1 + LLM 抽取**（supersedes D-043 P3 反馈闭环）| **D-073** |
 | **74** | **Sandbox Time-Travel 模式**（虚拟时钟 + 数据落盘根隔离 + L1 异步抽取 + 6 sandbox 端点 + 前端 SandboxBar） | **D-074** |
+| **75** | **apps/debug-ui 独立 SPA**（Vite + React 18 + TS + V12 DAG sticky, 5 主题, 7 phase Codex-reviewed） | **D-075** |
+| **76** | **L1 LLM 抽取真兑现**（V1.1 反馈预聚合 + claude_code_cli text 路径 + l1_prefs.load_prefs schema 校验, supersedes 旧 long_term_prefs.py 伪 L1）| **D-076** |
+| **77** | **Sandbox PR-1a~1d 落地**（clock.py + sandbox.py + data_root.py + 6 端点 + 前端 SandboxBar + Inspect Drawer） | **D-077** |
+| **78** | **Sandbox 收尾修补**（时钟漏注入第 12 处 + accept→meal_log 闭环 cooldown + Codex S2 reset/disable L1 lock） | **D-078** |
+| **79** | **推荐链路 trace 持久化 + Debug 三模式 (Replay/What-if/Live)**（`logs/recommend_trace/{sid}.json` + 3 端点 + apps/debug-ui 三模式 + URL state） | **D-079** |
 
 ---
 

@@ -228,3 +228,138 @@ export type BackendDebugRecommendReq = {
   n_return?: number;
   n_explore?: number;
 };
+
+// ---------- D-079: /api/debug/* trace replay endpoints ----------
+
+export type BackendFeedbackLink = {
+  accepted: boolean;
+  accepted_rank: number | null;
+  accepted_at: string | null;
+  stopped: boolean;
+  feedback_submitted: boolean;
+  rating: number | null;
+  feedback_record?: unknown;
+};
+
+export type BackendSessionMeta = {
+  session_id: string;
+  started_at: string;
+  meal_type: "lunch" | "dinner" | string;
+  zone: string;
+  top1_summary: string;
+  total_latency_ms: number;
+  l3_status: string;
+  source: "production" | "what_if_preview" | string;
+  feedback?: BackendFeedbackLink | null;
+};
+
+export type BackendSessionsResp = {
+  items: BackendSessionMeta[];
+  corrupt_count: number;
+};
+
+// trace.l3 in production trace is flat (different from BackendL3Llm shape).
+export type BackendTraceL3 = {
+  used: boolean;
+  status: "ok" | "fallback" | "config_error" | "skipped" | null | string;
+  model: string | null;
+  resolved_provider: string | null;
+  raw_response: string;
+  raw_response_chars: number;
+  system_prompt_chars?: number;
+  user_message_chars?: number;
+  user_message_full?: string;
+  tool_input: unknown;
+  stop_reason: string | null;
+  fallback_reason: string | null;
+  parsed_candidates: unknown;
+  payload_to_llm: unknown;
+  n_returned: number;
+  used_fallback: boolean;
+  // optional new fields (not always present, but adapter tolerates).
+  // D-079 followup: usage shape 是 provider 统一后的 OpenAI 风格
+  // (prompt_tokens/completion_tokens/cached_tokens/cache_write_tokens, 见
+  // chisha/llm_providers/*.py); adapter.wrapTraceL3 做字段名映射到前端的
+  // Anthropic 命名 (input_tokens/cache_read_input_tokens) — 两种命名都兼容.
+  latency_ms?: number;
+  usage?: {
+    // OpenAI 风格 (provider 实际返回)
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    cached_tokens?: number;
+    cache_write_tokens?: number;
+    cost?: number;
+    // Anthropic 风格 (兼容老 trace)
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
+  max_tokens?: number;
+  temperature?: number;
+};
+
+export type BackendTraceRefine = {
+  applied: boolean;
+  user_input?: string;
+  intent?: unknown;
+  round?: number;
+  n_combos_recalled?: number;
+  n_after_l2?: number;
+  n_returned?: number;
+  candidate_ids?: string[];
+  ts?: string;
+};
+
+export type BackendDebugTrace = {
+  __version: number;
+  __source: "production" | "what_if_preview" | string;
+  __parent_session_id: string | null;
+  __llm_called: boolean;
+  __frozen: {
+    ctx: Record<string, unknown>;
+    today: string;
+    meal_type: "lunch" | "dinner" | string;
+    zone: string;
+    profile_snapshot: Record<string, unknown>;
+    l1_combos: Array<{ restaurant_id: string; dish_ids: string[] }>;
+    restaurants: Record<string, Record<string, unknown>>;
+    dishes: Record<string, Record<string, unknown>>;
+    l1_prefs_snapshot: unknown;
+    l2_meal_log_view: unknown[];
+  };
+  __config: {
+    use_llm_rerank: boolean | null;
+    n_return: number;
+    n_explore: number;
+    daily_mood: string | null;
+    refine_text: string | null;
+    profile_overrides: Record<string, unknown> | null;
+  };
+  __feedback?: BackendFeedbackLink | null;
+  session_id: string;
+  started_at: string;
+  total_latency_ms: number;
+  ctx_latency_ms: number;
+  recall_latency_ms: number;
+  score_latency_ms: number;
+  rerank_latency_ms: number;
+  final_latency_ms: number;
+  l1: BackendL1Recall;
+  l2: BackendL2Score;
+  l3: BackendTraceL3;
+  final: BackendFinalRow[];
+  refine: BackendTraceRefine;
+};
+
+export type BackendWhatIfOverrides = {
+  n_return?: number | null;
+  n_explore?: number | null;
+  use_llm_rerank?: boolean | null;
+  profile_overrides?: Record<string, unknown> | null;
+};
+
+export type BackendWhatIfReq = {
+  base_session_id: string;
+  overrides: BackendWhatIfOverrides;
+};

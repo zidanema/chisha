@@ -140,11 +140,21 @@ src/
 - 无 a11y / 无 i18n / 无移动端 (桌面 ≥1440px 中文)
 - 任何 TS 组件文件 ≤ 400 行 (data files: styles.css / mocks/session.ts 豁免)
 
+## D-079 三模式 (Replay / What-if / Live) — 2026-05-16 落地
+
+URL state: `?sid={session_id}` `?mode=live` `?what_if=1` 全部 `replaceState` 同步, 刷新可定位.
+
+- **Replay** (默认): Sidebar 进入页面 fetch `/api/debug/sessions`, 点 history 行 → fetch `/api/debug/sessions/{sid}` → 渲染历史 trace (只读). 后端可达时是单一可信源 (DESIGN §8.2), 不可达自动降级 localStorage 离线缓存 + 顶部 banner.
+- **What-if**: Sidebar `🧪 What-if` 按钮 (仅 backend-backed Replay 行可用) → 双栏对比 panel + JSON overrides 编辑 + use_llm_rerank 开关 (default false). 后端冻结 `__frozen.{ctx, today, l1_combos, l1_prefs, l2_meal_log_view, profile}` 零 runtime read, 重跑 L2+L3, **永不写盘**.
+- **Live**: Sidebar `⚡ Live 试跑` → /api/debug_recommend 跑一次, 临时显示 + 顶部金色 banner. 不落 localStorage, 不落后端 trace_store, 关 tab 即丢.
+
+每行 Run History 显示 feedback badge: `⭐{rank}` (accepted) / `❤×N` (rating) / `🚫` (stopped). 后端 `corrupt_count > 0` 顶部红字告警.
+
 ## 已知 defer (Phase X+ 视必要)
 
 - **`/api/debug_refine` 真 backend 接入** — 当前 Phase 3 用 mock 派生二轮.
   接通后 mocks/refineSession.ts 可砍.
-- **`/api/sessions` 真 backend 持久化** — 当前 Phase 2 用 localStorage cap 8.
+- ~~`/api/sessions` 真 backend 持久化~~ — **已落地 (D-079, 2026-05-16)** `/api/debug/sessions` GET list + `/api/debug/sessions/{sid}` GET detail + `/api/debug/what_if` POST 三端点 + 后端 trace_store + 前端 `traceToSession` adapter.
 - **L3 fallback 桌面 Notification** — 真链路打通后再开 Web Notifications.
 - **per-dish trace rank 精确归属** (Codex Phase 4 noted) — backend `matched_combos_in_ranked`
   没带 dish_id, 当前 PanelTrace 表内 rank 列显示 first matched combo 的 rank.

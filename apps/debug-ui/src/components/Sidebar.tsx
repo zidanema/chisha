@@ -1,4 +1,40 @@
-import type { Meal, RunHistoryRow } from "../types/trace";
+import type { FeedbackBadge, Meal, RunHistoryRow } from "../types/trace";
+
+function FeedbackBadgeView({ fb }: { fb: FeedbackBadge }) {
+  // 视觉次序: accepted (⭐ rank) → rating (❤×N) → stopped (🚫). 简洁优先, 不堆叠.
+  if (fb.stopped) {
+    return <span className="fb-badge stopped" title="stopped: 这餐没看上 / 不饿">🚫</span>;
+  }
+  const items: { key: string; el: JSX.Element }[] = [];
+  if (fb.accepted) {
+    items.push({
+      key: "acc",
+      el: (
+        <span className="fb-badge acc" title={`accepted rank ${fb.accepted_rank ?? "?"}`}>
+          ⭐{fb.accepted_rank ?? ""}
+        </span>
+      ),
+    });
+  }
+  if (fb.rating != null) {
+    items.push({
+      key: "rt",
+      el: (
+        <span className="fb-badge rt" title={`rating ${fb.rating}/3`}>
+          {"❤".repeat(Math.max(0, Math.min(3, fb.rating)))}
+        </span>
+      ),
+    });
+  }
+  if (items.length === 0) return null;
+  return (
+    <span className="fb-badges">
+      {items.map((i) => (
+        <span key={i.key}>{i.el}</span>
+      ))}
+    </span>
+  );
+}
 
 export type SidebarProps = {
   meal: Meal;
@@ -22,6 +58,11 @@ export type SidebarProps = {
   onRunRefine: () => void;
   onRunTrace: () => void;
   onReplayConfig: (id: string) => void;
+  backendOnline?: boolean;
+  corruptCount?: number;
+  onRunLive?: () => void;
+  onOpenWhatIf?: () => void;
+  whatIfAvailable?: boolean;
 };
 
 export function Sidebar({
@@ -32,6 +73,8 @@ export function Sidebar({
   profileOverride, setProfileOverride,
   profileError, runDisabled,
   onRunMain, onRunRefine, onRunTrace, onReplayConfig,
+  backendOnline, corruptCount,
+  onRunLive, onOpenWhatIf, whatIfAvailable,
 }: SidebarProps) {
   return (
     <aside className="sidebar">
@@ -86,6 +129,30 @@ export function Sidebar({
           ▶ 触发首轮推荐
           <span className="kbd">⏎</span>
         </button>
+        {onRunLive && (
+          <button
+            className="btn"
+            onClick={onRunLive}
+            disabled={runDisabled}
+            style={runDisabled ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
+            title="Live 模式: 仅本次显示, 永不写盘"
+          >
+            ⚡ Live 试跑 <span className="dim mono">(no trace)</span>
+          </button>
+        )}
+        {onOpenWhatIf && (
+          <button
+            className="btn"
+            onClick={onOpenWhatIf}
+            disabled={!whatIfAvailable}
+            style={!whatIfAvailable ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
+            title={whatIfAvailable
+              ? "基于当前 Replay trace 改 weights / caps 重跑下游"
+              : "需先在 Run History 选一条 backend trace"}
+          >
+            🧪 What-if
+          </button>
+        )}
       </div>
 
       <h3>Refine</h3>
@@ -122,7 +189,21 @@ export function Sidebar({
       </div>
       <button className="btn" onClick={onRunTrace}>⌕ 追溯命中</button>
 
-      <h3>Run History</h3>
+      <h3>
+        Run History
+        {backendOnline === false && (
+          <span style={{ color: "var(--warn)", marginLeft: 6, fontSize: 10 }}
+                title="后端 /api/debug/sessions 不可达, 显示 localStorage 缓存">
+            ⚠ offline
+          </span>
+        )}
+        {backendOnline === true && corruptCount != null && corruptCount > 0 && (
+          <span style={{ color: "var(--warn)", marginLeft: 6, fontSize: 10 }}
+                title="后端列出 trace 时跳过损坏文件">
+            ⚠ {corruptCount} corrupt
+          </span>
+        )}
+      </h3>
       <div className="run-history">
         {history.map((h) => (
           <div
@@ -133,8 +214,13 @@ export function Sidebar({
             <div
               className={`dot ${h.status === "ok" ? "ok" : h.status === "fallback" ? "fb" : "warn"}`}
             ></div>
-            <div>
-              <div>{h.title}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {h.title}
+                </span>
+                {h.feedback && <FeedbackBadgeView fb={h.feedback} />}
+              </div>
               <div className="time">{h.time} · {h.latency}ms</div>
             </div>
             <button

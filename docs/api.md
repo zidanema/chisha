@@ -29,6 +29,9 @@
 | `GET`  | `/api/profile` | 读 profile.yaml | V1 ✅ |
 | `PUT`  | `/api/profile` (兼容 `POST`) | 写 profile.yaml | V1 ✅ |
 | `GET`  | `/api/history?days=` | 历史推荐列表 | V1 ✅ |
+| `GET`  | `/api/debug/sessions?limit=&meal_type=` | 列最近 N 条 trace meta + feedback badge (D-079) | V1 ✅ |
+| `GET`  | `/api/debug/sessions/{session_id}` | 单条完整 trace (Replay 详情) | V1 ✅ |
+| `POST` | `/api/debug/what_if` | What-if 重跑 (冻结 L1, 重跑 L2+L3, 永不写盘) | V1 ✅ |
 
 > **V1.1 状态说明**: 反馈系统 7 个端点在 `apps/web/src/lib/mockApi.ts` 全量实现, 前端 mock 模式可端到端跑 (D-056~D-068)。后端 FastAPI **待装**, 实施进度跟踪在 IMPL_LOG D-056~D-068 执行记录。
 > **砍掉的旧端点**: `GET /api/session/last_unfed` (被 inbox[0] 取代) · `POST /api/session/dismiss_feedback_banner` (被 snooze/stop 取代)。
@@ -259,6 +262,78 @@
 ### 6.6 `GET /api/profile` / `PUT /api/profile`
 
 `Profile` 形状见 `types.ts` (镜像 profile.yaml)。`PUT` body 是完整 Profile 对象，后端覆盖式写入 profile.yaml（保留注释由 ruamel.yaml 处理）。
+
+### 6.7 `/api/debug/*` (D-079, Replay / What-if)
+
+全部 localhost-only (debug_server bind 127.0.0.1, `_require_localhost` 守门)。详见 [DEBUG_REPLAY_DESIGN.md](DEBUG_REPLAY_DESIGN.md) §7.
+
+**`GET /api/debug/sessions?limit=&meal_type=&source=`** — Sidebar 列表数据源
+
+Query:
+- `limit` (int, default 30, max 100)
+- `meal_type` (`lunch|dinner|null`)
+- `source` V1 只接受 `production` (V2 扩展)
+
+Response:
+```json
+{
+  "items": [
+    {
+      "session_id": "sess_lunch_20260516_122334_xxx",
+      "started_at": "2026-05-16T12:23:34+08:00",
+      "meal_type": "lunch",
+      "zone": "shenzhen-bay",
+      "top1_summary": "锅二爷 · 番茄牛腩饭 + 凉拌木耳",
+      "total_latency_ms": 8423,
+      "l3_status": "ok",
+      "source": "production",
+      "feedback": {
+        "accepted": true, "accepted_rank": 2,
+        "rating": 3, "stopped": false,
+        "feedback_submitted": true
+      }
+    }
+  ],
+  "corrupt_count": 0
+}
+```
+
+**`GET /api/debug/sessions/{session_id}`** — Replay 详情, 完整 trace JSON
+
+Schema 顶层: `__version` + `__source` + `__parent_session_id` + `__llm_called` + `__frozen.{ctx, today, meal_type, zone, l1_combos, restaurants, dishes, profile_snapshot, l1_prefs_snapshot, l2_meal_log_view}` + `__config` + `__feedback` + `l1` + `l2` + `l3` + `final` + `refine`. 详见 DESIGN §2.2.
+
+Failure matrix:
+- `404` — trace 不存在
+- `409` — schema `__version` 不识别 (`{detail: "version mismatch", trace_version: N}`)
+- `500` — JSON 损坏 (`{detail: "corrupt", backup: ".corrupt.{ts}.bak"}`, 文件已备份)
+
+**`POST /api/debug/what_if`** — What-if 重跑 (永不写盘)
+
+Body:
+```json
+{
+  "base_session_id": "sess_lunch_20260516_xxx",
+  "overrides": {
+    "profile_overrides": { "scoring_weights": { "distance": 0.5 } },
+    "use_llm_rerank": false,
+    "n_return": 5,
+    "n_explore": 2
+  }
+}
+```
+
+Overrides schema `extra='forbid'` 严格 — 未知字段直接 422 拒. `use_llm_rerank` 默认 `False` (Codex +4, 防意外烧 LLM 配额).
+
+Response: 同单条 trace shape, 但 `__source="what_if_preview"` + `__parent_session_id=base_sid` + `__llm_called: bool` 表明本次是否真发了 LLM. **永不写盘**.
+
+Failure matrix:
+- `400` — overrides 非白名单 / base trace `__source != production` / base trace 缺 `__frozen`
+- `404` — base trace 不存在
+- `409` — schema 版本不兼容 (What-if 要求 exact match)
+- `422` — pydantic schema 层拒绝 (未知字段/类型错/缺必填)
+- `500` — base trace 损坏 / L2/L3 重跑内部错
+
+**Live 模式 (`/api/debug_recommend`)** — D-039 老端点, D-079 复用作 Live 入口. 后端走 `debug_recommend.debug_recommend()` 全链路跑包含 LLM, 但**不调用** `trace_store.write_trace()` (Codex +1 约束). 前端 SPA 看到 `__llm_called` 字段统一展示.
 
 ---
 

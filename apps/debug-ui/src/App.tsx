@@ -1,10 +1,12 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BackendStatusPill } from "./components/BackendStatusPill";
 import { Sidebar } from "./components/Sidebar";
 import { DagHeader } from "./components/DagHeader";
 import { EmptyStateHint } from "./components/EmptyStateHint";
+import { LiveBanner } from "./components/LiveBanner";
 import { ThemeSwitcher } from "./components/ThemeSwitcher";
 import { Toaster, pushToast } from "./components/Toaster";
+import { WhatIfPanel } from "./components/WhatIfPanel";
 import { DEFAULT_PROFILE_OVERRIDE, DEFAULT_REFINE_TEXT, TODAY_ISO } from "./constants/defaults";
 import { useTheme } from "./hooks/useTheme";
 import { useSession } from "./hooks/useSession";
@@ -23,6 +25,30 @@ import { PanelTrace } from "./panels/PanelTrace";
 import type { Meal } from "./types/trace";
 
 type Tab = "main" | "refine" | "trace";
+// D-079: 三种 mode. Replay = 默认 (历史 trace), Live = /api/debug_recommend 临时试跑
+// (永不写盘), WhatIf = 基于当前 Replay trace overlay 重跑下游.
+type Mode = "replay" | "live" | "whatif";
+
+function readQueryParams(): { sid: string | null; mode: Mode; whatIf: boolean } {
+  if (typeof window === "undefined") return { sid: null, mode: "replay", whatIf: false };
+  const qs = new URLSearchParams(window.location.search);
+  const sid = qs.get("sid");
+  const modeRaw = qs.get("mode");
+  const mode: Mode = modeRaw === "live" ? "live" : "replay";
+  const whatIf = qs.get("what_if") === "1";
+  return { sid, mode, whatIf };
+}
+
+function writeQueryParams(p: { sid: string | null; mode: Mode; whatIf: boolean }) {
+  if (typeof window === "undefined") return;
+  const qs = new URLSearchParams(window.location.search);
+  if (p.sid) qs.set("sid", p.sid); else qs.delete("sid");
+  if (p.mode === "live") qs.set("mode", "live"); else qs.delete("mode");
+  if (p.whatIf) qs.set("what_if", "1"); else qs.delete("what_if");
+  const s = qs.toString();
+  const url = `${window.location.pathname}${s ? `?${s}` : ""}`;
+  window.history.replaceState(null, "", url);
+}
 
 const TABS: { id: Tab; label: string; sub: string; disabled?: boolean }[] = [
   { id: "main", label: "主视图", sub: "L1 / L2 / L3 / Final" },
@@ -55,8 +81,33 @@ export function App() {
     activeSessionId,
     setActiveSessionId,
     runMain,
+    backendOnline,
+    corruptCount,
   } = useSession();
   const traceState = useTrace();
+
+  // D-079: mode + What-if overlay. 进入页面读 URL 一次, 后续手动 setMode 同步回 URL.
+  const initialQp = useMemo(() => readQueryParams(), []);
+  const [mode, setMode] = useState<Mode>(initialQp.mode);
+  const [whatIfOpen, setWhatIfOpen] = useState<boolean>(initialQp.whatIf);
+  const [liveLlmCalled, setLiveLlmCalled] = useState<boolean | null>(null);
+
+  // 首次挂载: 若 URL 带 sid 且与默认不一致, 切到该 sid (useSession 会异步 fetch).
+  useEffect(() => {
+    if (initialQp.sid && initialQp.sid !== activeSessionId) {
+      setActiveSessionId(initialQp.sid);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // mode / sid / whatIf 任一变化都同步回 URL.
+  useEffect(() => {
+    writeQueryParams({
+      sid: mode === "live" ? null : activeSessionId,
+      mode,
+      whatIf: whatIfOpen,
+    });
+  }, [mode, activeSessionId, whatIfOpen]);
 
   useKeyboardShortcuts({
     onRunMain: handleRunMain,
@@ -174,6 +225,8 @@ export function App() {
     clickIntentRef.current = Date.now();
     scrollContentTop();
     setDagCompact(false);
+    setMode("replay");
+    setWhatIfOpen(false);
     await runMain({
       meal,
       today,
@@ -182,6 +235,35 @@ export function App() {
       profileOverrideRaw: profileOverride,
     });
   }
+
+  // D-079: Live 模式 — /api/debug_recommend 跑一次, 永不落 localStorage 也永不落
+  // 后端 trace_store (debug_recommend 自身不调 write_trace).
+  // Codex NIT 修补: runMain 返回 fresh session, 直接从返值派生 llmCalled,
+  // 避免 await 后读 liveSession state (React state 异步, closure 是 stale).
+  const handleRunLive = useCallback(async () => {
+    if (!profileParse.ok) {
+      pushToast({ kind: "warn", title: "profile JSON 不合法", detail: profileParse.error ?? "" });
+      return;
+    }
+    setTab("main");
+    clickIntentRef.current = Date.now();
+    scrollContentTop();
+    setDagCompact(false);
+    setMode("live");
+    setWhatIfOpen(false);
+    setLiveLlmCalled(null);
+    const fresh = await runMain({
+      meal,
+      today,
+      llmAuto,
+      profileOverride: profileParse.value,
+      profileOverrideRaw: profileOverride,
+      live: true,
+    });
+    if (fresh) {
+      setLiveLlmCalled(fresh.l3?.status === "ok");
+    }
+  }, [profileParse, meal, today, llmAuto, profileOverride, runMain]);
 
   function handleReplayConfig(id: string) {
     const cfg = loadConfig(id);
@@ -314,13 +396,48 @@ export function App() {
           traceRest={traceRest} setTraceRest={setTraceRest}
           traceDish={traceDish} setTraceDish={setTraceDish}
           history={history}
-          activeSession={activeSessionId} setActiveSession={setActiveSessionId}
+          activeSession={activeSessionId} setActiveSession={(id) => {
+            // 点 history 行 → 默认回 Replay 模式 (Live 是单次试跑, 不持久化).
+            setMode("replay");
+            setActiveSessionId(id);
+          }}
           profileOverride={profileOverride} setProfileOverride={setProfileOverride}
           profileError={profileParse.ok ? null : profileParse.error}
           runDisabled={status === "loading" || !profileParse.ok}
           onReplayConfig={handleReplayConfig}
+          backendOnline={backendOnline}
+          corruptCount={corruptCount}
+          onRunLive={handleRunLive}
+          onOpenWhatIf={() => {
+            // What-if 只对 backend-backed Replay session 有意义
+            // (Live/mock 没 base trace, 后端会 404).
+            setMode("replay");
+            setWhatIfOpen(true);
+            setTab("main");
+            scrollContentTop();
+          }}
+          whatIfAvailable={
+            mode === "replay"
+            && backendOnline === true
+            && history.find((h) => h.id === activeSessionId)?.source === "backend"
+          }
         />
         <div className="content">
+          {mode === "live" && (
+            <LiveBanner
+              llmCalled={liveLlmCalled ?? undefined}
+              onExit={() => {
+                setMode("replay");
+                setLiveLlmCalled(null);
+              }}
+            />
+          )}
+          {whatIfOpen && mode === "replay" && tab === "main" && (
+            <WhatIfPanel
+              baseSession={session}
+              onClose={() => setWhatIfOpen(false)}
+            />
+          )}
           <DagHeader
             activeTab={tab}
             fallbackL3LatencyMs={fallbackL3LatencyMs}
