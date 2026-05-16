@@ -10,7 +10,7 @@
 
 ## 当前状态
 
-**Phase 0 工程侧已收尾**（2026-05-16）—— 「原则派点餐执行外包」定位收敛 + L0 方法论 spec 抽象 + **L1 长期反馈层真兑现（LLM 抽取）** + **Sandbox Time-Travel 模式（一次会话压缩多日验证）** + 推荐 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈 + FastAPI 20 端点（D-069 13 + D-076/074 7）。Step 2 用户验证现在可走 sandbox → Phase 1 同事推广。
+**Phase 0 工程侧已收尾**（2026-05-16）—— 「原则派点餐执行外包」定位收敛 + L0 方法论 spec 抽象 + **L1 长期反馈层真兑现（LLM 抽取）** + **Sandbox Time-Travel 模式** + **D-076.1/D-078.1/2/3 + Codex S2 闭环修补（L1→L3 prompt 桥 + positive boost 词表扩 + inspect raw + refine root threading）** + 推荐 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈 + FastAPI 20 端点（D-069 13 + D-076/074 7）。L1 (LLM 抽取) → L2 (taste_match_bonus) → L3 (prompt 注入"行为信号") **三层贯通**, 真实 LLM 两轮演练 (low_oil + spicy boost) 验. Step 2 用户验证现在可走 sandbox → Phase 1 同事推广。
 
 **当前状态（2026-05-16）**：
 
