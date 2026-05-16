@@ -1472,6 +1472,13 @@ recall:
 
 **2026-05-13**
 
+> **⚠️ 反馈闭环 P3 部分已被 [D-076](#d-073-l1-长期反馈层重构--砍伪-l1--llm-抽取-v1x) superseded (2026-05-16)**:
+> "refine chip → feedback_history.jsonl 频次聚合 → load_runtime_hints" 这条路径
+> 概念错位 (refine chip 是 L2 单次信号, 不该跨 session). D-076 砍掉此路径,
+> 改成 V1.1 反馈 → LLM 抽取 → `data/long_term_prefs.json`. `long_term_prefs.py`
+> 标 DEPRECATED stub. L2 打分体系本身 (4 层 cap + popularity/variety/taste 改活 +
+> unforgivable penalty) 仍生效.
+
 ### 背景
 D-042 cap 后用户报告: top30 仍高度同质 (潮汕粥/汤水类), 排序集中在少数店. 数据分析显示打分 16 维度中:
 

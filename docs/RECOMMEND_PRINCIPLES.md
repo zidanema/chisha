@@ -138,18 +138,23 @@ if has_unforgivable_penalty(combo):  # 如 sweet_sauce ≥ 3 且 processed_meat 
 - 哪些 cuisine_preference 是用户真实偏好，哪些是写在 profile 里但实际不爱
 - 哪些时段/天气真的对应 want_light vs want_indulgent
 
-**最小可行实现（D-043 P3 已落地）**：
-1. `refine.py` 调用 `parse_feedback` 后 append 到 `data/feedback_history.jsonl`（append-only JSONL）
-2. `rank_combos` 调 `long_term_prefs.load_runtime_hints` 聚合（半衰期 30 天 + 拉普拉斯 min_count=2.0 平滑）
-3. 三源合并 `merge_hints`：profile 静态 hints + runtime 学习 hints + 显式 taste_hints
-4. **不**做权重在线更新（P4，数据量需求）
-5. **不**做 RL（数据量不足，过早复杂化）
+**当前实现（D-076 LLM 抽取层，2026-05-16）**：
+1. **L2 当下 session 信号**：`refine.py` 调用 `parse_feedback` 解析 chip + note，仅本 session 影响 L3 prompt，**不**写入跨 session 文件
+2. **L1 长期反馈层**：V1.1 反馈页（rating + 4 维 calibration + note）落 `logs/feedback/store.json` → `chisha/l1_extractor.py` LLM 抽取（`claude_code_cli` text + JSON prompt + parse/validate/retry）→ 写 `data/long_term_prefs.json`
+3. **L2 打分读取**：`rank_combos` 调 `l1_prefs.load_prefs()` → `to_runtime_hints()` → 三源合并 `merge_hints`：profile 静态 hints + L1 prefs + 显式 taste_hints
+4. **抽取阈值**：`based_on_meals < 3` 不调 LLM；boost/penalty 各 ≤ 2 个 token；6 token enum 严格校验（low_oil / wetness / sweet_sauce / processed_meat / carb_heavy / spicy）
+5. **不**做权重在线更新；**不**做 RL（数据量不足，过早复杂化）
 
-代码：`chisha/long_term_prefs.py`；写入：`chisha/refine.py`；读取：`chisha/score.py` `rank_combos`。
+**❌ 已废弃路径（D-043 P3 → D-076 PR-0.5 砍掉）**：
+- `refine.py` 写 `data/feedback_history.jsonl` 频次累加（refine chip 是 L2 单次信号，不应跨 session 累加成"伪长期偏好"）
+- `long_term_prefs.load_runtime_hints` 半衰期 30d + 拉普拉斯 ≥2 次平滑（模块标 DEPRECATED stub，仅 bootstrap 脚本读旧数据）
+
+代码：`chisha/l1_extractor.py` + `chisha/l1_prefs.py`；写入：`chisha/web_api.py:/api/long_term_prefs/refresh` + `/api/sandbox/advance` 异步触发；读取：`chisha/score.py` `rank_combos`。
 
 **反馈数据稀疏的应对**：
-- Bayesian 先验（拉普拉斯平滑），避免 1-2 次反馈就漂移
-- 时间衰减（远期反馈衰减为弱信号）
+- LLM 抽取规则要求 ≥2 evidence 才出 token，避免单次反馈触发
+- D-077 sandbox time-travel 模式可一次会话压缩多日累积，快速测试机制
+- `scripts/bootstrap_l1_from_legacy.py` 冷启动兜底（读 D-043 旧 jsonl 生成首版 prefs，标 `bootstrap_from_legacy=true`）
 
 ---
 
