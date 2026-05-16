@@ -1,10 +1,12 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Route, Routes, useLocation } from "react-router-dom";
 import { LABELS } from "@/lib/labels";
-import { api } from "@/lib/api";
+import { api, isMock } from "@/lib/api";
+import { sandboxApi, type SandboxState } from "@/lib/sandbox";
 import { ChishaProvider, useChisha } from "@/lib/useChishaState";
 
 import { NavBar } from "@/components/NavBar";
+import { SandboxBar } from "@/components/SandboxBar";
 import { DetailPanel } from "@/components/DetailPanel";
 import { Toast } from "@/components/Toast";
 import { PageShell } from "@/components/PageShell";
@@ -60,6 +62,32 @@ function NotFound() {
 
 function Shell() {
   const { home, setHome, refreshInbox, toast } = useChisha();
+  // D-074 PR-1d: sandbox state 由 App 顶层管理, 启用时 SandboxBar 显示, 否则不渲染.
+  // 仅当真实后端可用 (isMock=false) 才尝试拉 state, mock 模式不调.
+  const [sandboxState, setSandboxState] = useState<SandboxState>({ enabled: false });
+
+  const refreshSandbox = useCallback(async () => {
+    if (isMock) return;
+    try {
+      const s = await sandboxApi.state();
+      setSandboxState(s);
+    } catch {
+      setSandboxState({ enabled: false });
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshSandbox();
+  }, [refreshSandbox]);
+
+  const onSandboxChange = useCallback(async () => {
+    await refreshSandbox();
+    // sandbox advance / reset 后, 清掉 HomePage 的 session 让用户重新推荐
+    // (虚拟日变了, 旧推荐结果失效); inbox 也重拉.
+    setHome({ session: null, pickedRank: null, detailCandidate: null,
+              refineHistory: [], skipped: false, skipReason: null });
+    await refreshInbox();
+  }, [refreshSandbox, refreshInbox, setHome]);
 
   // Detail "就这个" — mirrors HomePage's onPick (lock card + accept, no fake deeplink)
   async function onDetailPick(c: import("@/lib/types").Candidate) {
@@ -75,6 +103,7 @@ function Shell() {
 
   return (
     <>
+      <SandboxBar state={sandboxState} onChange={onSandboxChange} />
       <NavBar />
       <Routes>
         <Route path="/" element={<HomePage />} />
