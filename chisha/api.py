@@ -25,7 +25,8 @@ from chisha.session import create_session, save_session
 
 
 def _gen_session_id(meal_type: str) -> str:
-    today = dt.datetime.now().strftime("%Y%m%d")
+    from chisha import clock
+    today = clock.now().strftime("%Y%m%d")
     return f"{today}_{meal_type}_{secrets.token_hex(2)}"
 
 
@@ -112,7 +113,8 @@ def recommend_meal(
     rests, tagged = load_zone_data(zone, root)
     meal_log = load_meal_log(root)
 
-    today = today or dt.date.today()
+    from chisha import clock
+    today = today or clock.today()
     session_id = _gen_session_id(meal_type)
 
     # 1. Context 注入 (D-034)
@@ -140,7 +142,7 @@ def recommend_meal(
         "zone": zone,
         "round": 1,
         "version": "v2",
-        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "generated_at": clock.now_utc().isoformat(),
         "context": ctx.to_llm_dict(),
         "stats": {
             "n_dishes_total": len(tagged),

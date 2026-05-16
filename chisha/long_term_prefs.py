@@ -88,8 +88,9 @@ def append_feedback(
         return  # 空反馈不落盘
     path = _default_history_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
+    from chisha import clock
     entry = {
-        "ts": (timestamp or dt.datetime.now()).isoformat(),
+        "ts": (timestamp or clock.now()).isoformat(),
         "meal_type": meal_type,
         "chips": list(chips or []),
         "rating": rating_taste,
