@@ -15,6 +15,10 @@ npm run dev                      # http://localhost:5173 (默认: 真接口, /ap
 
 历史: 早期 mock-first 默认导致 D-073 调试时对着 mock 看不到 backend 实测差异 — 改 real-first + NavBar `MOCK` 角标双保险, 详见 IMPL_LOG D-073 sanity sweep.
 
+## Claude Code 自测约定
+
+改本目录任何 `.tsx` / `.css` / `vite.config.ts` 后, Claude Code 必须用 `mcp__chrome-devtools__*` 工具自驱浏览器验证 (导航到改动路由 + 走 golden path + 看 console / network), 不许只跑 vitest/tsc 就宣告完成. 详见根目录 [`CLAUDE.md`](../../CLAUDE.md) "前端自测" 章节.
+
 ## 路由
 
 | 路由 | 用途 | 状态 |

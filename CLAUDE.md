@@ -79,6 +79,20 @@ uv run python -m scripts.compare_traces                                         
 - **改 sandbox inspect 时**: 必须同时返回 long_term_prefs (走 load_prefs 三态) + long_term_prefs_raw (直读磁盘 raw json). load_prefs 在 boost+penalty 都空时返 None 是 L2 等价语义, 但 inspect 必须显示 regularities_freetext / signals_not_scored / evidence (D-078.3)
 - **Phase 1 (同事推广) 才考虑**: data zone 拆包 / OpenClaw 接入 / screener 设计 / 第二份 methodology spec / L1 词表进一步扩 (cuisine 偏好 token 等) — Phase 0 内不做
 
+## 前端自测(强制,改 apps/web 或 apps/debug-ui 必走)
+
+本项目装了 `chrome-devtools-mcp` (user scope, 2026-05-16). 改 `apps/web/src/**` (用户视图 :5173) 或 `apps/debug-ui/src/**` (D-075 SPA :5174) 任意 `.tsx` / `.css` / `vite.config.ts` / proxy 后, **必须用 `mcp__chrome-devtools__*` 工具自驱浏览器验证**,不许只跑 vitest/tsc 就宣告完成,也不许让志丹去当眼睛。
+
+最小流程:
+
+1. 确认两个 server 在跑:后端 `uv run python -m chisha.debug_server` (:8765) + Vite (`apps/web` :5173 或 `apps/debug-ui` :5174)
+2. `mcp__chrome-devtools__navigate` 打到改动涉及的路由
+3. 走一遍 golden path + 至少一个 edge case
+4. 看 `console_messages` 有没有 error/warn,看 `network_requests` 有没有 4xx/5xx
+5. 必要时截图反馈;**跑不通就直说"Vite 没起来 / 后端 502 / 没验"**,不要假装通过
+
+不适用:纯后端 (`chisha/**` Python) / 脚本 (`scripts/**`) / 测试 (`tests/**`) 改动 — pytest + baseline_l2_snapshot 已经够。
+
 ## 提醒(给未来的 Claude Code)
 
 - DECISIONS.md 已经发生过定位漂移 (62.5% 条目漂成工程日志);P0 拆分后**严格守边界**,新条目写之前先过判别准则

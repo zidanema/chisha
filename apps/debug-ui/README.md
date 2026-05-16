@@ -22,6 +22,10 @@ npm run dev                            # http://127.0.0.1:5174
 打开 http://127.0.0.1:5174/ 即可。Vite proxy `/api → :8765` 已配。
 后端 offline 时 SPA 自动 fallback 到内置 mock,顶栏 pill 变橙色提示。
 
+## Claude Code 自测约定
+
+改本目录任何 `.tsx` / `.css` / `vite.config.ts` 后, Claude Code 必须用 `mcp__chrome-devtools__*` 工具自驱浏览器验证 (导航 + 走完整 DAG 渲染 + 切主题 + 看 console / network), 不许只跑 lint/tsc 就宣告完成. 详见根目录 [`CLAUDE.md`](../../CLAUDE.md) "前端自测" 章节.
+
 ## 主题切换
 
 5 套 palette: `dark-cool / dark-warm / dark-mono / light-paper / light-modern`。
