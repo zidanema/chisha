@@ -905,22 +905,18 @@ def test_apply_caps_regression_against_naive_chain():
 
 
 def test_rank_combos_end_to_end_root_closes_feedback_loop(tmp_path, monkeypatch):
-    """Codex 二审 WARN 修复: 端到端验证 rank_combos(root=...) 透传到 load_runtime_hints.
+    """D-073 PR-0.7 后: 验证 rank_combos(root=...) 透传到 l1_prefs.load_prefs.
 
-    不 mock 底层, 直接走完整 rank_combos 路径: 用 tmp root 写反馈 → rank_combos
-    传同一 tmp root 读 → taste_match 命中, 证明 root 闭合.
+    旧 D-043: append_feedback 写 jsonl → load_runtime_hints 读 → hints
+    新 D-073: l1_extractor 抽取 → save_prefs 写 → load_prefs 读 → hints
     """
-    from chisha.long_term_prefs import append_feedback
+    from chisha.l1_prefs import save_prefs
     import datetime as dt2
-    # 写 3 条"想喝汤" feedback 到 tmp_path
-    for i in range(3):
-        append_feedback(
-            chips=["想喝汤"], rating_taste=4,
-            timestamp=dt2.datetime(2026, 5, 13 - i),
-            root=tmp_path,
-        )
-    # 让 long_term_prefs 默认 path 解析到 tmp_path
-    # 但这里我们走 rank_combos(root=tmp_path), 内部应当透传, 不需要 monkeypatch
+    save_prefs(
+        {"boost": ["wetness"], "penalty": [],
+         "based_on_meals": 5, "extracted_at": "2026-05-13T00:00:00"},
+        root=tmp_path,
+    )
     profile = {
         "basics": {}, "plate_rule": {"min_protein_g": 0, "must_have_vegetable": False},
         "preferences": {}, "scoring_weights": {"taste_match": 1.0},
@@ -934,30 +930,29 @@ def test_rank_combos_end_to_end_root_closes_feedback_loop(tmp_path, monkeypatch)
     out = rank_combos([combo], profile, today=dt2.date(2026, 5, 13),
                        root=tmp_path)
     br = out[0]["score_breakdown"]
-    # taste_match 必须 > 0 (wetness boost 命中, 来自 tmp_path 反馈)
+    # taste_match 必须 > 0 (wetness boost 命中, 来自 tmp_path prefs)
     assert br["taste_match"] > 0.0
 
 
 def test_rank_combos_default_root_does_not_pick_up_custom_root_feedback(
     tmp_path, monkeypatch
 ):
-    """端到端验证: rank_combos 默认 root 不会读到 tmp_path 写入的反馈."""
-    from chisha.long_term_prefs import append_feedback
+    """D-073 PR-0.7 后: 默认 root 不会读到 tmp_path prefs.json."""
+    from chisha.l1_prefs import save_prefs
     import datetime as dt2
-    # 在 tmp_path 写 (默认根读不到)
-    for i in range(3):
-        append_feedback(
-            chips=["想喝汤"], rating_taste=4,
-            timestamp=dt2.datetime(2026, 5, 13 - i),
-            root=tmp_path,
-        )
-    # monkeypatch 默认根指向另一个空目录, 避免污染真实 data/
+    # 在 tmp_path 写 prefs (默认根读不到)
+    save_prefs(
+        {"boost": ["wetness"], "penalty": [],
+         "based_on_meals": 5, "extracted_at": "2026-05-13T00:00:00"},
+        root=tmp_path,
+    )
+    # monkeypatch _prefs_path 让默认根指向另一个空目录
     other = tmp_path / "other_root"
     other.mkdir()
-    from chisha import long_term_prefs as ltp
+    from chisha import l1_prefs as lp
     monkeypatch.setattr(
-        ltp, "_default_history_path",
-        lambda root=None: (root or other) / "data" / "feedback_history.jsonl",
+        lp, "_prefs_path",
+        lambda root=None: (root or other) / "data" / "long_term_prefs.json",
     )
     profile = {
         "basics": {}, "plate_rule": {"min_protein_g": 0, "must_have_vegetable": False},
@@ -969,7 +964,7 @@ def test_rank_combos_default_root_does_not_pick_up_custom_root_feedback(
                               vegetable_ratio_estimate=0.8, spicy_level=0,
                               oil_level=5)],
     }
-    # rank_combos 不传 root → 走 monkeypatched 默认根 (other, 空目录) → 读不到 hint
+    # rank_combos 不传 root → 走 patched 默认根 (other, 空) → 读不到 hint
     out = rank_combos([combo], profile, today=dt2.date(2026, 5, 13))
     br = out[0]["score_breakdown"]
     # taste_match 应为 0 (没读到任何 hints)
@@ -1042,24 +1037,23 @@ def test_food_form_powder_noodle_still_noodle():
 # ─────────────────────── D-043 Codex review fix: hints 三源合并
 def test_rank_combos_merges_explicit_static_runtime_hints(basic_profile, tmp_path,
                                                             monkeypatch):
-    """Codex MAJOR 修复: 显式 taste_hints 也要 merge static + runtime, 不再短路.
+    """D-073 PR-0.7 后: 显式 taste_hints 也要 merge static + L1 prefs.
 
-    设计: combo 命中 wetness 但 oil 高 → 显式 hints 不含 wetness → 只有 runtime
-    含 wetness 时 taste_match 才能命中. 这样断言确切证明 runtime hints 合并生效.
+    设计: combo 命中 wetness 但 oil 高 → 显式 hints 不含 wetness → 只有 L1 prefs
+    含 wetness 时 taste_match 才能命中. 这样断言确切证明 L1 prefs 合并生效.
     """
-    from chisha.long_term_prefs import append_feedback
+    from chisha.l1_prefs import save_prefs
     import datetime as dt2
-    for i in range(3):
-        append_feedback(
-            chips=["想喝汤"], rating_taste=4,
-            timestamp=dt2.datetime(2026, 5, 13 - i),
-            root=tmp_path,
-        )
-    # monkey-patch _default_history_path 让 long_term_prefs 读 tmp_path
-    from chisha import long_term_prefs as ltp
+    save_prefs(
+        {"boost": ["wetness"], "penalty": [],
+         "based_on_meals": 5, "extracted_at": "2026-05-13T00:00:00"},
+        root=tmp_path,
+    )
+    # monkey-patch _prefs_path 让 l1_prefs 读 tmp_path
+    from chisha import l1_prefs as lp
     monkeypatch.setattr(
-        ltp, "_default_history_path",
-        lambda root=None: tmp_path / "data" / "feedback_history.jsonl"
+        lp, "_prefs_path",
+        lambda root=None: tmp_path / "data" / "long_term_prefs.json"
     )
     basic_profile.pop("taste_description", None)  # 排除 static 干扰
     # 显式 hints 不含 wetness (只含 spicy penalty, 与 wetness 无关)
@@ -1073,7 +1067,7 @@ def test_rank_combos_merges_explicit_static_runtime_hints(basic_profile, tmp_pat
     out = rank_combos([combo], basic_profile, today=dt2.date(2026, 5, 13),
                        taste_hints=explicit)
     br = out[0]["score_breakdown"]
-    # 必须 > 0: 因为 runtime hints 注入了 wetness boost, combo wetness=3 → +0.5 × 0.4
+    # 必须 > 0: 因为 L1 prefs 注入了 wetness boost, combo wetness=3 → +0.5 × 0.4
     assert br["taste_match"] > 0.0
 
 
