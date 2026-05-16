@@ -71,6 +71,76 @@ def load_meal_log(root: Path) -> list[dict]:
     return out
 
 
+def append_meal_log_entry(
+    root: Path,
+    session_id: str,
+    meal_type: str,
+    restaurant_id: str,
+    restaurant_name: str,
+    dishes: list[dict],
+    *,
+    zone: str | None = None,
+    accepted_rank: int | None = None,
+    combo_index: int | None = None,
+    candidate_id: str | None = None,
+) -> dict:
+    """D-078: accept 时往 meal_log.jsonl 追加一条记录, 让 diversity_filter 闭环.
+
+    Schema 与 load_meal_log / diversity_filter 已有期望一致, 并加审计字段:
+      {timestamp, session_id, meal_type, zone, restaurant_id, restaurant_name,
+       accepted_rank, combo_index, candidate_id,
+       dishes: [{main_ingredient_type, canonical_name}, ...]}
+
+    时钟走 chisha.clock.now_utc(root), sandbox 启用时自动用虚拟时钟.
+
+    dishes 接受两种形态:
+      - flat (chisha.api._format_candidate 输出): {main_ingredient_type, oil_level}
+      - nested (raw tagged): {nutrition_profile: {main_ingredient_type, ...}}
+    两种都规范化成 flat main_ingredient_type 落盘.
+
+    并发: append 模式无锁, 与 recommend_log.jsonl 同等约束 (单进程单后端). 多 tab
+    高频 accept 在同一秒内的极端情况下可能行交错, 当前 V1 自用单后端不补锁.
+    """
+    from chisha import clock, data_root
+    p = data_root.meal_log_path(root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    flat_dishes: list[dict] = []
+    for d in dishes or []:
+        ing = d.get("main_ingredient_type")
+        if ing is None:
+            np_ = d.get("nutrition_profile") or {}
+            ing = np_.get("main_ingredient_type")
+        entry_d = {}
+        if ing is not None:
+            entry_d["main_ingredient_type"] = ing
+        name = d.get("canonical_name") or d.get("name")
+        if name:
+            entry_d["canonical_name"] = name
+        flat_dishes.append(entry_d)
+
+    entry: dict = {
+        "timestamp": clock.now_utc(root=root).isoformat(),
+        "session_id": session_id,
+        "meal_type": meal_type,
+        "restaurant_id": restaurant_id,
+        "restaurant_name": restaurant_name,
+        "dishes": flat_dishes,
+    }
+    if zone is not None:
+        entry["zone"] = zone
+    if accepted_rank is not None:
+        entry["accepted_rank"] = accepted_rank
+    if combo_index is not None:
+        entry["combo_index"] = combo_index
+    if candidate_id is not None:
+        entry["candidate_id"] = candidate_id
+
+    with p.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return entry
+
+
 def compute_extra_banned_restaurants(
     restaurants: list[dict],
     profile: dict,

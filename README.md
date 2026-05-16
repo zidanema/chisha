@@ -34,11 +34,11 @@
 
 ## 项目状态
 
-**Phase 0 工程侧已收尾**（2026-05-16）—— 「原则派点餐执行外包」定位收敛（[D-070](docs/DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)）+ 砍 mood picker（D-071, 已 superseded by D-073）+ methodology spec 抽象（[D-072](docs/DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)/[D-072.1](docs/DECISIONS.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)）+ **refine 结构化意图（[D-073](docs/DECISIONS.md#d-073-refine-走结构化意图-refineintent--重召回-让用户主动表达诉求真正生效) + [D-073.1](docs/DECISIONS.md#d-0731-refine-显式-cuisine_want-时-目标菜系免-cuisinebrandfood_form-cap)）** + **L1 长期反馈层真兑现（[D-076](docs/DECISIONS.md#d-076-l1-长期反馈层重构--砍伪-l1--llm-抽取-v1x)）** + **Sandbox Time-Travel 模式（[D-077](docs/DECISIONS.md#d-077-sandbox-time-travel-模式-v1x)）** + 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + FastAPI 20 端点（D-069 13 + D-076 1 + D-077 6）。
+**Phase 0 工程侧已收尾**（2026-05-16）—— 「原则派点餐执行外包」定位收敛（[D-070](docs/DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1)）+ 砍 mood picker（D-071, 已 superseded by D-073）+ methodology spec 抽象（[D-072](docs/DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)/[D-072.1](docs/DECISIONS.md#d-0721-phase-b-不等-step-2-自用数据-用-l2-trace-baseline-替代)）+ **refine 结构化意图（[D-073](docs/DECISIONS.md#d-073-refine-走结构化意图-refineintent--重召回-让用户主动表达诉求真正生效) + [D-073.1](docs/DECISIONS.md#d-0731-refine-显式-cuisine_want-时-目标菜系免-cuisinebrandfood_form-cap)）** + **L1 长期反馈层真兑现（[D-076](docs/DECISIONS.md#d-076-l1-长期反馈层重构--砍伪-l1--llm-抽取-v1x)）** + **Sandbox Time-Travel 模式（[D-077](docs/DECISIONS.md#d-077-sandbox-time-travel-模式-v1x)）** + **Sandbox 收尾修补（[D-078](docs/DECISIONS.md#d-078-sandbox-时钟漏注入修补--acceptmeal_log-闭环-cooldown-v1x)，时钟漏注入+meal_log 闭环 cooldown+Codex 二轮 audit）** + 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + FastAPI 20 端点（D-069 13 + D-076 1 + D-077 6）。
 
 **refine 链路大改**（[D-073](docs/DECISIONS.md#d-073-refine-走结构化意图-refineintent--重召回-让用户主动表达诉求真正生效) + [D-073.1](docs/DECISIONS.md#d-0731-refine-显式-cuisine_want-时-目标菜系免-cuisinebrandfood_form-cap)）—— 实测"想吃点湖南菜，然后肉多一点"暴露 CHIP_VOCAB 封闭词表 + chip 死映射 + refine 不重召回 3 个结构性约束 → 拆 parser、开放 RefineIntent schema、重做 recall、L2 加 intent_match_bonus、健康 guardrail、彻底砍 D-071；D-073.1 修 apply_caps 边界。
 
-Step 2 用户自用验证现在可走 sandbox 一次会话压缩到分钟级（开沙盒 → 点"下一天" → 真实写反馈 → inspect 看 L1 抽取产物），不必等真实日历日 → Phase 1 同事推广。
+Step 2 用户自用验证现在可走 sandbox 一次会话压缩到分钟级（开沙盒 → 点"下一天" → 真实写反馈 → inspect 看 L1 抽取产物），不必等真实日历日 → Phase 1 同事推广。D-078 修补后真实 LLM 5 日演练已绿（based_on_meals 累积 1→2→3→4 + LLM 抽出 boost=low_oil + cooldown 屏蔽 + 8d 后解锁全部跑通）。
 
 > **V1 主交互**：本机 localhost Web SPA。`cd apps/web && npm install && npm run dev` → http://localhost:5173。详见 [`apps/web/README.md`](apps/web/README.md) + [`docs/style-guide.md`](docs/style-guide.md) + [`docs/api.md`](docs/api.md)。飞书延后到 V1.5 做推送通道。
 

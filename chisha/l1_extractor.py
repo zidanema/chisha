@@ -60,6 +60,7 @@ def aggregate_inputs(
     profile: dict,
     today: dt.date | None = None,
     window_days: int = DEFAULT_WINDOW_DAYS,
+    root: Path | None = None,
 ) -> dict:
     """Deterministic 预聚合 — 不走 LLM, 不抽取信号, 只计数.
 
@@ -69,13 +70,18 @@ def aggregate_inputs(
     Args:
         feedback_store_data: feedback_store.load_store() 返回的 dict
         profile: profile.yaml 加载结果
-        today: 当日, None = 现在
+        today: 当日, None = clock.today(root) (D-077 PR-1a 第 12 处时间注入修补,
+               原 dt.date.today() 在 sandbox 模式下用真实时钟, 把虚拟时钟产生的
+               未来日期反馈整批过滤, 导致 based_on_meals 永远停在 1)
         window_days: 回看窗口, 默认 14 天
+        root: 仓库根 (供 clock.today 解析 sandbox state)
 
     Returns:
         summary dict, 送 LLM prompt 用. 永不抛错, 数据不足时 based_on_meals=0.
     """
-    today = today or dt.date.today()
+    if today is None:
+        from chisha import clock
+        today = clock.today(root=root)
     cutoff = today - dt.timedelta(days=window_days)
     feedbacks: dict[str, dict] = feedback_store_data.get("feedbacks") or {}
     accepted: dict[str, dict] = feedback_store_data.get("accepted") or {}
@@ -235,13 +241,16 @@ def _extract_json_from_text(raw: str) -> dict:
 
 # Default LLM call: lazy import 避免 test 时强依赖 llm_client.
 def _default_llm_call(prompt: str, system: str, profile_llm: dict | None) -> str:
-    """走 chisha.llm_client.call. 默认 provider auto (claude_code_cli 优先).
+    """走 chisha.llm_client.call_text. 默认 provider auto (claude_code_cli 优先).
 
     返回纯文本 (content). 不传 tools, claude_code_cli 才能用 (D-076 拍板 1A).
+
+    D-078 修补: 原写的是 `llm_client.call`, 实际只存在 `call_text` (D-047 改名
+    后 L1 没跟上). 之前 based_on_meals 永远卡在 1 (D-078 时钟 bug) 掩盖了这处.
     """
-    from chisha.llm_client import call as llm_call
-    result = llm_call(
-        prompt=prompt,
+    from chisha.llm_client import call_text
+    result = call_text(
+        prompt,
         system=system,
         max_tokens=2048,
         temperature=0.0,
@@ -361,7 +370,8 @@ def extract_and_save(
         最终 prefs dict (含 extracted_at / based_on_*)
     """
     summary = aggregate_inputs(
-        feedback_store_data, profile, today=today, window_days=window_days
+        feedback_store_data, profile, today=today, window_days=window_days,
+        root=root,
     )
     prefs = extract_prefs(
         summary,

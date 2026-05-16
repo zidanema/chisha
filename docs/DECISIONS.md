@@ -3174,3 +3174,86 @@ D-编号占用:
 讨论存档:
 - D-036 dual-model audit: Codex S2 第二轮 review 揭出 tool_use 矛盾
   + PR-0.7 等价性风险, 引出 bootstrap_from_legacy + 三态守门
+
+
+## D-078: Sandbox 时钟漏注入修补 + accept→meal_log 闭环 cooldown (V1.x)
+
+日期: 2026-05-16
+状态: active · 落地: 2026-05-16 (1 commit, S2 Codex review 两轮)
+
+背景:
+D-077 sandbox 落地后用户视角 e2e 自验 (5 日推进真实 LLM 闭环) 抓到 3 个连带
+bug, 全部因为「之前从没真正端到端走过」:
+
+1. **L1 时钟漏注入 (P0)**: `l1_extractor.aggregate_inputs` 默认 today 用
+   `dt.date.today()` 真实时钟; 但 feedback.submitted_at 由 `clock.now_utc()`
+   产生虚拟时钟时间. 沙盒推进到 Day 5 时, real today ≈ 2026-05-16, 虚拟
+   feedbacks 落在 2026-05-16..05-20; `ts > today` 全部判为「未来」过滤掉,
+   based_on_meals 永远 = 1 < MIN=3 → 永远 skipped_extraction → L1 prefs 永远
+   空. D-077 PR-1a 自称「11 处时间注入」, 漏了第 12 处.
+2. **meal_log 写入端缺失 (P1)**: D-077 文档自认 V1 gap, 但 ROADMAP 又说
+   「开 sandbox 推进 7 天看 cooldown 屏蔽行为」—— 矛盾. `/api/accept` 只写
+   feedback_store, 不写 meal_log.jsonl, recall.diversity_filter 读空集 →
+   沙盒推进时 cooldown 完全失效 (Day N+1 推 Day N accept 的店在 #1).
+3. **llm_client.call 不存在 (P0 连带)**: D-047 改名 call → call_text, L1 没
+   跟上. bug-1 把 based_on_meals 锁 1 → 永远不进 LLM 分支, 一直没暴露.
+
+修复 (志丹原则 #2 「不阉割不绕开」):
+- l1_extractor.aggregate_inputs 加 `root` 参数, 默认 today=`clock.today(root)`;
+  extract_and_save 透传 root. 守门测试 test_aggregate_default_today_uses_chisha_clock.
+- l1_extractor._default_llm_call 改用 `llm_client.call_text` (位置参数). 守门
+  测试 test_default_llm_call_uses_existing_llm_client_symbol.
+- chisha/recall.py 新增 `append_meal_log_entry(zone, accepted_rank, combo_index,
+  candidate_id 可选审计字段)`, 时钟走 clock.now_utc(root). api_accept 在
+  record_accept 后调用, hard-fail (与 record_accept 同等级别 — meal_log 是
+  diversity cooldown 的 source-of-truth, accept_count > meal_log 暗洞会让
+  一周内重餐厅).
+
+Codex S2 review 二轮额外修补:
+- **Q3-High** reset/disable 在 L1 worker 运行时执行 → save_prefs 走回 prod
+  data/long_term_prefs.json 污染. 修法: reset/disable 抢 L1_EXTRACTION_LOCK,
+  抢不到 timeout 30s 后 409. 守门 anchor 13.
+- **Q2** advance 在 L1 pending 期间裸 POST 绕过 UI disable → trylock 跳过,
+  新日期 L1 不重抽 stale prefs 生效. 修法: api_sandbox_advance 在 status=
+  pending 时直接 409. 守门 anchor 14. SandboxBar 同时 disable 按钮兜底.
+- **Q1** 半态 transaction (record_accept 成功 + meal_log 失败 = 500 但 banner
+  已弹): 评估后保留 hard-fail, V1 自用单后端 + 磁盘故障是全局风险, 一致性
+  比 UX 重要. 完整 2-write transaction 留待 V2 引入持久层时设计.
+
+inspect drawer UX (P2):
+- SandboxBar 三态显示: prefs=null → 「未抽取」; skipped_extraction → 「⏳ 样本
+  不足 N/3」; 其它 → 正常 boost/penalty 渲染. meal_log_recent 从占位文案改
+  成真实条目渲染.
+
+D-编号占用:
+- 检查 docs/DECISIONS.md 末尾确认 D-078 空缺 (memory 草稿 ai_friendly 没真正
+  落 DECISIONS, 按"先到先得"占 D-078). AI-friendly 真正落条目改用 D-076+.
+
+不在 D-078 内:
+- diversity_filter 按 zone 过滤 (跨 zone 污染概率低, 留 D-076+ 决策)
+- reset/disable 抢锁失败的完整 dirty-flag 补跑机制 (D-078.1 候补)
+- meal_log 多 tab 并发 append 加文件锁 (与 recommend_log 同等约束, V1 单用户
+  单后端不必)
+- L1→L2 整轮重抽 (advance 在 pending 期间被 409, 用户必须等; 完整 dirty-flag
+  重排队留 D-078.1)
+
+验证:
+- 542 pytest 全过 (+4 守门 anchor 11/12/13/14, +2 单测)
+- baseline_l2_snapshot 4 snap md5 bit-identical (0 drift)
+- 真实 LLM (Max 订阅 claude_code_cli) 5 日沙盒演练: based_on_meals 累积
+  1→2→3→4, Day 4 触发 LLM 12s, 抽出 boost=["low_oil"] + evidence "4/4 oil
+  calibration=too_high", Day 12 (7d 后) Day 1 店重回候选 (cooldown 解锁),
+  taste_match_bonus(低油 hints={boost:[low_oil]})=0.5, 高油=0.0.
+
+依赖 / 影响:
+- 修补 D-076 (L1 LLM 抽取层) + D-077 (Sandbox Time-Travel) 落地后的连带空洞
+- 不动 L2 trace (baseline 0 diff)
+- 替 ROADMAP 兑现「开 sandbox 推进 7 天看 cooldown 屏蔽行为」承诺
+
+讨论存档:
+- Codex S1 (codex-rescue): 给出 P1×3 / P2×4 issue list, 含 zone 缺失
+  / hard-fail vs soft-fail / advance race / wait_l1_settle 提 conftest /
+  D-078 编号合法性 5 个角度
+- Codex S2 (codex-rescue): 揭出 reset/disable 期间 L1 worker 写盘污染 prod
+  路径 (High) + advance 期间 pending 绕过路径 (Medium) + 半态 transaction
+  (Q1, 拍板保留 hard-fail)

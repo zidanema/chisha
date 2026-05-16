@@ -1,7 +1,7 @@
 # chisha · 项目级指令
 
 > 项目名:今天吃点啥 (chisha) · 个人 AI **原则派点餐执行外包**工具 (L0 方法论 spec / L1 数据 / L2 打分 / L3 LLM 精排)
-> 当前阶段:**Phase 0 工程侧收尾** — 推荐链路 + Web SPA + V1.1 反馈 + FastAPI 20 端点 + 砍 mood picker + methodology spec 抽象 + **D-070 L1 真兑现 (LLM 抽取)** + **D-077 sandbox time-travel 模式** 全部 ready (D-001~D-077, 2026-05-16)。Step 2 用户自用验证现在可走 sandbox 一次会话内压缩验证, 不必等真实日历日。
+> 当前阶段:**Phase 0 工程侧收尾** — 推荐链路 + Web SPA + V1.1 反馈 + FastAPI 20 端点 + 砍 mood picker + methodology spec 抽象 + **D-070 L1 真兑现 (LLM 抽取)** + **D-077 sandbox time-travel 模式** + **D-078 sandbox 收尾修补 (时钟漏注+meal_log 闭环 cooldown+Codex 二轮 audit)** 全部 ready (D-001~D-078, 2026-05-16)。Step 2 用户自用验证现在可走 sandbox 一次会话内压缩验证, 不必等真实日历日; 真实 LLM 5 日演练已绿。
 > 主语言:Python (后端) + TypeScript (前端) · 包管理:uv / npm · 测试:pytest
 
 ## 必读(首次接触本项目)
@@ -59,7 +59,7 @@ uv run python -m scripts.baseline_l2_snapshot --out-dir tmp/baseline_traces_afte
 uv run python -m scripts.compare_traces                                            # 严格对比 (EPSILON=1e-6)
 ```
 
-## 推荐链路改动红线 (D-070~D-077 沉淀)
+## 推荐链路改动红线 (D-070~D-078 沉淀)
 
 - **不要让用户主动选 mood**: D-071 砍掉 mood picker. 新心情维度走 refine 文本或 L3 prompt, 绝不在前端加 chip
 - **`infer_refine_mood` 只服务 want_soup**: 不许扩为通用 mood parser (D-071 边界, 单测有守门 8 case)
@@ -68,7 +68,10 @@ uv run python -m scripts.compare_traces                                         
 - **L1 词表锁定**: `score.taste_match_bonus` 现支持 6 token (low_oil/wetness/sweet_sauce/processed_meat/carb_heavy/spicy), 扩词表 = 改打分逻辑, 违反 D-072 边界, Phase 1 独立决策 (D-076)
 - **L1 抽取走 claude_code_cli text 路径**: 不传 tools (CLI 不支持 tool_use). prompt 在 `prompts/l1_extract.md`, 改 prompt 走 D-036 dual-model audit (D-076)
 - **sandbox 是 user web 一个 mode**: 不允许做 CLI 替代或 fixture batch (D-077 原则 #1). 行为完全一致 prod (#2), 仅时钟 + 数据落盘根隔离 (#3)
-- **改时间相关逻辑前先看 11 处时间注入**: web_api/api/refine/feedback_store/session/long_term_prefs 已替换走 `chisha.clock.*`. 不注入: time.time latency / corrupt backup ts / comment id 毫秒 (D-077 PR-1a)
+- **改时间相关逻辑前先看 12 处时间注入**: web_api/api/refine/feedback_store/session/long_term_prefs/**l1_extractor** 已替换走 `chisha.clock.*`. 不注入: time.time latency / corrupt backup ts / comment id 毫秒 (D-077 PR-1a + D-078 l1_extractor 修补)
+- **改 sandbox 生命周期相关时**: reset/disable 必须先抢 `_L1_EXTRACTION_LOCK` (web_api `_block_until_l1_idle_or_409`), 否则 worker 中途 save_prefs 会污染 prod long_term_prefs.json. advance 在 status=pending 时直接返 409 防 UI bypass (D-078 Codex S2 Q3-High/Q2)
+- **改 /api/accept 时**: meal_log.jsonl 是 diversity cooldown source-of-truth. record_accept 和 append_meal_log_entry 必须同等 hard-fail. 砍掉 meal_log 写入 = 一周内重餐厅 (D-078 P1)
+- **L1 抽取必须接虚拟时钟**: l1_extractor.aggregate_inputs/extract_and_save 必须透传 root, 默认 today=clock.today(root). 守门测试 test_aggregate_default_today_uses_chisha_clock + test_default_llm_call_uses_existing_llm_client_symbol 不许删 (D-078 P0)
 - **Phase 1 (同事推广) 才考虑**: data zone 拆包 / OpenClaw 接入 / screener 设计 / 第二份 methodology spec — Phase 0 内不做
 
 ## 提醒(给未来的 Claude Code)

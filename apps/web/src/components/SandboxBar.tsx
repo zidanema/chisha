@@ -90,6 +90,12 @@ export function SandboxBar({
   // sandbox 关闭 → 不渲染
   if (!state.enabled) return null;
 
+  // D-078 P1-3: L1 抽取 pending 时禁用 advance, 防止 trylock 跳过新触发
+  // (worker 用旧虚拟日期跑, advance 期间不重抽 → state 静默错). 完整修法 (dirty
+  // flag → 锁释放后补跑) 留待 D-078.1.
+  const l1Pending = state.last_l1_extraction?.status === "pending";
+  const advanceDisabled = !!busy || l1Pending;
+
   const badge = l1StatusBadge(state);
   const toneClass =
     badge.tone === "good"
@@ -128,7 +134,8 @@ export function SandboxBar({
               className="px-2.5 py-1 rounded border border-amber-400
                 bg-white hover:bg-amber-100 disabled:opacity-50"
               onClick={() => onAdvance(1)}
-              disabled={!!busy}
+              disabled={advanceDisabled}
+              title={l1Pending ? "L1 抽取中, 完成后再推进" : undefined}
             >
               下一天 →
             </button>
@@ -136,7 +143,8 @@ export function SandboxBar({
               className="px-2.5 py-1 rounded border border-amber-400
                 bg-white hover:bg-amber-100 disabled:opacity-50"
               onClick={() => onAdvance(3)}
-              disabled={!!busy}
+              disabled={advanceDisabled}
+              title={l1Pending ? "L1 抽取中, 完成后再推进" : undefined}
             >
               +3 天
             </button>
@@ -222,47 +230,70 @@ function InspectDrawer({
         {inspect && inspect.enabled && (
           <div className="space-y-4 text-[13px]">
             <Section title="当前 L1 长期偏好 (生效)">
-              {inspect.long_term_prefs ? (
-                <>
-                  <div>
-                    <span className="font-mono text-emerald-700">boost</span>:{" "}
-                    {inspect.long_term_prefs.boost.length
-                      ? inspect.long_term_prefs.boost.join(", ")
-                      : "(空)"}
-                  </div>
-                  <div>
-                    <span className="font-mono text-rose-700">penalty</span>:{" "}
-                    {inspect.long_term_prefs.penalty.length
-                      ? inspect.long_term_prefs.penalty.join(", ")
-                      : "(空)"}
-                  </div>
-                  <div className="text-stone-500 text-[11.5px] mt-1">
-                    based_on_meals:{" "}
-                    {inspect.long_term_prefs.based_on_meals ?? 0}
-                    {inspect.long_term_prefs.extracted_at &&
-                      ` · ${inspect.long_term_prefs.extracted_at}`}
-                  </div>
-                  {!!inspect.long_term_prefs.evidence?.length && (
-                    <ul className="mt-2 list-disc list-inside text-stone-600 text-[12px]">
-                      {inspect.long_term_prefs.evidence.slice(0, 5).map((ev, i) => (
-                        <li key={i}>
-                          <b>{ev.token}</b>: {ev.rationale}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {!!inspect.long_term_prefs.regularities_freetext?.length && (
-                    <div className="mt-2 text-stone-500 text-[12px]">
-                      regularities:{" "}
-                      {inspect.long_term_prefs.regularities_freetext.join(" · ")}
+              {(() => {
+                const p = inspect.long_term_prefs;
+                // D-078: 三态显示
+                //   (a) p == null               → 未抽取 (从未触发)
+                //   (b) p.skipped_extraction    → 抽取了但样本不足, 暂未生效
+                //   (c) 其它                    → 有 prefs (boost/penalty 可空)
+                if (!p) {
+                  return (
+                    <div className="text-stone-500">
+                      未抽取 (advance 后会自动触发, 或反馈累积 ≥3 次)
                     </div>
-                  )}
-                </>
-              ) : (
-                <div className="text-stone-500">
-                  暂无 L1 prefs (still cold-start, 反馈累积 ≥3 次后抽取)
-                </div>
-              )}
+                  );
+                }
+                if (p.skipped_extraction) {
+                  return (
+                    <>
+                      <div className="text-amber-700">
+                        ⏳ 已抽取但样本不足 ({p.based_on_meals ?? 0}/3 餐) —
+                        暂不生效, 继续推进/累积反馈
+                      </div>
+                      {!!p.regularities_freetext?.length && (
+                        <div className="mt-1 text-stone-500 text-[12px]">
+                          {p.regularities_freetext.join(" · ")}
+                        </div>
+                      )}
+                      {p.extracted_at && (
+                        <div className="text-stone-500 text-[11.5px] mt-1">
+                          extracted_at: {p.extracted_at}
+                        </div>
+                      )}
+                    </>
+                  );
+                }
+                return (
+                  <>
+                    <div>
+                      <span className="font-mono text-emerald-700">boost</span>:{" "}
+                      {p.boost.length ? p.boost.join(", ") : "(空)"}
+                    </div>
+                    <div>
+                      <span className="font-mono text-rose-700">penalty</span>:{" "}
+                      {p.penalty.length ? p.penalty.join(", ") : "(空)"}
+                    </div>
+                    <div className="text-stone-500 text-[11.5px] mt-1">
+                      based_on_meals: {p.based_on_meals ?? 0}
+                      {p.extracted_at && ` · ${p.extracted_at}`}
+                    </div>
+                    {!!p.evidence?.length && (
+                      <ul className="mt-2 list-disc list-inside text-stone-600 text-[12px]">
+                        {p.evidence.slice(0, 5).map((ev, i) => (
+                          <li key={i}>
+                            <b>{ev.token}</b>: {ev.rationale}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {!!p.regularities_freetext?.length && (
+                      <div className="mt-2 text-stone-500 text-[12px]">
+                        regularities: {p.regularities_freetext.join(" · ")}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </Section>
 
             <Section title={`最近 V1.1 反馈 (${inspect.feedbacks_total ?? 0})`}>
@@ -291,10 +322,23 @@ function InspectDrawer({
                 inspect.meal_log_recent?.length ?? 0
               }`}
             >
-              <div className="text-stone-500 text-[12px]">
-                (meal_log 写入逻辑由后续 V1.2 补, 当前 sandbox 推荐 → accept
-                只写 feedback_store, meal_log 暂为空)
-              </div>
+              {inspect.meal_log_recent?.length ? (
+                <ul className="space-y-1 text-[12px]">
+                  {inspect.meal_log_recent.slice(-5).map((m, i) => (
+                    <li key={i} className="font-mono text-stone-600 truncate">
+                      {(m.timestamp as string)?.slice(0, 10)} · {String(m.restaurant_name)} ·{" "}
+                      {((m.dishes as Array<{ main_ingredient_type?: string }>) || [])
+                        .map((d) => d.main_ingredient_type)
+                        .filter(Boolean)
+                        .join("/")}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-stone-500 text-[12px]">
+                  尚无 meal_log (accept 后自动写, cooldown 起作用)
+                </div>
+              )}
             </Section>
           </div>
         )}
