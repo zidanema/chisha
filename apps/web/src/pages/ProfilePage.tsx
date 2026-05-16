@@ -98,6 +98,8 @@ export function ProfilePage() {
           {LABELS.ui.profileLastMod}：2026-05-13 09:12
         </div>
 
+        <SandboxControlSection />
+
         <FooterBar />
       </PageShell>
     );
@@ -480,20 +482,16 @@ export function ProfilePage() {
 
 // D-077 PR-1d: ProfilePage 沙盒入口 — 不在 navbar 加, 放 profile 最底 "调试/沙盒" 段
 // (志丹原则: user web 默认无沙盒, 入口含蓄, 启用后 SandboxBar 接管显示).
-import { sandboxApi, type SandboxState } from "@/lib/sandbox";
+// 修: sandboxState 走 ChishaCtx, onInit 后调 refreshSandbox 通知顶层 SandboxBar.
+import { sandboxApi } from "@/lib/sandbox";
 import { isMock } from "@/lib/api";
 
 function SandboxControlSection() {
-  const [state, setState] = useState<SandboxState>({ enabled: false });
+  const { sandboxState: state, refreshSandbox } = useChisha();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [startDate, setStartDate] = useState("");
   const [copyData, setCopyData] = useState(false);
-
-  useEffect(() => {
-    if (isMock) return;
-    sandboxApi.state().then(setState).catch(() => {});
-  }, []);
 
   if (isMock) return null; // mock 模式不展示
 
@@ -501,11 +499,11 @@ function SandboxControlSection() {
     setBusy(true);
     setErr(null);
     try {
-      const s = await sandboxApi.init({
+      await sandboxApi.init({
         start_date: startDate || undefined,
         copy_real_data: copyData,
       });
-      setState(s);
+      await refreshSandbox();
     } catch (e) {
       setErr((e as Error).message);
     } finally {

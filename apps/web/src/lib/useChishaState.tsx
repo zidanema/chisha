@@ -5,7 +5,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { Candidate, MealType, Mood, RecommendResponse, SkipReason, UnfedSession } from "./types";
 import type { RefineHistoryEntry } from "@/components/RefineCrumb";
-import { api } from "./api";
+import { api, isMock } from "./api";
+import { sandboxApi, type SandboxState } from "./sandbox";
 
 interface SessionState {
   session_id: string;
@@ -39,6 +40,11 @@ interface ChishaCtx {
   refreshInbox: () => Promise<void>;
   toast: ToastState;
   showToast: (msg: string, tone?: ToastState["tone"]) => void;
+  // D-077 PR-1d fix: sandbox state 提升到 context, ProfilePage init/disable 后
+  // 能通知顶层 SandboxBar 重渲染. 原来 App.tsx Shell 私有 state, ProfilePage 改
+  // 不到 → 启用沙盒后 SandboxBar 不出现 (要硬刷整页).
+  sandboxState: SandboxState;
+  refreshSandbox: () => Promise<void>;
 }
 
 const Ctx = createContext<ChishaCtx | null>(null);
@@ -74,6 +80,20 @@ export function ChishaProvider({ children }: { children: React.ReactNode }) {
     void refreshInbox();
   }, [refreshInbox]);
 
+  const [sandboxState, setSandboxState] = useState<SandboxState>({ enabled: false });
+  const refreshSandbox = useCallback(async () => {
+    if (isMock) return;
+    try {
+      const s = await sandboxApi.state();
+      setSandboxState(s);
+    } catch {
+      setSandboxState({ enabled: false });
+    }
+  }, []);
+  useEffect(() => {
+    void refreshSandbox();
+  }, [refreshSandbox]);
+
   const [toast, setToast] = useState<ToastState>({ msg: "", tone: "default" });
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = useCallback((msg: string, tone: ToastState["tone"] = "default") => {
@@ -86,7 +106,7 @@ export function ChishaProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <Ctx.Provider value={{ home, setHome, inbox, refreshInbox, toast, showToast }}>
+    <Ctx.Provider value={{ home, setHome, inbox, refreshInbox, toast, showToast, sandboxState, refreshSandbox }}>
       {children}
     </Ctx.Provider>
   );

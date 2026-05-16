@@ -87,6 +87,16 @@ export function SandboxBar({
     }
   };
 
+  // L1 抽取异步跑在后端 worker (15-30s); SandboxBar 只在 advance 完成时收到一次
+  // state, 之后没轮询 → L1 完成后前端永远停在 "抽取中…", 按钮一直 disabled.
+  // 修: pending 时 2s 轮询拉 state, 完成或失败自动停.
+  useEffect(() => {
+    if (!state.enabled) return;
+    if (state.last_l1_extraction?.status !== "pending") return;
+    const t = setInterval(onChange, 2000);
+    return () => clearInterval(t);
+  }, [state.enabled, state.last_l1_extraction?.status, onChange]);
+
   // sandbox 关闭 → 不渲染
   if (!state.enabled) return null;
 

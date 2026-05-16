@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { Link, Route, Routes, useLocation } from "react-router-dom";
 import { LABELS } from "@/lib/labels";
-import { api, isMock } from "@/lib/api";
-import { sandboxApi, type SandboxState } from "@/lib/sandbox";
+import { api } from "@/lib/api";
 import { ChishaProvider, useChisha } from "@/lib/useChishaState";
 
 import { NavBar } from "@/components/NavBar";
@@ -61,24 +60,9 @@ function NotFound() {
 }
 
 function Shell() {
-  const { home, setHome, refreshInbox, toast } = useChisha();
-  // D-077 PR-1d: sandbox state 由 App 顶层管理, 启用时 SandboxBar 显示, 否则不渲染.
-  // 仅当真实后端可用 (isMock=false) 才尝试拉 state, mock 模式不调.
-  const [sandboxState, setSandboxState] = useState<SandboxState>({ enabled: false });
-
-  const refreshSandbox = useCallback(async () => {
-    if (isMock) return;
-    try {
-      const s = await sandboxApi.state();
-      setSandboxState(s);
-    } catch {
-      setSandboxState({ enabled: false });
-    }
-  }, []);
-
-  useEffect(() => {
-    refreshSandbox();
-  }, [refreshSandbox]);
+  const { home, setHome, refreshInbox, toast, sandboxState, refreshSandbox } = useChisha();
+  // D-077 PR-1d (修): sandboxState 已提升到 ChishaCtx, 所以 ProfilePage 启停沙盒
+  // 也能通知 SandboxBar 重渲染. Shell 只负责 advance/reset 后清 HomePage session.
 
   const onSandboxChange = useCallback(async () => {
     await refreshSandbox();
