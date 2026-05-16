@@ -337,6 +337,120 @@ def test_deep_merge_recursive():
 
 # ────────────────────────── what_if_rerun 错误路径
 
+def test_what_if_use_llm_does_not_read_live_prefs(fixed_env, monkeypatch):
+    """D-079 BLOCKER fix 守门: What-if 走 LLM 路径 (use_llm_rerank=True) 时,
+    _profile_block 必须用 frozen l1_prefs_snapshot, 绝不能 load_prefs(disk).
+
+    Codex review 抓的 merge BLOCKER: 修前 debug_what_if 调 v2_rerank 不传
+    l1_prefs_override → _profile_block(root=None) → load_prefs(None) →
+    _project_root() fallback 读 live disk, 违反 "What-if 零 runtime read".
+
+    Stub LLM call_text 让 use_llm=True 跑通到 _profile_block, 同时
+    monkeypatch load_prefs raise. 若仍被调 = BLOCKER 复活.
+    """
+    from chisha import llm_client
+    _, base_trace = _run_recommend_and_get_trace(fixed_env)
+    sid = base_trace["session_id"]
+
+    # load_prefs 被调 = 红线破
+    def _explode(*args, **kwargs):
+        raise RuntimeError("load_prefs must not be called during What-if LLM path")
+
+    monkeypatch.setattr(l1_prefs, "load_prefs", _explode)
+
+    # stub call_text → 返一个最简合法 LLM 响应 (避免真调 LLM 网络)
+    def _fake_call_text(*args, **kwargs):
+        return {
+            "raw_text": '{"candidates": []}',
+            "content": '{"candidates": []}',
+            "stop_reason": "tool_use",
+            "tool_input": {"candidates": []},
+            "model": "stub",
+            "usage": None,
+        }
+    monkeypatch.setattr(llm_client, "call_text", _fake_call_text)
+    # 同时跳过 provider 校验, 让 _run_llm_rerank 不在 _resolve_provider 阶段
+    # 就走 config_error 短路 (这样 build_user_message → _profile_block 一定执行).
+    monkeypatch.setattr(llm_client, "_resolve_provider", lambda *_a, **_k: "anthropic")
+    monkeypatch.setattr(llm_client, "_resolve_model",
+                         lambda *_a, **_k: "claude-opus-4-7")
+
+    wi = what_if_rerun(sid,
+                       overrides={"use_llm_rerank": True}, root=fixed_env)
+    # 至少跑到 trace 写完; final 可能为空 (stub 返 0 candidates → fallback),
+    # 关键是 load_prefs 没被调 (否则 RuntimeError 上抛)
+    assert wi.get("__source") == "what_if_preview"
+
+
+def test_what_if_uses_frozen_prefs_snapshot(fixed_env, monkeypatch):
+    """D-079 BLOCKER fix 守门: frozen l1_prefs_snapshot ≠ disk prefs 时,
+    _profile_block 渲染 user_message 必须用 frozen 版本.
+
+    构造: frozen 含 boost=[low_oil], runtime disk 含 boost=[spicy]. 跑 What-if
+    LLM 路径, 抓 build_user_message 真正传给 LLM 的字符串, 必须含 low_oil
+    不能含 spicy.
+    """
+    import datetime as _dt
+    from chisha import llm_client
+    _, base_trace = _run_recommend_and_get_trace(fixed_env)
+    sid = base_trace["session_id"]
+
+    # 手动塞 frozen.l1_prefs_snapshot
+    base_trace["__frozen"]["l1_prefs_snapshot"] = {
+        "version": 1,
+        "boost": ["low_oil"],
+        "penalty": [],
+        "based_on_meals": 4,
+        "evidence": [{
+            "token": "low_oil", "from_meals": ["d1", "d2"],
+            "rationale": "4/4 oil_calibration=too_high",
+        }],
+        "regularities_freetext": "",
+        "signals_not_scored": [],
+    }
+    trace_store.write_trace(sid, base_trace, root=fixed_env)
+
+    # disk prefs: 写 spicy boost 到 sandbox-equivalent 路径 (fixed_env)
+    from chisha import data_root
+    prefs_path = data_root.long_term_prefs_path(fixed_env)
+    prefs_path.parent.mkdir(parents=True, exist_ok=True)
+    prefs_path.write_text(json.dumps({
+        "version": 1,
+        "boost": ["spicy"],
+        "penalty": [],
+        "based_on_meals": 4,
+        "evidence": [],
+    }), encoding="utf-8")
+
+    # 抓 build_user_message 实际拼出的 user_msg
+    captured: dict = {}
+
+    def _capture_call_text(user_msg, **kwargs):
+        captured["user_msg"] = user_msg
+        return {
+            "raw_text": '{"candidates": []}',
+            "content": '{"candidates": []}',
+            "stop_reason": "tool_use",
+            "tool_input": {"candidates": []},
+            "model": "stub",
+            "usage": None,
+        }
+    monkeypatch.setattr(llm_client, "call_text", _capture_call_text)
+    monkeypatch.setattr(llm_client, "_resolve_provider", lambda *_a, **_k: "anthropic")
+    monkeypatch.setattr(llm_client, "_resolve_model",
+                         lambda *_a, **_k: "claude-opus-4-7")
+
+    what_if_rerun(sid, overrides={"use_llm_rerank": True}, root=fixed_env)
+
+    user_msg = captured.get("user_msg") or ""
+    assert "low_oil" in user_msg, (
+        f"frozen boost=low_oil 未注入 [PROFILE] 行为信号: user_msg={user_msg[:500]!r}"
+    )
+    assert "spicy" not in user_msg, (
+        f"disk prefs=spicy 泄漏 (应被 frozen 覆盖): user_msg={user_msg[:500]!r}"
+    )
+
+
 def test_what_if_rejects_missing_trace(fixed_env):
     with pytest.raises(FileNotFoundError):
         what_if_rerun("does_not_exist_sid", overrides={}, root=fixed_env)

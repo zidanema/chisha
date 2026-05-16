@@ -226,6 +226,10 @@ def what_if_rerun(
     rerank_collector: dict = {}
     if use_llm and top_k:
         try:
+            # D-079 BLOCKER fix: 不传 root + 显式传 l1_prefs_override=snapshot,
+            # 走 frozen 路径; _profile_block 内 sentinel 判定不会再 load_prefs
+            # (违反 "What-if 零 runtime read" 红线). l1_prefs_snapshot 允许是
+            # None (那餐 L1 尚无产物), sentinel 区分"显式 None"与"未传".
             reranked = v2_rerank(
                 top_k, profile,
                 context=None, meal_log=l2_meal_log_view,
@@ -233,6 +237,7 @@ def what_if_rerun(
                 refine=False, use_llm=True,
                 today=today,
                 trace_collector=rerank_collector,
+                l1_prefs_override=l1_prefs_snapshot,
             )
         except Exception as e:
             # v2_rerank 自身不应抛 (内部已 fallback), 这里是 defense-in-depth

@@ -378,7 +378,17 @@ def _fmt_counts_or_none(d) -> str:
     return " ".join(f"{k}×{v}" for k, v in list(d.items())[:8])
 
 
-def _profile_block(profile: dict, root: "Path | None" = None) -> str:
+# D-079 BLOCKER fix: sentinel 区分"未传 l1_prefs_override (走默认 load_prefs)"
+# vs "显式传 None (frozen 时 L1 抽取无产物)". 不能用 None 当默认 —— frozen
+# snapshot 里 l1_prefs_snapshot 本来就允许是 None (那餐没抽出 prefs).
+_UNSET_L1_PREFS: Any = object()
+
+
+def _profile_block(
+    profile: dict,
+    root: "Path | None" = None,
+    l1_prefs_override: Any = _UNSET_L1_PREFS,
+) -> str:
     """构造 [PROFILE] 段. D-072: 注入 methodology display_name + rationale 摘要,
     替代之前 L3 prompt 隐式靠 taste_description 传方法论, 防 L2/L3 描述漂移.
 
@@ -386,6 +396,10 @@ def _profile_block(profile: dict, root: "Path | None" = None) -> str:
     LLM 显式看到 long_term_prefs.json — 否则 L1 只到 L2 打分顺序, L3 LLM 无从
     知道 top60 里哪些 combo 是因 L1 boost 被排前. 演练实测: 4/4 oil=too_high
     抽出 boost=['low_oil'] 后 L3 仍可能挑高油 combo, 因为 prompt 没透出信号.
+
+    D-079 BLOCKER fix: l1_prefs_override 传入 (非 sentinel) 时用 override 而非
+    runtime load. What-if frozen replay 必须走这条路径, 否则 _profile_block 会
+    `load_prefs(root)` 读 live disk, 违反 D-079 "What-if 零 runtime read" 红线.
 
     spec 缺失 (老 profile 没 load_profile 一致路径) 时回退老格式 (向后兼容).
     """
@@ -407,8 +421,11 @@ def _profile_block(profile: dict, root: "Path | None" = None) -> str:
     ])
     # D-078.2: L1 行为信号
     try:
-        from chisha.l1_prefs import load_prefs
-        l1 = load_prefs(root=root)
+        if l1_prefs_override is _UNSET_L1_PREFS:
+            from chisha.l1_prefs import load_prefs
+            l1 = load_prefs(root=root)
+        else:
+            l1 = l1_prefs_override
         if l1 and (l1.get("boost") or l1.get("penalty")):
             n_meals = l1.get("based_on_meals", 0)
             evid = l1.get("evidence") or []
@@ -476,14 +493,17 @@ def build_user_message(
     n: int,
     n_explore: int,
     root: "Path | None" = None,
+    l1_prefs_override: Any = _UNSET_L1_PREFS,
 ) -> str:
     """拼 user message: CONFIG + PROFILE + CONTEXT + CANDIDATES, 紧凑符号化.
 
     D-078.2: root 透传给 _profile_block 注入 L1 prefs.
+    D-079 BLOCKER fix: l1_prefs_override 透传, What-if 路径必须走 frozen 而非
+    runtime load (违反 "What-if 零 runtime read" 红线).
     """
     blocks = [
         f"[CONFIG] n={n} n_explore={n_explore}",
-        _profile_block(profile, root=root),
+        _profile_block(profile, root=root, l1_prefs_override=l1_prefs_override),
         _context_block(context),
         "[CANDIDATES]",
     ]
@@ -935,6 +955,7 @@ def _run_llm_rerank(
     model: str | None = None,
     profile_llm: dict | None = None,
     root: "Path | None" = None,
+    l1_prefs_override: Any = _UNSET_L1_PREFS,
 ) -> dict:
     """共享 LLM rerank 调用 helper (D-047 抽出, 同时给 prod _llm_rerank +
     debug _llm_rerank_traced 用, 解决双份代码漂移问题).
@@ -1029,7 +1050,8 @@ def _run_llm_rerank(
         else:
             system_prompt = system_prompt_raw
         user_msg = build_user_message(top_combos, profile, context,
-                                       n=n, n_explore=n_explore, root=root)
+                                       n=n, n_explore=n_explore, root=root,
+                                       l1_prefs_override=l1_prefs_override)
         out["system_prompt_chars"] = len(system_prompt)
         out["user_message_chars"] = len(user_msg)
         out["user_message_full"] = user_msg
@@ -1197,18 +1219,22 @@ def _llm_rerank(top_combos: list[dict], profile: dict,
                 context: "ContextSnapshot | None", n: int, n_explore: int,
                 model: str | None = None,
                 n_max: int = 5,
-                root: "Path | None" = None) -> list[dict] | None:
+                root: "Path | None" = None,
+                l1_prefs_override: Any = _UNSET_L1_PREFS) -> list[dict] | None:
     """调 LLM 返回 list of candidate dict, 失败返回 None (上游 fallback).
 
     D-047: 走 _run_llm_rerank 共享 helper + tool_use 强制 schema.
     profile.llm 透传到 call_text 控制 provider 路由.
     D-078.2: root 透传给 build_user_message 注入 L1 prefs.
+    D-079 BLOCKER fix: l1_prefs_override 透传到 _run_llm_rerank, What-if frozen
+    路径用 snapshot 而非 load_prefs(root).
     """
     res = _run_llm_rerank(
         top_combos, profile, context,
         n=n, n_explore=n_explore, n_max=n_max, model=model,
         profile_llm=profile.get("llm"),
         root=root,
+        l1_prefs_override=l1_prefs_override,
     )
     if res["status"] == "config_error":
         # D-048 BLOCKER: provider 配置错误显式 ERROR 级日志, 不当普通 fallback.
@@ -1236,6 +1262,7 @@ def rerank(
     *,
     today: "dt.date | None" = None,
     trace_collector: dict | None = None,
+    l1_prefs_override: Any = _UNSET_L1_PREFS,
 ) -> list[dict]:
     """主入口. LLM 精排 + fallback.
 
@@ -1250,6 +1277,9 @@ def rerank(
             L1 LLM 抽取的 long_term_prefs.json (boost/penalty + evidence).
         today: D-079, 透传给 fallback_rerank 防 wall-clock 漂移.
         trace_collector: D-079, 注入 dict 时把 L3 LLM 中间状态写入供 trace 持久化.
+        l1_prefs_override: D-079 BLOCKER fix. 默认 _UNSET → _profile_block 走
+            load_prefs(root) 原路径; 显式传 (包括 None) → 用 override, What-if
+            frozen replay 必须传, 否则违反 "What-if 零 runtime read" 红线.
     """
     # D-079 Codex FIX-NOW #1: trace_collector 必须在所有 return 前填齐核心字段,
     # 避免 early-return / fallback / skipped 路径漏字段导致 UI/replay 失数据.
@@ -1288,6 +1318,7 @@ def rerank(
                 n=n, n_explore=n_explore, n_max=n,
                 model=model, profile_llm=profile.get("llm"),
                 root=root,
+                l1_prefs_override=l1_prefs_override,
             )
             llm_resp = res.get("llm_response") or {}
             raw_text = (llm_resp.get("raw_text") or "") if isinstance(llm_resp, dict) else ""
@@ -1324,7 +1355,8 @@ def rerank(
             llm_out = _llm_rerank(top_combos=top_combos,
                                    profile=profile, context=context,
                                    n=n, n_explore=n_explore,
-                                   model=model, n_max=n, root=root)
+                                   model=model, n_max=n, root=root,
+                                   l1_prefs_override=l1_prefs_override)
             if llm_out is not None:
                 llm_called = True
         if llm_out is not None:
