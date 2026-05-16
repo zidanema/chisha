@@ -2,7 +2,7 @@
 
 V1: 6 维 (vegetable_floor / protein_floor / low_oil / popularity /
        cuisine_preference / variety_bonus).
-V2 ([D-033](docs/DECISIONS.md#d-033)): 加 ~10 个维度
+V2 ([D-033](docs/archive/DECISIONS_phase0.md#d-033)): 加 ~10 个维度
        - 5 新字段 (carb_quality / processed_meat / sweet_sauce / soup_broth / dish_role)
        - 履约 (distance / eta / price)
        - taste_match (taste_description 进决策, 由 LLM 反馈解析员提示)

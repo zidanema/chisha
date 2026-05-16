@@ -13,7 +13,10 @@
 **Context / Mood**: [D-034](#d-034) · [D-071](#d-071) · [D-015](#d-015)
 **方法论 (L0)**: [D-023](#d-023) · [D-072+D-072.1](#d-072--d-0721)
 **反馈系统**: [D-063+D-064+D-065](#d-063--d-064--d-065) · [D-066+D-067](#d-066--d-067)
-**工具 / 调试**: [D-039](#d-039) · [D-028](#d-028)
+**工具 / 调试**: [D-039](#d-039) · [D-075](#d-075) · [D-079](#d-079) · [D-028](#d-028)
+**Refine 重做**: [D-073+D-073.1](#d-073--d-0731)（推翻 D-071）
+**L1 真兑现**: [D-076+D-076.1](#d-076--d-0761) · [D-077](#d-077) · [D-078](#d-078)
+**Agent 接入 (草稿)**: [D-074](#d-074)
 
 ---
 
@@ -150,3 +153,58 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 明确不服务"什么都行又什么都不想吃"的目标缺失型用户
 - 三层信号模型：**L0 方法论 spec / L1 用户偏好（长期） / L2 session mood**
 - 修订 PRD §1 / §3
+
+## D-073 + D-073.1
+**refine 走结构化意图（RefineIntent）+ 重召回，让"用户主动表达诉求"真正生效。完全推翻 D-071，部分推翻 D-035 / D-043 P3 在 refine 端的应用。** (2026-05-16)
+- 触发：实测"想吃点湖南菜，然后肉多一点"——CHIP_VOCAB 封闭 + chip 死映射 + refine 不重召回，结果完全靠 L3 撞大运
+- 拆 parser：`parse_feedback`（餐后，chip 词表稳定）vs `parse_refine_intent`（餐中，开放 schema）。挤一起是病根
+- RefineIntent schema 开放（cuisine_want / ingredient_want / flavor_tags / portion / staple / price），LLM 抽不联想
+- 链路接入：recall 重做（三桶拼合 + cuisine_avoid 硬过滤）+ L2 加 `intent_match_bonus`（cuisine 0.50 / ingredient 0.20 / flavor 0.10）+ 健康 guardrail 拉低系数 0.4 + spicy 仍由 profile 硬过滤
+- refine **不再写 long_term_prefs**：当下意图 ≠ 长期偏好，会污染 D-043 chip 历史
+- D-073.1 修 apply_caps 边界：`intent.cuisine_want` 命中菜系免 cuisine/brand/food_form 三层 cap，restaurant cap 保留防同店刷屏
+
+## D-074
+**AI-friendly 接入终态共识 = CLI + Skill 模式（草稿，未正式落）。** (2026-05-16, draft)
+- 编号已占住，正式条目走 D-074.1+ 修订
+- 共识来源：Opus + Codex + 志丹三方收敛，详见 [`docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md`](design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md)
+- Phase 2 待 Step 2 自用一周完成后翻案，期间 D-038/D-047B/D-048 的 provider 抽象仍是落地形态
+
+## D-075
+**`apps/debug-ui/` 独立 Vite SPA，不并入 `apps/web/`。** (2026-05-16) · 推翻 ROADMAP "调试台 V1 整合到 /debug 路由"
+- CSS 视觉系统不同（5 套 oklch palette + 高密度 heatmap）/ 依赖分歧（user 端 Tailwind + router，debug 端均禁）/ 受众不同（用户视图克制 vs 调试自用密集）
+- 独立项目仅通过 `/api/*` 联调，backend 只动 `chisha/debug_recommend.py` 两处 ADD 字段，不动 user-view 端
+- 老 `chisha/static/debug.html`（D-039）保留双轨过渡，不删
+- 端口 5174，proxy `/api → :8765`
+
+## D-076 + D-076.1
+**L1 长期反馈层重构 — 砍伪 L1 + LLM 抽取真兑现，词表加 positive boost。** (2026-05-16) · 推翻 D-043 "refine chip → load_runtime_hints"
+- 病因：D-070 文档说 L1 已建，实际 `long_term_prefs.py` 是把 refine chip（当下信号）当长期偏好做半衰期统计，**概念错位**；V1.1 反馈 schema 落盘只为回放，没有任何机制汇成长期偏好
+- 解法：砍 refine 写 `feedback_history.jsonl`；新增 `chisha/l1_extractor.py` + `chisha/l1_prefs.py` 走 claude_code_cli text + JSON parse/validate/retry；`score.rank_combos` 切到 `load_prefs`；`bootstrap_from_legacy` 兜底一次性脚本
+- 词表（Phase 0 边界）：BOOST = `low_oil / wetness / spicy / sweet_sauce`（D-076.1 加后两个，志丹是吃辣 + 重口下饭用户，原词表结构性表达不了正向偏好）；PENALTY = `sweet_sauce / processed_meat / carb_heavy / spicy`；不加 `processed_meat / carb_heavy boost` 违反 harvard_plate baseline
+- 验收：真实 LLM 演练 — 4 餐 spicy boost 抽出 + Day 5 LLM reason 显式 "顶格命中追辣 boost"，L1→L2→L3 三层贯通
+
+## D-077
+**Sandbox Time-Travel 模式 = user web 一个 mode，行为完全一致 prod，仅时钟 + 数据落盘根隔离。** (2026-05-16)
+- 痛点：推荐链路有多层时间累积（cooldown 7d / 3d / snooze / ttl / D-076 L1 抽取），真实日历日推进太慢
+- 五条不可动摇原则：① 真实交互优先，不做 CLI 替代 / fixture batch ② 行为完全一致 prod（禁 fake LLM / 跳 cooldown）③ 仅时钟 + 数据落盘根隔离 ④ inspect 端点要看得到沉淀 ⑤ reset 一键回干净
+- 实现：`chisha/clock.py` + `chisha/sandbox.py`（state.json + threading.Lock）+ `chisha/data_root.py`（7+ 路径派生）+ `/api/sandbox/*` 6 端点 + 前端 SandboxBar / Inspect Drawer / ProfilePage 入口
+- LLM 成本：claude_code_cli + Max 订阅承载 ~21 次/周
+- D-编号占用：原 D-074 AI-friendly 草稿没正式落，让位给 sandbox；AI-friendly 改用 D-074 自身 .x 修订
+
+## D-078
+**Sandbox 端到端首跑修补 + accept→meal_log 闭环 cooldown（含 D-078.1/.2/.3 三个 followup）。** (2026-05-16) · D-077 sandbox 落地后真实 e2e 暴露
+- P0 时钟漏注入：`l1_extractor.aggregate_inputs` 默认 today 用真实 wall clock，feedback ts 用虚拟时钟，沙盒推进永远判"未来"过滤光，based_on_meals 永远=1 卡死。修：透传 root，默认 today=`clock.today(root)`
+- P0 llm_client.call 不存在：D-047 改名 call→call_text，L1 没跟上
+- P1 meal_log 写入端缺失：`/api/accept` 只写 feedback_store 不写 `meal_log.jsonl`，cooldown 完全失效。修：`append_meal_log_entry` hard-fail（与 record_accept 同等级别，否则一周内重餐厅）
+- Codex S2 二轮 review 修补：reset/disable 抢 `_L1_EXTRACTION_LOCK` 防 worker 写盘污染 prod；advance 在 status=pending 时返 409 防 UI bypass
+- D-078.1 sandbox path 回归 / D-078.2 L1 → L3 prompt 桥透传 root（refine 二轮也得显式 `root=root`，防多 worktree 跨 root 串数据）/ D-078.3 inspect 同时返 `long_term_prefs`（load_prefs 三态）+ `long_term_prefs_raw`（磁盘直读）
+- 验收：真实 5 日演练 — based_on_meals 1→2→3→4，Day 4 LLM 抽出 `boost=["low_oil"]`，Day 12 cooldown 解锁同店
+
+## D-079
+**推荐链路 trace 持久化 + Debug 三模式（Replay / What-if / Live）。** (2026-05-16) · 兑现 D-075 deferred `/api/sessions 后端持久化`
+- 痛点：`logs/recommend_log.jsonl` 只存 final 5，没 L1 drops / L2 完整 breakdown / L3 LLM payload。差评事后无法回溯；改 weight A/B 时 ctx 也变，不可隔离归因
+- 三模式：Replay（读 `logs/recommend_trace/{sid}.json` 默认）/ What-if（冻结 ctx + L1 combos，改下游 weights/rules，默认无 LLM）/ Live（现场全链路，永不写盘）
+- 自包含原则：`__frozen` 必须含 `ctx + today + l1_combos + l1_prefs_snapshot + l2_meal_log_view + profile_snapshot`，What-if 严禁任何 runtime read
+- 写盘失败仅 warning 不阻断；读盘损坏 fail-closed（备份 `.corrupt.{ts}.bak` 同 D-066/067）；trace size 改 50MB sanity bound（实测单 zone ~1.3MB 是常态，"调试完整性优先"）
+- 后端是单一可信源，前端 localStorage 退为 7 天离线 fallback 永不参与列表合并；不动 L1/L2/L3/Final/Refine/Trace 6 个 panel 组件（what-if 是 overlay）
+- 改 trace schema 必 bump `TRACE_SCHEMA_VERSION`；改 score / methodology / spec 仍必跑 baseline_l2 守门（D-072.1 红线）

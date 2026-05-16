@@ -265,7 +265,7 @@
 
 ### 6.7 `/api/debug/*` (D-079, Replay / What-if)
 
-全部 localhost-only (debug_server bind 127.0.0.1, `_require_localhost` 守门)。详见 [DEBUG_REPLAY_DESIGN.md](DEBUG_REPLAY_DESIGN.md) §7.
+全部 localhost-only (debug_server bind 127.0.0.1, `_require_localhost` 守门)。详见 [archive/DEBUG_REPLAY_DESIGN_phase0.md](archive/DEBUG_REPLAY_DESIGN_phase0.md) §7。活约束在 [CONTRACTS.md](CONTRACTS.md) §Trace + Debug 三模式。
 
 **`GET /api/debug/sessions?limit=&meal_type=&source=`** — Sidebar 列表数据源
 

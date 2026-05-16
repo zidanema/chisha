@@ -246,7 +246,7 @@ def _parse_json_object_from_text(raw: str) -> dict | None:
 # ⚠️ D-048 (Codex MAJOR 4): 这里是 *无 profile override 时的兜底默认*.
 # profile.yaml `llm.model.<provider>` 一旦设了, _run_llm_rerank 会让 call_text
 # 走 profile 配置 (而不是这里的默认). 当前 profile.yaml 三个 provider 都
-# 显式配 sonnet, 实际生效不是这里写的 opus. 见 docs/DECISIONS.md D-048.
+# 显式配 sonnet, 实际生效不是这里写的 opus. 见 docs/archive/DECISIONS_phase0.md D-048.
 _RERANK_MODEL_BY_PROVIDER = {
     "anthropic": "claude-opus-4-7",
     "openrouter": "anthropic/claude-opus-4.7",
@@ -975,7 +975,7 @@ def _run_llm_rerank(
     """
     import time
     # D-047 merge 修复: 按 resolved provider 选默认 rerank model, 保留
-    # profile.llm.model.<provider> 覆盖能力. 见 docs/DECISIONS.md D-047 Part B.
+    # profile.llm.model.<provider> 覆盖能力. 见 docs/archive/DECISIONS_phase0.md D-047 Part B.
     from chisha.llm_client import _resolve_model, _resolve_provider, call_text
 
     # D-048 BLOCKER (Codex): provider 配置错误 (CHISHA_LLM_PROVIDER=foo /

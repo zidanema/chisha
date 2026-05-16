@@ -1,6 +1,6 @@
 # Debug Replay & What-if 技术设计 (D-079)
 
-> 状态: **draft for Codex review** · 日期: 2026-05-16 · 配套 PRD: [DEBUG_REPLAY_PRD.md](DEBUG_REPLAY_PRD.md)
+> 状态: **draft for Codex review** · 日期: 2026-05-16 · 配套 PRD: [DEBUG_REPLAY_PRD_phase0.md](DEBUG_REPLAY_PRD_phase0.md)
 > 前置阅读: D-072.1 baseline trace · D-075 debug-ui SPA · D-077 sandbox time-travel · D-078 收尾
 
 ---

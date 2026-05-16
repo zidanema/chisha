@@ -2,7 +2,7 @@
 
 > 用法：把这整份文件粘进 [claude.ai/design](https://claude.ai/design)，让它出 React + TypeScript + Tailwind 组件源码。**两份 brief 不要合并**：本 brief 仅覆盖**用户视图**（路由 `/`），调试台（路由 `/debug`）见 [v1_debug_view.md](v1_debug_view.md)（待写）。
 >
-> 本 brief 锁定决策见 [DECISIONS D-051](../DECISIONS.md#d-051)（2026-05-15）。
+> 本 brief 锁定决策见 [DECISIONS D-051](../archive/DECISIONS_phase0.md#d-051)（2026-05-15）。
 >
 > ---
 >

@@ -1,9 +1,9 @@
 # BACKLOG · 待办池
 
 > 收"已知但当前不解决"的 bug / feature / idea。判别原则:
-> - 触发架构决策 → 挪 [DECISIONS.md](DECISIONS.md) 拿 D-XXX
+> - 触发架构决策 → 挪 [decisions.md](decisions.md) 拿 D-XXX (≤ 15 行/条)
 > - 进入实施期 → 挪 [ROADMAP.md](ROADMAP.md) 对应 Phase
-> - 已实施细节复盘 → [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md)
+> - 已实施细节 → 不再单独写 IMPL_LOG, git log + grep 代码即权威
 > - 决定不做 → 挪 [ROADMAP.md](ROADMAP.md) "已砍清单" 并标关联 D-XXX
 >
 > **本文档不是决策日志**。条目可以模糊、可以悬而未决。半年没动的 idea 主动砍掉, 不要养着。
@@ -44,7 +44,7 @@
 
 ### F-001 · L1 词表扩 cuisine 偏好 token
 
-- **来源**: [CLAUDE.md](../CLAUDE.md) 推荐链路红线 + [D-076.1](DECISIONS.md#d-0761-l1-词表加-positive-方向-boost-spicy--sweet_sauce) 边界
+- **来源**: [CLAUDE.md](../CLAUDE.md) 推荐链路红线 + [D-076.1](archive/DECISIONS_phase0.md#d-0761-l1-词表加-positive-方向-boost-spicy--sweet_sauce) 边界
 - **状态**: open, 排到 Phase 1
 - **What**: 当前 L1 词表只有 8 token (low_oil/wetness/spicy/sweet_sauce × boost/penalty)。扩 cuisine 偏好 (川/粤/日料/湘菜...) 让 L1 抽取能稳定承接长期 cuisine 倾向, 不只靠 refine 一次性表达
 - **约束**: 需独立决策 + baseline_l2_snapshot 守门; cuisine token enum 要和 recall.py / score.py 现有 cuisine 字段对齐
@@ -52,7 +52,7 @@
 
 ### F-002 · data zone 拆包
 
-- **来源**: [CLAUDE.md](../CLAUDE.md) Phase 1 列表 + [D-030](DECISIONS.md#d-030)
+- **来源**: [CLAUDE.md](../CLAUDE.md) Phase 1 列表 + [D-030](archive/DECISIONS_phase0.md#d-030)
 - **状态**: open, 排到 Phase 1
 - **What**: 把数据采集 / 清洗 / 打标 / 保鲜独立成 `chisha-collector` sister project (D-027 已立项但未拆), V1 后做
 - **优先级**: P2
@@ -61,12 +61,12 @@
 
 - **来源**: [CLAUDE.md](../CLAUDE.md) Phase 1 列表
 - **状态**: open, 排到 Phase 1
-- **What**: 同事推广时需要一个"是否适合用 chisha"的筛子 (目标缺失型 vs 原则派, [D-070](DECISIONS.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1) 边界)
+- **What**: 同事推广时需要一个"是否适合用 chisha"的筛子 (目标缺失型 vs 原则派, [D-070](archive/DECISIONS_phase0.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1) 边界)
 - **优先级**: P2
 
 ### F-004 · 第二份 methodology spec
 
-- **来源**: [CLAUDE.md](../CLAUDE.md) Phase 1 列表 + [D-072](DECISIONS.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)
+- **来源**: [CLAUDE.md](../CLAUDE.md) Phase 1 列表 + [D-072](archive/DECISIONS_phase0.md#d-072-methodology-spec-抽象-放-phase-0-收尾-v1)
 - **状态**: open, 排到 Phase 1
 - **What**: 当前只有 `harvard_plate.yaml`。需要第二份 (增肌高蛋白 / 糖控 / 孕期 / 控盐...) 来验证 spec 抽象是否真正解耦了打分逻辑
 - **约束**: 不允许借机改 score.py 逻辑或调权重 (D-072 边界)

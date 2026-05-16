@@ -62,9 +62,40 @@
 
 ---
 
-## 调试台
+## L1 长期偏好层 (D-076 / D-076.1)
 
-- **调试台 = 独立 FastAPI on `:8765`，与主推荐链路解耦。** 调试逻辑不要混进生产代码 (`chisha/api.py`)。改打分链路时检查 `chisha/debug_recommend.py` 的 instrumented 管道还能跑（参 D-039）。
+- **L1 抽取走 `claude_code_cli` text + JSON 路径，不传 tools。** CLI 不支持 tool_use，prompt 在 `prompts/l1_extract.md`；改 prompt 走 D-036 dual-model audit。
+- **词表锁定 = BOOST {low_oil, wetness, spicy, sweet_sauce} / PENALTY {sweet_sauce, processed_meat, carb_heavy, spicy}。** spicy / sweet_sauce 双向有意；`processed_meat / carb_heavy` 不许 boost（违反 harvard_plate baseline）。守门测试 `test_token_vocabulary_unchanged`。进一步扩词表 = 新决策 + baseline_l2 守门。
+- **`score.taste_match_bonus` 走 `l1_prefs.load_prefs`，旧 `load_runtime_hints` 已 deprecated。** `rank_combos(l1_prefs_override=...)` 区分"未传" vs "显式 None"，What-if 不许静默 fallback 到 live state。
+- **L1 → L3 prompt 桥 `root` 必须透传。** `rerank()` 主入口 + `refine.py` 调 rerank 都得显式 `root=root`。`_profile_block` 默认 root=None 时走 `_project_root` 兜底——测试用 monkeypatched ROOT 或多 worktree 场景下会跨 root 串数据。守门：`test_refine_passes_root_to_rerank`（参 D-078.2）。
+
+---
+
+## Sandbox Time-Travel (D-077 / D-078)
+
+- **sandbox = user web 一个 mode，不是 CLI 替代或 fixture batch。** 行为完全一致 prod（禁 fake LLM / 跳 cooldown），仅时钟 + 数据落盘根隔离。
+- **改时间相关逻辑前先看 12 处时间注入。** `web_api / api / refine / feedback_store / session / long_term_prefs / l1_extractor` 已替换走 `chisha.clock.*`。不注入：`time.time` latency / corrupt backup 时间戳 / comment id 毫秒（参 D-077 PR-1a + D-078 l1_extractor 修补）。
+- **`l1_extractor.aggregate_inputs / extract_and_save` 必须透传 `root`，默认 today=`clock.today(root)`。** 守门测试 `test_aggregate_default_today_uses_chisha_clock` + `test_default_llm_call_uses_existing_llm_client_symbol` 不许删（参 D-078 P0）。
+- **sandbox 生命周期：reset/disable 先抢 `_L1_EXTRACTION_LOCK`（`_block_until_l1_idle_or_409`），否则 worker 中途 `save_prefs` 会污染 prod `long_term_prefs.json`。** `advance` 在 `status=pending` 时直接返 409 防 UI bypass（参 D-078 Codex S2 Q3-High/Q2）。
+- **`/api/accept` 必须 hard-fail 写 `meal_log.jsonl`，与 `record_accept` 同等级别。** `meal_log` 是 diversity cooldown 的 source-of-truth，砍掉写入 = 一周内重餐厅（参 D-078 P1）。
+- **`sandbox inspect` 必须同时返 `long_term_prefs`（走 `load_prefs` 三态）+ `long_term_prefs_raw`（直读磁盘 raw json）。** `load_prefs` 在 boost+penalty 都空时返 None 是 L2 等价语义，但 inspect 必须显示 `regularities_freetext / signals_not_scored / evidence`（参 D-078.3）。
+
+---
+
+## Trace + Debug 三模式 (D-079)
+
+- **trace 落盘走 `trace_store.write_trace`，失败仅 `logger.warning` 不阻断 recommend。** `read_trace` fail-closed：损坏抛 `TraceCorrupt` + 备份 `.corrupt.{ts}.bak`（与 D-066/067 一致）。改 trace schema 必 bump `TRACE_SCHEMA_VERSION`。
+- **What-if 零 runtime read。** `chisha/debug_what_if.py:what_if_rerun` 必须 100% 用 `__frozen.{ctx, today, l1_combos, l1_prefs_snapshot, l2_meal_log_view, profile_snapshot}`，**严禁** `clock.today()` / `dt.date.today()` / `load_prefs(root)` 任何 runtime state read。加新冻结字段 → 同步 `_build_trace` 写入 + 测试守门。
+- **Live 模式永不写盘。** `/api/debug_recommend`（老 D-039 端点）+ `chisha/api.py:recommend_meal(persist_trace=False)` 是 Live 入口，永不调 `trace_store.write_trace`——为"好调试"加 trace 写盘会污染 Replay 列表。
+- **refine 二轮写 trace 必须先 `read_trace(sid)` merge 进同一文件。** Sidebar 一条 session 一行不分裂。missing → warn + 不持久化；corrupt → error + 不持久化。**绝不**创 refine-only 孤儿 trace（参 D-079 PR-4）。
+- **改 debug-ui 前端时：** 后端是单一可信源，`localStorage` 只作 7 天离线 fallback，永不参与后端列表合并；不动 `L1 / L2 / L3 / Final / Refine / Trace` 6 个 panel 组件——What-if 是 overlay 不重设计；URL state 用 `replaceState` 不 push。
+
+---
+
+## 调试台 (D-039 + D-075)
+
+- **老调试台 = 独立 FastAPI on `:8765`，与主推荐链路解耦。** 调试逻辑不要混进生产代码 (`chisha/api.py`)。改打分链路时检查 `chisha/debug_recommend.py` instrumented 管道还能跑（参 D-039）。
+- **新 debug-ui SPA (`apps/debug-ui/`) 独立 Vite 项目，端口 5174，不并入 `apps/web/`。** 只通过 `/api/*` 联调，backend 只在 `chisha/debug_recommend.py` ADD 字段不动既有键（参 D-075）。改 backend trace shape 同步 `apps/debug-ui/src/api/backend-types.ts`。
 
 ---
 
@@ -75,6 +106,7 @@
 - OpenClaw / Hermes 接入（待 D-074 草稿落定）
 - screener 设计 / 同事推广前的注册流
 - 第二份 methodology spec（减脂 / 糖控变体）
-- 调试台 React 化
+- L1 词表进一步扩（cuisine 偏好 token 等）
+- 调试台 React 化（D-075 已 partial 实现，更进一步定位拆/合 留 Phase 1）
 
 如果某 PR 触及上面任一项，先回头读 ROADMAP + decisions.md 确认是否真的要提前。
