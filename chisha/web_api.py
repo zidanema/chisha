@@ -806,6 +806,142 @@ def api_sandbox_state(request: Request) -> dict:
     return _sandbox.state(root=ROOT)
 
 
+# ---------- /api/debug/* (D-079 PR-2: Replay + What-if) ----------
+
+class WhatIfOverrides(BaseModel):
+    """What-if 可改字段白名单 (DESIGN §4.2). Pydantic 校验 + extra='forbid' 拒绝
+    未知字段, 防止前端误传 frozen 字段误改 (违反 §4.1 冻结边界)."""
+    model_config = {"extra": "forbid"}
+
+    n_return: int | None = Field(default=None, ge=1, le=10)
+    n_explore: int | None = Field(default=None, ge=0, le=5)
+    use_llm_rerank: bool | None = None
+    profile_overrides: dict[str, Any] | None = None
+
+
+class WhatIfReq(BaseModel):
+    """POST /api/debug/what_if body."""
+    model_config = {"extra": "forbid"}
+
+    base_session_id: str = Field(min_length=1)
+    overrides: WhatIfOverrides = Field(default_factory=WhatIfOverrides)
+
+
+@router.get("/debug/sessions")
+def api_debug_sessions(
+    request: Request,
+    limit: int = Query(default=30, ge=1, le=100),
+    meal_type: str | None = Query(default=None),
+    source: str = Query(default="production"),
+) -> dict:
+    """D-079 §7.1: list 最近 N 条 trace meta + feedback link.
+
+    V1 只接受 source=production (Codex +1). 留 query param 是给 V2 扩展.
+    """
+    _require_localhost(request)
+    if source != "production":
+        raise HTTPException(
+            400, f"source must be 'production' in V1, got {source!r}"
+        )
+    if meal_type is not None and meal_type not in ("lunch", "dinner"):
+        raise HTTPException(400, f"meal_type must be lunch|dinner|null, got {meal_type!r}")
+
+    from chisha import trace_store
+    items, corrupt_count = trace_store.list_traces(
+        root=ROOT, limit=limit, meal_type=meal_type,
+    )
+    items = trace_store.attach_feedback_links(items, root=ROOT)
+    return {"items": items, "corrupt_count": corrupt_count}
+
+
+@router.get("/debug/sessions/{session_id}")
+def api_debug_session_detail(request: Request, session_id: str) -> dict:
+    """D-079 §7.2: 单条完整 trace.
+
+    Failure matrix (§7 Preamble):
+      - 404 trace 不存在
+      - 409 schema __version 不匹配
+      - 500 文件损坏 (备份 .corrupt.{ts}.bak)
+    """
+    _require_localhost(request)
+    from chisha import trace_store
+    try:
+        trace = trace_store.read_trace(session_id, root=ROOT)
+    except trace_store.TraceCorrupt as e:
+        raise HTTPException(500, f"trace corrupt: {e}")
+    except trace_store.TraceVersionMismatch as e:
+        raise HTTPException(
+            409, f"trace schema version mismatch: found={e.found}, expected={e.expected}"
+        )
+    if trace is None:
+        raise HTTPException(404, f"trace {session_id!r} not found")
+
+    # 附 feedback record (与 list 派生字段同口径, replay 详情页要看完整反馈链)
+    try:
+        store = feedback_store.load_store(ROOT)
+        accepted = (store.get("accepted") or {}).get(session_id)
+        fb = (store.get("feedbacks") or {}).get(session_id)
+        trace["__feedback"] = {
+            "accepted": bool(accepted) and not (accepted or {}).get("skipped"),
+            "accepted_rank": (accepted or {}).get("accepted_rank"),
+            "accepted_at": (accepted or {}).get("accepted_at"),
+            "stopped": bool((accepted or {}).get("stopped")),
+            "feedback_submitted": fb is not None,
+            "rating": (fb or {}).get("rating"),
+            "feedback_record": fb,
+        }
+    except Exception as e:
+        # feedback link 失败不阻断 trace 返回 (与 attach_feedback_links 同口径)
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "attach feedback for trace %s failed: %s: %s",
+            session_id, type(e).__name__, e,
+        )
+        trace["__feedback"] = None
+    return trace
+
+
+@router.post("/debug/what_if")
+def api_debug_what_if(request: Request, req: WhatIfReq) -> dict:
+    """D-079 §7.3: What-if 重跑. 冻结上游 ctx/L1, 重跑 L2+L3.
+
+    Response: shape 同 GET 单条 trace, 但 __source='what_if_preview' +
+    __parent_session_id=base_sid + __llm_called=bool. **永不写盘**.
+
+    Failure matrix:
+      - 400 overrides 非白名单 (pydantic 已挡, 兜底再挡一层)
+      - 400 base trace __source != production
+      - 404 base trace 不存在
+      - 409 schema 版本不匹配
+      - 500 trace 损坏 / L2/L3 内部错
+    """
+    _require_localhost(request)
+    from chisha import debug_what_if, trace_store
+    overrides_dict = req.overrides.model_dump(exclude_none=True)
+    try:
+        return debug_what_if.what_if_rerun(
+            base_session_id=req.base_session_id,
+            overrides=overrides_dict,
+            root=ROOT,
+        )
+    except debug_what_if.InvalidOverrides as e:
+        raise HTTPException(400, f"invalid overrides: {e}")
+    except debug_what_if.InvalidBaseTrace as e:
+        # source!=production / 缺 __frozen / today 不合法 — 都是请求级错误
+        # (用户挑了不能 What-if 的 base trace), 400 而非 500
+        raise HTTPException(400, f"invalid base trace: {e}")
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except trace_store.TraceCorrupt as e:
+        raise HTTPException(500, f"base trace corrupt: {e}")
+    except trace_store.TraceVersionMismatch as e:
+        raise HTTPException(
+            409, f"trace schema version mismatch: found={e.found}, expected={e.expected}"
+        )
+    # 注: Codex PR-2 FIX-NOW #2 — 不再 catch 裸 ValueError. score/rerank 内部
+    # 抛 ValueError 是 5xx 范畴, 应通过 FastAPI 默认 handler 走 500.
+
+
 @router.get("/sandbox/inspect")
 def api_sandbox_inspect(request: Request) -> dict:
     """沉淀状态 (志丹原则 #4): 当前 L1 prefs + 最近反馈 + 最近 meal_log.

@@ -370,7 +370,7 @@ def what_if(base_sid: str, overrides: WhatIfOverrides, root: Path) -> dict:
 - **启动断言** (实施时加在 `debug_server.main()`):`assert host == "127.0.0.1", "debug server must bind localhost only"`,防误改
 - 威胁模型不覆盖 "本机恶意进程 / 浏览器 CSRF 到 localhost",Phase 0 单用户自托管不在范围
 
-**Failure matrix (Codex #5 固化)**:
+**Failure matrix (Codex #5 固化 + PR-2 NIT #7 修订)**:
 | 场景 | HTTP code | body | side effect |
 |---|---|---|---|
 | trace 不存在 | 404 | `{detail: "trace not found"}` | 无 |
@@ -378,6 +378,13 @@ def what_if(base_sid: str, overrides: WhatIfOverrides, root: Path) -> dict:
 | JSON 损坏 | 500 | `{detail: "corrupt", backup: ".corrupt.{ts}.bak"}` | 备份原文件 + warn log |
 | list 中遇 corrupt | 200 | `{items: [...], corrupt_count: N}` | 跳过损坏条目,前端可选展示 warning |
 | 写 trace 失败 | (内部) | n/a | warn log,**不阻断** recommend response |
+| schema validation 失败 (pydantic) | **422** | `{detail: [{loc, msg, type}, ...]}` (pydantic 默认) | 无 |
+| domain validation 失败 (业务规则) | **400** | `{detail: "..."}` | 无 |
+
+**422 vs 400 边界 (PR-2 修订)**:
+- **422**: FastAPI/Pydantic schema 层拦截 — 未知字段 (`extra='forbid'`)、类型错误、Field 范围 (`ge`/`le`)、必填字段缺失
+- **400**: 端点业务逻辑层拒绝 — `source != 'production'` (V1 限制)、What-if base trace `__source != production`、What-if base trace 缺 `__frozen` (pre-D079)
+- 不强行用 handler 把 422 翻 400 (REST 标准是分开的, 客户端可据此区分 "请求结构有问题" vs "请求合法但业务不允许")
 
 
 ### 7.1 `GET /api/debug/sessions`

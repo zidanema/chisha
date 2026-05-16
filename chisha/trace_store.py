@@ -328,20 +328,16 @@ def _truncate_for_size(trace: dict) -> dict:
     if _trace_size_bytes(t) <= MAX_TRACE_BYTES:
         return t
 
-    # Step 4: dish nutrition_profile 仅保留 scoring 字段
-    # (score.py 真实消费: oil_level / spicy_level / wetness / sweet_sauce /
-    #  processed_meat / carb_heavy / protein_g / vegetable_g 等)
-    SCORING_NUTRITION_KEYS = {
-        "oil_level", "spicy_level", "wetness", "sweet_sauce", "processed_meat",
-        "carb_heavy", "carb_quality", "protein_g", "vegetable_g",
-        "main_ingredient_type", "cooking_method", "food_form",
-    }
-    combos = (t.get("__frozen") or {}).get("l1_combos") or []
-    for c in combos:
-        for d in c.get("dishes") or []:
+    # Step 4: dish nutrition_profile 仅保留 scoring 字段.
+    # Codex PR-2 DEFER #5: schema 与 api._SCORING_NUTRITION_KEYS 严格一致,
+    # 且裁剪目标改成 __frozen.dishes 表 (PR-1 normalized schema, 不再嵌套在 l1_combos).
+    from chisha.api import _SCORING_NUTRITION_KEYS
+    dishes_tbl = (t.get("__frozen") or {}).get("dishes") or {}
+    if isinstance(dishes_tbl, dict):
+        for did, d in dishes_tbl.items():
             np = d.get("nutrition_profile") or {}
             d["nutrition_profile"] = {
-                k: v for k, v in np.items() if k in SCORING_NUTRITION_KEYS
+                k: v for k, v in np.items() if k in _SCORING_NUTRITION_KEYS
             }
     return t
 
