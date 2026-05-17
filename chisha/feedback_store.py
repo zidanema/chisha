@@ -298,3 +298,85 @@ def get_accepted(data: dict, session_id: str) -> dict | None:
 
 def get_feedback_record(data: dict, session_id: str) -> dict | None:
     return data["feedbacks"].get(session_id)
+
+
+# ---------- B-001: feedback_recency 短链路视图 ----------
+
+def _parse_iso_date(ts: str | None) -> dt.date | None:
+    """容忍 ISO datetime / date 字符串 (带 Z / +00:00 后缀也接受)."""
+    if not ts or not isinstance(ts, str):
+        return None
+    s = ts.strip()
+    if not s:
+        return None
+    try:
+        if "T" in s:
+            # ISO datetime; 把末尾 Z 当 UTC
+            if s.endswith("Z"):
+                s = s[:-1] + "+00:00"
+            return dt.datetime.fromisoformat(s).date()
+        return dt.date.fromisoformat(s[:10])
+    except (ValueError, TypeError):
+        return None
+
+
+def build_feedback_view(
+    store: dict,
+    today: dt.date,
+    window_days: int = 60,
+) -> list[dict]:
+    """B-001: 派生 feedback view 给 score/rerank 短链路用.
+
+    输入:
+      - store: feedback_store.load_store(root) 返回的 dict
+      - today: 虚拟时钟 (sandbox / What-if frozen 用)
+      - window_days: 时间窗 (默认 60), 超窗条目过滤掉
+
+    输出: list of {"restaurant_name": str, "rating": int (-1/+1), "age_days": int}
+      - rating ∈ {-1, +1} 才入 view (rating=0 / None 不计)
+      - restaurant_name 非空
+      - age_days ∈ [0, window_days]
+      - 按 age_days 升序 (近期靠前)
+
+    设计原则 (B-001 Codex review 拍板):
+      - 仅 restaurant 级 (accepted.summary 自由文本, 不解析菜品)
+      - source-of-truth = feedbacks[sid].rating + accepted[sid].restaurant_name
+      - age_days 取 accepted.accepted_at 优先, fallback feedback.submitted_at
+        (前者是"吃饭时间", 更贴近"距今多久")
+
+    What-if 路径: 调用方不能传 store, 必须读 __frozen.feedback_view (D-079 红线).
+    """
+    if not isinstance(store, dict) or window_days < 0:
+        return []
+    accepted = store.get("accepted") or {}
+    feedbacks = store.get("feedbacks") or {}
+    out: list[dict] = []
+    for sid, fb in feedbacks.items():
+        if not isinstance(fb, dict):
+            continue
+        rating = fb.get("rating")
+        try:
+            rating_int = int(rating) if rating is not None else 0
+        except (ValueError, TypeError):
+            continue
+        if rating_int not in (-1, 1):
+            continue
+        acc = accepted.get(sid) or {}
+        name = (acc.get("restaurant_name") or "").strip()
+        if not name:
+            continue
+        # age 优先用 accepted_at (吃饭时间), fallback submitted_at (反馈时间)
+        when_str = acc.get("accepted_at") or fb.get("submitted_at")
+        when = _parse_iso_date(when_str)
+        if when is None:
+            continue
+        age = (today - when).days
+        if age < 0 or age > window_days:
+            continue
+        out.append({
+            "restaurant_name": name,
+            "rating": rating_int,
+            "age_days": age,
+        })
+    out.sort(key=lambda x: x["age_days"])
+    return out

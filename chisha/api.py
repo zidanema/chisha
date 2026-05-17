@@ -145,10 +145,21 @@ def recommend_meal(
     _t0 = _time.monotonic()
     combos = recall(profile, rests, tagged, meal_log, today, meal_type=meal_type)
     recall_latency_ms = int((_time.monotonic() - _t0) * 1000)
+    # B-001: feedback_view 在入口处一次派生, 同份传给 L2 (打分) 和 L3 (prompt 渲染),
+    # 也写进 trace.__frozen.feedback_view (What-if 重跑用; 不能让 What-if 读 disk).
+    try:
+        from chisha import feedback_store
+        feedback_view = feedback_store.build_feedback_view(
+            feedback_store.load_store(root), today
+        )
+    except Exception:
+        feedback_view = []
+
     # 3. V2 打分 (~12 维, 含 context) + 三层 cap (D-043) (L2)
     _t0 = _time.monotonic()
     ranked_raw = rank_combos(combos, profile, meal_log, today,
-                          context=ctx, meal_type=meal_type, root=root)
+                          context=ctx, meal_type=meal_type, root=root,
+                          feedback_view=feedback_view)
     ranked = apply_caps(ranked_raw, profile)
     score_latency_ms = int((_time.monotonic() - _t0) * 1000)
     # 4. LLM 精排 topK → 5 (3 exploit + 2 explore, D-015; D-046: 30 → 60) (L3)
@@ -160,7 +171,8 @@ def recommend_meal(
     reranked = v2_rerank(top_k, profile, context=ctx, meal_log=meal_log,
                           n=5, n_explore=2, refine=False, use_llm=use_llm_rerank,
                           root=root,
-                          today=today, trace_collector=l3_collector)
+                          today=today, trace_collector=l3_collector,
+                          feedback_view=feedback_view)
     rerank_latency_ms = int((_time.monotonic() - _t0) * 1000)
     # 5. 创建 session (供 refine 二轮用)
     state = create_session(session_id, meal_type, zone, daily_mood=daily_mood)
@@ -222,6 +234,7 @@ def recommend_meal(
                 l3_collector=l3_collector or {},
                 use_llm_rerank=use_llm_rerank,
                 root=root,
+                feedback_view=feedback_view,
             )
             from chisha import trace_store
             trace_store.write_trace(session_id, trace, root=root)
@@ -349,6 +362,7 @@ def _build_trace(
     l3_collector: dict,
     use_llm_rerank: bool | None,
     root: Path | None,
+    feedback_view: list[dict] | None = None,  # B-001
 ) -> dict:
     """D-079: 组装完整 trace dict (与 apps/debug-ui Session type 对齐 + __frozen).
 
@@ -467,6 +481,8 @@ def _build_trace(
         "dishes": frozen_dishes,                 # id → minimal dish record (含 scoring nutrition_profile)
         "l1_prefs_snapshot": l1_prefs_snapshot,
         "l2_meal_log_view": l2_meal_log_view,
+        # B-001: feedback_view 冻结进 trace, What-if 重跑必须用 frozen (D-079 红线)
+        "feedback_view": feedback_view or [],
     }
 
     return {

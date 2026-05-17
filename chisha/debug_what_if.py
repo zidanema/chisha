@@ -189,6 +189,9 @@ def what_if_rerun(
     meal_type = frozen.get("meal_type") or "lunch"
     l1_prefs_snapshot = frozen.get("l1_prefs_snapshot")
     l2_meal_log_view = frozen.get("l2_meal_log_view") or []
+    # B-001: feedback_view 走 frozen (D-079 红线: What-if 零 runtime read).
+    # 旧 trace (pre-B-001) 没此字段 → [] = 不计 (与无反馈语义一致).
+    feedback_view_frozen = frozen.get("feedback_view") or []
     ctx_dict = frozen.get("ctx") or {}
 
     n_return = overrides.get("n_return") or 5
@@ -209,6 +212,7 @@ def what_if_rerun(
         meal_type=meal_type,
         root=root,
         l1_prefs_override=l1_prefs_snapshot,
+        feedback_view=feedback_view_frozen,  # B-001: frozen, 不读 disk
     )
     ranked = apply_caps(ranked_raw, profile)
 
@@ -238,6 +242,7 @@ def what_if_rerun(
                 today=today,
                 trace_collector=rerank_collector,
                 l1_prefs_override=l1_prefs_snapshot,
+                feedback_view=feedback_view_frozen,  # B-001
             )
         except Exception as e:
             # v2_rerank 自身不应抛 (内部已 fallback), 这里是 defense-in-depth

@@ -220,3 +220,12 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 没选的方向:改 prompt 让 LLM 抽更细的 ingredient (留 F-001), 或在 score.intent_match_bonus 加权 (P1, 与本次正交)
 - 守门:baseline_l2_snapshot 严格 0 diff (改动全在 intent 非空分支); 浏览器 /api/refine 实测 top5 5/5 含牛肉菜
 - Codex R1 catch: 漏了 `_INGREDIENT_BROAD` 仍含具体蛋白单字键, 已补
+
+## D-081
+**B-001 修复 — `feedback_recency` 短链路直入 score，补 L1 长链路盲区。** (2026-05-17)
+- 病因：反馈→推荐只有 L1 慢路径（≥20 餐 + 强信号才抽出 token），冷启动期 score.py / recall.py **不直接读 rating**，9 餐沙盒实测抽空，被踩餐厅 7 天后照样推
+- 解法：score.py 新增 `feedback_recency` 维度（weight=1.0）+ L3 prompt 加 `[FEEDBACK_RECENT]` 段；rating=-1 走指数衰减 `-1.5 * exp(-age/14)`，rating=+1 / age<3 cooldown 线性 -0.7 → 0，3+ 天弱 boost 上限 +0.25
+- 聚合：同餐厅多条取**最强负向优先**（不用 mean，防远期 -1 + 近期 +1 错误抵消，Codex 二轮 review 拍板）
+- 守门：`feedback_view=[]` 或无命中 → **不写** breakdown key（保 16 维 keyset 不变，baseline_l2 EPSILON=1e-6 严格 0 差）
+- 落点：sentinel 区分 `_UNSET_FEEDBACK_VIEW` vs `[]`，What-if 必须显式传 `__frozen.feedback_view`（D-079 零 runtime read 红线）
+- 不动 L1 长链路（双层互补）/ 不做 hard avoid（软扣分够压，且不和 D-073 cuisine_want 冲突）/ 仅餐厅级（菜品/配料留 Phase 1，B-002 并行处理 ingredient 不重叠）
