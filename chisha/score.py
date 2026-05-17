@@ -508,16 +508,12 @@ def cuisine_soft_match(combo: dict, cuisine_want: list[str]) -> bool:
 
 
 # 食材匹配: 用户说 "牛肉" → 看 canonical_name 是否含; 用户说 "肉" → main_ingredient_type ∈ {红肉,白肉}
+# B-002 修订 (2026-05-17, D-080): 从 broad 剥离具体蛋白词 (牛/猪/羊/鸡/鸡肉/鱼/虾).
+# 原因: "牛" 映射 {红肉} 会让用户说"牛"时把所有红肉菜 (猪/羊) 都命中, 信号被泛化.
+# 具体蛋白必须走 name 子串 (path 2a). broad 只留真正的类别词 (肉/海鲜/蛋/豆/素/蔬菜).
 _INGREDIENT_BROAD: dict[str, set[str]] = {
     "肉": {"红肉", "白肉"},
     "海鲜": {"海鲜"},
-    "鱼": {"海鲜"},
-    "虾": {"海鲜"},
-    "鸡": {"白肉"},
-    "鸡肉": {"白肉"},
-    "牛": {"红肉"},
-    "猪": {"红肉"},
-    "羊": {"红肉"},
     "蛋": {"蛋"},
     "豆": {"豆制品"},
     "豆制品": {"豆制品"},
@@ -540,19 +536,20 @@ def contains_ingredient(combo: dict, ingredient: str) -> bool:
     """combo 是否含目标食材.
 
     两条路径:
-      1. 广义词 (肉/海鲜/纯素/蛋/豆制品/...) → _INGREDIENT_BROAD 命中 main_ingredient_type
-      2. 具体词 (牛肉/鸡肉/虾/...):
-         a. 菜名子串命中 (优先)
-         b. 提取精确蛋白关键词 (牛/鸡/虾/鱼...) → main_ingredient_type 单类匹配
+      1. 广义词 (肉/海鲜/蛋/豆/豆制品/素/蔬菜) → _INGREDIENT_BROAD 命中 main_ingredient_type
+      2. 具体词 (牛肉/鸡肉/虾仁/...) → canonical_name 子串命中, **不走 main_ingredient 兜底**
 
-    Codex P0-2 修订: 不再遍历 _INGREDIENT_BROAD.items() 做"子串包含"判断,
-    避免 "牛肉" 误命中白肉、"鸡肉" 误命中红肉. _PROTEIN_KEYWORDS_TO_MTYPE 是
-    单一映射, 一个关键词对应一个 main_ingredient 类别.
+    B-002 修订 (2026-05-17, D-080): 砍掉旧 path 2b (_PROTEIN_KEYWORDS_TO_MTYPE 兜底).
+    旧逻辑里用户说"牛肉" → 在字符串中扫到"牛"→ 红肉 → 任何红肉菜 (猪/羊) 都命中,
+    把"夫妻肺片"(数据缺失牛肉标注但 main_type=红肉) 算作牛肉菜, 但同时把"梅菜扣肉"
+    也算作牛肉菜, 信号污染严重. 现在具体蛋白词必须 name 子串命中.
+
+    `_PROTEIN_KEYWORDS_TO_MTYPE` 保留 (其他模块可能 import), 仅本函数不再引用.
     """
     if not ingredient:
         return False
     ing = ingredient.strip()
-    # 路径 1: 广义词 (整词命中)
+    # 路径 1: 广义类别词 (整词命中 broad)
     broad = _INGREDIENT_BROAD.get(ing)
     if broad:
         for d in combo.get("dishes") or []:
@@ -560,21 +557,11 @@ def contains_ingredient(combo: dict, ingredient: str) -> bool:
             if np_.get("main_ingredient_type") in broad:
                 return True
         return False
-    # 路径 2a: 具体词菜名子串
+    # 路径 2: 具体词菜名子串
     for d in combo.get("dishes") or []:
         name = d.get("canonical_name") or ""
         if ing in name:
             return True
-    # 路径 2b: 具体词中包含精确蛋白关键词 → 单一类别匹配
-    matched_mtypes: set[str] = set()
-    for kw, mtype in _PROTEIN_KEYWORDS_TO_MTYPE.items():
-        if kw in ing:
-            matched_mtypes.add(mtype)
-    if matched_mtypes:
-        for d in combo.get("dishes") or []:
-            np_ = d.get("nutrition_profile") or {}
-            if np_.get("main_ingredient_type") in matched_mtypes:
-                return True
     return False
 
 
