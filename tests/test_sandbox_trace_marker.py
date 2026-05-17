@@ -160,8 +160,39 @@ def test_living_recommend_writes_prod_even_when_sandbox_enabled(
         f"= {sandbox_state_during_call} (期望 [False])"
     )
 
-    # 退出请求后 is_enabled 恢复 True (ContextVar 干净清理)
+    # 退出请求后 is_enabled 恢复 True (thread-local 干净清理)
     assert sandbox.is_enabled(tmp_path) is True
+
+
+def test_living_force_disabled_also_kills_virtual_clock(tmp_path, monkeypatch):
+    """D-085 Codex re-review 第二轮 BLOCKER 修复: force_disabled 不仅要关
+    存储路径 (data_root), 还要关虚拟时钟 (sandbox.current_date 等), 否则
+    Lab 已 advance 虚拟日期 → Living recommend 会用 sandbox 虚拟日做 today,
+    污染 cooldown / variety_bonus / meal_log timestamp.
+    """
+    import datetime as dt
+    from chisha import clock
+
+    monkeypatch.setattr(sandbox, "_project_root", lambda: tmp_path)
+    sandbox.init(start_date="2030-01-15", root=tmp_path)  # 远未来日期
+
+    # 全局 enabled → 虚拟时钟生效
+    assert sandbox.is_enabled(tmp_path) is True
+    assert sandbox.current_date(tmp_path) == dt.date(2030, 1, 15)
+    assert clock.today(tmp_path) == dt.date(2030, 1, 15)
+
+    # force_disabled 内 — 全部回到真实
+    with sandbox.force_disabled():
+        assert sandbox.is_enabled(tmp_path) is False
+        assert sandbox.current_date(tmp_path) is None
+        assert sandbox.current_datetime(tmp_path) is None
+        assert sandbox.current_datetime_utc(tmp_path) is None
+        # clock.today fallback 走真实 today, 不是 2030-01-15
+        assert clock.today(tmp_path) == dt.date.today()
+
+    # 退出 with 后恢复虚拟时钟
+    assert sandbox.is_enabled(tmp_path) is True
+    assert sandbox.current_date(tmp_path) == dt.date(2030, 1, 15)
 
 
 def test_lab_sessions_endpoint_exposes_include_sandbox(tmp_path: Path, monkeypatch):

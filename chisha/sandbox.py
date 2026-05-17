@@ -121,9 +121,12 @@ def is_enabled(root: Path | None = None) -> bool:
 
 
 def current_date(root: Path | None = None) -> dt.date | None:
-    s = state(root)
-    if not s.get("enabled"):
+    # D-085 (Codex re-review): 走 is_enabled() 让 force_disabled 同时关掉
+    # 虚拟时钟. 否则 Living force_disabled 只盖了存储路径, sandbox.current_date
+    # 仍直读 state(root).get("enabled") 把虚拟日期串到 Living recommend.
+    if not is_enabled(root):
         return None
+    s = state(root)
     raw = s.get("current_date")
     if not raw:
         return None
@@ -141,6 +144,9 @@ def current_datetime(root: Path | None = None) -> dt.datetime | None:
     的 hour 部分相对真实时间不变, 但 date 部分已跳到虚拟日).
 
     Returns: aware datetime (local naive 兼容旧 dt.datetime.now() 行为) 或 None.
+
+    D-085 (Codex re-review): force_disabled 通过 current_date → is_enabled
+    自然短路, 返 None → clock.* 自动 fallback 真实时间.
     """
     d = current_date(root)
     if d is None:
@@ -150,7 +156,10 @@ def current_datetime(root: Path | None = None) -> dt.datetime | None:
 
 
 def current_datetime_utc(root: Path | None = None) -> dt.datetime | None:
-    """虚拟 UTC datetime: 沙盒 date + 真实 UTC 时分秒. aware tz=UTC."""
+    """虚拟 UTC datetime: 沙盒 date + 真实 UTC 时分秒. aware tz=UTC.
+
+    D-085 (Codex re-review): 同 current_date, force_disabled 自然短路返 None.
+    """
     d = current_date(root)
     if d is None:
         return None

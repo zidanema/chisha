@@ -15,7 +15,7 @@ LLM 输出).
 8. prod 路径不回归              → 关 sandbox 时 baseline 0 diff (已在 PR-0.7
                                     / PR-1a / PR-1b / PR-1c 跑过, 这里只
                                     做 smoke)
-9. profile 切 zone 不污染 prod  → sandbox 内 PUT 写副本
+9. profile 切 zone 不污染 prod  → D-085 改: Living PUT 永远写 prod (invariant 3)
 10. reset 干净                  → reset 后 logs/sandbox 不存在
 """
 from __future__ import annotations
