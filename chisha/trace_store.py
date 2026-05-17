@@ -72,6 +72,15 @@ def write_trace(
     """
     try:
         trace["__version"] = TRACE_SCHEMA_VERSION
+        # D-085: trace 自描述 — 写时记录是否在 sandbox 模式下生成. Lab Replay 不
+        # 用读目录就知道. 默认查询过滤掉 sandbox (invariant 4).
+        # 老 trace 缺该字段 → 读侧默认 False.
+        try:
+            from chisha import sandbox as _sandbox
+            trace["is_sandbox"] = bool(_sandbox.is_enabled(root))
+        except Exception:
+            # sandbox state 读取异常不阻断写盘
+            trace.setdefault("is_sandbox", False)
         # session_id 反注入: 不允许 / 或 ..
         if "/" in session_id or ".." in session_id or not session_id:
             raise ValueError(f"invalid session_id: {session_id!r}")
@@ -166,24 +175,37 @@ def list_traces(
     root: Optional[Path] = None,
     limit: int = 30,
     meal_type: Optional[str] = None,
+    include_sandbox: bool = False,
 ) -> tuple[list[dict], int]:
-    """列出最近 N 条 trace meta (不读 full body). 按 started_at desc.
+    """列出最近 N 条 trace meta (不读 full body). 按 mtime desc.
+
+    Args:
+        include_sandbox: D-085. False (默认) = 仅 prod trace; True = prod + sandbox
+            目录合并扫描, items 里附 `is_sandbox` 字段供 Lab UI 区分. invariant 4:
+            默认查询不混 sandbox; Lab 端点显式打开才显示.
 
     Returns:
         (items, corrupt_count). 损坏的 trace 跳过 (不抛), 仅累计 corrupt_count.
-        前端可选展示 "N 条损坏被跳过" warning.
 
     items 元素 = {session_id, started_at, meal_type, zone, top1_summary,
-                  total_latency_ms, l3_status, source}.
+                  total_latency_ms, l3_status, source, is_sandbox}.
     feedback link 由调用方再 attach (派生字段不存 trace 文件).
     """
-    d = data_root.recommend_trace_dir(root)
-    if not d.exists():
-        return [], 0
+    # D-085: 显式指定扫描目录, 不再跟 sandbox.is_enabled 全局状态走.
+    dirs: list[Path] = [data_root.recommend_trace_prod_dir(root)]
+    if include_sandbox:
+        dirs.append(data_root.recommend_trace_sandbox_dir(root))
+
+    # 收集所有候选 path, 按 mtime 排序后取 limit (跨目录 merge)
+    paths: list[Path] = []
+    for d in dirs:
+        if d.exists():
+            paths.extend(d.glob("*.json"))
+    paths.sort(key=lambda x: x.stat().st_mtime, reverse=True)
 
     items: list[dict] = []
     corrupt_count = 0
-    for p in sorted(d.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
+    for p in paths:
         try:
             raw = p.read_text(encoding="utf-8")
             data = json.loads(raw)
@@ -218,6 +240,8 @@ def list_traces(
                 "refine_round": refine.get("round"),
                 "refine_user_input": refine.get("user_input"),
                 "has_round2": bool(data.get("round2")),
+                # D-085: sandbox marker (老 trace 缺 → 默认 False).
+                "is_sandbox": bool(data.get("is_sandbox", False)),
             })
         except Exception as e:
             corrupt_count += 1

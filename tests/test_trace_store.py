@@ -138,15 +138,18 @@ def test_list_traces_filters_meal_type(tmp_path: Path) -> None:
 
 
 def test_sandbox_isolation(tmp_path: Path) -> None:
-    """sandbox 启用时 trace 写 logs/sandbox/recommend_trace/, prod 读不到."""
+    """D-085 (revised from D-077): sandbox 启用时 trace 写 logs/sandbox/
+    recommend_trace/. list_traces 默认 include_sandbox=False 只看 prod, 不再
+    跟 sandbox.is_enabled 全局状态走 (invariant 4).
+    """
     from chisha import sandbox
 
-    # 不启用 sandbox 写一条 → 写在 prod
+    # 不启用 sandbox 写一条 → 写在 prod, is_sandbox=False
     trace_store.write_trace("sess_prod_only", _minimal_trace("sess_prod_only"), root=tmp_path)
     prod_path = tmp_path / "logs" / "recommend_trace" / "sess_prod_only.json"
     assert prod_path.exists()
 
-    # 启用 sandbox 后写 → 写在 sandbox, prod 不变
+    # 启用 sandbox 后写 → 物理写到 sandbox 目录, prod 目录不变, trace.is_sandbox=True
     sandbox.init(root=tmp_path)
     try:
         assert sandbox.is_enabled(tmp_path)
@@ -154,18 +157,23 @@ def test_sandbox_isolation(tmp_path: Path) -> None:
                                   root=tmp_path)
         sb_path = tmp_path / "logs" / "sandbox" / "recommend_trace" / "sess_sandbox_only.json"
         assert sb_path.exists()
-        # prod 不变
         assert not (tmp_path / "logs" / "recommend_trace" / "sess_sandbox_only.json").exists()
 
-        # sandbox list 不含 prod trace
+        # D-085: 默认 list 不混 sandbox — 即便 sandbox 启用, 默认看到的还是 prod
         items, _ = trace_store.list_traces(root=tmp_path)
         sids = {it["session_id"] for it in items}
-        assert "sess_sandbox_only" in sids
-        assert "sess_prod_only" not in sids
+        assert "sess_prod_only" in sids
+        assert "sess_sandbox_only" not in sids
+
+        # include_sandbox=True 才能看到 sandbox trace
+        items_all, _ = trace_store.list_traces(root=tmp_path, include_sandbox=True)
+        sids_all = {it["session_id"] for it in items_all}
+        assert "sess_prod_only" in sids_all
+        assert "sess_sandbox_only" in sids_all
     finally:
         sandbox.disable(root=tmp_path)
 
-    # 关 sandbox 后 list 又回 prod
+    # 关 sandbox 后 list 仍只看 prod
     items, _ = trace_store.list_traces(root=tmp_path)
     sids = {it["session_id"] for it in items}
     assert "sess_prod_only" in sids

@@ -363,10 +363,14 @@ def api_lab_sessions(
     limit: int = Query(default=30, ge=1, le=100),
     meal_type: str | None = Query(default=None),
     source: str = Query(default="production"),
+    include_sandbox: bool = Query(default=False),
 ) -> dict:
     """D-079 §7.1: list 最近 N 条 trace meta + feedback link.
 
-    V1 只接受 source=production (Codex +1). 留 query param 是给 V2 扩展.
+    Args:
+        include_sandbox: D-085. False (默认) = 仅 prod trace; True = 合并扫
+            sandbox 目录, items 里 is_sandbox 字段供 Lab UI 区分.
+            invariant 4 — 默认不混 sandbox.
     """
     _require_localhost(request)
     if source != "production":
@@ -379,6 +383,7 @@ def api_lab_sessions(
     from chisha import trace_store
     items, corrupt_count = trace_store.list_traces(
         root=ROOT, limit=limit, meal_type=meal_type,
+        include_sandbox=include_sandbox,
     )
     items = trace_store.attach_feedback_links(items, root=ROOT)
     return {"items": items, "corrupt_count": corrupt_count}

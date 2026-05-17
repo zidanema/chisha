@@ -96,6 +96,18 @@ def recommend_trace_dir(root: Optional[Path] = None) -> Path:
     return _maybe_sandbox(r, "recommend_trace", "logs/recommend_trace")
 
 
+def recommend_trace_prod_dir(root: Optional[Path] = None) -> Path:
+    """D-085: 显式 prod trace 目录 (不看 sandbox state). list_traces 用."""
+    r = _resolve_root(root)
+    return r / "logs" / "recommend_trace"
+
+
+def recommend_trace_sandbox_dir(root: Optional[Path] = None) -> Path:
+    """D-085: 显式 sandbox trace 目录 (不看 sandbox state). list_traces 用."""
+    r = _resolve_root(root)
+    return r / "logs" / "sandbox" / "recommend_trace"
+
+
 def profile_path(root: Optional[Path] = None) -> Path:
     """sandbox 启用且副本存在时返沙盒副本; 否则 prod profile.yaml.
 
