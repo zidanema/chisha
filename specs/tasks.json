@@ -53,7 +53,8 @@
       "title": "reference 块 resolver + 比较器",
       "regression_risk": "medium",
       "depends_on": ["T-P1a-03"],
-      "status": "pending"
+      "status": "done",
+      "_notes": "resolver + 3 comparator 完整 + 17 单测. refine path 真接入留 follow-up."
     },
     {
       "id": "T-P2-02",
