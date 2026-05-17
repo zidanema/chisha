@@ -496,3 +496,16 @@ export type BackendWhatIfReq = {
   base_session_id: string;
   overrides: BackendWhatIfOverrides;
 };
+
+// D-085 PR-E: /api/lab/sessions/{sid}/summary
+// 后端 fail-closed: LLM 失败时仍返 200, fallback=true. 前端用 fallback 字段判定渲染状态.
+export type BackendSessionSummary = {
+  text: string | null;
+  model?: string;
+  generated_at?: string;
+  fingerprint?: string;
+  cached?: boolean;
+  fallback: boolean;
+  error_kind?: "no_provider" | "llm_error" | "timeout" | "empty_trace" | string;
+  error_detail?: string;
+};

@@ -5,6 +5,7 @@ import type {
   BackendDebugRecommendReq,
   BackendDebugTrace,
   BackendSessionsResp,
+  BackendSessionSummary,
   BackendWhatIfReq,
 } from "./backend-types";
 
@@ -87,6 +88,14 @@ export function postWhatIf(req: BackendWhatIfReq): Promise<BackendDebugTrace> {
     method: "POST",
     body: JSON.stringify(req),
   });
+}
+
+// D-085 PR-E: trace 人话层摘要 (haiku). fail-closed — 后端 LLM 异常返 200 +
+// fallback=true, 前端用 fallback 字段切渲染状态.
+export function fetchSessionSummary(sid: string): Promise<BackendSessionSummary> {
+  return fetchJson<BackendSessionSummary>(
+    `/api/lab/sessions/${encodeURIComponent(sid)}/summary`,
+  );
 }
 
 // D-082: 触发 refine. 后端 /api/refine 同 session 二轮, 返 RecommendResponse 形状

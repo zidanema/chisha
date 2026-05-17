@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { BackendStatusPill } from "./components/BackendStatusPill";
 import { Sidebar } from "./components/Sidebar";
 import { DagHeader } from "./components/DagHeader";
+import { SummaryCard } from "./components/SummaryCard";
 import { EmptyStateHint } from "./components/EmptyStateHint";
 import { LiveBanner } from "./components/LiveBanner";
 import { ThemeSwitcher } from "./components/ThemeSwitcher";
@@ -386,6 +387,13 @@ export function App() {
               baseSession={session}
               onClose={() => setWhatIfOpen(false)}
             />
+          )}
+          {/* D-085 PR-E: 人话层摘要 — 仅 replay mode + 非 what-if + 主 tab + 有持久化 session.
+              Live trace 不持久化 → 调 summary endpoint 必 404, 屏蔽掉.
+              What-if preview 同理 (后端虽容忍但不写盘, 没价值显示). */}
+          {mode === "replay" && !whatIfOpen && tab === "main" && session != null
+            && session.session_id && (
+            <SummaryCard sessionId={session.session_id} />
           )}
           {session != null && (
             <DagHeader

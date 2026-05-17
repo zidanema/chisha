@@ -1633,6 +1633,42 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
 }
 .live-banner .lb-exit:hover { color: var(--t-0); background: var(--bg-2); }
 
+/* D-085 PR-E: 人话层摘要卡片 — 放在 DagHeader 之前, 首屏第一眼 */
+.summary-card {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px;
+  margin: 10px 14px 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+  font-size: 13px;
+  line-height: 1.5;
+  box-shadow: 0 2px 6px var(--shadow-card);
+}
+.summary-card.summary-ok       { border-left: 3px solid var(--L3); }
+.summary-card.summary-loading  { border-left: 3px solid var(--line-strong); opacity: 0.85; }
+.summary-card.summary-fallback { border-left: 3px solid var(--accent); }
+.summary-card.summary-error    { border-left: 3px solid var(--err); }
+.summary-card .sc-tag {
+  font-family: var(--mono); font-size: 10px;
+  padding: 2px 6px; border-radius: 2px;
+  background: var(--L3); color: var(--bg-0);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+.summary-card .sc-tag-warn { background: var(--accent); }
+.summary-card .sc-tag-err  { background: var(--err); color: #fff; }
+.summary-card .sc-text { flex: 1 1 auto; color: var(--t-0); min-width: 200px; }
+.summary-card .sc-meta { font-size: 11px; flex-shrink: 0; }
+.summary-card .sc-retry {
+  font-family: var(--mono); font-size: 11px;
+  padding: 3px 8px; border-radius: 3px;
+  background: var(--bg-3); border: 1px solid var(--line-strong);
+  color: var(--t-1); cursor: pointer;
+  flex-shrink: 0;
+}
+.summary-card .sc-retry:hover { color: var(--t-0); background: var(--bg-2); }
+
 /* D-079: What-if panel — two-column compare */
 .what-if {
   margin: 14px;
