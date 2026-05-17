@@ -200,8 +200,10 @@ def hard_filter(
     profile: dict,
     avoid_restaurant_ids: set[str] | None = None,
     rest_ban_reasons: dict[str, str] | None = None,
+    *,
+    hard_filter_events: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    """硬过滤 (DESIGN §5.6 召回-2 + D-041).
+    """硬过滤 (DESIGN §5.6 召回-2 + D-041 + T-P1a-01 L0 三分).
 
     Returns (kept, dropped). dropped 每项: {dish_id, name, restaurant_id, reason}.
 
@@ -210,11 +212,20 @@ def hard_filter(
         每个 rid 默认 reason="餐厅被 ban".
       rest_ban_reasons: 优先级更高, 把 rid → 具体原因字符串. 调用方传入,
         让 trace 看清楚是 ETA/avoid_name/diversity/旧入口 哪种.
+      hard_filter_events: T-P1a-01 可选事件累计 list. 不为 None 时
+        L0-A/B 触发会 append 事件 (经 l0_constraints.make_hard_filter_event 构造).
 
     其它逻辑:
       - 销量缺失 (=0) 视为"无信息"不卡; 显式 >0 且 < min_sales 才卡.
       - P1 字段黑名单 (D-041): main_ingredient / cooking_method / cuisine.
+      - L0-A 医学过敏 + L0-B 身份伦理在所有偏好过滤前先做 (永不可破契约).
     """
+    from chisha.l0_constraints import (
+        load_l0_constraints,
+        dish_violates_l0_a,
+        dish_violates_l0_b,
+        make_hard_filter_event,
+    )
     avoid_restaurant_ids = avoid_restaurant_ids or set()
     rest_ban_reasons = rest_ban_reasons or {}
     prefs = profile.get("preferences") or {}
@@ -225,6 +236,10 @@ def hard_filter(
     # D-043: processed_meat / sweet_sauce 三档处理 — 这里是 L1 硬过滤档
     banned_processed_meat = bool(prefs.get("banned_processed_meat", False))
     banned_sweet_3 = bool(prefs.get("banned_sweet_sauce_level_3", False))
+    # T-P1a-01: L0 三分约束加载 (段缺失返空, 不抛)
+    l0c = load_l0_constraints(profile)
+    l0_a_dropped: dict[str, int] = {}   # allergy -> count
+    l0_b_dropped: dict[str, int] = {}   # rule -> count
     spicy_max = prefs.get("spicy_tolerance", 3)
     hard_max_oil = profile["plate_rule"].get("hard_max_oil_level", 5)
     min_sales = profile.get("recall", {}).get("min_monthly_sales", 0)
@@ -237,6 +252,31 @@ def hard_filter(
         reason: str | None = None
         matched_avoid = next((a for a in avoid_dish_names if a in name), None)
         sales = d.get("monthly_sales", 0)
+        # T-P1a-01: L0-A 医学过敏检查 (永不可破, 优先级最高)
+        if not l0c.is_empty():
+            a_hit = dish_violates_l0_a(d, l0c)
+            if a_hit:
+                reason = f"L0-A 医学过敏: {a_hit}"
+                l0_a_dropped[a_hit] = l0_a_dropped.get(a_hit, 0) + 1
+                dropped.append({
+                    "dish_id": d.get("dish_id"),
+                    "name": name,
+                    "restaurant_id": rid,
+                    "reason": reason,
+                })
+                continue
+            # T-P1a-01: L0-B 身份伦理检查
+            b_hit = dish_violates_l0_b(d, l0c)
+            if b_hit:
+                reason = f"L0-B 身份伦理: {b_hit}"
+                l0_b_dropped[b_hit] = l0_b_dropped.get(b_hit, 0) + 1
+                dropped.append({
+                    "dish_id": d.get("dish_id"),
+                    "name": name,
+                    "restaurant_id": rid,
+                    "reason": reason,
+                })
+                continue
         if rid in rest_ban_reasons:
             reason = rest_ban_reasons[rid]
         elif rid in avoid_restaurant_ids:
@@ -276,6 +316,25 @@ def hard_filter(
             })
         else:
             kept.append(d)
+
+    # T-P1a-01: L0-A/B drops 累积到事件列表 (调用方决定写不写)
+    if hard_filter_events is not None:
+        kept_total = len(kept)
+        for allergy, cnt in l0_a_dropped.items():
+            hard_filter_events.append(make_hard_filter_event(
+                category="L0_A_medical",
+                rule=f"allergy:{allergy}",
+                dropped_count=cnt,
+                kept_count=kept_total,
+            ))
+        for rule, cnt in l0_b_dropped.items():
+            hard_filter_events.append(make_hard_filter_event(
+                category="L0_B_identity",
+                rule=rule,
+                dropped_count=cnt,
+                kept_count=kept_total,
+            ))
+
     return kept, dropped
 
 
@@ -344,8 +403,19 @@ def is_complete_meal(d: dict) -> bool:
     return d.get("nutrition_profile", {}).get("is_complete_meal", False)
 
 
-def combo_passes_plate_rule(combo_dishes: list[dict], profile: dict) -> bool:
-    """弱约束三件套校验 (D-023)."""
+def combo_passes_plate_rule(
+    combo_dishes: list[dict],
+    profile: dict,
+    *,
+    intent=None,  # T-P1a-01: RefineIntent | None
+) -> bool:
+    """弱约束三件套校验 (D-023). T-P1a-01: intent.allows_methodology_break() 时直接放过.
+
+    保留 bool 返回类型 (调用方包括 tests/test_recall.py 不动). 解除原因的细节
+    用 combo_passes_plate_rule_with_reason 获取.
+    """
+    if intent is not None and intent.allows_methodology_break():
+        return True  # L0-C 解除 (refine 明确放纵)
     pr = profile["plate_rule"]
     has_veg = sum(1 for d in combo_dishes if is_vegetable_dish(d))
     if pr.get("must_have_vegetable", True):
@@ -358,6 +428,33 @@ def combo_passes_plate_rule(combo_dishes: list[dict], profile: dict) -> bool:
     if total_protein < pr.get("min_protein_g", 0):
         return False
     return True
+
+
+def combo_passes_plate_rule_with_reason(
+    combo_dishes: list[dict],
+    profile: dict,
+    *,
+    intent=None,
+) -> tuple[bool, str | None]:
+    """T-P1a-01: 返 (pass, override_reason).
+
+    给 _build_l1_trace / debug instrument 调用以记录解除事件. 不破坏 bool 接口.
+    override_reason 非 None 时表示 L0-C 解除 (refine_break_methodology) 或失败原因.
+    """
+    if intent is not None and intent.allows_methodology_break():
+        return True, "refine_break_methodology"
+    pr = profile["plate_rule"]
+    has_veg = sum(1 for d in combo_dishes if is_vegetable_dish(d))
+    if pr.get("must_have_vegetable", True):
+        if has_veg < pr.get("min_vegetable_dishes", 1):
+            return False, "fail_min_vegetable"
+    total_protein = sum(
+        d.get("nutrition_profile", {}).get("protein_grams_estimate", 0)
+        for d in combo_dishes
+    )
+    if total_protein < pr.get("min_protein_g", 0):
+        return False, "fail_min_protein"
+    return True, None
 
 
 def _intent_dish_score(d: dict, intent) -> float:
@@ -479,7 +576,7 @@ def build_combos_for_restaurant(
 
     # 路线 A: 完整套餐 (盖饭/套餐)，可选 +1 蔬菜
     for cm in completes:
-        if 1 <= max_n and combo_passes_plate_rule([cm], profile):
+        if 1 <= max_n and combo_passes_plate_rule([cm], profile, intent=intent):
             combos.append([cm])
         if max_n < 2:
             continue
@@ -487,7 +584,7 @@ def build_combos_for_restaurant(
             if v["dish_id"] == cm["dish_id"]:
                 continue
             c = [cm, v]
-            if combo_passes_plate_rule(c, profile):
+            if combo_passes_plate_rule(c, profile, intent=intent):
                 combos.append(c)
 
     # 路线 B: 灵活蛋白 × 蔬菜 × 主食
@@ -510,7 +607,7 @@ def build_combos_for_restaurant(
                             continue
                         if n_c == 0:
                             dishes = list(p_set) + list(v_set)
-                            if combo_passes_plate_rule(dishes, profile):
+                            if combo_passes_plate_rule(dishes, profile, intent=intent):
                                 combos.append(dishes)
                             continue
                         for c_set in _comb(carbs, n_c):
@@ -518,7 +615,7 @@ def build_combos_for_restaurant(
                             if c_ids & (p_ids | v_ids):
                                 continue
                             dishes = list(p_set) + list(v_set) + list(c_set)
-                            if combo_passes_plate_rule(dishes, profile):
+                            if combo_passes_plate_rule(dishes, profile, intent=intent):
                                 combos.append(dishes)
 
     # 去重 (按 dish_id 集合)

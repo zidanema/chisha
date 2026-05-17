@@ -146,6 +146,21 @@ def refine(
     }
     _append_intent_trace(trace, root)
 
+    # T-P1a-01: 若 refine 触发 L0-C methodology 解除, 通过响应携带事件
+    # 让 web_api 在合并 base_trace 时 append 到 l1.hard_filter_events.
+    # Codex review blocker #1 修复: refine path 走 recall, 不经 _build_l1_trace,
+    # 故 _build_l1_trace 里的事件 emit 不会触发, 需在此 path 单独构造.
+    refine_hard_filter_events: list[dict] = []
+    if not intent.is_empty() and intent.allows_methodology_break():
+        from chisha.l0_constraints import make_hard_filter_event
+        refine_hard_filter_events.append(make_hard_filter_event(
+            category="methodology",
+            rule="refine_break_relaxed_plate_rule",
+            dropped_count=0,
+            kept_count=len(combos),
+            refine_override=True,
+        ))
+
     # 8. 返回 §5.7-style (字段对前端兼容)
     return {
         "session_id": session_id,
@@ -162,6 +177,8 @@ def refine(
             "n_returned": len(reranked),
         },
         "candidates": reranked,
+        # T-P1a-01: refine path L0-C 事件 (web_api 合并 base_trace 时 append)
+        "_refine_hard_filter_events": refine_hard_filter_events,
     }
 
 

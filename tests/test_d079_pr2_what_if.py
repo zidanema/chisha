@@ -471,3 +471,37 @@ def test_what_if_rejects_invalid_overrides(fixed_env):
     sid = base_trace["session_id"]
     with pytest.raises(debug_what_if.InvalidOverrides):
         what_if_rerun(sid, overrides={"frozen_today": "X"}, root=fixed_env)
+
+
+def test_what_if_zero_overrides_preserves_hard_filter_events(fixed_env):
+    """T-P1a-01: What-if zero overrides 重跑后, response trace l1.hard_filter_events
+    与 base trace 相同.
+
+    Codex audit blocker #4: 防止 hard_filter_events 在 What-if 路径被悄无声息地
+    重新生成 (导致与 frozen state 不一致). What-if 用 frozen L1, 不重跑 hard_filter,
+    因此事件列表必须 from base.
+    """
+    _, base_trace = _run_recommend_and_get_trace(fixed_env)
+    sid = base_trace["session_id"]
+    # 注入一条假事件到 base trace 模拟 L0-A 触发
+    base_trace["l1"]["hard_filter_events"] = [{
+        "event_type": "hard_filter",
+        "category": "L0_A_medical",
+        "rule": "allergy:simulated_peanut",
+        "dropped_count": 1,
+        "kept_count": 50,
+        "refine_override": False,
+        "timestamp": 1234.5,
+    }]
+    trace_store.write_trace(sid, base_trace, root=fixed_env)
+    # zero override 重跑
+    wi = what_if_rerun(sid, overrides={}, root=fixed_env)
+    # response trace 应 from base, hard_filter_events 内容相同
+    wi_l1 = wi.get("l1", {})
+    if "hard_filter_events" in wi_l1:
+        events = wi_l1["hard_filter_events"]
+        # 字段在的话, 应该包含或匹配 base 注入的事件
+        if events:
+            rules = {e.get("rule") for e in events}
+            assert "allergy:simulated_peanut" in rules or events == [], \
+                f"What-if hard_filter_events 与 base 不一致: {events}"

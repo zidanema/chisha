@@ -76,11 +76,15 @@ def _traced_hard_filter(
     avoid_restaurant_ids: set[str],
     banned_rests_by_eta: set[str] | None = None,
     banned_rests_by_name: set[str] | None = None,
+    *,
+    hard_filter_events: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """委托给生产 hard_filter, 仅负责把"餐厅 ban 来源"映射成可读理由.
 
     把 ETA / avoid_restaurants / diversity 三组餐厅 id 合并成 rest_ban_reasons
     传给生产函数, 让丢弃明细带上具体原因.
+
+    T-P1a-01: hard_filter_events 透传给生产 hard_filter, L0-A/B 事件累积到此 list.
     """
     banned_rests_by_eta = banned_rests_by_eta or set()
     banned_rests_by_name = banned_rests_by_name or set()
@@ -98,6 +102,7 @@ def _traced_hard_filter(
         dishes, profile,
         avoid_restaurant_ids=all_avoid,
         rest_ban_reasons=rest_ban_reasons,
+        hard_filter_events=hard_filter_events,
     )
 
 
@@ -201,10 +206,14 @@ def _build_l1_trace(
     meal_log: list[dict],
     today: dt.date,
     meal_type: str | None = None,
+    intent=None,  # T-P1a-01: RefineIntent | None, 给 combo 阶段判断 L0-C 解除
 ) -> tuple[dict, list[dict]]:
-    """返回 L1 trace + combos (供 L2)."""
+    """返回 L1 trace + combos (供 L2). T-P1a-01: trace 含 hard_filter_events."""
     total_dishes = len(tagged)
     total_rests = len(rests)
+
+    # T-P1a-01: 累积 L0-A/B + methodology + refine_break 事件
+    hard_filter_events: list[dict] = []
 
     # 1a. 多样性: 近期已吃餐厅
     _, _, diversity_avoid, _ = _traced_diversity_filter(
@@ -216,11 +225,12 @@ def _build_l1_trace(
     )
     all_banned_rests = diversity_avoid | banned_by_eta | banned_by_name
 
-    # 2. hard_filter (含 P0 餐厅级 + P1 菜级黑名单)
+    # 2. hard_filter (含 P0 餐厅级 + P1 菜级黑名单 + T-P1a-01 L0-A/B)
     after_hard, hard_dropped = _traced_hard_filter(
         tagged, profile, diversity_avoid,
         banned_rests_by_eta=banned_by_eta,
         banned_rests_by_name=banned_by_name,
+        hard_filter_events=hard_filter_events,
     )
 
     # 3. diversity_filter (按主蛋白多样性, 再过一次)
@@ -235,13 +245,15 @@ def _build_l1_trace(
     rest_idx = {r["id"]: r for r in rests}
     per_rest_max = profile.get("recall", {}).get("per_restaurant_max", 3)
 
-    # 5. 每家餐厅生成 combos
+    # 5. 每家餐厅生成 combos (T-P1a-01: intent 透传支持 L0-C 解除)
     combos: list[dict] = []
     per_restaurant_summary: list[dict] = []
     for rid, rest_dishes in by_rest.items():
         if rid not in rest_idx:
             continue
-        rcombos = build_combos_for_restaurant(rest_dishes, profile, per_rest_max)
+        rcombos = build_combos_for_restaurant(
+            rest_dishes, profile, per_rest_max, intent=intent
+        )
         per_restaurant_summary.append({
             "restaurant_id": rid,
             "name": rest_idx[rid]["name"],
@@ -280,7 +292,19 @@ def _build_l1_trace(
 
     per_restaurant_summary.sort(key=lambda x: -x["n_combos"])
 
+    # T-P1a-01: 如果 refine 触发 L0-C 解除, 记一条 trace 事件
+    if intent is not None and intent.allows_methodology_break():
+        from chisha.l0_constraints import make_hard_filter_event
+        hard_filter_events.append(make_hard_filter_event(
+            category="methodology",
+            rule="refine_break_relaxed_plate_rule",
+            dropped_count=0,
+            kept_count=len(combos),
+            refine_override=True,
+        ))
+
     trace = {
+        "hard_filter_events": hard_filter_events,
         "summary": {
             "total_dishes": total_dishes,
             "total_restaurants": total_rests,

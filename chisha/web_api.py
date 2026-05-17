@@ -186,6 +186,12 @@ def api_refine(req: RefineReq) -> dict:
             cfg = base_trace.get("__config") or {}
             cfg["refine_text"] = req.refine_text or ""
             base_trace["__config"] = cfg
+            # T-P1a-01: 把 refine path 的 L0-C 事件 append 到 base_trace l1.hard_filter_events
+            refine_events = raw.get("_refine_hard_filter_events") or []
+            if refine_events:
+                l1_seg = base_trace.setdefault("l1", {})
+                events = l1_seg.setdefault("hard_filter_events", [])
+                events.extend(refine_events)
             trace_store.write_trace(req.session_id, base_trace, root=ROOT)
     except trace_store.TraceCorrupt as e:
         import logging as _logging

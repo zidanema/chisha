@@ -385,3 +385,23 @@ def test_list_sessions_includes_v1_after_bump(app_root):
         sids = {item["session_id"] for item in body.get("items", [])}
         assert v1_sid in sids
         assert v2_sid in sids
+
+
+# ────────────────────────── T-P1a-01: hard_filter_events 位置守门
+
+
+def test_fresh_trace_has_hard_filter_events_at_l1(app_root):
+    """T-P1a-01: production recommend 出来的 trace, l1.hard_filter_events 在 T-00 schema 位置.
+
+    位置守约: trace["l1"]["hard_filter_events"], 不是根级.
+    """
+    app, root = app_root
+    sid = _seed_trace(root)
+    trace = trace_store.read_trace(sid, root=root)
+    assert trace is not None
+    assert "hard_filter_events" in trace.get("l1", {}), \
+        "T-00 contract violation: hard_filter_events 必须在 trace['l1'] 下"
+    assert "hard_filter_events" not in trace, \
+        "T-00 contract violation: hard_filter_events 不应在 trace 根级"
+    # 当前 profile 无 l0_constraints + 无 refine → 数组应为空
+    assert trace["l1"]["hard_filter_events"] == []

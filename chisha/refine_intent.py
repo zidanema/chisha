@@ -51,6 +51,13 @@ PORTION_TAGS: set[str] = {
 STAPLE_TAGS: set[str] = {"avoid_staple", "want_rice", "want_noodle"}
 PRICE_BANDS: set[str] = {"cheap", "normal", "premium"}
 
+# T-P1a-01: refine 文本里出现这些词才视为"显式解除 L0-C 健康硬契约". 设计偏严,
+# 避免日常表达 ("想吃肉") 被误判成"放弃方法论".
+_METHODOLOGY_BREAK_KEYWORDS: tuple[str, ...] = (
+    "破戒", "放纵", "放开吃", "今晚不管", "今晚就", "无所谓",
+    "随便", "别管那么多", "一次性", "今天就这样", "今天放飞",
+)
+
 
 @dataclass
 class RefineIntent:
@@ -89,6 +96,16 @@ class RefineIntent:
             self.portion,
             self.staple_preference, self.price_band,
         ])
+
+    def allows_methodology_break(self) -> bool:
+        """T-P1a-01: L0-C 硬契约 (蔬菜/油上限/价格带/方法论) 是否被 refine 文本明确解除.
+
+        L0-A 医学过敏 + L0-B 身份伦理永不可破 (与本方法无关).
+        L0-C 仅当 refine 包含 "破戒/放纵/今晚就/无所谓" 等明确信号时放开.
+        检查 raw_text + freeform_note 拼接后的子串匹配.
+        """
+        text = (self.raw_text or "") + " " + (self.freeform_note or "")
+        return any(k in text for k in _METHODOLOGY_BREAK_KEYWORDS)
 
 
 # ─────────────────────────── 归一化 helpers ───────────────────────────────
