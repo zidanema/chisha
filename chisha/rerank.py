@@ -85,7 +85,17 @@ _RERANK_TOOL = {
                     "additionalProperties": False,
                 },
             },
+            # T-P1b-02: 顶层 narrative 字段, 概述"为什么推这 5 道"
+            "narrative": {
+                "type": "string",
+                "maxLength": 100,
+                "description": (
+                    "≤ 50 字摘要, 解释为什么推荐这 5 道. 必须有执行证据支撑 "
+                    "(例: '阴雨 + 近 2 餐高油 → 给你低油暖菜'), 禁止空泛形容."
+                ),
+            },
         },
+        # T-P1b-02: narrative 现阶段非强制 (旧 trace 向后兼容), 解析层兜底空字符串
         "required": ["candidates"],
         "additionalProperties": False,
     },
@@ -100,7 +110,8 @@ _CLI_OUTPUT_SECTION = """# 输出方式 (claude_code_cli no-tool 路径)
 
 直接输出一个 JSON 对象, 形如:
 
-{"candidates": [
+{"narrative": "今天阴雨 + 你近 2 餐高油 → 给你低油暖菜",
+ "candidates": [
   {"rank": 1, "is_explore": false, "combo_index": 12,
    "fit_score": 0.85, "taste_match": 0.7,
    "risk_flags": ["油偏高"], "one_line_reason": "..."},
@@ -108,6 +119,8 @@ _CLI_OUTPUT_SECTION = """# 输出方式 (claude_code_cli no-tool 路径)
 ]}
 
 字段约束:
+- narrative (T-P1b-02 新增): ≤ 50 字摘要, 解释为什么推荐这 5 道. 必须有执行证据支撑
+  (引用 refine_intent / context / 健康约束等). 禁止空泛形容. 缺省时回填 "" 不抛.
 - rank: 1..n 连续整数
 - is_explore: bool. 前 (n - n_explore) 个 false (exploit), 后 n_explore 个 true (explore). refine 模式 n_explore=0 时全部 false.
 - combo_index: 必须是输入 [idx] 段里出现过的整数, 不能凭空生成, 不能超出输入候选数, 不能重复.
@@ -1103,6 +1116,10 @@ def _run_llm_rerank(
                     f"JSON 对象缺 candidates 数组: keys={list(obj.keys())}"
                 )
                 return out
+            # T-P1b-02: 顶层 narrative 字段, 缺省回退空字符串 (旧 prompt 兼容)
+            narrative = obj.get("narrative")
+            if isinstance(narrative, str):
+                out["narrative"] = narrative
         else:
             # D-048 MAJOR 5 (Codex): 强约束以 type=="tool_use" + tool_name 为准,
             # stop_reason 不作硬断言 (OR 在某些路由上对合法 tool_call 会返回
@@ -1130,6 +1147,10 @@ def _run_llm_rerank(
                 return out
 
             cands = tool_input.get("candidates")
+            # T-P1b-02: 顶层 narrative (tool_use 路径), 缺省回退空字符串
+            narrative = tool_input.get("narrative")
+            if isinstance(narrative, str):
+                out["narrative"] = narrative
 
         validated, code, detail = _validate_llm_candidates_v(
             cands, n_max=n_max,
@@ -1339,6 +1360,8 @@ def rerank(
             )
             trace_collector["fallback_reason"] = res.get("fallback_reason")
             trace_collector["parsed_candidates"] = res.get("candidates")
+            # T-P1b-02: narrative 落 trace, 旧 trace adapter 兼容缺字段
+            trace_collector["narrative"] = res.get("narrative", "")
             # D-079 followup: 透传 latency/usage/sampling 进 trace, 让 DagHeader
             # 能渲染 L3 latency_ms / cache_hit% / token 概览; 旧 trace 这些字段
             # 仍是 None, adapter 已兜底.

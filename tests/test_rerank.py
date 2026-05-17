@@ -700,3 +700,32 @@ def test_run_llm_rerank_respects_profile_model_override(
 
     # call_text 内部 _resolve_model 透传 profile model → provider 收到 sonnet
     assert captured.get("model") == "claude-sonnet-4-6"
+
+
+# ────────────────────────── T-P1b-02 narrative 字段
+
+
+def test_rerank_tool_schema_includes_narrative_field():
+    """T-P1b-02: _RERANK_TOOL schema 含 narrative 顶层字段."""
+    from chisha.rerank import _RERANK_TOOL
+    props = _RERANK_TOOL["input_schema"]["properties"]
+    assert "narrative" in props, "tool schema 必须暴露 narrative 顶层字段"
+    assert props["narrative"]["type"] == "string"
+    assert props["narrative"]["maxLength"] == 100  # ~50 字汉字预算
+
+
+def test_rerank_tool_schema_narrative_optional():
+    """T-P1b-02: narrative 非 required 让旧 LLM 返回向后兼容."""
+    from chisha.rerank import _RERANK_TOOL
+    required = _RERANK_TOOL["input_schema"]["required"]
+    assert "narrative" not in required, \
+        "narrative 应为 optional (旧 trace / 旧 LLM 不带 narrative 不应崩)"
+    # candidates 仍是 required
+    assert "candidates" in required
+
+
+def test_cli_output_section_mentions_narrative():
+    """T-P1b-02: CLI prompt 必须包含 narrative 输出指令 (no-tool 路径需自己写)."""
+    from chisha.rerank import _CLI_OUTPUT_SECTION
+    assert "narrative" in _CLI_OUTPUT_SECTION
+    assert "≤ 50" in _CLI_OUTPUT_SECTION or "50 字" in _CLI_OUTPUT_SECTION
