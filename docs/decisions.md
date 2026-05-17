@@ -14,8 +14,9 @@
 **方法论 (L0)**: [D-023](#d-023) · [D-072+D-072.1](#d-072--d-0721)
 **反馈系统**: [D-063+D-064+D-065](#d-063--d-064--d-065) · [D-066+D-067](#d-066--d-067)
 **工具 / 调试**: [D-039](#d-039) · [D-075](#d-075) · [D-079](#d-079) · [D-028](#d-028)
-**Refine 重做**: [D-073+D-073.1](#d-073--d-0731)（推翻 D-071）
+**Refine 重做**: [D-073+D-073.1](#d-073--d-0731)（推翻 D-071） · [D-080](#d-080) · [D-081](#d-081) · [D-084](#d-084)
 **L1 真兑现**: [D-076+D-076.1](#d-076--d-0761) · [D-077](#d-077) · [D-078](#d-078)
+**Refine v2 / Faithful Refine**: [D-080](#d-080) · [D-081](#d-081) · [D-082](#d-082) · [D-083](#d-083) · [D-084](#d-084) · [D-085](#d-085)
 **Agent 接入 (草稿)**: [D-074](#d-074)
 
 ---
@@ -210,3 +211,50 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 后端是单一可信源，前端 localStorage 退为 7 天离线 fallback 永不参与列表合并；不动 L1/L2/L3/Final/Refine/Trace 6 个 panel 组件（what-if 是 overlay）
 - 改 trace schema 必 bump `TRACE_SCHEMA_VERSION`；改 score / methodology / spec 仍必跑 baseline_l2 守门（D-072.1 红线）
 - Codex 两轮 review 12 finding 全闭环（2 BLOCKER：`__frozen.l1_prefs_snapshot` + `l2_meal_log_view` 漏了 runtime read 漂移；7 FIX-NOW：failure matrix 固化 / `__source` 枚举 / 300→50MB trace size / Live `save-as-replay` 禁；1 push back: localhost 鉴权用 bind 替代端点 token；2 defer: schema upgrade policy + 文件分桶）
+
+## D-080
+**第一原则: Faithful Refine — 系统对 refine 文本的理解深度和执行忠实度, 是用户对 chisha 信任的唯一来源。冲突时, 忠实优先于多样性 / 效率 / 探索 / narrative 美观。** (2026-05-18) · 系统宪法
+- 用户自用暴露体感问题: refine 自然语言诉求 "没被很好理解和满足" + trace 送 L3 的 combo 凑不满 60
+- 根因: 系统把 refine 当 "打分修饰符", 没当 "召回方针重写"
+- 这一原则写入 CONTRACTS.md 顶部, 所有改推荐链路的 PR 必须先证明不违反
+- 详见 [`docs/design_briefs/2026-05-18-refine-v2-faithful-refine.md`](design_briefs/2026-05-18-refine-v2-faithful-refine.md) §1
+
+## D-081
+**refine 多 slot LLM 解析 — 不再 "分类", 意图天然可叠加 (redirect + constrain + reject_previous 同时拍)。** (2026-05-18) · 演进 D-073 RefineIntent
+- 新 schema 加: brand_avoid / cooking_method_avoid / food_form_avoid / quality_floor / delivery_only / functional / reference / cuisine_candidates_expanded / ingredient_synonyms / raw_understanding
+- 裸 LLM 单点必须带 3 安全带: schema 验证 + 失败降级到空 refine 模式 / trace 双存 (raw + 结构化 + raw_understanding) / 冷启动 eval set 30-50 条
+- 失败 case 必须显式告知用户 ("没听懂"), 绝不偷换
+- 详见 brief §4
+
+## D-082
+**L0 三分判定表取代旧 "硬契约 vs 破戒模式" 二分。** (2026-05-18) · 修正蓝图 v1 自相矛盾
+- A 医学风险类 (过敏 / 药物 / 孕期 / 术后 / 小孩过敏): **永不可破**
+- B 身份伦理类 (清真 / 素食 / 宗教): **永不可破** (只能 profile 改)
+- C 普通健康类 (油 / 糖 / 蔬菜占比 / 价格带 / 减脂): **refine 明确表达可破**
+- 副作用: 蓝图 v1 "破戒模式" 独立 feature 取消, 被 L0 三分 + refine 解除 C 类吸收
+- 详见 brief §3
+
+## D-083
+**methodology 拆两层 — 硬契约下沉 L1 hard_filter, 软偏好留 L2 加权。** (2026-05-18) · 兑现 D-070 "原则派" 承诺
+- 当前 bug: 长期方法论 (蔬菜 ≥ 50% / 油上限) 只是 L2 一个权重, 与 popularity 0.4 / variety 0.5 同台 PK → 减脂用户被推炒饭
+- 改造: harvard_plate.yaml 健康硬契约从 L2 weight 改为 L1 hard_filter, 不满足直接出局
+- 与 D-082 耦合: L0 C 类约束就是要下沉到 L1 的内容
+- baseline_l2_snapshot 守门 (D-072.1 红线): 无 refine 路径 0 diff
+- 详见 brief §7
+
+## D-084
+**refine 模式 L1 召回参数走差异化分支 — 不再与空输入共用一套。** (2026-05-18) · 解决 "L3 凑不满 60"
+- per_restaurant_max 3 → 5-8 / 总召回 2-3x / ingredient_want 进 L1 反查 / L3 top_k 保底至少 30 个 intent 命中
+- Cap 失败三级回落: 精确 → 同源扩展 → 全集, 每级 UI 显式告知
+- L2 权重重平衡: 满足 0.7 / 多样性 0.3 (refine 时)
+- 多样性维度 refine 时转纵向 (intent 内部子类, 如湘菜分家常/小炒/腊味)
+- 空输入路径行为完全不变 (baseline_l2_snapshot 0 diff)
+- 详见 brief §6
+
+## D-085
+**narrative + 状态条必须后置 — 链路错时漂亮 narrative 是信任放大器 (Codex 反直觉挑战)。** (2026-05-18) · 实施次序硬约束
+- L3 prompt 加 narrative 字段输出 "为什么推这 5 道" + 顶部 always-on 状态条 (当前模式 / refine 命中 L0 过滤时告知)
+- 但必须在 D-083 硬契约下沉 + D-084 召回重写**之后**上线, 否则 LLM 会自信编 "为你避开了高油菜" 实际没过滤, 欺骗深、失信代价大
+- 字段空洞 (quality_floor / delivery_only / reference) 务实降级: schema 抽出但 L1/L2 不消费, 只透传 L3 prompt + trace 标 `unsupported_in_recall=true`, 不假装做了
+- 联动改造 (≠ 无侵入): API 契约 + 前端卡片 + trace schema bump + 旧结果兼容, 至少 4 处
+- 详见 brief §5 §8

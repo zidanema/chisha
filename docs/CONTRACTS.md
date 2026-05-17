@@ -7,6 +7,22 @@
 
 ---
 
+## 第一原则 (系统宪法)
+
+### Faithful Refine
+- **系统对 refine 文本的理解深度和执行忠实度，是用户对 chisha 信任的唯一来源。** 冲突时，忠实优先于多样性 / 效率 / 探索 / narrative 美观（参 D-080）。
+- 推论 1: refine ≠ 长期偏好补丁，是一次完整、独立、最高优先级的表达。
+- 推论 2: refine 的失败必须**显式告知用户**（"没找到 X，按相似口味推 Y"），不能默默偷换。
+- 推论 3: narrative 美观永远不能跑在执行能力前面 — 链路错时漂亮 narrative 是信任放大器，欺骗深、失信代价大（参 D-085）。
+
+### L0 三分判定表 (refine 解除政策)
+- **A 医学风险类**（过敏 / 药物冲突 / 孕期 / 术后 / 小孩过敏）: refine **永不可破**，触发时显式提示。
+- **B 身份伦理类**（清真 / 素食 / 宗教忌口）: refine **永不可破**，只能 profile 改。
+- **C 普通健康类**（油 / 糖 / 蔬菜占比 / 价格带 / 减脂目标）: refine **明确表达可破**，UI 提示「破戒模式」。
+- 拆分理由见 D-082。改 L0 类别归属前必须更新 profile schema + 这条契约。
+
+---
+
 ## 推荐链路 (L1 / L2 / L3)
 
 ### L1 召回
@@ -35,6 +51,9 @@
 
 - **`infer_refine_mood` 只服务 `want_soup`。** 不许扩为通用 mood parser。新心情维度走 refine 自由文本或 L3 prompt，**绝不在前端加 mood chip**（参 D-071）。单测 `test_refine_mood.py` 有 8 case 守门。
 - **explore 默认开启（top 5 中 1-2 个），refine 路径关闭。** 用户已主动给方向就不要再 explore（参 D-015）。
+- **refine 与空输入必须走差异化 L1 召回分支**（per_restaurant_max / 总召回 / top_k 兜底 / ingredient 反查），不能共用一套。空输入路径行为变化需 baseline_l2_snapshot 0 diff 验证（参 D-084）。
+- **refine 多 slot LLM 解析必须带 3 安全带**: schema 验证 + 失败降级到 "空 refine 模式" + UI 显式告知 / trace 双存 raw + 结构化 + raw_understanding / 改 prompt 或换模型必跑 eval set（参 D-081）。
+- **字段空洞 (quality_floor / delivery_only / reference) 务实降级原则**: schema 抽出但 L1/L2 不消费，只透传 L3 prompt + trace 标 `unsupported_in_recall=true`。**不假装做了**。补字段后再升级（参 D-085）。
 
 ---
 

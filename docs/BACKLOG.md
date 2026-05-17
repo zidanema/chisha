@@ -35,6 +35,7 @@
   - 待定: hard avoid vs 软扣分 / 衰减曲线 / 影响 score 还是只 L3 prompt
 - **绕过**: 当前无, 用户需手填 `profile.preferences.avoid_dishes / disliked_cuisines`
 - **不修原因**: 涉及打分链路改动, 必须 baseline_l2_snapshot 守门; 衰减曲线 + hard/soft 决策需要设计讨论, 不能边写边定
+- **与 Refine v2 (D-080~D-085) 关系**: 不重叠。Refine v2 解决 "当下意图忠实兑现"，B-001 解决 "近期反馈对长期偏好的衰减"。两条路径独立、可并行做。Refine v2 完成不解此 bug，仍需单独 session 设计。
 
 ---
 
@@ -49,6 +50,7 @@
 - **What**: 当前 L1 词表只有 8 token (low_oil/wetness/spicy/sweet_sauce × boost/penalty)。扩 cuisine 偏好 (川/粤/日料/湘菜...) 让 L1 抽取能稳定承接长期 cuisine 倾向, 不只靠 refine 一次性表达
 - **约束**: 需独立决策 + baseline_l2_snapshot 守门; cuisine token enum 要和 recall.py / score.py 现有 cuisine 字段对齐
 - **优先级**: P2 (Phase 1 同事推广前做, 因为同事的 cuisine 倾向比志丹自己分散)
+- **与 Refine v2 关系**: 互补。Refine v2 (D-081) 让 refine 一次性表达的 cuisine 被忠实兑现; F-001 让 cuisine 倾向能跨 session 沉淀进 L1 长期。两条独立。
 
 ### F-002 · data zone 拆包
 
@@ -79,6 +81,33 @@
 - **What**: Phase 0 只做 Claude Code reference adapter, Phase 1 扩 OpenClaw / HappyClaw / Codex 等
 - **优先级**: P2
 
+### F-006 · eater_context (替别人点餐场景)
+
+- **来源**: 2026-05-18 Codex v2 review Refine v2 蓝图时挑出
+- **状态**: open, 排到 V2
+- **What**: 当用户替别人 (老人 / 小孩) 点餐时, refine 表达不应自动套用 owner 的 L0 (C 类) 解除权限。schema 需加 `eater_context` 字段标识此次餐对象
+- **约束**: Phase 0 单用户场景风险可接受, 不在 Refine v2 (D-080~D-085) 范围
+- **优先级**: P3 (多用户场景出现时再做)
+
+### F-007 · Refine 高级 slot 扩展 (occasion / avoid_pattern / exploration_boost)
+
+- **来源**: Refine v2 brief §12 标记的未来扩展
+- **状态**: open, 待真实数据验证
+- **What**: 三类 LLM 解析 slot:
+  - `occasion`: "见客户" / "孩子也吃" / "和朋友 AA" → 改 brand_tier / 分量 / 辣度
+  - `reference.relation: avoid_pattern`: "不要像那次那样" → reference 的 negative 版
+  - `exploration_boost`: "随便" / "都行" / "你看着办" → 主动放手时让 ε-greedy 加大
+- **触发条件**: D-081 eval set 跑出 miss 率 > 20% 再加
+- **优先级**: P3
+
+### F-008 · 反馈接口 3 维 (喜欢 / 不喜欢 / 不合时宜)
+
+- **来源**: 2026-05-18 Refine v2 讨论中 Opus 提出
+- **状态**: open, 排到 V2
+- **What**: 当前反馈只有"喜欢/不喜欢"二维; 加"不合时宜"维度区分"今天不想吃但本身爱"vs"本身不喜欢", 避免长期偏好被污染
+- **与 B-001 关系**: 同属反馈改造范畴, 应在反馈优化 session 中一起做
+- **优先级**: P2 (反馈优化专题里做)
+
 ---
 
 ## Ideas
@@ -94,3 +123,4 @@ _(待填)_
 > 条目状态变更追踪。挪走 / 砍掉 / 升级时在此记一行。
 
 - 2026-05-17 · BACKLOG.md 建档, 从 ROADMAP / CLAUDE.md 收 F-001~F-005 五条 Phase 1 deferred 种子
+- 2026-05-18 · Refine v2 设计后追加 F-006 (eater_context) / F-007 (refine 高级 slot 扩展) / F-008 (反馈 3 维); B-001 / F-001 标注与 Refine v2 (D-080~D-085) 的关系
