@@ -20,8 +20,6 @@ type DagNode = {
 
 export type DagHeaderProps = {
   activeTab: "main" | "refine" | "trace";
-  fallbackL3LatencyMs: number | null;
-  fallbackProvider: string | null;
   currentPanel: string;
   onClickNode: (id: string) => void;
   compact: boolean;
@@ -33,10 +31,7 @@ export type DagHeaderProps = {
 function buildNodes(
   session: Session,
   activeTab: DagHeaderProps["activeTab"],
-  fallbackL3LatencyMs: number | null,
-  fallbackProvider: string | null,
 ): DagNode[] {
-  const useFallback = fallbackL3LatencyMs != null;
   const { l1, l2, l3, refine } = session;
   const totalCombos = l1.funnel[l1.funnel.length - 1]?.value ?? 0;
   const restCountAfter = l2.kpi.restaurants_after_cap;
@@ -48,11 +43,32 @@ function buildNodes(
   const cacheHitPct = l3.input_tokens
     ? Math.round((l3.cache_read_input_tokens / l3.input_tokens) * 100)
     : 0;
-  const l3LatencyDisplay = useFallback ? fallbackL3LatencyMs : l3.latency_ms;
+  const l3LatencyDisplay = l3.latency_ms;
   const ctxLat = `${session.ctx_latency_ms}ms`;
   const finalLat = `${session.final_latency_ms}ms`;
+  // D-082: refine 节点用 round2 真实数据驱动 (老 diff 字段已废, adapter 喂 [])
+  const refineApplied = refine.user_text.length > 0;
+  const round2 = session.round2;
+  const refineRound = (refine.intent as { round?: number } | null)?.round;
+  const compactLayout = activeTab === "refine" || (refineApplied && round2);
 
-  if (activeTab === "refine") {
+  const baseRefineNode: DagNode | null = refineApplied
+    ? {
+        id: "refine",
+        x: compactLayout ? "78%" : "82%",
+        y: 36,
+        tone: "refine",
+        title: round2 ? "round 2 · L1→L2→L3 全跑" : "round 2 summary only",
+        metric: round2
+          ? String(round2.final.length)
+          : String(refine.candidate_ids?.length ?? 0),
+        subm: "picks",
+        sub: round2 ? `${round2.l2.combos.length} top · ${round2.l3.candidates_returned} out` : "no round2",
+        lat: round2 ? `${round2.total_latency_ms}ms` : (refineRound ? `r${refineRound}` : "—"),
+      }
+    : null;
+
+  if (compactLayout) {
     return [
       { id: "ctx", x: "1%", y: 36, tone: "ctx", title: "build_context", metric: "profile",
         sub: `${l1.meal} · ${l1.area.slice(0, 6)}`, lat: ctxLat },
@@ -61,16 +77,13 @@ function buildNodes(
       { id: "l2", x: "31%", y: 36, tone: "l2", title: `${l2.weights.length}-dim + cap K=${l2.kpi.cap_k}`,
         metric: String(l2.candidates_to_l3), subm: "top", sub: `${restCountBefore}→${restCountAfter}`, lat: `${l2.latency_ms}ms` },
       { id: "l3", x: "46%", y: 36, tone: "l3",
-        title: useFallback ? "FALLBACK · sonnet" : `${l3.model.split("-").slice(-3).join("-")} · tool_use`,
+        title: `${l3.model.split("-").slice(-3).join("-")} · tool_use`,
         metric: String(l3LatencyDisplay), subm: "ms",
-        sub: useFallback ? (fallbackProvider ?? "fallback") : `cache ${cacheHitPct}%`,
-        lat: useFallback ? "FB" : "OK", warn: true, fb: useFallback },
+        sub: `cache ${cacheHitPct}%`,
+        lat: "OK", warn: true },
       { id: "final", x: "61%", y: 36, tone: "final", title: `${exploitN} exploit + ${exploreN} explore`,
         metric: String(session.final.length), subm: "picks", sub: `¥${top1Price}`, lat: finalLat },
-      { id: "refine", x: "78%", y: 36, tone: "refine", title: "parse → chips → rerun",
-        metric: `+${refine.diff.new_in_top5.length} / −${refine.diff.dropped_from_top5.length}`,
-        subm: "diff", sub: `haiku · ${refine.parse_feedback.llm_call.latency_ms}ms`,
-        lat: `${refine.summary_kpi.total_latency_ms}ms` },
+      ...(baseRefineNode ? [baseRefineNode] : []),
     ];
   }
 
@@ -82,10 +95,10 @@ function buildNodes(
     { id: "l2", x: "33%", y: 36, tone: "l2", title: `${l2.weights.length}-dim · cap K=${l2.kpi.cap_k}`,
       metric: String(l2.candidates_to_l3), subm: "top", sub: `${restCountBefore}→${restCountAfter} rest`, lat: `${l2.latency_ms}ms` },
     { id: "l3", x: "49.5%", y: 36, tone: "l3",
-      title: useFallback ? "FALLBACK · sonnet" : `${l3.model.split("-").slice(-3).join("-")} · tool_use`,
+      title: `${l3.model.split("-").slice(-3).join("-")} · tool_use`,
       metric: String(l3LatencyDisplay), subm: "ms",
-      sub: useFallback ? (fallbackProvider ?? "fallback") : `cache ${cacheHitPct}%`,
-      lat: useFallback ? "FB" : "OK", warn: true, fb: useFallback },
+      sub: `cache ${cacheHitPct}%`,
+      lat: "OK", warn: true },
     { id: "final", x: "66%", y: 36, tone: "final", title: `${exploitN} exploit + ${exploreN} explore`,
       metric: String(session.final.length), subm: "picks", sub: `¥${top1Price} · ${top1Eta}min`, lat: finalLat },
   ];
@@ -126,7 +139,9 @@ function DagArrows({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const W = activeTab === "refine" ? 138 : 154;
+    // D-082: compact width 当 refine 节点存在 (refine tab 或 main 带 round2).
+    const hasRefine = nodes.some((n) => n.id === "refine");
+    const W = hasRefine ? 138 : 154;
     const H = 78;
 
     const compute = () => {
@@ -176,18 +191,17 @@ function DagArrows({
 }
 
 export function DagHeader({
-  activeTab, fallbackL3LatencyMs, fallbackProvider, currentPanel, onClickNode,
+  activeTab, currentPanel, onClickNode,
   compact, onToggleCompact, runningPulse, session,
 }: DagHeaderProps) {
-  const useFallback = fallbackL3LatencyMs != null;
   const canvasRef = useRef<HTMLDivElement>(null);
-  const nodes = buildNodes(session, activeTab, fallbackL3LatencyMs, fallbackProvider);
+  const nodes = buildNodes(session, activeTab);
   const sessionId = session.session_id;
   const startedTime = session.started_at.split(" ")[1] ?? session.started_at;
   const totalLatency = session.total_latency_ms;
-  // Read real L3 status so config_error / skipped surface in the DAG header,
-  // not just OK. fallback toggle still overrides for mock demo.
-  const l3Status: L3Status = useFallback ? "fallback" : session.l3.status;
+  // Real L3 status: config_error / skipped / fallback / ok 都 surface 出来.
+  // 真实 LLM provider chain fallback 由 session.l3.status + session.l3.fallback_chain 驱动.
+  const l3Status: L3Status = session.l3.status;
   const cacheHitPct = session.l3.input_tokens
     ? Math.round((session.l3.cache_read_input_tokens / session.l3.input_tokens) * 1000) / 10
     : 0;
@@ -205,7 +219,7 @@ export function DagHeader({
             .map((n, i, arr) => (
               <Fragment key={n.id}>
                 <button
-                  className={`chip ${n.tone} ${useFallback && n.id === "l3" ? "fb" : ""} ${currentPanel === n.id ? "selected" : ""}`}
+                  className={`chip ${n.tone} ${l3Status === "fallback" && n.id === "l3" ? "fb" : ""} ${currentPanel === n.id ? "selected" : ""}`}
                   onClick={() => onClickNode(n.id)}
                 >
                   {chipLabel(n.id)}
@@ -218,7 +232,7 @@ export function DagHeader({
               </Fragment>
             ))}
         </div>
-        {useFallback && (
+        {l3Status === "fallback" && (
           <span className="strip-warn">
             <span className="pulse"></span>L3 fallback
           </span>
@@ -271,7 +285,10 @@ export function DagHeader({
           <div
             key={n.id}
             className={`dag-node ${currentPanel === n.id ? "selected" : ""}`.trim()}
-            style={{ left: n.x, top: n.y, width: activeTab === "refine" ? 138 : 154 }}
+            style={{
+              left: n.x, top: n.y,
+              width: nodes.some((nn) => nn.id === "refine") ? 138 : 154,
+            }}
             onClick={() => onClickNode(n.id)}
           >
             <div className={`dag-node-head ${n.tone}`}>
@@ -297,7 +314,7 @@ export function DagHeader({
           <span><span className="swatch" style={{ background: "var(--L2)" }}></span>L2</span>
           <span><span className="swatch" style={{ background: "var(--L3)" }}></span>L3</span>
           <span><span className="swatch" style={{ background: "var(--final)" }}></span>final</span>
-          {activeTab === "refine" && (
+          {nodes.some((n) => n.id === "refine") && (
             <span><span className="swatch" style={{ background: "var(--refine)" }}></span>refine</span>
           )}
           <button

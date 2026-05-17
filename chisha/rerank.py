@@ -1121,8 +1121,12 @@ def _run_llm_rerank(
                                        l1_prefs_override=l1_prefs_override,
                                        feedback_view=feedback_view)
         out["system_prompt_chars"] = len(system_prompt)
+        out["system_prompt_full"] = system_prompt
         out["user_message_chars"] = len(user_msg)
         out["user_message_full"] = user_msg
+        # B-004: 把 tool 定义+choice 落 trace 让 Replay 自包含 (CLI 路径不发 tool, 留 None)
+        out["tool_definition"] = None if is_cli else _RERANK_TOOL
+        out["tool_choice"] = None if is_cli else _RERANK_TOOL_CHOICE
         kwargs: dict[str, Any] = {
             "model": final_model,
             # D-048 MAJOR 1 (Codex): CLI 路径 max_tokens 是 *假保护* — claude_code_cli
@@ -1418,8 +1422,12 @@ def rerank(
             trace_collector["resolved_provider"] = res.get("resolved_provider")
             trace_collector["model"] = res.get("model")
             trace_collector["system_prompt_chars"] = res.get("system_prompt_chars")
+            trace_collector["system_prompt_full"] = res.get("system_prompt_full")
             trace_collector["user_message_chars"] = res.get("user_message_chars")
             trace_collector["user_message_full"] = res.get("user_message_full")
+            # B-004: tool 定义 (forced JSON schema) + choice 进 trace, 让 Replay 自包含.
+            trace_collector["tool_definition"] = res.get("tool_definition")
+            trace_collector["tool_choice"] = res.get("tool_choice")
             trace_collector["raw_response"] = raw_text
             trace_collector["raw_response_chars"] = len(raw_text)
             trace_collector["tool_input"] = (

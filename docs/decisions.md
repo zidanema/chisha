@@ -13,7 +13,7 @@
 **Context / Mood**: [D-034](#d-034) · [D-071](#d-071) · [D-015](#d-015)
 **方法论 (L0)**: [D-023](#d-023) · [D-072+D-072.1](#d-072--d-0721)
 **反馈系统**: [D-063+D-064+D-065](#d-063--d-064--d-065) · [D-066+D-067](#d-066--d-067)
-**工具 / 调试**: [D-039](#d-039) · [D-075](#d-075) · [D-079](#d-079) · [D-028](#d-028)
+**工具 / 调试**: [D-039](#d-039) · [D-075](#d-075) · [D-079](#d-079) · [D-082](#d-082) · [D-028](#d-028)
 **Refine 重做**: [D-073+D-073.1](#d-073--d-0731)（推翻 D-071）
 **L1 真兑现**: [D-076+D-076.1](#d-076--d-0761) · [D-077](#d-077) · [D-078](#d-078)
 **Agent 接入 (草稿)**: [D-074](#d-074)
@@ -229,3 +229,10 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 守门：`feedback_view=[]` 或无命中 → **不写** breakdown key（保 16 维 keyset 不变，baseline_l2 EPSILON=1e-6 严格 0 差）
 - 落点：sentinel 区分 `_UNSET_FEEDBACK_VIEW` vs `[]`，What-if 必须显式传 `__frozen.feedback_view`（D-079 零 runtime read 红线）
 - 不动 L1 长链路（双层互补）/ 不做 hard avoid（软扣分够压，且不和 D-073 cuisine_want 冲突）/ 仅餐厅级（菜品/配料留 Phase 1，B-002 并行处理 ingredient 不重叠）
+
+## D-082
+**Refine 二轮全量 pipeline trace 写进同一 trace 文件 `round2` 子键, debug-ui Refine tab 真接入。** (2026-05-17) · 推翻 D-079 PR-4 "只 merge refine summary"
+- 痛点: D-079 PR-4 只写 intent + 5 个 candidate_ids, Refine tab 是 "Phase 4+ 未接入" 占位 — 用户跑完 refine 在 debug 台看不到 round2 任何信息
+- 落地: refine.py 加 `trace_intermediates` 收集中间态; web_api.py 调 `_build_pipeline_trace_block` 塞 `base_trace["round2"]`; 仍单文件 (守住 CONTRACTS.md "一条 session 一行")
+- 前端: PanelRefine 重建 (RefineIntent chips + diff 四数 + 复用 PanelL1/L2/L3/Final 渲 round2); Sidebar 角标 R (实=可回放, 虚=老 trace 仅 summary)
+- 兼容: 不 bump `TRACE_SCHEMA_VERSION` (round2 / B-003 新字段全 optional, 老 trace 走 OldTraceCallout 提示重跑); CONTRACTS.md "调试台 React 化留 Phase 1" 不适用 (这是修完整不是新增)

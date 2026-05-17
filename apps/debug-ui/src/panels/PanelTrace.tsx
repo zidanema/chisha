@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Pill } from "../components/ui/Pill";
 import type { PillTone } from "../components/ui/Pill";
 import type { BackendMatchedDish, BackendTargetTrace } from "../api/backend-types";
@@ -279,9 +279,8 @@ export function PanelTrace({
                 const isOpen = openId === d.dish_id;
                 const inRanked = matchedComboIds.size > 0;
                 return (
-                  <>
+                  <Fragment key={d.dish_id}>
                     <tr
-                      key={d.dish_id}
                       onClick={() => setOpenId(isOpen ? null : d.dish_id)}
                       style={{ cursor: "pointer" }}
                     >
@@ -315,7 +314,7 @@ export function PanelTrace({
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>

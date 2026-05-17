@@ -88,3 +88,17 @@ export function postWhatIf(req: BackendWhatIfReq): Promise<BackendDebugTrace> {
     body: JSON.stringify(req),
   });
 }
+
+// D-082: 触发 refine. 后端 /api/refine 同 session 二轮, 返 RecommendResponse 形状
+// (debug-ui 不消费, 触发完直接 refetch trace 拿 round2). 调用方 await 后调
+// fetchSession(sid) 取更新过的 trace.
+export function postRefine(
+  sessionId: string,
+  refineText: string,
+): Promise<unknown> {
+  return fetchJson<unknown>("/api/refine", {
+    method: "POST",
+    body: JSON.stringify({ session_id: sessionId, refine_text: refineText }),
+  });
+}
+

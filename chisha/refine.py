@@ -55,6 +55,7 @@ def refine(
     today: dt.date | None = None,
     n: int = 5,
     use_llm: bool | None = None,
+    trace_intermediates: dict | None = None,
 ) -> dict:
     """refine_recommendation 主入口 (D-073 v2).
 
@@ -65,10 +66,15 @@ def refine(
         root: 仓库根目录 (用于 session 落盘 + trace 写入).
         n: 输出候选数, refine 时 explore_count=0.
         use_llm: LLM 开关 (None=auto).
+        trace_intermediates: D-082. 注入 dict 时 refine 把 combos/ranked_raw/
+            ranked/top_k/reranked/l3_collector/ctx + 各阶段 latency_ms 原地填进
+            去, 供 web_api.py 调 _build_trace(round=2) 生成 round2 全量 trace.
+            None = 不收集 (向后兼容).
 
     Raises:
         FileNotFoundError: session 不存在或已过期.
     """
+    import time as _time
     state = load_session(session_id, root)
     if state is None:
         raise FileNotFoundError(
@@ -76,6 +82,7 @@ def refine(
         )
 
     today = today or dt.date.today()
+    _t_start = _time.monotonic()
 
     # 1. parse_refine_intent: user_input → 结构化意图
     intent: RefineIntent = parse_refine_intent(
@@ -85,6 +92,7 @@ def refine(
     )
 
     # 2. 重建 ContextSnapshot, 注入 refine_input (原文) + refine_intent (结构化)
+    _t0 = _time.monotonic()
     ctx = build_context(
         profile=profile,
         meal_log=meal_log,
@@ -94,12 +102,15 @@ def refine(
         refine_input=user_input,
         refine_intent=intent.to_log_dict() if not intent.is_empty() else None,
     )
+    ctx_latency_ms = int((_time.monotonic() - _t0) * 1000)
 
     # 3. recall (intent 进 combo 生成 + 三桶 + avoid 硬过滤)
+    _t0 = _time.monotonic()
     combos = recall(profile, rests, tagged, meal_log, today,
                      meal_type=state.meal_type,
                      intent=intent if not intent.is_empty() else None,
                      n=n)
+    recall_latency_ms = int((_time.monotonic() - _t0) * 1000)
 
     # B-001: feedback_view 在 refine 二轮也注入, 保持与第一轮一致 (避免用户已
     # 踩过的餐厅在 refine 后又回来). 一次性派生, 传给 L2 + L3.
@@ -112,7 +123,8 @@ def refine(
         feedback_view = []
 
     # 4. L2 打分 (intent 进 intent_match_bonus 三档)
-    ranked = rank_combos(combos, profile, meal_log, today,
+    _t0 = _time.monotonic()
+    ranked_raw = rank_combos(combos, profile, meal_log, today,
                           context=ctx,
                           meal_type=state.meal_type,
                           root=root,
@@ -120,8 +132,9 @@ def refine(
                           feedback_view=feedback_view)
     # D-043: refine 也走三层 cap
     # D-073 followup: 传 intent, cuisine_want 命中的菜系免 cuisine cap (「换日料」bug)
-    ranked = apply_caps(ranked, profile,
+    ranked = apply_caps(ranked_raw, profile,
                         intent=intent if not intent.is_empty() else None)
+    score_latency_ms = int((_time.monotonic() - _t0) * 1000)
     # D-046: top60 给 L3
     from chisha.rerank import L3_INPUT_TOP_K
     top_k = ranked[:L3_INPUT_TOP_K]
@@ -130,10 +143,34 @@ def refine(
     # D-078.2 Codex S2 FIX-NOW: root 必须透传, 否则 refine 二轮 _profile_block
     # 走默认 (project root 兜底), sandbox 启用时读不到沙盒 long_term_prefs.json
     # (或反过来污染 prod), 行为信号在 refine 链路静默缺失.
+    # D-082: trace_intermediates 注入时同时给 rerank 创建 l3_collector, 让 round2
+    # trace 也能拿到 L3 LLM 中间状态.
+    l3_collector: dict | None = {} if trace_intermediates is not None else None
+    _t0 = _time.monotonic()
     reranked = rerank(top_k, profile, context=ctx, meal_log=meal_log,
                        n=n, n_explore=0, refine=True, use_llm=use_llm,
                        root=root,
-                       feedback_view=feedback_view)
+                       feedback_view=feedback_view,
+                       trace_collector=l3_collector)
+    rerank_latency_ms = int((_time.monotonic() - _t0) * 1000)
+
+    # D-082: 把中间状态填给调用方 (web_api.py 用来 _build_trace round=2).
+    if trace_intermediates is not None:
+        trace_intermediates["combos"] = combos
+        trace_intermediates["ranked_raw"] = ranked_raw
+        trace_intermediates["ranked"] = ranked
+        trace_intermediates["top_k"] = top_k
+        trace_intermediates["reranked"] = reranked
+        trace_intermediates["l3_collector"] = l3_collector or {}
+        trace_intermediates["ctx"] = ctx
+        trace_intermediates["feedback_view"] = feedback_view
+        trace_intermediates["ctx_latency_ms"] = ctx_latency_ms
+        trace_intermediates["recall_latency_ms"] = recall_latency_ms
+        trace_intermediates["score_latency_ms"] = score_latency_ms
+        trace_intermediates["rerank_latency_ms"] = rerank_latency_ms
+        trace_intermediates["total_latency_ms"] = int(
+            (_time.monotonic() - _t_start) * 1000
+        )
 
     # 6. 更新 session
     state.round += 1

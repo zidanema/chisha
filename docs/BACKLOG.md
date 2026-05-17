@@ -28,6 +28,32 @@
 - **实测**: dry_run + 浏览器 /api/refine top5 = 5/5 含牛肉菜
 - **守门**: baseline_l2_snapshot 严格 0 diff (intent=None 路径无影响)
 
+### B-003 · trace_store 不自包含 → **已修 (2026-05-17)**
+
+- **来源**: 2026-05-17 debug-ui D-079 cleanup 验收时发现 (志丹删 mock 后暴露)
+- **状态**: **closed** (2026-05-17 修复, 留作 changelog)
+- **现象 (修复前)**: debug-ui system_prompt tab 空 (chars=4089 但渲染空); tool_input tab 显示假 `name="emit_recommendations" / input_schema={}` (mock 残留, 真实 tool 名是 `select_top_candidates`)
+- **根因**:
+  - `chisha/api.py:226-227` 写 trace 时只存 `system_prompt_chars` 计数, 不存 `system_prompt_full`
+  - `chisha/rerank.py:1334` `trace_collector["tool_input"]` 存的是 LLM **输出**, 不存发送给 LLM 的 tool 定义
+  - 结果: D-079 trace "可 Replay" 的契约打折扣
+- **走过的弯路**: 先尝试加 `/api/debug/rerank_assets` 端点直接读源文件,但 prompt 后续改动会污染老 trace 显示, 这是免责声明不是真修. 撤销后正确方案如下
+- **修复**:
+  - `chisha/rerank.py:_run_llm_rerank` 在 `out` 加 `system_prompt_full` / `tool_definition` / `tool_choice` (CLI 路径 tool 字段为 None, 因 CLI 不支持 tool_use)
+  - `chisha/rerank.py` trace_collector 透传上述字段
+  - `chisha/api.py:_build_trace` `l3_trace` 加这三个字段
+  - debug-ui adapter 读 `l3.system_prompt_full` / `l3.tool_definition` 真实字段; 老 trace (修复前生成) 字段为空 → PanelL3 显示 `OldTraceCallout` 提示重跑; CLI 路径 tool_definition=None → 显示 `CliNoToolCallout` 解释为啥
+- **迁移策略 (D-082 同步决策)**: **不** bump `TRACE_SCHEMA_VERSION`. 这些字段都是 backend 写盘新增 + 前端 optional 读 (`?.` / `??`), 老 trace 读出来不会触发 `TraceCorrupt` fail-closed; 用户体感是个别 tab 显示 callout 提示重跑, 不阻断 Replay 列表. bump 版本反而会让老 trace 直接被拒读, 与 "调试完整性优先" 冲突.
+- **验证**: 用 `/api/recommend` 跑一条新 trace, l3.system_prompt_full=4089 chars 真实落盘; debug-ui 渲染真实方法论内容
+
+### B-004 · debug-ui L2 KPI 字段 `candidates_to_l3` 之前显示 topk_window (60) 而非实际数 (54)
+
+- **来源**: 2026-05-17 debug-ui 验收, 志丹观察"user message 没凑满 60 个 combo"
+- **状态**: **已修** (debug-ui adapter 改 `n_scored ?? top.length`, 显示真实数), 留条记录
+- **根因(已澄清)**: L2 `apply_caps()` (chisha/score.py:1068) 是 D-049 head-only 模式, 四层 cap (餐厅 3 / 品牌 2 / 菜系 6 / food_form 8) 把候选压到 54 条 head 而不到 60。 `top_k = ranked[:60]` 拿到 min(54, 60) = 54. **真送给 LLM 的就是 54 个, 不是 bug**
+- **遗留**: backend 写 trace 字段名 `topk_window=60` 是配置 cap, 不是实际数; 真实数读 `l2.summary.n_scored` 或 `l2.top.length`. 前端 adapter 之前 map 错了字段, 现在已对齐
+- **不再追踪**: 仅留作"避免再次困惑"备忘
+
 ---
 
 ### B-001 · 近期反馈对推荐影响过弱 (短链路缺口)
@@ -105,3 +131,4 @@ _(待填)_
 > 条目状态变更追踪。挪走 / 砍掉 / 升级时在此记一行。
 
 - 2026-05-17 · BACKLOG.md 建档, 从 ROADMAP / CLAUDE.md 收 F-001~F-005 五条 Phase 1 deferred 种子
+- 2026-05-17 · 收 B-003 (trace 不自包含 / system_prompt + tool_def 缺失) + B-004 (L2 KPI 字段已修留记录), 来源 D-079 cleanup 验收

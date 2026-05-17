@@ -1,7 +1,9 @@
 import { useEffect } from "react";
 
 export type ShortcutCallbacks = {
-  onRunMain: () => void;
+  // D-079 cleanup: 砍掉 "首轮推荐" 后, Cmd+Enter / Cmd+R 全部映射到 Live 试跑.
+  // 真实写盘走 apps/web /api/recommend.
+  onRunLive: () => void;
   onRunRefine: () => void;
   isRunDisabled: () => boolean;
   hasRefineText: () => boolean;
@@ -28,7 +30,7 @@ function isInsideSidebar(target: EventTarget | null): boolean {
 }
 
 export function useKeyboardShortcuts({
-  onRunMain,
+  onRunLive,
   onRunRefine,
   isRunDisabled,
   hasRefineText,
@@ -39,32 +41,32 @@ export function useKeyboardShortcuts({
 
       const mod = e.metaKey || e.ctrlKey;
 
-      // Cmd/Ctrl + Enter inside a sidebar textarea → trigger main run.
+      // Cmd/Ctrl + Enter → Live 试跑.
       if (mod && e.key === "Enter") {
         if (!isInsideSidebar(e.target) && !isInteractiveTarget(e.target)) {
           // global Cmd+Enter outside any input: still trigger.
         }
         if (isRunDisabled()) return;
         e.preventDefault();
-        onRunMain();
+        onRunLive();
         return;
       }
 
-      // Cmd/Ctrl + R: intercept browser reload, run refine if text present
-      // otherwise re-run main. Cmd+Shift+R is left untouched (escape hatch
-      // to force-reload).
+      // Cmd/Ctrl + R: 拦截浏览器刷新. 有 refine 文本 → refine, 否则 → Live 试跑.
+      // success/error toast 由 handleRunRefine + useSession.runRefine 内部已 fire.
+      // Cmd+Shift+R 保留浏览器原生 force-reload escape hatch.
       if (mod && (e.key === "r" || e.key === "R") && !e.shiftKey && !e.altKey) {
         if (isRunDisabled()) return;
         e.preventDefault();
         if (hasRefineText()) {
           onRunRefine();
         } else {
-          onRunMain();
+          onRunLive();
         }
         return;
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onRunMain, onRunRefine, isRunDisabled, hasRefineText]);
+  }, [onRunLive, onRunRefine, isRunDisabled, hasRefineText]);
 }

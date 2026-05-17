@@ -1,311 +1,210 @@
+// D-082: PanelRefine — refine 二轮 trace 回放. 消费 session.refine + session.round2.
+//
+// 三层渲染:
+//   1. RefineIntentCard: user_input (原文) + RefineIntent 结构化字段 (D-073)
+//   2. DiffSummary: round1 vs round2 top5 变化的四数 (+N / −M / ↑K / ↓J)
+//   3. Round2 pipeline: 复用 PanelL1 / PanelL2 (带 comboDiff) / PanelL3 / PanelFinal
+//      (带 finalDiff + droppedRows). PanelL2 / PanelFinal 已内建 diff 渲染.
+//
+// 没 round2 (refine 未触发, 或老 trace 只有 summary): 渲一张 "等待触发 refine" 提示.
+
 import { Pill } from "../components/ui/Pill";
-import type { SessionDiff } from "../lib/diffSession";
-import type { RefineTrace, Session } from "../types/trace";
+import { computeRefineDiff } from "../lib/diffSession";
+import type { Session } from "../types/trace";
 import { PanelL1 } from "./PanelL1";
 import { PanelL2 } from "./PanelL2";
 import { PanelL3 } from "./PanelL3";
 import { PanelFinal } from "./PanelFinal";
 
-export function PanelRefine({
-  refine,
-  secondSession,
-  diff,
-}: {
-  refine: RefineTrace;
-  secondSession?: Session;
-  diff?: SessionDiff;
-}) {
-  const R = refine;
+const INTENT_LABELS: Record<string, { label: string; tone: "want" | "avoid" }> = {
+  cuisine_want:      { label: "菜系想",   tone: "want" },
+  cuisine_avoid:     { label: "菜系不想", tone: "avoid" },
+  ingredient_want:   { label: "食材想",   tone: "want" },
+  ingredient_avoid:  { label: "食材不想", tone: "avoid" },
+  flavor_want:       { label: "口味想",   tone: "want" },
+  flavor_avoid:      { label: "口味不想", tone: "avoid" },
+  flavor_tags:       { label: "口味标签", tone: "want" },
+  cooking_method:    { label: "烹饪方式", tone: "want" },
+  raw_flavor:        { label: "原文口味", tone: "want" },
+  portion:           { label: "份量",     tone: "want" },
+  staple_preference: { label: "主食",     tone: "want" },
+  price_band:        { label: "价格带",   tone: "want" },
+};
+
+function intentValues(v: unknown): string[] {
+  if (v == null) return [];
+  if (Array.isArray(v)) return v.map((x) => String(x)).filter(Boolean);
+  if (typeof v === "string") return v.trim() ? [v] : [];
+  if (typeof v === "object") {
+    // RefineIntent 嵌套 object (price_band 可能是 {min, max} 等) → 简单 JSON
+    const s = JSON.stringify(v);
+    return s === "{}" ? [] : [s];
+  }
+  return [String(v)];
+}
+
+function RefineIntentCard({ session }: { session: Session }) {
+  const r = session.refine;
+  const intent = (r.intent ?? {}) as Record<string, unknown>;
+  const freeform = typeof intent.freeform_note === "string" ? intent.freeform_note : "";
+  const entries = Object.entries(INTENT_LABELS)
+    .map(([k, meta]) => [k, meta, intentValues(intent[k])] as const)
+    .filter(([, , vals]) => vals.length > 0);
+
   return (
-    <div>
-      <div className="refine-input-box">
-        <div className="session-info">
-          <span>
-            <span className="dim">parent_session</span>{" "}
-            <span style={{ color: "var(--t-0)" }}>{R.parent_session}</span>
-          </span>
-          <span className="dim">·</span>
-          <span>
-            <span className="dim">refine_session</span>{" "}
-            <span style={{ color: "var(--t-0)" }}>{R.refine_session}</span>
-          </span>
-          <span className="dim">·</span>
-          <Pill tone="violet">
-            n={R.summary_kpi.candidates_returned} · explore={R.summary_kpi.explore_n}
+    <div
+      className="panel"
+      style={{ marginBottom: 12 }}
+    >
+      <div className="panel-head">
+        <span className="layer-tag layer-l3">REFINE</span>
+        <h2>用户反馈 · D-073 RefineIntent</h2>
+        <span className="subtitle">round {r.parse_feedback.note}</span>
+        <div className="right">
+          <Pill tone={r.user_text ? "violet" : "gray"}>
+            {r.user_text ? `applied (round ${r.candidate_ids?.length != null ? "2+" : "?"})` : "no refine"}
           </Pill>
         </div>
-        <textarea defaultValue={R.user_text} spellCheck={false} />
-        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-          <button className="btn primary" style={{ width: "auto", padding: "6px 16px" }}>
-            ↻ 重跑 refine
-          </button>
-          <button className="btn" style={{ width: "auto", padding: "6px 12px" }}>清空</button>
-          <div
-            className="dim mono"
-            style={{ marginLeft: "auto", display: "flex", gap: 12, alignItems: "center" }}
-          >
-            <span>
-              last latency{" "}
-              <span style={{ color: "var(--t-0)" }}>{R.summary_kpi.total_latency_ms}ms</span>
-            </span>
-            <span>
-              diff_top5 <span style={{ color: "var(--t-0)" }}>{R.summary_kpi.diff_top5}</span>
-            </span>
-          </div>
-        </div>
       </div>
-
-      <div className="pipeline">
-        <div className="subhead" style={{ margin: 0, marginBottom: 12 }}>
-          链路追溯 · refine pipeline
+      <div className="panel-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div>
+          <div className="subhead" style={{ margin: 0, marginBottom: 6 }}>原文</div>
+          <div
+            style={{
+              padding: "8px 10px",
+              background: "var(--bg-inset)",
+              border: "1px solid var(--line)",
+              borderRadius: 3,
+              fontFamily: "var(--sans)",
+              fontSize: 13,
+              lineHeight: 1.5,
+              minHeight: 36,
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {r.user_text || <span className="dim">(空)</span>}
+          </div>
+          {freeform && freeform !== r.user_text && (
+            <div className="dim mono" style={{ fontSize: 10, marginTop: 6 }}>
+              freeform_note: {freeform}
+            </div>
+          )}
         </div>
-        <div className="pipeline-grid">
-          <div className="pipe-step">
-            <div className="name">1 · 用户输入</div>
-            <div className="desc">原始自然语言</div>
-            <div className="out" style={{ fontFamily: "var(--sans)", fontSize: 12 }}>
-              "{R.user_text}"
-            </div>
-            <div className="dim mono" style={{ fontSize: 10 }}>
-              chars: {R.user_text.length}
-            </div>
-          </div>
-
-          <div className="pipe-step">
-            <div className="name">2 · parse_feedback</div>
-            <div className="desc">LLM 解析 → chips + note + rating</div>
-            <div className="out">
-              <div className="row between" style={{ fontSize: 10 }}>
-                <span className="dim">model</span>
-                <span>{R.parse_feedback.llm_call.model}</span>
-              </div>
-              <div className="row between" style={{ fontSize: 10 }}>
-                <span className="dim">latency</span>
-                <span>{R.parse_feedback.llm_call.latency_ms}ms</span>
-              </div>
-              <div className="row between" style={{ fontSize: 10 }}>
-                <span className="dim">tokens</span>
-                <span>
-                  {R.parse_feedback.llm_call.input_tokens} in / {R.parse_feedback.llm_call.output_tokens} out
-                </span>
-              </div>
-              <div className="row between" style={{ fontSize: 10 }}>
-                <span className="dim">cache</span>
-                <span>{R.parse_feedback.llm_call.cache_read_input_tokens} hit</span>
-              </div>
-            </div>
-            <div>
-              <div className="dim mono" style={{ fontSize: 10, marginBottom: 4 }}>chips_hit</div>
-              <div className="chips">
-                {R.parse_feedback.chips_hit.map((c) => (
-                  <span className={`chip ${c.startsWith("avoid") ? "neg" : "hit"}`.trim()} key={c}>
-                    {c}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div className="dim" style={{ fontSize: 11, lineHeight: 1.5 }}>
-              <span className="mono">note:</span> {R.parse_feedback.note}
-            </div>
-          </div>
-
-          <div className="pipe-step">
-            <div className="name">3 · chips_to_taste_hints</div>
-            <div className="desc">生成 boost / penalty 字典</div>
-            <div className="out">
-              <div className="dim mono" style={{ fontSize: 10 }}>boost</div>
-              <div className="chips">
-                {Object.entries(R.chips_to_taste_hints.boost).flatMap(([dim, vals]) =>
-                  Object.entries(vals).map(([k, v]) => (
-                    <span className="chip pos" key={dim + k}>
-                      {dim}:{k} <span className="mono">+{v}</span>
-                    </span>
-                  )),
-                )}
-              </div>
-              <div className="dim mono" style={{ fontSize: 10, marginTop: 4 }}>penalty</div>
-              <div className="chips">
-                {Object.entries(R.chips_to_taste_hints.penalty).flatMap(([dim, vals]) =>
-                  Object.entries(vals).map(([k, v]) => (
-                    <span className="chip neg" key={dim + k}>
-                      {dim}:{k} <span className="mono">{v}</span>
-                    </span>
-                  )),
-                )}
-              </div>
-            </div>
-            <div className="dim" style={{ fontSize: 10 }}>
-              用户偏好直接喂回 L2 weight system
-            </div>
-          </div>
-
-          <div className="pipe-step">
-            <div className="name">4 · infer_refine_mood</div>
-            <div className="desc">关键词正/负向命中</div>
-            <div className="out">
-              {R.infer_refine_mood.hits.map((h, i) => (
-                <div key={i} className="row" style={{ gap: 8, fontSize: 11 }}>
-                  <span
-                    className={h.direction === "+" ? "diff-up" : "diff-down"}
-                    style={{ fontFamily: "var(--mono)", fontWeight: 600 }}
-                  >
-                    {h.direction}
-                  </span>
-                  <span className="mono dim">{h.keyword}</span>
-                  <span className="mono" style={{ marginLeft: "auto" }}>→ {h.target}</span>
+        <div>
+          <div className="subhead" style={{ margin: 0, marginBottom: 6 }}>结构化 intent</div>
+          {entries.length === 0 ? (
+            <div className="dim mono" style={{ fontSize: 11 }}>(无)</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {entries.map(([k, meta, vals]) => (
+                <div key={k} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 11 }}>
+                  <span className="dim mono" style={{ minWidth: 80 }}>{meta.label}</span>
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    {vals.map((val, i) => (
+                      <Pill key={`${k}-${i}`} tone={meta.tone === "want" ? "green" : "red"}>
+                        {val}
+                      </Pill>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>
-            <div>
-              <div className="dim mono" style={{ fontSize: 10, marginBottom: 4 }}>resolved_mood</div>
-              <div className="chips">
-                {Object.entries(R.infer_refine_mood.resolved_mood).map(([k, v]) => (
-                  <span className={`chip ${v > 0 ? "pos" : "neg"}`} key={k}>
-                    {k} <span className="mono">{v > 0 ? "+" : ""}{v}</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div className="dim" style={{ fontSize: 11 }}>
-              <span style={{ color: "var(--orange)" }}>注</span>: 仅在 refine 内生效;首轮已无 mood 入口
-            </div>
-          </div>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
 
-      <div className="diff-summary">
-        <div className="cell">
-          <div className="k">新进 top 5</div>
-          <div className="v" style={{ color: "var(--green)" }}>+ {R.diff.new_in_top5.length}</div>
-        </div>
-        <div className="cell">
-          <div className="k">被踢出 top 5</div>
-          <div className="v" style={{ color: "var(--red)" }}>− {R.diff.dropped_from_top5.length}</div>
-        </div>
-        <div className="cell">
-          <div className="k">排名上移</div>
-          <div className="v" style={{ color: "var(--blue)" }}>{R.diff.moved_up.length}</div>
-        </div>
-        <div className="cell">
-          <div className="k">排名下移</div>
-          <div className="v">{R.diff.moved_down.length}</div>
-        </div>
-      </div>
+function DiffSummary({ session }: { session: Session }) {
+  const diff = computeRefineDiff(session);
+  if (!diff) return null;
+  const newCount = [...diff.combos.values()].filter((d) => d.kind === "NEW").length;
+  const droppedCount = [...diff.combos.values()].filter((d) => d.kind === "DROPPED").length;
+  const upCount = [...diff.combos.values()].filter((d) => d.kind === "UP").length;
+  const downCount = [...diff.combos.values()].filter((d) => d.kind === "DOWN").length;
+  const finalDropped = diff.droppedFinals.length;
+  const finalNew = [...diff.final.values()].filter((v) => v === "new").length;
 
-      <div className="panel">
-        <div className="panel-head">
-          <span className="layer-tag layer-diff">DIFF</span>
-          <h2>第二轮 vs 第一轮</h2>
-          <span className="subtitle">top 5 变化明细</span>
-        </div>
-        <div className="panel-body">
-          <table className="tbl" style={{ width: "100%" }}>
-            <thead>
-              <tr>
-                <th style={{ width: 80 }}>变化</th>
-                <th>combo</th>
-                <th className="right">第一轮 rank</th>
-                <th className="right">第二轮 rank</th>
-                <th>触发原因</th>
-              </tr>
-            </thead>
-            <tbody>
-              {R.diff.new_in_top5[0] && (
-                <tr>
-                  <td><Pill tone="green">+ 新进</Pill></td>
-                  <td>{R.diff.new_in_top5[0]}</td>
-                  <td className="right mono dim">—</td>
-                  <td className="right mono"><span style={{ color: "var(--green)" }}>#3</span></td>
-                  <td className="reason">wetness:soup boost +0.22 · main:fish boost +0.08</td>
-                </tr>
-              )}
-              {R.diff.new_in_top5[1] && (
-                <tr>
-                  <td><Pill tone="green">+ 新进</Pill></td>
-                  <td>{R.diff.new_in_top5[1]}</td>
-                  <td className="right mono dim">—</td>
-                  <td className="right mono"><span style={{ color: "var(--green)" }}>#4</span></td>
-                  <td className="reason">wetness:wet +0.18 · 椰子鸡蒸饺非面/非饭</td>
-                </tr>
-              )}
-              {R.diff.dropped_from_top5[0] && (
-                <tr>
-                  <td><Pill tone="red">− 踢出</Pill></td>
-                  <td>{R.diff.dropped_from_top5[0]}</td>
-                  <td className="right mono"><span style={{ color: "var(--red)" }}>#2</span></td>
-                  <td className="right mono dim">—</td>
-                  <td className="reason">grain:quinoa 命中 grain penalty (-0.30 noodle 不命中但 wet 0)</td>
-                </tr>
-              )}
-              {R.diff.dropped_from_top5[1] && (
-                <tr>
-                  <td><Pill tone="red">− 踢出</Pill></td>
-                  <td>{R.diff.dropped_from_top5[1]}</td>
-                  <td className="right mono"><span style={{ color: "var(--red)" }}>#4</span></td>
-                  <td className="right mono dim">—</td>
-                  <td className="reason">restaurant 命中 -1.0 (用户点名拒绝)</td>
-                </tr>
-              )}
-              <tr>
-                <td><Pill tone="blue">↑ 上移</Pill></td>
-                <td className="mono">cmb_005 汤先生</td>
-                <td className="right mono">#3</td>
-                <td className="right mono"><span style={{ color: "var(--blue)" }}>#2</span></td>
-                <td className="reason">soup +0.22 加持,wet 重新排到前面</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+  const cell = (k: string, v: number | string, color?: string) => (
+    <div
+      style={{
+        flex: 1, padding: "10px 14px", background: "var(--bg-2)",
+        border: "1px solid var(--line)", borderRadius: 3,
+      }}
+    >
+      <div className="dim mono" style={{ fontSize: 10, marginBottom: 4 }}>{k}</div>
+      <div style={{ fontFamily: "var(--mono)", fontSize: 18, color: color ?? "var(--t-0)" }}>{v}</div>
+    </div>
+  );
+  return (
+    <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+      {cell("final 新进", `+${finalNew}`, "var(--green)")}
+      {cell("final 踢出", `-${finalDropped}`, "var(--red)")}
+      {cell("L2 combo NEW",     `+${newCount}`,     "var(--green)")}
+      {cell("L2 combo DROPPED", `-${droppedCount}`, "var(--red)")}
+      {cell("L2 combo UP",   `${upCount}`,   "var(--blue)")}
+      {cell("L2 combo DOWN", `${downCount}`, "var(--orange)")}
+    </div>
+  );
+}
 
-      {secondSession ? (
-        <>
-          <div className="subhead" style={{ margin: "20px 0 12px" }}>
-            第二轮完整 trace · L1 / L2 / L3 / Final
-            <span className="count">refine round 2</span>
-          </div>
-          <PanelL1 l1={secondSession.l1} />
-          <PanelL2 l2={secondSession.l2} comboDiff={diff?.combos} />
-          <PanelL3
-            l3={secondSession.l3}
-            finalRows={secondSession.final}
-            sessionId={secondSession.session_id}
-          />
-          <PanelFinal
-            rows={secondSession.final}
-            totalLatencyMs={secondSession.total_latency_ms}
-            finalDiff={diff?.final}
-            droppedRows={diff?.droppedFinals ?? []}
-          />
-        </>
-      ) : (
+export function PanelRefine({ session }: { session: Session }) {
+  // 没 round2 → 提示触发 refine
+  if (!session.round2) {
+    return (
+      <div>
+        <RefineIntentCard session={session} />
         <div className="panel">
           <div className="panel-head">
             <span className="layer-tag layer-l2r">L2'</span>
-            <h2>第二轮 trace</h2>
-            <span className="subtitle">点 sidebar「触发 refine」生成</span>
-            <div className="right">
-              <Pill tone="orange">等待触发</Pill>
-            </div>
+            <h2>round 2 trace 未生成</h2>
+            <span className="subtitle">在 sidebar 输入反馈点「↻ 触发 refine」</span>
+            <div className="right"><Pill tone="orange">等待触发</Pill></div>
           </div>
           <div className="panel-body">
             <div
               className="dim mono"
               style={{
                 padding: 24, textAlign: "center", fontSize: 12,
-                border: "1px dashed var(--line-strong)", borderRadius: 4, background: "var(--bg-inset)",
+                border: "1px dashed var(--line-strong)", borderRadius: 4,
+                background: "var(--bg-inset)",
               }}
             >
-              # 二轮 trace 待生成 — 在 sidebar 填反馈后点击「↻ 触发 refine」.
-              <br />
-              <span style={{ color: "var(--t-3)" }}>
-                Phase 3 当前 mock 派生 (按 refine_text 文本做 deterministic perturb).
-                Phase 4+ 才接 /api/debug_refine 真链路.
-              </span>
+              # 该 session 还没 round2 全量 trace.<br/>
+              # 在 sidebar 填入反馈, 点 ↻ 触发 refine, 后端 /api/refine 会重跑 L1/L2/L3<br/>
+              # 并把 round2 完整 pipeline 写进同一份 trace 文件 (D-082).
             </div>
           </div>
         </div>
-      )}
+      </div>
+    );
+  }
+
+  const diff = computeRefineDiff(session);
+  const round2 = session.round2;
+
+  return (
+    <div>
+      <RefineIntentCard session={session} />
+      <DiffSummary session={session} />
+      <div className="subhead" style={{ margin: "16px 0 8px" }}>
+        round 2 · 完整 pipeline
+        <span className="count">L1 → L2 → L3 → Final</span>
+      </div>
+      <PanelL1 l1={round2.l1} />
+      <PanelL2 l2={round2.l2} comboDiff={diff?.combos} />
+      <PanelL3
+        l3={round2.l3}
+        finalRows={round2.final}
+        sessionId={session.session_id}
+      />
+      <PanelFinal
+        rows={round2.final}
+        totalLatencyMs={round2.total_latency_ms}
+        finalDiff={diff?.final}
+        droppedRows={diff?.droppedFinals ?? []}
+      />
     </div>
   );
 }

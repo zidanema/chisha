@@ -48,13 +48,12 @@ export type SidebarProps = {
   traceDish: string;
   setTraceDish: (s: string) => void;
   history: RunHistoryRow[];
-  activeSession: string;
+  activeSession: string | null;
   setActiveSession: (id: string) => void;
   profileOverride: string;
   setProfileOverride: (s: string) => void;
   profileError: string | null;
   runDisabled: boolean;
-  onRunMain: () => void;
   onRunRefine: () => void;
   onRunTrace: () => void;
   onReplayConfig: (id: string) => void;
@@ -72,7 +71,7 @@ export function Sidebar({
   history, activeSession, setActiveSession,
   profileOverride, setProfileOverride,
   profileError, runDisabled,
-  onRunMain, onRunRefine, onRunTrace, onReplayConfig,
+  onRunRefine, onRunTrace, onReplayConfig,
   backendOnline, corruptCount,
   onRunLive, onOpenWhatIf, whatIfAvailable,
 }: SidebarProps) {
@@ -120,24 +119,15 @@ export function Sidebar({
 
       <h3>Actions</h3>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        <button
-          className="btn primary"
-          onClick={onRunMain}
-          disabled={runDisabled}
-          style={runDisabled ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
-        >
-          ▶ 触发首轮推荐
-          <span className="kbd">⏎</span>
-        </button>
         {onRunLive && (
           <button
-            className="btn"
+            className="btn primary"
             onClick={onRunLive}
             disabled={runDisabled}
             style={runDisabled ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
-            title="Live 模式: 仅本次显示, 永不写盘"
+            title="Live 模式: 跑一次但不落 trace, 仅本次显示. 真实生产 trace 由 apps/web (/api/recommend) 写盘"
           >
-            ⚡ Live 试跑 <span className="dim mono">(no trace)</span>
+            ⚡ Live 试跑 <span className="kbd">⏎</span> <span className="dim mono">(no trace)</span>
           </button>
         )}
         {onOpenWhatIf && (
@@ -220,6 +210,28 @@ export function Sidebar({
                   {h.title}
                 </span>
                 {h.feedback && <FeedbackBadgeView fb={h.feedback} />}
+                {h.refine?.applied && (
+                  <span
+                    title={
+                      `refine round ${h.refine.round ?? "?"}` +
+                      (h.refine.user_input ? `\n"${h.refine.user_input}"` : "") +
+                      (h.refine.has_round2 ? "\n(完整 round2 trace 可回放)" : "\n(仅 summary, 老 trace 无 round2)")
+                    }
+                    style={{
+                      fontSize: 9,
+                      fontFamily: "var(--mono)",
+                      padding: "1px 5px",
+                      borderRadius: 2,
+                      background: h.refine.has_round2 ? "var(--refine)" : "var(--bg-2)",
+                      color: h.refine.has_round2 ? "var(--bg-0)" : "var(--t-2)",
+                      border: h.refine.has_round2 ? "none" : "1px dashed var(--line-strong)",
+                      letterSpacing: 0.4,
+                      flexShrink: 0,
+                    }}
+                  >
+                    R{h.refine.round ? h.refine.round : ""}
+                  </span>
+                )}
               </div>
               <div className="time">{h.time} · {h.latency}ms</div>
             </div>

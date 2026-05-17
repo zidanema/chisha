@@ -198,7 +198,10 @@ function adaptL2(l2: BackendL2Score, combosBeforeL2: number,
     kpi: adaptL2KPI(l2),
     // D-079: 从 trace.score_latency_ms 传; debug_recommend 链路缺时为 0.
     latency_ms: latencyMs,
-    candidates_to_l3: l2.summary.topk_window,
+    // n_scored = apply_caps 后实际进 L3 的 combo 数 (真实送给 LLM 的). 当 cap 把候选
+    // 压到不足 topk_window 时 n_scored < topk_window — 这是 chisha/score.py apply_caps
+    // 四层 head-only 截断的真实行为, 不是 bug. fallback 到 top.length 兜底.
+    candidates_to_l3: l2.summary.n_scored ?? l2.top.length,
     combos_before_l2: combosBeforeL2,
   };
 }
@@ -228,7 +231,7 @@ function adaptL3(l3: BackendL3Rerank): L3Trace {
       fallback_chain: [],
       system_prompt: "",
       user_message: "",
-      tool_input: { name: "", description: "", input_schema: {} },
+      tool_input: null,
       raw_response_blocks: [],
       validator_errors: null,
     };
@@ -272,7 +275,6 @@ function adaptL3(l3: BackendL3Rerank): L3Trace {
   }
 
   const usage = llm.usage ?? {};
-  const toolInputSchema = (llm.tool_input as { input_schema?: unknown } | null)?.input_schema;
 
   return {
     status,
@@ -291,13 +293,11 @@ function adaptL3(l3: BackendL3Rerank): L3Trace {
     candidates_returned: l3.n_returned,
     fallback_chain: fallbackChain,
     fallback_reason: llm.fallback_reason ?? undefined,
-    system_prompt: llm.system_prompt_full,
+    // B-004: trace 写盘时记录的真实 system_prompt_full + tool_definition (新 trace).
+    // 老 trace (backend 改之前生成) 这两个字段为空,渲染时 PanelL3 显示 callout.
+    system_prompt: llm.system_prompt_full ?? "",
     user_message: llm.user_message_full,
-    tool_input: {
-      name: "emit_recommendations",
-      description: "Emit reranked combos with one-line reasons.",
-      input_schema: toolInputSchema ?? {},
-    },
+    tool_input: llm.tool_definition ?? null,
     raw_response_blocks: blocks,
     validator_errors: null,
   };
@@ -393,7 +393,10 @@ function wrapTraceL3(l3: BackendTraceL3,
     used: true,
     model: l3.model,
     system_prompt_chars: l3.system_prompt_chars ?? 0,
-    system_prompt_full: "",
+    // B-004: 从 trace 读真实记录;老 trace 缺则 "" + null,渲染时 callout 提示.
+    system_prompt_full: l3.system_prompt_full ?? "",
+    tool_definition: l3.tool_definition ?? null,
+    tool_choice: l3.tool_choice ?? null,
     user_message_chars: l3.user_message_chars ?? 0,
     user_message_preview: "",
     user_message_full: l3.user_message_full ?? "",
@@ -415,6 +418,20 @@ function wrapTraceL3(l3: BackendTraceL3,
 export function traceToSession(trace: BackendDebugTrace): Session {
   const meal: Meal = trace.__frozen?.meal_type === "dinner" ? "dinner" : "lunch";
   const area = zoneLabel(trace.__frozen?.zone ?? "");
+  // D-082: 有 round2 → 用同一组 adapter 解二轮 pipeline (meal/area 沿用 round1).
+  const round2 = trace.round2;
+  const round2View = round2
+    ? {
+        started_at: round2.started_at,
+        total_latency_ms: round2.total_latency_ms,
+        ctx_latency_ms: round2.ctx_latency_ms,
+        final_latency_ms: round2.final_latency_ms,
+        l1: adaptL1(round2.l1, area, meal, round2.recall_latency_ms ?? 0),
+        l2: adaptL2(round2.l2, round2.l1.summary.n_combos, round2.score_latency_ms ?? 0),
+        l3: adaptL3(wrapTraceL3(round2.l3, round2.rerank_latency_ms ?? 0)),
+        final: adaptFinal(round2.final),
+      }
+    : undefined;
   return {
     session_id: trace.session_id,
     started_at: trace.started_at,
@@ -425,6 +442,7 @@ export function traceToSession(trace: BackendDebugTrace): Session {
     l2: adaptL2(trace.l2, trace.l1.summary.n_combos, trace.score_latency_ms ?? 0),
     l3: adaptL3(wrapTraceL3(trace.l3, trace.rerank_latency_ms ?? 0)),
     final: adaptFinal(trace.final),
+    round2: round2View,
     refine: {
       parent_session: trace.session_id,
       refine_session: trace.refine?.applied ? trace.session_id : "—",

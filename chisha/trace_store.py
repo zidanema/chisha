@@ -192,6 +192,7 @@ def list_traces(
             if meal_type and mt != meal_type:
                 continue
             top1_summary = _extract_top1_summary(data)
+            refine = data.get("refine") or {}
             items.append({
                 "session_id": data.get("session_id") or p.stem,
                 "started_at": data.get("started_at"),
@@ -201,6 +202,13 @@ def list_traces(
                 "total_latency_ms": data.get("total_latency_ms"),
                 "l3_status": (data.get("l3") or {}).get("status"),
                 "source": data.get("__source") or "production",
+                # D-082: refine 角标 (sidebar 显示 R + tooltip).
+                # round2 = True 表示有完整 pipeline trace 可回放; refine_applied
+                # 但 round2 = False 表示老 trace 只有 summary.
+                "refine_applied": bool(refine.get("applied")),
+                "refine_round": refine.get("round"),
+                "refine_user_input": refine.get("user_input"),
+                "has_round2": bool(data.get("round2")),
             })
         except Exception as e:
             corrupt_count += 1
