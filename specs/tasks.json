@@ -8,7 +8,7 @@
       "title": "trace event schema + intent schema 版本号",
       "regression_risk": "low",
       "depends_on": [],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "T-P1a-01",
