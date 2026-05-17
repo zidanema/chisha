@@ -61,7 +61,8 @@
       "title": "簇式输出 (intent 内部子类多样化)",
       "regression_risk": "medium",
       "depends_on": ["T-P1a-02", "T-P1a-03"],
-      "status": "pending"
+      "status": "done",
+      "_notes": "核心算法 + 8 菜系子类词表 + 11 单测. refine path 接入留 follow-up."
     }
   ]
 }
