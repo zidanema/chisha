@@ -1,11 +1,10 @@
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 import { Link, Route, Routes, useLocation } from "react-router-dom";
 import { LABELS } from "@/lib/labels";
 import { api } from "@/lib/api";
 import { ChishaProvider, useChisha } from "@/lib/useChishaState";
 
 import { NavBar } from "@/components/NavBar";
-import { SandboxBar } from "@/components/SandboxBar";
 import { DetailPanel } from "@/components/DetailPanel";
 import { Toast } from "@/components/Toast";
 import { PageShell } from "@/components/PageShell";
@@ -60,18 +59,8 @@ function NotFound() {
 }
 
 function Shell() {
-  const { home, setHome, refreshInbox, toast, sandboxState, refreshSandbox } = useChisha();
-  // D-077 PR-1d (修): sandboxState 已提升到 ChishaCtx, 所以 ProfilePage 启停沙盒
-  // 也能通知 SandboxBar 重渲染. Shell 只负责 advance/reset 后清 HomePage session.
-
-  const onSandboxChange = useCallback(async () => {
-    await refreshSandbox();
-    // sandbox advance / reset 后, 清掉 HomePage 的 session 让用户重新推荐
-    // (虚拟日变了, 旧推荐结果失效); inbox 也重拉.
-    setHome({ session: null, pickedRank: null, detailCandidate: null,
-              refineHistory: [], skipped: false, skipReason: null });
-    await refreshInbox();
-  }, [refreshSandbox, refreshInbox, setHome]);
+  // D-085: Living UI 不再承载 sandbox 开关. sandbox = Lab 子系统, 入口在 debug-ui.
+  const { home, setHome, refreshInbox, toast } = useChisha();
 
   // Detail "就这个" — mirrors HomePage's onPick (lock card + accept, no fake deeplink)
   async function onDetailPick(c: import("@/lib/types").Candidate) {
@@ -87,7 +76,6 @@ function Shell() {
 
   return (
     <>
-      <SandboxBar state={sandboxState} onChange={onSandboxChange} />
       <NavBar />
       <Routes>
         <Route path="/" element={<HomePage />} />

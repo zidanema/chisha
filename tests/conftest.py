@@ -133,7 +133,7 @@ def wait_l1_settle(client, prev_at: str | None = None,
     import time as _t
     deadline = _t.time() + timeout
     while _t.time() < deadline:
-        s = client.get("/api/sandbox/state").json()
+        s = client.get("/api/lab/sandbox/state").json()
         ext = s.get("last_l1_extraction") or {}
         cur_at = ext.get("at")
         if (cur_at and cur_at != prev_at

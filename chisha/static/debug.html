@@ -897,7 +897,7 @@ $('btn-run').onclick = async () => {
     clearOutput();
     setLoading(true);
     const req = getCommonReq(false);
-    const data = await postJson('/api/debug_recommend', req);
+    const data = await postJson('/api/lab/debug_recommend', req);
     renderResult(data);
   } catch (e) {
     showError(e.message);
@@ -914,7 +914,7 @@ $('btn-trace').onclick = async () => {
     if (!req.trace_target) {
       throw new Error('请填餐厅名或菜名');
     }
-    const data = await postJson('/api/debug_recommend', req);
+    const data = await postJson('/api/lab/debug_recommend', req);
     renderResult(data);
   } catch (e) {
     showError(e.message);
@@ -928,7 +928,7 @@ $('btn-compare').onclick = async () => {
     clearOutput();
     setLoading(true);
     const common = getCommonReq(false);
-    const data = await postJson('/api/compare_moods', {
+    const data = await postJson('/api/lab/compare_moods', {
       moods: ['want_light', 'want_soup', 'want_indulgent'],
       meal_type: common.meal_type,
       today: common.today,

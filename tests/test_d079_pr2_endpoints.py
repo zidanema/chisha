@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from chisha import api as api_module
-from chisha import data_root, trace_store, web_api
+from chisha import api_lab as web_api, data_root, trace_store
 from chisha.api import recommend_meal
 from tests.conftest import make_dish, make_restaurant
 
@@ -95,7 +95,7 @@ def test_list_sessions_happy_path(app_root):
     app, root = app_root
     sid = _seed_trace(root)
     with TestClient(app) as c:
-        r = c.get("/api/debug/sessions")
+        r = c.get("/api/lab/sessions")
         assert r.status_code == 200, r.text
         body = r.json()
         assert "items" in body and "corrupt_count" in body
@@ -114,17 +114,17 @@ def test_list_sessions_filter_meal_type(app_root):
     app, root = app_root
     _seed_trace(root)
     with TestClient(app) as c:
-        r = c.get("/api/debug/sessions", params={"meal_type": "dinner"})
+        r = c.get("/api/lab/sessions", params={"meal_type": "dinner"})
         assert r.status_code == 200
         assert r.json()["items"] == []  # seed 是 lunch
-        r = c.get("/api/debug/sessions", params={"meal_type": "lunch"})
+        r = c.get("/api/lab/sessions", params={"meal_type": "lunch"})
         assert len(r.json()["items"]) >= 1
 
 
 def test_list_sessions_400_invalid_source(app_root):
     app, _ = app_root
     with TestClient(app) as c:
-        r = c.get("/api/debug/sessions", params={"source": "what_if_preview"})
+        r = c.get("/api/lab/sessions", params={"source": "what_if_preview"})
         assert r.status_code == 400
         assert "production" in r.json()["detail"]
 
@@ -132,7 +132,7 @@ def test_list_sessions_400_invalid_source(app_root):
 def test_list_sessions_400_invalid_meal_type(app_root):
     app, _ = app_root
     with TestClient(app) as c:
-        r = c.get("/api/debug/sessions", params={"meal_type": "brunch"})
+        r = c.get("/api/lab/sessions", params={"meal_type": "brunch"})
         assert r.status_code == 400
 
 
@@ -144,7 +144,7 @@ def test_list_sessions_corrupt_count(app_root):
     bad = data_root.recommend_trace_dir(root) / "sess_lunch_99999999_999999_dead.json"
     bad.write_text("not json {{{", encoding="utf-8")
     with TestClient(app) as c:
-        r = c.get("/api/debug/sessions")
+        r = c.get("/api/lab/sessions")
         assert r.status_code == 200
         body = r.json()
         assert body["corrupt_count"] >= 1
@@ -159,7 +159,7 @@ def test_get_session_happy_path(app_root):
     app, root = app_root
     sid = _seed_trace(root)
     with TestClient(app) as c:
-        r = c.get(f"/api/debug/sessions/{sid}")
+        r = c.get(f"/api/lab/sessions/{sid}")
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["session_id"] == sid
@@ -177,7 +177,7 @@ def test_get_session_happy_path(app_root):
 def test_get_session_404(app_root):
     app, _ = app_root
     with TestClient(app) as c:
-        r = c.get("/api/debug/sessions/nonexistent_sid_xyz")
+        r = c.get("/api/lab/sessions/nonexistent_sid_xyz")
         assert r.status_code == 404
 
 
@@ -193,7 +193,7 @@ def test_get_session_409_version_mismatch(app_root):
     obj["__version"] = 999
     p.write_text(json.dumps(obj), encoding="utf-8")
     with TestClient(app) as c:
-        r = c.get(f"/api/debug/sessions/{sid}")
+        r = c.get(f"/api/lab/sessions/{sid}")
         assert r.status_code == 409
         assert "version mismatch" in r.json()["detail"].lower()
 
@@ -205,7 +205,7 @@ def test_get_session_500_corrupt(app_root):
     p.mkdir(parents=True, exist_ok=True)
     (p / f"{sid}.json").write_text("garbage{{{", encoding="utf-8")
     with TestClient(app) as c:
-        r = c.get(f"/api/debug/sessions/{sid}")
+        r = c.get(f"/api/lab/sessions/{sid}")
         assert r.status_code == 500
         assert "corrupt" in r.json()["detail"].lower()
 
@@ -216,7 +216,7 @@ def test_what_if_happy_path(app_root):
     app, root = app_root
     sid = _seed_trace(root)
     with TestClient(app) as c:
-        r = c.post("/api/debug/what_if", json={
+        r = c.post("/api/lab/what_if", json={
             "base_session_id": sid,
             "overrides": {},
         })
@@ -231,7 +231,7 @@ def test_what_if_happy_path(app_root):
 def test_what_if_404_base_missing(app_root):
     app, _ = app_root
     with TestClient(app) as c:
-        r = c.post("/api/debug/what_if", json={
+        r = c.post("/api/lab/what_if", json={
             "base_session_id": "does_not_exist",
             "overrides": {},
         })
@@ -243,7 +243,7 @@ def test_what_if_400_extra_overrides(app_root):
     app, root = app_root
     sid = _seed_trace(root)
     with TestClient(app) as c:
-        r = c.post("/api/debug/what_if", json={
+        r = c.post("/api/lab/what_if", json={
             "base_session_id": sid,
             "overrides": {"hack_frozen_today": "2099-01-01"},
         })
@@ -256,7 +256,7 @@ def test_what_if_overrides_type_validation(app_root):
     app, root = app_root
     sid = _seed_trace(root)
     with TestClient(app) as c:
-        r = c.post("/api/debug/what_if", json={
+        r = c.post("/api/lab/what_if", json={
             "base_session_id": sid,
             "overrides": {"n_return": "five"},
         })
@@ -280,7 +280,7 @@ def test_get_session_legacy_no_frozen(app_root):
     }
     trace_store.write_trace(legacy_sid, legacy, root=root)
     with TestClient(app) as c:
-        r = c.get(f"/api/debug/sessions/{legacy_sid}")
+        r = c.get(f"/api/lab/sessions/{legacy_sid}")
         assert r.status_code == 200, r.text
         # __frozen 缺失也能返
         body = r.json()
@@ -302,7 +302,7 @@ def test_what_if_400_legacy_no_frozen(app_root):
     }
     trace_store.write_trace(legacy_sid, legacy, root=root)
     with TestClient(app) as c:
-        r = c.post("/api/debug/what_if", json={
+        r = c.post("/api/lab/what_if", json={
             "base_session_id": legacy_sid, "overrides": {},
         })
         assert r.status_code == 400
@@ -315,7 +315,7 @@ def test_what_if_with_profile_overrides(app_root):
     app, root = app_root
     sid = _seed_trace(root)
     with TestClient(app) as c:
-        r = c.post("/api/debug/what_if", json={
+        r = c.post("/api/lab/what_if", json={
             "base_session_id": sid,
             "overrides": {
                 "profile_overrides": {"scoring_weights": {"distance": 5.0}},

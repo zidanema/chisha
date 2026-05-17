@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def app_with_isolated_root(tmp_path: Path, monkeypatch):
     """注入 ROOT 指向 tmp_path, 避免污染真实仓库 data/."""
-    from chisha import web_api
+    from chisha import api_living as web_api
     # ROOT 是模块级常量, monkeypatch
     monkeypatch.setattr(web_api, "ROOT", tmp_path)
     monkeypatch.setattr(web_api, "PROFILE_PATH",
@@ -40,7 +40,7 @@ def app_with_isolated_root(tmp_path: Path, monkeypatch):
 
 def test_refresh_rejects_non_localhost(app_with_isolated_root, monkeypatch):
     """非 localhost client.host → 403."""
-    from chisha import web_api
+    from chisha import api_living as web_api
 
     # 用 TestClient 时 client.host 默认是 "testclient", 不在 localhost 集合
     with TestClient(app_with_isolated_root) as c:
@@ -53,7 +53,7 @@ def test_refresh_rejects_non_localhost(app_with_isolated_root, monkeypatch):
 def test_refresh_localhost_with_bootstrap(app_with_isolated_root, monkeypatch):
     """localhost + force_run_without_llm=True → 走 bootstrap, 不调 LLM."""
     # monkey-patch _is_localhost 返回 True (TestClient 模拟 localhost)
-    from chisha import web_api
+    from chisha import api_living as web_api
     monkeypatch.setattr(web_api, "_is_localhost", lambda req: True)
 
     with TestClient(app_with_isolated_root) as c:
@@ -70,7 +70,7 @@ def test_refresh_admin_token_required_when_env_set(
     app_with_isolated_root, monkeypatch
 ):
     """env CHISHA_ADMIN_TOKEN 设了 → 必须传 X-Admin-Token, 不匹配 401."""
-    from chisha import web_api
+    from chisha import api_living as web_api
     monkeypatch.setenv("CHISHA_ADMIN_TOKEN", "secret-xyz")
     monkeypatch.setattr(web_api, "_is_localhost", lambda req: True)
 
@@ -95,7 +95,7 @@ def test_refresh_admin_token_required_when_env_set(
 
 def test_refresh_llm_failure_returns_503(app_with_isolated_root, monkeypatch):
     """LLM extract_and_save 抛 RuntimeError → 端点返回 503."""
-    from chisha import web_api
+    from chisha import api_living as web_api
     monkeypatch.setattr(web_api, "_is_localhost", lambda req: True)
 
     def fake_extract_and_save(*args, **kwargs):

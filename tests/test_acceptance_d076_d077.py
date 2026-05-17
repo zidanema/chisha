@@ -36,7 +36,7 @@ def app_root(tmp_path: Path, monkeypatch):
 
     精确复用真实 profile.yaml, 不要 mock 拼凑出残缺 profile.
     """
-    from chisha import web_api, sandbox
+    from chisha import api_lab, api_living, sandbox
     real_root = Path(__file__).resolve().parent.parent
 
     # 拷贝必要文件
@@ -55,9 +55,12 @@ def app_root(tmp_path: Path, monkeypatch):
     if (real_root / "prompts").exists():
         shutil.copytree(real_root / "prompts", tmp_path / "prompts")
 
-    monkeypatch.setattr(web_api, "ROOT", tmp_path)
-    monkeypatch.setattr(web_api, "PROFILE_PATH", tmp_path / "profile.yaml")
-    monkeypatch.setattr(web_api, "_is_localhost", lambda req: True)
+    monkeypatch.setattr(api_lab, "ROOT", tmp_path)
+    monkeypatch.setattr(api_lab, "PROFILE_PATH", tmp_path / "profile.yaml")
+    monkeypatch.setattr(api_lab, "_is_localhost", lambda req: True)
+    monkeypatch.setattr(api_living, "ROOT", tmp_path)
+    monkeypatch.setattr(api_living, "PROFILE_PATH", tmp_path / "profile.yaml")
+    monkeypatch.setattr(api_living, "_is_localhost", lambda req: True)
     monkeypatch.delenv("CHISHA_ADMIN_TOKEN", raising=False)
     # 关键: clock 调用默认走 sandbox._project_root(), 测试 ROOT 隔离时必须 patch
     monkeypatch.setattr(sandbox, "_project_root", lambda: tmp_path)
@@ -68,7 +71,9 @@ def app_root(tmp_path: Path, monkeypatch):
         shutil.rmtree(sandbox_dir)
 
     app = FastAPI()
-    app.include_router(web_api.router)
+    # D-085: Living + Lab 两个 router 各挂一次
+    app.include_router(api_living.router)
+    app.include_router(api_lab.router)
     return app, tmp_path
 
 
@@ -143,7 +148,7 @@ def test_anchor_2_cooldown_3d_no_same_protein(app_root):
 def test_anchor_3_snooze_unblocks_after_one_day(app_root):
     app, root = app_root
     with TestClient(app) as c:
-        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
+        c.post("/api/lab/sandbox/init", json={"start_date": "2026-05-20"})
         # accept 一个 session
         from chisha import feedback_store
         feedback_store.record_accept(
@@ -159,7 +164,7 @@ def test_anchor_3_snooze_unblocks_after_one_day(app_root):
         assert "sid_s" not in sids_visible
 
         # 推进一天, snooze 应过期
-        c.post("/api/sandbox/advance", json={"days": 1})
+        c.post("/api/lab/sandbox/advance", json={"days": 1})
         inbox2 = c.get("/api/feedback/inbox", params={"include_snoozed": 0}).json()
         sids_after = [it["session_id"] for it in inbox2["items"]]
         assert "sid_s" in sids_after
@@ -197,7 +202,7 @@ def test_anchor_4_l1_extracts_after_feedbacks(app_root, monkeypatch):
     monkeypatch.setattr(l1_extractor, "extract_and_save", fake_extract)
 
     with TestClient(app) as c:
-        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
+        c.post("/api/lab/sandbox/init", json={"start_date": "2026-05-20"})
 
         # 模拟 3 餐 + 3 次反馈 oil_calibration=2
         from chisha import feedback_store
@@ -222,11 +227,11 @@ def test_anchor_4_l1_extracts_after_feedbacks(app_root, monkeypatch):
             })
 
         # advance 触发 L1 抽取
-        c.post("/api/sandbox/advance", json={"days": 1})
+        c.post("/api/lab/sandbox/advance", json={"days": 1})
         time.sleep(0.3)  # 等异步抽取
 
         # inspect 看到 low_oil
-        inspect = c.get("/api/sandbox/inspect").json()
+        inspect = c.get("/api/lab/sandbox/inspect").json()
         prefs = inspect.get("long_term_prefs")
         assert prefs is not None
         assert "low_oil" in prefs["boost"]
@@ -273,9 +278,9 @@ def test_anchor_6_refine_no_longer_writes_history(app_root):
 def test_anchor_7_cold_start_no_errors(app_root):
     app, root = app_root
     with TestClient(app) as c:
-        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
+        c.post("/api/lab/sandbox/init", json={"start_date": "2026-05-20"})
         # 立即 inspect: 应该全空 (无反馈, 无 prefs)
-        r = c.get("/api/sandbox/inspect")
+        r = c.get("/api/lab/sandbox/inspect")
         assert r.status_code == 200
         data = r.json()
         assert data["enabled"] is True
@@ -306,7 +311,7 @@ def test_anchor_9_profile_isolated_in_sandbox(app_root):
     app, root = app_root
     prod_profile = (root / "profile.yaml").read_text(encoding="utf-8")
     with TestClient(app) as c:
-        c.post("/api/sandbox/init",
+        c.post("/api/lab/sandbox/init",
                 json={"start_date": "2026-05-20", "copy_real_data": True})
         # 改 profile (PUT 走 sandbox 副本)
         new_p = {"basics": {"office_zone": "home",
@@ -333,7 +338,7 @@ def test_anchor_12_accept_writes_meal_log_and_cooldown_active(app_root):
     from chisha.recall import load_meal_log, diversity_filter
 
     with TestClient(app) as c:
-        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
+        c.post("/api/lab/sandbox/init", json={"start_date": "2026-05-20"})
         # 直接走 /api/accept 模拟前端 RecCard 「定它了」
         candidate = {
             "rank": 1,
@@ -428,7 +433,7 @@ def test_anchor_13_reset_waits_for_l1_worker(app_root, monkeypatch):
     monkeypatch.setattr(l1_extractor, "extract_and_save", slow_extract)
 
     with TestClient(app) as c:
-        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
+        c.post("/api/lab/sandbox/init", json={"start_date": "2026-05-20"})
         # 累 ≥3 餐反馈, 否则 L1 进 skipped 分支不走 LLM
         from chisha import feedback_store
         for i in range(3):
@@ -445,7 +450,7 @@ def test_anchor_13_reset_waits_for_l1_worker(app_root, monkeypatch):
             })
 
         # advance 触发 worker
-        c.post("/api/sandbox/advance", json={"days": 1})
+        c.post("/api/lab/sandbox/advance", json={"days": 1})
         # 等 worker started
         assert started.wait(timeout=2.0), "worker 未启动"
 
@@ -453,7 +458,7 @@ def test_anchor_13_reset_waits_for_l1_worker(app_root, monkeypatch):
         # 拿一个线程发 reset, 同时让 worker 在 ~1s 后完成
         result: dict = {}
         def _reset():
-            r = c.post("/api/sandbox/reset")
+            r = c.post("/api/lab/sandbox/reset")
             result["status"] = r.status_code
             result["body"] = r.json()
         t = threading.Thread(target=_reset)
@@ -498,7 +503,7 @@ def test_anchor_14_advance_409_when_pending(app_root, monkeypatch):
     monkeypatch.setattr(l1_extractor, "extract_and_save", slow_extract)
 
     with TestClient(app) as c:
-        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
+        c.post("/api/lab/sandbox/init", json={"start_date": "2026-05-20"})
         from chisha import feedback_store
         for i in range(3):
             sid = f"sid_p{i}"
@@ -513,10 +518,10 @@ def test_anchor_14_advance_409_when_pending(app_root, monkeypatch):
                 "quick": False,
             })
 
-        c.post("/api/sandbox/advance", json={"days": 1})
+        c.post("/api/lab/sandbox/advance", json={"days": 1})
         assert started.wait(timeout=2.0)
         # 此时 state.status=pending, 第二次 advance 应 409
-        r = c.post("/api/sandbox/advance", json={"days": 1})
+        r = c.post("/api/lab/sandbox/advance", json={"days": 1})
         assert r.status_code == 409
         finishing.set()
 
@@ -558,7 +563,7 @@ def test_anchor_11_l1_uses_virtual_clock_across_days(app_root, monkeypatch):
     from tests.conftest import wait_l1_settle as _wait_l1_settle
 
     with TestClient(app) as c:
-        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
+        c.post("/api/lab/sandbox/init", json={"start_date": "2026-05-20"})
         from chisha import feedback_store
         prev_at: str | None = None
         # 4 餐反馈先全部录入 (避免 advance 后再 record 导致 worker 看不到最新一餐)
@@ -575,11 +580,11 @@ def test_anchor_11_l1_uses_virtual_clock_across_days(app_root, monkeypatch):
                 "note": "", "variant": "progressive", "quick": False,
             })
             if i < 3:
-                c.post("/api/sandbox/advance", json={"days": 1})
+                c.post("/api/lab/sandbox/advance", json={"days": 1})
                 _, prev_at = _wait_l1_settle(c, prev_at)
 
         # 最后再推一天触发 L1 抽取看到全部 4 餐
-        c.post("/api/sandbox/advance", json={"days": 1})
+        c.post("/api/lab/sandbox/advance", json={"days": 1})
         _, _ = _wait_l1_settle(c, prev_at)
 
         # 守门: based_on_meals 必须 ≥ 4 (D-078 bug 回归会卡在 1)
@@ -589,7 +594,7 @@ def test_anchor_11_l1_uses_virtual_clock_across_days(app_root, monkeypatch):
         )
 
         # inspect 应看到 low_oil prefs
-        insp = c.get("/api/sandbox/inspect").json()
+        insp = c.get("/api/lab/sandbox/inspect").json()
         prefs = insp.get("long_term_prefs")
         assert prefs is not None
         assert "low_oil" in prefs["boost"]
@@ -599,9 +604,9 @@ def test_anchor_11_l1_uses_virtual_clock_across_days(app_root, monkeypatch):
 def test_anchor_10_reset_clean(app_root):
     app, root = app_root
     with TestClient(app) as c:
-        c.post("/api/sandbox/init",
+        c.post("/api/lab/sandbox/init",
                 json={"start_date": "2026-05-20", "copy_real_data": True})
-        c.post("/api/sandbox/advance", json={"days": 2})
+        c.post("/api/lab/sandbox/advance", json={"days": 2})
         # 反馈数据
         from chisha import feedback_store
         feedback_store.record_accept(
@@ -614,7 +619,7 @@ def test_anchor_10_reset_clean(app_root):
         assert sandbox_dir.exists()
 
         # reset
-        c.post("/api/sandbox/reset")
+        c.post("/api/lab/sandbox/reset")
         assert not sandbox_dir.exists()
         # state 也清了
-        assert c.get("/api/sandbox/state").json() == {"enabled": False}
+        assert c.get("/api/lab/sandbox/state").json() == {"enabled": False}

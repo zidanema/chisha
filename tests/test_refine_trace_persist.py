@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def app_with_root(tmp_path: Path, monkeypatch):
-    from chisha import web_api, trace_store
+    from chisha import api_living as web_api, trace_store
 
     # web_api 把 ROOT 写死成模块常量, 测试时 monkeypatch.
     monkeypatch.setattr(web_api, "ROOT", tmp_path)

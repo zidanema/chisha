@@ -49,7 +49,7 @@ async function fetchJson<T>(input: string, init: RequestInit = {}): Promise<T> {
 export function postDebugRecommend(
   req: BackendDebugRecommendReq,
 ): Promise<BackendDebugRecommend> {
-  return fetchJson<BackendDebugRecommend>("/api/debug_recommend", {
+  return fetchJson<BackendDebugRecommend>("/api/lab/debug_recommend", {
     method: "POST",
     body: JSON.stringify(req),
   });
@@ -72,18 +72,18 @@ export function fetchSessions(params: {
   if (params.meal_type) q.set("meal_type", params.meal_type);
   const qs = q.toString();
   return fetchJson<BackendSessionsResp>(
-    `/api/debug/sessions${qs ? `?${qs}` : ""}`,
+    `/api/lab/sessions${qs ? `?${qs}` : ""}`,
   );
 }
 
 export function fetchSession(sid: string): Promise<BackendDebugTrace> {
   return fetchJson<BackendDebugTrace>(
-    `/api/debug/sessions/${encodeURIComponent(sid)}`,
+    `/api/lab/sessions/${encodeURIComponent(sid)}`,
   );
 }
 
 export function postWhatIf(req: BackendWhatIfReq): Promise<BackendDebugTrace> {
-  return fetchJson<BackendDebugTrace>("/api/debug/what_if", {
+  return fetchJson<BackendDebugTrace>("/api/lab/what_if", {
     method: "POST",
     body: JSON.stringify(req),
   });

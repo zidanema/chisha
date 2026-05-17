@@ -20,11 +20,18 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def app_with_sandbox(tmp_path: Path, monkeypatch):
-    """注入 ROOT 指向 tmp_path. 默认 _is_localhost=True (TestClient)."""
-    from chisha import web_api
-    monkeypatch.setattr(web_api, "ROOT", tmp_path)
-    monkeypatch.setattr(web_api, "PROFILE_PATH", tmp_path / "profile.yaml")
-    monkeypatch.setattr(web_api, "_is_localhost", lambda req: True)
+    """注入 ROOT 指向 tmp_path. 默认 _is_localhost=True (TestClient).
+
+    D-085: sandbox endpoints 已迁到 api_lab router (/api/lab/sandbox/*);
+    /api/recommend 仍在 api_living router. 同 fixture 挂两个 router 才能
+    跑 sandbox+recommend 联动测试.
+    """
+    from chisha import api_lab, api_living
+    monkeypatch.setattr(api_lab, "ROOT", tmp_path)
+    monkeypatch.setattr(api_lab, "PROFILE_PATH", tmp_path / "profile.yaml")
+    monkeypatch.setattr(api_lab, "_is_localhost", lambda req: True)
+    monkeypatch.setattr(api_living, "ROOT", tmp_path)
+    monkeypatch.setattr(api_living, "PROFILE_PATH", tmp_path / "profile.yaml")
     monkeypatch.delenv("CHISHA_ADMIN_TOKEN", raising=False)
     # prod profile.yaml
     (tmp_path / "profile.yaml").write_text(
@@ -32,28 +39,29 @@ def app_with_sandbox(tmp_path: Path, monkeypatch):
         encoding="utf-8",
     )
     app = FastAPI()
-    app.include_router(web_api.router)
+    app.include_router(api_living.router)
+    app.include_router(api_lab.router)
     return app, tmp_path
 
 
 # ─────────────────────── 鉴权
 def test_sandbox_endpoints_reject_non_localhost(app_with_sandbox, monkeypatch):
     app, _ = app_with_sandbox
-    from chisha import web_api
-    monkeypatch.setattr(web_api, "_is_localhost", lambda req: False)
+    from chisha import api_lab
+    monkeypatch.setattr(api_lab, "_is_localhost", lambda req: False)
     with TestClient(app) as c:
-        assert c.post("/api/sandbox/init", json={}).status_code == 403
-        assert c.post("/api/sandbox/advance", json={}).status_code == 403
-        assert c.post("/api/sandbox/reset").status_code == 403
-        assert c.get("/api/sandbox/state").status_code == 403
-        assert c.get("/api/sandbox/inspect").status_code == 403
+        assert c.post("/api/lab/sandbox/init", json={}).status_code == 403
+        assert c.post("/api/lab/sandbox/advance", json={}).status_code == 403
+        assert c.post("/api/lab/sandbox/reset").status_code == 403
+        assert c.get("/api/lab/sandbox/state").status_code == 403
+        assert c.get("/api/lab/sandbox/inspect").status_code == 403
 
 
 # ─────────────────────── init
 def test_init_default_start_date(app_with_sandbox):
     app, root = app_with_sandbox
     with TestClient(app) as c:
-        r = c.post("/api/sandbox/init", json={})
+        r = c.post("/api/lab/sandbox/init", json={})
         assert r.status_code == 200
         s = r.json()
         assert s["enabled"] is True
@@ -63,7 +71,7 @@ def test_init_default_start_date(app_with_sandbox):
 def test_init_explicit_start_date(app_with_sandbox):
     app, root = app_with_sandbox
     with TestClient(app) as c:
-        r = c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
+        r = c.post("/api/lab/sandbox/init", json={"start_date": "2026-05-20"})
         assert r.status_code == 200
         assert r.json()["current_date"] == "2026-05-20"
 
@@ -77,7 +85,7 @@ def test_init_copy_real_data(app_with_sandbox):
         encoding="utf-8",
     )
     with TestClient(app) as c:
-        r = c.post("/api/sandbox/init",
+        r = c.post("/api/lab/sandbox/init",
                     json={"start_date": "2026-05-20", "copy_real_data": True})
         assert r.status_code == 200
     # sandbox 副本存在
@@ -96,8 +104,8 @@ def test_advance_increments_day(app_with_sandbox, monkeypatch):
         lambda *a, **kw: {"boost": [], "penalty": [], "based_on_meals": 0},
     )
     with TestClient(app) as c:
-        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
-        r = c.post("/api/sandbox/advance", json={"days": 3})
+        c.post("/api/lab/sandbox/init", json={"start_date": "2026-05-20"})
+        r = c.post("/api/lab/sandbox/advance", json={"days": 3})
         assert r.status_code == 200
         s = r.json()
         assert s["current_date"] == "2026-05-23"
@@ -107,7 +115,7 @@ def test_advance_increments_day(app_with_sandbox, monkeypatch):
 def test_advance_without_init_400(app_with_sandbox):
     app, _ = app_with_sandbox
     with TestClient(app) as c:
-        r = c.post("/api/sandbox/advance", json={"days": 1})
+        r = c.post("/api/lab/sandbox/advance", json={"days": 1})
         assert r.status_code == 400
 
 
@@ -124,8 +132,8 @@ def test_advance_triggers_l1_extraction(app_with_sandbox, monkeypatch):
     monkeypatch.setattr(l1_extractor, "extract_and_save", fake_extract)
 
     with TestClient(app) as c:
-        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
-        c.post("/api/sandbox/advance", json={"days": 1})
+        c.post("/api/lab/sandbox/init", json={"start_date": "2026-05-20"})
+        c.post("/api/lab/sandbox/advance", json={"days": 1})
 
     # 等异步抽取完成
     time.sleep(0.3)
@@ -133,7 +141,7 @@ def test_advance_triggers_l1_extraction(app_with_sandbox, monkeypatch):
 
     # state 应该有 last_l1_extraction
     with TestClient(app) as c:
-        s = c.get("/api/sandbox/state").json()
+        s = c.get("/api/lab/sandbox/state").json()
     assert s.get("last_l1_extraction", {}).get("status") == "ok"
 
 
@@ -141,17 +149,17 @@ def test_advance_triggers_l1_extraction(app_with_sandbox, monkeypatch):
 def test_reset_clears_data(app_with_sandbox):
     app, root = app_with_sandbox
     with TestClient(app) as c:
-        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
-        c.post("/api/sandbox/reset")
-        assert c.get("/api/sandbox/state").json()["enabled"] is False
+        c.post("/api/lab/sandbox/init", json={"start_date": "2026-05-20"})
+        c.post("/api/lab/sandbox/reset")
+        assert c.get("/api/lab/sandbox/state").json()["enabled"] is False
 
 
 def test_disable_preserves_data(app_with_sandbox):
     app, root = app_with_sandbox
     with TestClient(app) as c:
-        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
-        c.post("/api/sandbox/disable")
-        s = c.get("/api/sandbox/state").json()
+        c.post("/api/lab/sandbox/init", json={"start_date": "2026-05-20"})
+        c.post("/api/lab/sandbox/disable")
+        s = c.get("/api/lab/sandbox/state").json()
         assert s["enabled"] is False
         # state 文件还在
         assert (root / "logs" / "sandbox" / "state.json").exists()
@@ -161,7 +169,7 @@ def test_disable_preserves_data(app_with_sandbox):
 def test_state_when_disabled(app_with_sandbox):
     app, _ = app_with_sandbox
     with TestClient(app) as c:
-        r = c.get("/api/sandbox/state")
+        r = c.get("/api/lab/sandbox/state")
         assert r.status_code == 200
         assert r.json() == {"enabled": False}
 
@@ -169,7 +177,7 @@ def test_state_when_disabled(app_with_sandbox):
 def test_inspect_when_disabled(app_with_sandbox):
     app, _ = app_with_sandbox
     with TestClient(app) as c:
-        r = c.get("/api/sandbox/inspect")
+        r = c.get("/api/lab/sandbox/inspect")
         assert r.status_code == 200
         assert r.json() == {"enabled": False}
 
@@ -185,8 +193,8 @@ def test_inspect_enabled_returns_data(app_with_sandbox, monkeypatch):
         encoding="utf-8",
     )
     with TestClient(app) as c:
-        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
-        r = c.get("/api/sandbox/inspect")
+        c.post("/api/lab/sandbox/init", json={"start_date": "2026-05-20"})
+        r = c.get("/api/lab/sandbox/inspect")
     assert r.status_code == 200
     data = r.json()
     assert data["enabled"] is True
@@ -217,7 +225,7 @@ def test_load_profile_finds_methodology_when_sandbox_enabled(
 
     # 启 sandbox + 拷副本
     with TestClient(app) as c:
-        c.post("/api/sandbox/init",
+        c.post("/api/lab/sandbox/init",
                json={"start_date": "2026-05-20", "copy_real_data": True})
 
     # 模拟 api.recommend_meal:114 的调用 (修复后必须显式传 root)
@@ -257,7 +265,7 @@ def test_web_api_recommend_under_sandbox_does_not_500_on_methodology(
     (zone_dir / "dishes_tagged.json").write_text("[]", encoding="utf-8")
 
     with TestClient(app) as c:
-        c.post("/api/sandbox/init",
+        c.post("/api/lab/sandbox/init",
                json={"start_date": "2026-05-20", "copy_real_data": True})
         r = c.get("/api/recommend?meal=lunch")
     # 关键: 不能 500 (回归触发 FileNotFoundError → 500). 空 zone 会让推荐返回
