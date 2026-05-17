@@ -336,9 +336,8 @@ def _normalize_combos(
     return restaurants, dishes, refs
 
 
-def _build_trace(
+def _build_pipeline_trace_block(
     *,
-    session_id: str,
     started_at: dt.datetime,
     total_latency_ms: int,
     ctx_latency_ms: int,
@@ -360,16 +359,13 @@ def _build_trace(
     top_k: list[dict],
     reranked: list[dict],
     l3_collector: dict,
-    use_llm_rerank: bool | None,
     root: Path | None,
     feedback_view: list[dict] | None = None,  # B-001
 ) -> dict:
-    """D-079: 组装完整 trace dict (与 apps/debug-ui Session type 对齐 + __frozen).
-
-    所有 L1/L2/L3 中间状态都已经在 recommend_meal 链路里算好, 这里只做组装,
-    L1 trace 用 debug_recommend._build_l1_trace 二次跑 (内部用同样的 production
-    hard_filter, 行为等价, ~50ms 开销).
-    """
+    """D-082: 抽出来的 pipeline trace block (l1/l2/l3/final/__frozen/latencies/
+    started_at/__llm_called). 不带 session-level wrapper (session_id / __version
+    / __config / refine / __source). round-1 由 _build_trace 套外壳, round-2 由
+    web_api.py /api/refine 直接塞进 base_trace["round2"]."""
     from chisha import trace_store
     from chisha.debug_recommend import (
         _build_l1_trace, _build_l2_cap_stats,
@@ -428,8 +424,13 @@ def _build_trace(
         "raw_response": l3_collector.get("raw_response", ""),
         "raw_response_chars": l3_collector.get("raw_response_chars", 0),
         "system_prompt_chars": l3_collector.get("system_prompt_chars"),
+        # B-004: 写 trace 时把发给 LLM 的 system_prompt 全文 + tool 定义记下来,
+        # 让 Replay 自包含 (源文件后续改动不污染历史 trace).
+        "system_prompt_full": l3_collector.get("system_prompt_full"),
         "user_message_chars": l3_collector.get("user_message_chars"),
         "user_message_full": l3_collector.get("user_message_full"),
+        "tool_definition": l3_collector.get("tool_definition"),
+        "tool_choice": l3_collector.get("tool_choice"),
         "tool_input": l3_collector.get("tool_input"),
         "stop_reason": l3_collector.get("stop_reason"),
         "fallback_reason": l3_collector.get("fallback_reason"),
@@ -505,20 +506,8 @@ def _build_trace(
     }
 
     return {
-        "__version": trace_store.TRACE_SCHEMA_VERSION,
-        "__source": "production",
-        "__parent_session_id": None,
         "__llm_called": bool(l3_collector.get("llm_called")),
         "__frozen": frozen,
-        "__config": {
-            "use_llm_rerank": use_llm_rerank,
-            "n_return": 5,
-            "n_explore": 2,
-            "daily_mood": daily_mood,
-            "refine_text": None,
-            "profile_overrides": None,
-        },
-        "session_id": session_id,
         "started_at": started_at.isoformat(),
         "total_latency_ms": total_latency_ms,
         "ctx_latency_ms": ctx_latency_ms,
@@ -534,9 +523,83 @@ def _build_trace(
         "l2": l2_trace,
         "l3": l3_trace,
         "final": final_view,
-        "refine": {"applied": False},
-        # D-083: 派生 feedback 因果快照 (与 L2 breakdown / L3 prompt 三轨之一)
+        # D-083 (PR-1): feedback_view_snapshot 顶层透出. round-1 / round-2 共用
+        # 同一 pipeline 构造函数, round-2 一旦接 feedback_view 也自动有此字段.
         "feedback_view_snapshot": feedback_view_snapshot,
+    }
+
+
+def _build_trace(
+    *,
+    session_id: str,
+    started_at: dt.datetime,
+    total_latency_ms: int,
+    ctx_latency_ms: int,
+    recall_latency_ms: int,
+    score_latency_ms: int,
+    rerank_latency_ms: int,
+    meal_type: str,
+    zone: str,
+    today: dt.date,
+    profile: dict,
+    rests: list[dict],
+    tagged: list[dict],
+    meal_log: list[dict],
+    combos: list[dict],
+    ctx,
+    daily_mood: str | None,
+    ranked_raw: list[dict],
+    ranked: list[dict],
+    top_k: list[dict],
+    reranked: list[dict],
+    l3_collector: dict,
+    use_llm_rerank: bool | None,
+    root: Path | None,
+    feedback_view: list | dict | None = None,  # B-001 / D-083 PR-1
+) -> dict:
+    """D-079: 组装完整 round-1 trace (session 外壳 + pipeline block)."""
+    from chisha import trace_store
+    pipeline = _build_pipeline_trace_block(
+        started_at=started_at,
+        total_latency_ms=total_latency_ms,
+        ctx_latency_ms=ctx_latency_ms,
+        recall_latency_ms=recall_latency_ms,
+        score_latency_ms=score_latency_ms,
+        rerank_latency_ms=rerank_latency_ms,
+        meal_type=meal_type,
+        zone=zone,
+        today=today,
+        profile=profile,
+        rests=rests,
+        tagged=tagged,
+        meal_log=meal_log,
+        combos=combos,
+        ctx=ctx,
+        daily_mood=daily_mood,
+        ranked_raw=ranked_raw,
+        ranked=ranked,
+        top_k=top_k,
+        reranked=reranked,
+        l3_collector=l3_collector,
+        root=root,
+        feedback_view=feedback_view,
+    )
+    return {
+        "__version": trace_store.TRACE_SCHEMA_VERSION,
+        "__source": "production",
+        "__parent_session_id": None,
+        "__config": {
+            "use_llm_rerank": use_llm_rerank,
+            "n_return": 5,
+            "n_explore": 2,
+            "daily_mood": daily_mood,
+            "refine_text": None,
+            "profile_overrides": None,
+        },
+        "session_id": session_id,
+        **pipeline,
+        "refine": {"applied": False},
+        # D-083 PR-1: feedback_view_snapshot 已在 pipeline 字典里, 通过 **pipeline 注入.
     }
 
 

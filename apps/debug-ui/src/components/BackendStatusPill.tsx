@@ -1,5 +1,4 @@
 // Backend connection status pill shown in topbar. Reads useSession status.
-// Extracted from App.tsx in Phase 7.
 
 import type { RunStatus } from "../hooks/useSession";
 
@@ -7,8 +6,8 @@ export function BackendStatusPill({ status }: { status: RunStatus }) {
   const label =
     status === "loading" ? "running…" :
     status === "error" ? "error" :
-    status === "offline" ? "offline · mock" :
-    "live :8765";
+    status === "offline" ? "offline" :
+    "live";
 
   const color =
     status === "error" ? "var(--err)" :

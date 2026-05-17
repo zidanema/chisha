@@ -199,6 +199,13 @@ export type BackendL3Llm = {
   model: string | null;
   system_prompt_chars: number;
   system_prompt_full: string;
+  // B-004: tool 定义 (forced schema) — trace 写盘时记录,Live 端点不返回.
+  tool_definition?: {
+    name: string;
+    description: string;
+    input_schema: unknown;
+  } | null;
+  tool_choice?: { type: string; name: string } | null;
   user_message_chars: number;
   user_message_preview: string;
   user_message_full: string;
@@ -340,6 +347,12 @@ export type BackendSessionMeta = {
   l3_status: string;
   source: "production" | "what_if_preview" | string;
   feedback?: BackendFeedbackLink | null;
+  // D-082: refine 角标. refine_applied=true 但 has_round2=false → 老 trace
+  // 只有 summary (Sidebar 仍标 R); has_round2=true → 点开能渲完整 round2 panel.
+  refine_applied?: boolean;
+  refine_round?: number | null;
+  refine_user_input?: string | null;
+  has_round2?: boolean;
 };
 
 export type BackendSessionsResp = {
@@ -356,8 +369,17 @@ export type BackendTraceL3 = {
   raw_response: string;
   raw_response_chars: number;
   system_prompt_chars?: number;
+  // B-004: 老 trace 没这两个字段 (在 backend 写盘前生成), 新 trace 有.
+  system_prompt_full?: string;
+  tool_definition?: {
+    name: string;
+    description: string;
+    input_schema: unknown;
+  } | null;
+  tool_choice?: { type: string; name: string } | null;
   user_message_chars?: number;
   user_message_full?: string;
+  // LLM 输出的 tool_use 内容 (与 tool_definition 不同, 后者是发给 LLM 的工具定义).
   tool_input: unknown;
   stop_reason: string | null;
   fallback_reason: string | null;
@@ -400,6 +422,24 @@ export type BackendTraceRefine = {
   ts?: string;
 };
 
+// D-082: refine 二轮完整 pipeline trace. 与 BackendDebugTrace 的 l1/l2/l3/final
+// 同形, 但不带 session-level wrapper (session_id / __version / __config / refine).
+export type BackendTraceRound2 = {
+  __llm_called: boolean;
+  __frozen?: BackendDebugTrace["__frozen"];
+  started_at: string;
+  total_latency_ms: number;
+  ctx_latency_ms: number;
+  recall_latency_ms: number;
+  score_latency_ms: number;
+  rerank_latency_ms: number;
+  final_latency_ms: number;
+  l1: BackendL1Recall;
+  l2: BackendL2Score;
+  l3: BackendTraceL3;
+  final: BackendFinalRow[];
+};
+
 export type BackendDebugTrace = {
   __version: number;
   __source: "production" | "what_if_preview" | string;
@@ -439,6 +479,8 @@ export type BackendDebugTrace = {
   l3: BackendTraceL3;
   final: BackendFinalRow[];
   refine: BackendTraceRefine;
+  // D-082: refine 触发后写入. 旧 trace / 没触发 refine 的 session 不存在.
+  round2?: BackendTraceRound2;
   // D-083 PR-1: 顶层 feedback_view_snapshot. 老 v1 trace 无此字段, 读侧空骨架兜底.
   feedback_view_snapshot?: BackendFeedbackViewSnapshot;
 };

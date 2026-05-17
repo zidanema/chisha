@@ -21,8 +21,6 @@ type DagNode = {
 
 export type DagHeaderProps = {
   activeTab: "main" | "refine" | "trace";
-  fallbackL3LatencyMs: number | null;
-  fallbackProvider: string | null;
   currentPanel: string;
   onClickNode: (id: string) => void;
   compact: boolean;
@@ -34,10 +32,7 @@ export type DagHeaderProps = {
 function buildNodes(
   session: Session,
   activeTab: DagHeaderProps["activeTab"],
-  fallbackL3LatencyMs: number | null,
-  fallbackProvider: string | null,
 ): DagNode[] {
-  const useFallback = fallbackL3LatencyMs != null;
   const { l1, l2, l3, refine } = session;
   const totalCombos = l1.funnel[l1.funnel.length - 1]?.value ?? 0;
   const restCountAfter = l2.kpi.restaurants_after_cap;
@@ -49,9 +44,14 @@ function buildNodes(
   const cacheHitPct = l3.input_tokens
     ? Math.round((l3.cache_read_input_tokens / l3.input_tokens) * 100)
     : 0;
-  const l3LatencyDisplay = useFallback ? fallbackL3LatencyMs : l3.latency_ms;
+  const l3LatencyDisplay = l3.latency_ms;
   const ctxLat = `${session.ctx_latency_ms}ms`;
   const finalLat = `${session.final_latency_ms}ms`;
+  // D-082: refine 节点用 round2 真实数据驱动 (老 diff 字段已废, adapter 喂 [])
+  const refineApplied = refine.user_text.length > 0;
+  const round2 = session.round2;
+  const refineRound = (refine.intent as { round?: number } | null)?.round;
+  const compactLayout = activeTab === "refine" || (refineApplied && round2);
 
   // D-083 PR-2: Feedback DAG 节点 (Codex S2 Q4=A: 总在, 空 trace 灰显).
   const fbSnap = session.feedback_view_snapshot;
@@ -63,33 +63,47 @@ function buildNodes(
     ? `${fbSnap.rating_signals.length + fbSnap.calibration_rules.length + fbSnap.note_breakdown.length}`
     : "0";
 
-  if (activeTab === "refine") {
-    // refine tab: 7 节点 (ctx/l1/feedback/l2/l3/final/refine), 总宽 ~83%, 间距 ~13.7%
+  // D-082: refine 节点用 round2 真实数据驱动. compactLayout 下右移到 78%, 否则 82%.
+  const baseRefineNode: DagNode | null = refineApplied
+    ? {
+        id: "refine",
+        x: compactLayout ? "78%" : "82%",
+        y: 36,
+        tone: "refine",
+        title: round2 ? "round 2 · L1→L2→L3 全跑" : "round 2 summary only",
+        metric: round2
+          ? String(round2.final.length)
+          : String(refine.candidate_ids?.length ?? 0),
+        subm: "picks",
+        sub: round2 ? `${round2.l2.combos.length} top · ${round2.l3.candidates_returned} out` : "no round2",
+        lat: round2 ? `${round2.total_latency_ms}ms` : (refineRound ? `r${refineRound}` : "—"),
+      }
+    : null;
+
+  if (compactLayout) {
+    // compact (refine tab 或 main+round2): 6/7 节点 + 可选 refine, 间距 ~13%
     return [
       { id: "ctx", x: "1%", y: 36, tone: "ctx", title: "build_context", metric: "profile",
         sub: `${l1.meal} · ${l1.area.slice(0, 6)}`, lat: ctxLat },
-      { id: "l1", x: "14%", y: 36, tone: "l1", title: `${(l1.raw_dishes / 1000).toFixed(0)}k dishes`,
+      { id: "l1", x: "13%", y: 36, tone: "l1", title: `${(l1.raw_dishes / 1000).toFixed(0)}k dishes`,
         metric: totalCombos.toLocaleString(), subm: "combo", sub: `${restCountAfter} rest`, lat: `${l1.latency_ms}ms` },
-      { id: "feedback", x: "27%", y: 36, tone: "feedback", title: "派生 view (R/C/N)",
+      { id: "feedback", x: "25%", y: 36, tone: "feedback", title: "派生 view (R/C/N)",
         metric: fbActive, subm: "evts", sub: fbCounts,
         lat: fbEmpty ? "—" : "OK", disabled: fbEmpty },
-      { id: "l2", x: "40%", y: 36, tone: "l2", title: `${l2.weights.length}-dim + cap K=${l2.kpi.cap_k}`,
+      { id: "l2", x: "37%", y: 36, tone: "l2", title: `${l2.weights.length}-dim + cap K=${l2.kpi.cap_k}`,
         metric: String(l2.candidates_to_l3), subm: "top", sub: `${restCountBefore}→${restCountAfter}`, lat: `${l2.latency_ms}ms` },
-      { id: "l3", x: "53%", y: 36, tone: "l3",
-        title: useFallback ? "FALLBACK · sonnet" : `${l3.model.split("-").slice(-3).join("-")} · tool_use`,
+      { id: "l3", x: "50%", y: 36, tone: "l3",
+        title: `${l3.model.split("-").slice(-3).join("-")} · tool_use`,
         metric: String(l3LatencyDisplay), subm: "ms",
-        sub: useFallback ? (fallbackProvider ?? "fallback") : `cache ${cacheHitPct}%`,
-        lat: useFallback ? "FB" : "OK", warn: true, fb: useFallback },
-      { id: "final", x: "66%", y: 36, tone: "final", title: `${exploitN} exploit + ${exploreN} explore`,
+        sub: `cache ${cacheHitPct}%`,
+        lat: "OK", warn: true },
+      { id: "final", x: "63%", y: 36, tone: "final", title: `${exploitN} exploit + ${exploreN} explore`,
         metric: String(session.final.length), subm: "picks", sub: `¥${top1Price}`, lat: finalLat },
-      { id: "refine", x: "82%", y: 36, tone: "refine", title: "parse → chips → rerun",
-        metric: `+${refine.diff.new_in_top5.length} / −${refine.diff.dropped_from_top5.length}`,
-        subm: "diff", sub: `haiku · ${refine.parse_feedback.llm_call.latency_ms}ms`,
-        lat: `${refine.summary_kpi.total_latency_ms}ms` },
+      ...(baseRefineNode ? [baseRefineNode] : []),
     ];
   }
 
-  // main tab: 6 节点 (ctx/l1/feedback/l2/l3/final), 间距 ~13%
+  // main tab (no refine): 6 节点 (ctx/l1/feedback/l2/l3/final), 间距 ~13%
   return [
     { id: "ctx", x: "1%", y: 36, tone: "ctx", title: "build_context", metric: "profile",
       sub: `${l1.meal} · ${l1.area.slice(0, 6)}`, lat: ctxLat },
@@ -101,10 +115,10 @@ function buildNodes(
     { id: "l2", x: "40%", y: 36, tone: "l2", title: `${l2.weights.length}-dim · cap K=${l2.kpi.cap_k}`,
       metric: String(l2.candidates_to_l3), subm: "top", sub: `${restCountBefore}→${restCountAfter} rest`, lat: `${l2.latency_ms}ms` },
     { id: "l3", x: "53%", y: 36, tone: "l3",
-      title: useFallback ? "FALLBACK · sonnet" : `${l3.model.split("-").slice(-3).join("-")} · tool_use`,
+      title: `${l3.model.split("-").slice(-3).join("-")} · tool_use`,
       metric: String(l3LatencyDisplay), subm: "ms",
-      sub: useFallback ? (fallbackProvider ?? "fallback") : `cache ${cacheHitPct}%`,
-      lat: useFallback ? "FB" : "OK", warn: true, fb: useFallback },
+      sub: `cache ${cacheHitPct}%`,
+      lat: "OK", warn: true },
     { id: "final", x: "66%", y: 36, tone: "final", title: `${exploitN} exploit + ${exploreN} explore`,
       metric: String(session.final.length), subm: "picks", sub: `¥${top1Price} · ${top1Eta}min`, lat: finalLat },
   ];
@@ -147,8 +161,11 @@ function DagArrows({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    // D-083 PR-2: 节点宽度收窄以容纳新 feedback 节点 (refine 7 节点 / main 6 节点)
-    const W = activeTab === "refine" ? 128 : 138;
+    // D-082+D-083: width 适配:
+    //  - main 6 节点 (含 fb): 138px
+    //  - compact (含 refine, 6+1 或 7 节点): 128px
+    const hasRefine = nodes.some((n) => n.id === "refine");
+    const W = hasRefine ? 128 : 138;
     const H = 78;
 
     const compute = () => {
@@ -198,18 +215,17 @@ function DagArrows({
 }
 
 export function DagHeader({
-  activeTab, fallbackL3LatencyMs, fallbackProvider, currentPanel, onClickNode,
+  activeTab, currentPanel, onClickNode,
   compact, onToggleCompact, runningPulse, session,
 }: DagHeaderProps) {
-  const useFallback = fallbackL3LatencyMs != null;
   const canvasRef = useRef<HTMLDivElement>(null);
-  const nodes = buildNodes(session, activeTab, fallbackL3LatencyMs, fallbackProvider);
+  const nodes = buildNodes(session, activeTab);
   const sessionId = session.session_id;
   const startedTime = session.started_at.split(" ")[1] ?? session.started_at;
   const totalLatency = session.total_latency_ms;
-  // Read real L3 status so config_error / skipped surface in the DAG header,
-  // not just OK. fallback toggle still overrides for mock demo.
-  const l3Status: L3Status = useFallback ? "fallback" : session.l3.status;
+  // Real L3 status: config_error / skipped / fallback / ok 都 surface 出来.
+  // 真实 LLM provider chain fallback 由 session.l3.status + session.l3.fallback_chain 驱动.
+  const l3Status: L3Status = session.l3.status;
   const cacheHitPct = session.l3.input_tokens
     ? Math.round((session.l3.cache_read_input_tokens / session.l3.input_tokens) * 1000) / 10
     : 0;
@@ -227,7 +243,7 @@ export function DagHeader({
             .map((n, i, arr) => (
               <Fragment key={n.id}>
                 <button
-                  className={`chip ${n.tone} ${useFallback && n.id === "l3" ? "fb" : ""} ${currentPanel === n.id ? "selected" : ""} ${n.disabled ? "disabled" : ""}`.trim()}
+                  className={`chip ${n.tone} ${l3Status === "fallback" && n.id === "l3" ? "fb" : ""} ${currentPanel === n.id ? "selected" : ""} ${n.disabled ? "disabled" : ""}`.trim()}
                   onClick={() => !n.disabled && onClickNode(n.id)}
                   disabled={n.disabled}
                   title={n.disabled ? "无 feedback 数据 — pre-D-083 trace 或空 store" : undefined}
@@ -243,7 +259,7 @@ export function DagHeader({
               </Fragment>
             ))}
         </div>
-        {useFallback && (
+        {l3Status === "fallback" && (
           <span className="strip-warn">
             <span className="pulse"></span>L3 fallback
           </span>
@@ -297,9 +313,8 @@ export function DagHeader({
             key={n.id}
             className={`dag-node ${currentPanel === n.id ? "selected" : ""} ${n.disabled ? "disabled" : ""}`.trim()}
             style={{
-              left: n.x,
-              top: n.y,
-              width: activeTab === "refine" ? 128 : 138,
+              left: n.x, top: n.y,
+              width: nodes.some((nn) => nn.id === "refine") ? 128 : 138,
               ...(n.disabled ? { opacity: 0.4, cursor: "not-allowed" } : {}),
             }}
             onClick={() => !n.disabled && onClickNode(n.id)}
@@ -329,7 +344,7 @@ export function DagHeader({
           <span><span className="swatch" style={{ background: "var(--L2)" }}></span>L2</span>
           <span><span className="swatch" style={{ background: "var(--L3)" }}></span>L3</span>
           <span><span className="swatch" style={{ background: "var(--final)" }}></span>final</span>
-          {activeTab === "refine" && (
+          {nodes.some((n) => n.id === "refine") && (
             <span><span className="swatch" style={{ background: "var(--refine)" }}></span>refine</span>
           )}
           <button

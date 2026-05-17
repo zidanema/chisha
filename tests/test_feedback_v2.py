@@ -137,7 +137,7 @@ def test_extract_tokens_processed_meat_aliases():
 def test_build_view_returns_dict():
     out = build_feedback_view({}, dt.date(2026, 5, 17))
     assert isinstance(out, dict)
-    # D-082: 增加 feedback_trace sibling key (派生层因果快照, 给 trace + DAG 用)
+    # D-084: 增加 feedback_trace sibling key (派生层因果快照, 给 trace + DAG 用). 原 D-082, 合并时与 main 冲突重号
     assert set(out.keys()) == {"ratings", "calibrations", "note_tokens",
                                 "feedback_trace"}
     assert out["ratings"] == []
@@ -278,7 +278,7 @@ def test_normalize_dict_passthrough():
 
 def test_normalize_none_returns_empty():
     out = normalize_feedback_view(None)
-    # D-082: 增加 feedback_trace sibling (空骨架, empty=True)
+    # D-084: 增加 feedback_trace sibling (空骨架, empty=True). 原 D-082, 与 main 冲突重号
     assert out["ratings"] == []
     assert out["calibrations"] == []
     assert out["note_tokens"] == []

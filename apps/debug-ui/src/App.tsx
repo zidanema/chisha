@@ -13,9 +13,6 @@ import { useSession } from "./hooks/useSession";
 import { useTrace } from "./hooks/useTrace";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { loadConfig } from "./lib/sessionCache";
-import { computeSessionDiff } from "./lib/diffSession";
-import { deriveRefineSession } from "./mocks/refineSession";
-import { L3_FALLBACK_EXAMPLE, MOCK_SESSION } from "./mocks/session";
 import { PanelL1 } from "./panels/PanelL1";
 import { PanelL2 } from "./panels/PanelL2";
 import { PanelL3 } from "./panels/PanelL3";
@@ -53,7 +50,7 @@ function writeQueryParams(p: { sid: string | null; mode: Mode; whatIf: boolean }
 
 const TABS: { id: Tab; label: string; sub: string; disabled?: boolean }[] = [
   { id: "main", label: "主视图", sub: "L1 / L2 / L3 / Final" },
-  { id: "refine", label: "Refine", sub: "二轮 / diff" },
+  { id: "refine", label: "Refine", sub: "round 2 trace + diff" },
   { id: "trace", label: "追溯", sub: "命中定位" },
 ];
 
@@ -64,10 +61,6 @@ export function App() {
   const [today] = useState(TODAY_ISO);
   const [llmAuto, setLlmAuto] = useState(true);
   const [refineText, setRefineText] = useState(DEFAULT_REFINE_TEXT);
-  // Submitted refine text drives the derived second-round Session. We don't
-  // refresh on every keystroke (would shimmer badges) — only when the user
-  // hits "触发 refine".
-  const [submittedRefineText, setSubmittedRefineText] = useState<string | null>(null);
   const [traceRest, setTraceRest] = useState("");
   const [traceDish, setTraceDish] = useState("");
   const [currentPanel, setCurrentPanel] = useState("l1");
@@ -82,6 +75,7 @@ export function App() {
     activeSessionId,
     setActiveSessionId,
     runMain,
+    runRefine,
     backendOnline,
     corruptCount,
   } = useSession();
@@ -94,15 +88,20 @@ export function App() {
   const [liveLlmCalled, setLiveLlmCalled] = useState<boolean | null>(null);
 
   // 首次挂载: 若 URL 带 sid 且与默认不一致, 切到该 sid (useSession 会异步 fetch).
+  // 用 ref guard 防止 mount 期间 sync-back effect 先把 URL sid 抹掉 (Codex review).
+  const urlInitDoneRef = useRef(false);
   useEffect(() => {
     if (initialQp.sid && initialQp.sid !== activeSessionId) {
       setActiveSessionId(initialQp.sid);
     }
+    urlInitDoneRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // mode / sid / whatIf 任一变化都同步回 URL.
+  // mount 期 (urlInitDoneRef=false) 跳过, 避免和上面 init effect race 抹 URL.
   useEffect(() => {
+    if (!urlInitDoneRef.current) return;
     writeQueryParams({
       sid: mode === "live" ? null : activeSessionId,
       mode,
@@ -111,7 +110,7 @@ export function App() {
   }, [mode, activeSessionId, whatIfOpen]);
 
   useKeyboardShortcuts({
-    onRunMain: handleRunMain,
+    onRunLive: () => { void handleRunLive(); },
     onRunRefine: handleRunRefine,
     isRunDisabled: () => status === "loading" || !profileParse.ok,
     hasRefineText: () => refineText.trim().length > 0,
@@ -134,38 +133,10 @@ export function App() {
     }
   }, [profileOverride]);
 
-  // Force-fallback toggle is only meaningful for the canonical mock session.
-  // Live sessions show their actual L3 status. Phase 2: keep the toggle live
-  // only for sess_a7f0 (mock fallback example) so the user can still demo
-  // the fallback view; everything else renders the real session as-is.
-  const useFallback = activeSessionId === "sess_a7f0";
-  const session = useFallback
-    ? { ...liveSession, l3: { ...liveSession.l3, ...L3_FALLBACK_EXAMPLE } }
-    : liveSession;
-  const fallbackL3LatencyMs = useFallback ? L3_FALLBACK_EXAMPLE.latency_ms : null;
-  const fallbackProvider = useFallback ? L3_FALLBACK_EXAMPLE.resolved_provider : null;
+  // 真实 L3 fallback (provider chain) 在 PanelL3 内通过 session.l3.fallback_chain
+  // 渲染. DagHeader 不再需要 fallback props.
+  const session = liveSession;
   const runningPulse = status === "loading";
-
-  // Phase 3 mock: derive second-round Session from first when user triggers
-  // refine. Stable for the lifetime of `(session, submittedRefineText)`.
-  // Phase 4+ replaces with /api/debug_refine round-trip.
-  const secondSession = useMemo(() => {
-    if (submittedRefineText == null) return null;
-    return deriveRefineSession(session, submittedRefineText);
-  }, [session, submittedRefineText]);
-
-  const sessionDiff = useMemo(() => {
-    if (!secondSession) return null;
-    return computeSessionDiff(session, secondSession);
-  }, [session, secondSession]);
-
-  // sessionMock visibility: a one-time hint if the only entry is the canonical mock row.
-  useEffect(() => {
-    if (history.length === 1 && history[0].id === MOCK_SESSION.session_id) {
-      // Don't toast on first mount; only when the user is about to interact.
-      // Currently no toast — Phase 6 adds the "backend connect status" pill.
-    }
-  }, [history]);
 
   useEffect(() => {
     const content = document.querySelector(".content");
@@ -214,32 +185,9 @@ export function App() {
     if (content) content.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  async function handleRunMain() {
-    if (!profileParse.ok) {
-      pushToast({
-        kind: "warn",
-        title: "profile JSON 不合法",
-        detail: profileParse.error ?? "",
-      });
-      return;
-    }
-    setTab("main");
-    clickIntentRef.current = Date.now();
-    scrollContentTop();
-    setDagCompact(false);
-    setMode("replay");
-    setWhatIfOpen(false);
-    await runMain({
-      meal,
-      today,
-      llmAuto,
-      profileOverride: profileParse.value,
-      profileOverrideRaw: profileOverride,
-    });
-  }
-
   // D-079: Live 模式 — /api/debug_recommend 跑一次, 永不落 localStorage 也永不落
   // 后端 trace_store (debug_recommend 自身不调 write_trace).
+  // Real traces 由 apps/web /api/recommend (recommend_meal persist_trace=True) 写盘.
   // Codex NIT 修补: runMain 返回 fresh session, 直接从返值派生 llmCalled,
   // 避免 await 后读 liveSession state (React state 异步, closure 是 stale).
   const handleRunLive = useCallback(async () => {
@@ -279,27 +227,29 @@ export function App() {
     pushToast({
       kind: "ok",
       title: "config 已复刻到 sidebar",
-      detail: "改完点 ▶ 触发首轮推荐 / Cmd+Enter",
+      detail: "改完点 ⚡ Live 试跑 / Cmd+Enter",
     });
   }
 
-  function handleRunRefine() {
-    // Phase 3: mock-derived second-round Session, not real backend yet.
-    const trimmed = refineText.trim();
-    if (!trimmed) {
-      pushToast({ kind: "warn", title: "refine 文本不能为空" });
+  async function handleRunRefine() {
+    // D-082: 后端 /api/refine 直接写 round2 全量 trace 进同一文件.
+    if (!activeSessionId) {
+      pushToast({ kind: "warn", title: "无 active session", detail: "先选一条 history 或跑一次 Live" });
+      return;
+    }
+    if (mode === "live") {
+      pushToast({ kind: "warn", title: "Live 模式不支持 refine", detail: "Live 永不写盘. 切回 Replay 再 refine." });
+      return;
+    }
+    const text = refineText.trim();
+    if (!text) {
+      pushToast({ kind: "warn", title: "refine_text 不能为空" });
       return;
     }
     setTab("refine");
     clickIntentRef.current = Date.now();
     scrollContentTop();
-    setDagCompact(false);
-    setSubmittedRefineText(trimmed);
-    pushToast({
-      kind: "ok",
-      title: "Refine round 2 (mock)",
-      detail: "Phase 3 走 mock 派生。Phase 4+ 才接 /api/debug_refine 真链路。",
-    });
+    await runRefine(text);
   }
 
   async function handleRunTrace() {
@@ -353,11 +303,8 @@ export function App() {
     });
   }
 
-  // Empty-state hint: never run + only the canonical mock row is in history.
-  const isEmptyState =
-    status === "idle" &&
-    history.length === 1 &&
-    history[0].id === MOCK_SESSION.session_id;
+  // Empty state: trace_store 空 + 没跑过 Live → session 为 null.
+  const isEmptyState = session == null;
 
   return (
     <div className="shell">
@@ -391,7 +338,6 @@ export function App() {
         <Sidebar
           meal={meal} setMeal={setMeal}
           llmAuto={llmAuto} setLlmAuto={setLlmAuto}
-          onRunMain={handleRunMain}
           onRunRefine={handleRunRefine}
           onRunTrace={handleRunTrace}
           refineText={refineText} setRefineText={setRefineText}
@@ -420,6 +366,7 @@ export function App() {
           }}
           whatIfAvailable={
             mode === "replay"
+            && session != null
             && backendOnline === true
             && history.find((h) => h.id === activeSessionId)?.source === "backend"
           }
@@ -434,25 +381,25 @@ export function App() {
               }}
             />
           )}
-          {whatIfOpen && mode === "replay" && tab === "main" && (
+          {whatIfOpen && mode === "replay" && tab === "main" && session != null && (
             <WhatIfPanel
               baseSession={session}
               onClose={() => setWhatIfOpen(false)}
             />
           )}
-          <DagHeader
-            activeTab={tab}
-            fallbackL3LatencyMs={fallbackL3LatencyMs}
-            fallbackProvider={fallbackProvider}
-            currentPanel={currentPanel}
-            onClickNode={handleNodeClick}
-            compact={dagCompact}
-            onToggleCompact={dagCompact ? handleExpandDag : () => setDagCompact(true)}
-            runningPulse={runningPulse}
-            session={session}
-          />
+          {session != null && (
+            <DagHeader
+              activeTab={tab}
+              currentPanel={currentPanel}
+              onClickNode={handleNodeClick}
+              compact={dagCompact}
+              onToggleCompact={dagCompact ? handleExpandDag : () => setDagCompact(true)}
+              runningPulse={runningPulse}
+              session={session}
+            />
+          )}
           {isEmptyState && <EmptyStateHint />}
-          {tab === "main" && (
+          {tab === "main" && session != null && (
             <Fragment>
               <div data-panel="l1"><PanelL1 l1={session.l1} /></div>
               {/* D-083 PR-2: feedback view 派生层卡片. empty/undefined 时
@@ -472,13 +419,9 @@ export function App() {
               <div style={{ height: 60 }}></div>
             </Fragment>
           )}
-          {tab === "refine" && (
+          {tab === "refine" && session != null && (
             <Fragment>
-              <PanelRefine
-                refine={secondSession?.refine ?? session.refine}
-                secondSession={secondSession ?? undefined}
-                diff={sessionDiff ?? undefined}
-              />
+              <PanelRefine session={session} />
               <div style={{ height: 60 }}></div>
             </Fragment>
           )}

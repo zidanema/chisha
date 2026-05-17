@@ -35,7 +35,7 @@ def _store_with(accepted: dict, feedbacks: dict) -> dict:
 
 def test_build_feedback_view_empty_store():
     # B-001 v2: 返 dict 形态 {ratings, calibrations, note_tokens}, 全空
-    # D-082: + feedback_trace sibling (空骨架, empty=True)
+    # D-084: + feedback_trace sibling (空骨架, empty=True). 原编号 D-082, 与 main D-082 (Refine 二轮) 冲突, 合并时重号
     v1 = build_feedback_view({}, dt.date(2026, 5, 17))
     assert v1["ratings"] == [] and v1["calibrations"] == [] and v1["note_tokens"] == []
     assert v1["feedback_trace"]["empty"] is True

@@ -225,13 +225,14 @@ export type L3Trace = {
   candidates_returned: number;
   fallback_chain: FallbackChainStep[];
   fallback_reason?: string;
-  system_prompt: string;
+  system_prompt: string;  // "" 时显示 callout (backend trace_store 不存 system_prompt_full)
   user_message: string;
+  // null 表示 backend trace 没存 tool 定义. 真实 tool spec 在 chisha/rerank.py:_RERANK_TOOL.
   tool_input: {
     name: string;
     description: string;
     input_schema: unknown;
-  };
+  } | null;
   raw_response_blocks: ResponseBlock[];
   validator_errors: string[] | null;
 };
@@ -260,8 +261,8 @@ export type FinalRow = {
 };
 
 // D-079 PR-3.1 (Codex FIX-NOW #2): backend trace.refine 携带 D-073 RefineIntent
-// 结构化字段, traceToSession 必须 1:1 映射, 不能丢. PanelRefine 会读这些字段
-// 展示 intent 命中详情.
+// 结构化字段, traceToSession 必须 1:1 映射, 不能丢. 留作未来 /api/debug_refine
+// 真后端接入时 (Phase 4+) 渲染 intent 命中详情.
 export type RefineIntentLite = {
   cuisine_want?: string | string[] | null;
   cuisine_avoid?: string | string[] | null;
@@ -341,6 +342,27 @@ export type RunHistoryRow = {
   feedback?: FeedbackBadge | null;
   // D-079: backend-backed 行允许 fetch trace 详情走 /api/debug/sessions/{sid}.
   source?: "backend" | "local";
+  // D-082: refine 角标. applied + has_round2=true 才能回放完整 round2.
+  refine?: {
+    applied: boolean;
+    round?: number | null;
+    user_input?: string | null;
+    has_round2: boolean;
+  } | null;
+};
+
+// D-082: refine 二轮 pipeline (l1/l2/l3/final/latencies). Session 包含 round1
+// 字段 (兼容历史) + round2?: Round2Pipeline. PanelRefine 消费 round2; diffSession
+// 比 round1 (session.final) 与 round2 (session.round2.final) 差异.
+export type Round2Pipeline = {
+  started_at: string;
+  total_latency_ms: number;
+  ctx_latency_ms: number;
+  final_latency_ms: number;
+  l1: L1Trace;
+  l2: L2Trace;
+  l3: L3Trace;
+  final: FinalRow[];
 };
 
 export type Session = {
@@ -354,6 +376,8 @@ export type Session = {
   l3: L3Trace;
   final: FinalRow[];
   refine: RefineTrace;
+  // D-082: round 2 refine 全量 pipeline trace (round2 子键, 单文件)
+  round2?: Round2Pipeline;
   // D-083 PR-2: 顶层 feedback_view_snapshot. 老 v1 trace 没此字段 → undefined,
   // FeedbackInputCard 必须容忍 (空骨架 / undefined 都不渲染).
   feedback_view_snapshot?: FeedbackViewSnapshot;

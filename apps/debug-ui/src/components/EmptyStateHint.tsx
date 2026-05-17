@@ -1,5 +1,5 @@
-// First-launch hint shown above the panels when no real run has happened.
-// Extracted from App.tsx in Phase 7.
+// Shown when trace_store is empty AND no Live run has happened yet.
+// D-079 cleanup: 删 mock 之后必须由真实环境(apps/web)产生 trace.
 
 export function EmptyStateHint() {
   return (
@@ -13,15 +13,27 @@ export function EmptyStateHint() {
         fontSize: 12,
         color: "var(--t-1)",
         display: "flex",
-        alignItems: "center",
-        gap: 12,
+        flexDirection: "column",
+        gap: 8,
       }}
     >
-      <span style={{ fontFamily: "var(--mono)", color: "var(--accent)", fontWeight: 600 }}>#</span>
-      <span>
-        空 session · 当前是 mock 数据.{" "}
-        <strong>点 ▶ 触发首轮推荐</strong> (或 ⌘Enter / Ctrl+Enter) 来跑一次真实链路.
-      </span>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ fontFamily: "var(--mono)", color: "var(--accent)", fontWeight: 600 }}>#</span>
+        <strong>trace_store 是空的 · 没有可 Replay 的历史</strong>
+      </div>
+      <div style={{ paddingLeft: 22, lineHeight: 1.6 }}>
+        debug-ui 只 Replay 真实环境写入的 trace。两种方式产生数据:
+      </div>
+      <ul style={{ paddingLeft: 44, margin: 0, lineHeight: 1.6 }}>
+        <li>
+          <strong>推荐</strong>: 在 apps/web (用户视图 :5173) 跑 1-2 次推荐 →
+          POST /api/recommend → 真实 trace 落盘
+        </li>
+        <li>
+          <strong>临时</strong>: 点左侧 <strong>⚡ Live 试跑</strong> →
+          /api/debug_recommend (本次只显示, 不落盘, 关 tab 即丢)
+        </li>
+      </ul>
     </div>
   );
 }

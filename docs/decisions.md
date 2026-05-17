@@ -13,7 +13,7 @@
 **Context / Mood**: [D-034](#d-034) · [D-071](#d-071) · [D-015](#d-015)
 **方法论 (L0)**: [D-023](#d-023) · [D-072+D-072.1](#d-072--d-0721)
 **反馈系统**: [D-063+D-064+D-065](#d-063--d-064--d-065) · [D-066+D-067](#d-066--d-067)
-**工具 / 调试**: [D-039](#d-039) · [D-075](#d-075) · [D-079](#d-079) · [D-028](#d-028)
+**工具 / 调试**: [D-039](#d-039) · [D-075](#d-075) · [D-079](#d-079) · [D-082](#d-082) · [D-028](#d-028)
 **Refine 重做**: [D-073+D-073.1](#d-073--d-0731)（推翻 D-071）
 **L1 真兑现**: [D-076+D-076.1](#d-076--d-0761) · [D-077](#d-077) · [D-078](#d-078)
 **Agent 接入 (草稿)**: [D-074](#d-074)
@@ -230,7 +230,29 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 落点：sentinel 区分 `_UNSET_FEEDBACK_VIEW` vs `[]`，What-if 必须显式传 `__frozen.feedback_view`（D-079 零 runtime read 红线）
 - 不动 L1 长链路（双层互补）/ 不做 hard avoid（软扣分够压，且不和 D-073 cuisine_want 冲突）/ 仅餐厅级（菜品/配料留 Phase 1，B-002 并行处理 ingredient 不重叠）
 
-## D-082 · B-001 v2 反馈短链路全字段覆盖 (2026-05-17)
+## D-082
+**Refine 二轮全量 pipeline trace 写进同一 trace 文件 `round2` 子键, debug-ui Refine tab 真接入。** (2026-05-17) · 推翻 D-079 PR-4 "只 merge refine summary"
+- 痛点: D-079 PR-4 只写 intent + 5 个 candidate_ids, Refine tab 是 "Phase 4+ 未接入" 占位 — 用户跑完 refine 在 debug 台看不到 round2 任何信息
+- 落地: refine.py 加 `trace_intermediates` 收集中间态; web_api.py 调 `_build_pipeline_trace_block` 塞 `base_trace["round2"]`; 仍单文件 (守住 CONTRACTS.md "一条 session 一行")
+- 前端: PanelRefine 重建 (RefineIntent chips + diff 四数 + 复用 PanelL1/L2/L3/Final 渲 round2); Sidebar 角标 R (实=可回放, 虚=老 trace 仅 summary)
+- 兼容: 不 bump `TRACE_SCHEMA_VERSION` (round2 / B-003 新字段全 optional, 老 trace 走 OldTraceCallout 提示重跑); CONTRACTS.md "调试台 React 化留 Phase 1" 不适用 (这是修完整不是新增)
+
+## D-083 · feedback 短链路观测性补齐 (2026-05-17)
+
+**B-001 v2 (D-081/084) 引入 feedback→view→score+L3 派生层, 但 view 在 trace+debug-ui 里完全不可见 → 沙箱调试时无法回答"这次推荐受哪条反馈影响, 衰减多少"。**
+
+- 派生 `feedback_trace` 顶层 sibling 进 `build_feedback_view` 返值, 写 trace `feedback_view_snapshot`. 含 rating_signals (signal+factors{peak,tau,stage}) / calibration_rules (triggers) / note_breakdown (decay) / global_token_freq
+- 3 score 函数加 `with_evidence=True` kwarg, 默认 float 不破 callers; rank_combos 挂 combo['feedback_evidence'] (**sibling, 不入 breakdown** — 避开 `_format_ranked_for_trace` round(v,3) numeric 契约, Codex S2 拍板)
+- `_run_llm_rerank` 同时捕 `feedback_block_rendered` 进 trace, 不再只埋 user_message_full
+- TRACE_SCHEMA_VERSION 1→2, 读侧白名单兼容 v1 (legacy 走空骨架兜底)
+- 守门: 空 view → 不写 breakdown key + collector={}, baseline 严格不变
+- 落地分 3 PR: PR-1 后端 trace+测试 (done); PR-2 debug-ui FeedbackInputCard+combo 角标 (done, Codex S2 共识落 `docs/wip/D-083-pr2-pr3-design-brief.md`); PR-3 What-if `ignore_feedbacks` (待做)
+- 不动: L1 prefs DAG 节点 (留单独决策) / restaurant-id-based 匹配 (本期仍 name) / 编辑 rating-note (只支持忽略)
+- brief: `docs/wip/D-083_feedback_trace_observability_brief.md` (含 Codex S2 review v1.1 共识)
+
+## D-084 · B-001 v2 反馈短链路全字段覆盖 (2026-05-17)
+
+> 原编号 D-082, 与 main 平行落 D-082 (Refine 二轮 pipeline trace) 冲突, 合并时占用下一空闲号 D-084. 内部代码 / brief 里的旧 D-082 引用按上下文判断 (本条 = B-001 v2 / 反馈短链路, main 的 D-082 = Refine 二轮).
 
 补 D-081 漏的 4 维 calibration + note + comments[] 短链路。dual-codex S2+S5 review 共识。
 
@@ -242,16 +264,3 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 不动: L1 长链路 / feedback schema / 菜品级反馈 / 不调 LLM / 不扩 L1 词表
 - 推 v2.1: normalize entry schema 防御 / note 5 条 cap / last_meal_cuisine meal_log fallback / L3 显示 age_meals
 - 实施 brief 留 `docs/wip/B-001-v2-design-brief.md` (有 4 视角分析 + 完整 S2/S5 review 落实表), 不入 archive
-
-## D-083 · feedback 短链路观测性补齐 (2026-05-17)
-
-**B-001 v2 (D-081/082) 引入 feedback→view→score+L3 派生层, 但 view 在 trace+debug-ui 里完全不可见 → 沙箱调试时无法回答"这次推荐受哪条反馈影响, 衰减多少"。**
-
-- 派生 `feedback_trace` 顶层 sibling 进 `build_feedback_view` 返值, 写 trace `feedback_view_snapshot`. 含 rating_signals (signal+factors{peak,tau,stage}) / calibration_rules (triggers) / note_breakdown (decay) / global_token_freq
-- 3 score 函数加 `with_evidence=True` kwarg, 默认 float 不破 callers; rank_combos 挂 combo['feedback_evidence'] (**sibling, 不入 breakdown** — 避开 `_format_ranked_for_trace` round(v,3) numeric 契约, Codex S2 拍板)
-- `_run_llm_rerank` 同时捕 `feedback_block_rendered` 进 trace, 不再只埋 user_message_full
-- TRACE_SCHEMA_VERSION 1→2, 读侧白名单兼容 v1 (legacy 走空骨架兜底)
-- 守门: 空 view → 不写 breakdown key + collector={}, baseline 严格不变
-- 落地分 3 PR: PR-1 后端 trace+测试 (done); PR-2 debug-ui FeedbackInputCard+combo 角标 (done, Codex S2 共识落 `docs/wip/D-083-pr2-pr3-design-brief.md`); PR-3 What-if `ignore_feedbacks` (待做)
-- 不动: L1 prefs DAG 节点 (留单独决策) / restaurant-id-based 匹配 (本期仍 name) / 编辑 rating-note (只支持忽略)
-- brief: `docs/wip/D-083_feedback_trace_observability_brief.md` (含 Codex S2 review v1.1 共识)

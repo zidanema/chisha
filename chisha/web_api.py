@@ -22,7 +22,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field, model_validator
 
 from chisha import feedback_store
-from chisha.api import format_v2_candidate, recommend_meal
+from chisha.api import _build_pipeline_trace_block, format_v2_candidate, recommend_meal
 from chisha.recall import (
     load_meal_log,
     load_profile,
@@ -101,6 +101,10 @@ def api_refine(req: RefineReq) -> dict:
     rests, tagged = load_zone_data(zone, ROOT)
     meal_log = load_meal_log(ROOT)
 
+    # D-082: 收集 refine 全链路中间状态, round2 trace 用.
+    from chisha import clock
+    refine_started_at = clock.now_utc()
+    trace_intermediates: dict = {}
     raw = refine_session(
         session_id=req.session_id,
         user_input=req.refine_text or "",
@@ -109,6 +113,7 @@ def api_refine(req: RefineReq) -> dict:
         tagged=tagged,
         meal_log=meal_log,
         root=ROOT,
+        trace_intermediates=trace_intermediates,
     )
 
     # refine() 返回的 candidates 是 raw rerank dict, 需要走 format_v2_candidate
@@ -119,7 +124,6 @@ def api_refine(req: RefineReq) -> dict:
 
     # 拼成与 recommend 一致的 RecommendResponse 形状 (前端 useChishaState 直接消费)
     from chisha.context import build_context
-    from chisha import clock
     today = clock.today()
     ctx = build_context(
         profile=profile,
@@ -186,6 +190,42 @@ def api_refine(req: RefineReq) -> dict:
             cfg = base_trace.get("__config") or {}
             cfg["refine_text"] = req.refine_text or ""
             base_trace["__config"] = cfg
+            # D-082: round2 全量 pipeline trace 也塞进同一文件 (Sidebar 仍一行).
+            # trace_intermediates 是 refine() 原地填的 dict, 拿不到说明 refine 没
+            # 注入收集 (老路径 / 单测). 没拿到就跳过 round2, 保留 refine summary.
+            if trace_intermediates.get("reranked") is not None:
+                try:
+                    round2 = _build_pipeline_trace_block(
+                        started_at=refine_started_at,
+                        total_latency_ms=trace_intermediates["total_latency_ms"],
+                        ctx_latency_ms=trace_intermediates["ctx_latency_ms"],
+                        recall_latency_ms=trace_intermediates["recall_latency_ms"],
+                        score_latency_ms=trace_intermediates["score_latency_ms"],
+                        rerank_latency_ms=trace_intermediates["rerank_latency_ms"],
+                        meal_type=state.meal_type,
+                        zone=zone,
+                        today=today,
+                        profile=profile,
+                        rests=rests,
+                        tagged=tagged,
+                        meal_log=meal_log,
+                        combos=trace_intermediates["combos"],
+                        ctx=trace_intermediates["ctx"],
+                        daily_mood=state.daily_mood,
+                        ranked_raw=trace_intermediates["ranked_raw"],
+                        ranked=trace_intermediates["ranked"],
+                        top_k=trace_intermediates["top_k"],
+                        reranked=trace_intermediates["reranked"],
+                        l3_collector=trace_intermediates["l3_collector"] or {},
+                        root=ROOT,
+                    )
+                    base_trace["round2"] = round2
+                except Exception as e:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "refine round2 trace build failed (non-fatal): %s: %s",
+                        type(e).__name__, e,
+                    )
             trace_store.write_trace(req.session_id, base_trace, root=ROOT)
     except trace_store.TraceCorrupt as e:
         import logging as _logging

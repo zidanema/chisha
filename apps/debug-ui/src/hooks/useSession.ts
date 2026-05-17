@@ -4,6 +4,7 @@ import {
   fetchSession,
   fetchSessions,
   postDebugRecommend,
+  postRefine,
 } from "../api/client";
 import { backendToSession, traceToSession } from "../api/adapter";
 import { pushToast } from "../components/Toaster";
@@ -16,7 +17,6 @@ import {
   rememberSession,
 } from "../lib/sessionCache";
 import type { StoredRunConfig } from "../lib/sessionCache";
-import { MOCK_SESSION } from "../mocks/session";
 import type {
   FeedbackBadge,
   Meal,
@@ -40,28 +40,24 @@ export type RunArgs = {
 };
 
 export type UseSession = {
-  session: Session;
+  // null = 还没有任何 trace 可显示 (trace_store 空 + 没跑过 Live).
+  // 真实数据驱动: 不再有 mock 兜底.
+  session: Session | null;
   status: RunStatus;
   error: string | null;
   history: RunHistoryRow[];
-  activeSessionId: string;
+  activeSessionId: string | null;
   setActiveSessionId: (id: string) => void;
-  // D-079 PR-3.1 (Codex NIT): runMain 返回 fresh session 让调用方派生 banner
-  // 状态等, 避免 await 后直接读 liveSession state 拿 stale closure.
   runMain: (args: RunArgs) => Promise<Session | null>;
+  // D-082: 对 active session 触发 refine, 然后 refetch trace 拿 round2.
+  // 返 fresh session (含 round2) 或 null (失败).
+  runRefine: (refineText: string) => Promise<Session | null>;
   refreshHistory: () => void;
-  // D-079 新增:
   backendOnline: boolean;        // /api/debug/sessions 成功响应过 ⇒ true
   corruptCount: number;          // 后端 list 跳过的损坏 trace 数
   loadBackendSession: (sid: string) => Promise<Session | null>;
   setActiveSessionLive: (session: Session, area: string) => void;
 };
-
-const INITIAL_HISTORY_FALLBACK: RunHistoryRow[] = [
-  { id: MOCK_SESSION.session_id, title: "lunch · 深圳湾 (mock)",
-    time: "—", status: "ok", latency: MOCK_SESSION.total_latency_ms,
-    source: "local" },
-];
 
 function badgeFromBackend(
   fb: { accepted: boolean; accepted_rank: number | null;
@@ -93,6 +89,10 @@ function backendRowToHistory(item: {
     stopped: boolean;
     feedback_submitted: boolean;
   } | null;
+  refine_applied?: boolean;
+  refine_round?: number | null;
+  refine_user_input?: string | null;
+  has_round2?: boolean;
 }): RunHistoryRow {
   const status: "ok" | "fallback" | "warn" =
     item.l3_status === "fallback" ? "fallback" :
@@ -108,77 +108,91 @@ function backendRowToHistory(item: {
     area: zoneLabel(item.zone),
     feedback: badgeFromBackend(item.feedback ?? null),
     source: "backend",
+    refine: item.refine_applied
+      ? {
+          applied: true,
+          round: item.refine_round ?? null,
+          user_input: item.refine_user_input ?? null,
+          has_round2: !!item.has_round2,
+        }
+      : null,
   };
 }
 
 export function useSession(): UseSession {
   const cachedHistory = listSessions();
-  const initialHistory = cachedHistory.length > 0 ? cachedHistory : INITIAL_HISTORY_FALLBACK;
-  const initialActive = initialHistory[0]?.id ?? MOCK_SESSION.session_id;
-  const initialSession =
-    (initialActive !== MOCK_SESSION.session_id && loadCachedSession(initialActive)) ||
-    MOCK_SESSION;
+  const initialActive = cachedHistory[0]?.id ?? null;
+  const initialSession = initialActive ? loadCachedSession(initialActive) : null;
 
-  const [session, setSession] = useState<Session>(initialSession);
+  const [session, setSession] = useState<Session | null>(initialSession);
   const [status, setStatus] = useState<RunStatus>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [history, setHistory] = useState<RunHistoryRow[]>(initialHistory);
-  const [activeSessionId, setActiveSessionIdState] = useState<string>(initialActive);
+  const [history, setHistory] = useState<RunHistoryRow[]>(cachedHistory);
+  const [activeSessionId, setActiveSessionIdState] = useState<string | null>(initialActive);
   const [backendOnline, setBackendOnline] = useState<boolean>(false);
   const [corruptCount, setCorruptCount] = useState<number>(0);
   // session payload cache for backend rows (so 二次点击不再 fetch)
   const backendSessionCacheRef = useRef<Map<string, Session>>(new Map());
   // Race guard
   const runSeqRef = useRef(0);
-  // Codex FIX-NOW #1: 异步 trace fetch race guard + active sid 反向追踪
-  // (避免 hydrate 用 closure 里的旧 activeSessionId).
   const sessionFetchSeqRef = useRef(0);
-  const activeSessionIdRef = useRef<string>(initialActive);
+  const activeSessionIdRef = useRef<string | null>(initialActive);
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
 
   const refreshHistory = useCallback(() => {
-    // Replaced on mount by backend list. Off-line fall-through still uses cache.
+    // Off-line fall-through: localStorage 缓存(真实跑过的 session, 不是 mock).
     if (backendOnline) return;
-    const fresh = listSessions();
-    setHistory(fresh.length > 0 ? fresh : INITIAL_HISTORY_FALLBACK);
+    setHistory(listSessions());
   }, [backendOnline]);
 
   // D-079: 进入页面 fetch 后端 list. 后端是单一可信源 (DESIGN §8.2).
-  // 成功 → 用后端列表替换 history; 失败 → 保留 localStorage 离线缓存 + banner.
-  // Codex review FIX-NOW #1: hydrate 成功后, 如果当前 activeSessionId 在 backend
-  // rows 里, 主动 fetch 该 trace (URL ?sid=xxx 首次打开场景 / 后续 refresh 同理).
+  // 成功 → 用后端列表替换 history; 失败 → 保留 localStorage 离线缓存.
   const hydrateFromBackend = useCallback(async () => {
     try {
       const resp = await fetchSessions({ limit: 30 });
       const rows = resp.items.map(backendRowToHistory);
-      setHistory(rows.length > 0 ? rows : INITIAL_HISTORY_FALLBACK);
+      setHistory(rows);
       setBackendOnline(true);
       setCorruptCount(resp.corrupt_count);
-      // hydrate 完成回填 active sid 对应的 trace (URL ?sid= 首次场景)
-      const activeRow = rows.find((r) => r.id === activeSessionIdRef.current);
+      // hydrate 完成回填 active sid 对应的 trace.
+      //   - active sid 在 backend rows 里 → fetch 该 trace
+      //   - active sid 不在 (localStorage 残留 / 旧 URL) → 切到 rows[0]
+      //   - 没 active sid 且有 rows → 默认选最新一条
+      // 总原则: backend online 时 backend 是单一可信源 (DESIGN §8.2),
+      //         localStorage 不能盖过 backend.
+      const inBackend = rows.find((r) => r.id === activeSessionIdRef.current);
+      const activeRow = inBackend ?? rows[0];
       if (activeRow && !backendSessionCacheRef.current.has(activeRow.id)) {
         const seq = ++sessionFetchSeqRef.current;
         try {
           const trace = await fetchSession(activeRow.id);
-          if (seq !== sessionFetchSeqRef.current) return; // 被更新的 active 抢占
+          if (seq !== sessionFetchSeqRef.current) return;
           const s = traceToSession(trace);
           backendSessionCacheRef.current.set(activeRow.id, s);
-          // 仅当用户当前 active 还是这条时才 setSession (race guard)
-          if (activeSessionIdRef.current === activeRow.id) setSession(s);
+          // 仅当用户当前 active 是这条 (或没显式选 / localStorage 残留)
+          // 时才 setSession + 同步 sid.
+          const cur = activeSessionIdRef.current;
+          const shouldAdopt = cur === activeRow.id || cur == null || !inBackend;
+          if (shouldAdopt) {
+            setSession(s);
+            if (cur !== activeRow.id) {
+              activeSessionIdRef.current = activeRow.id;
+              setActiveSessionIdState(activeRow.id);
+            }
+          }
         } catch {
-          // hydrate 阶段失败不阻断列表渲染, 用户点击行时再次走 loadBackendSession
+          // hydrate 阶段失败不阻断列表渲染
         }
       }
     } catch (err) {
-      // 离线/降级: 保留 localStorage 缓存作为 fallback (style §8.2)
       setBackendOnline(false);
       const apiErr = err instanceof ApiError ? err : null;
       if (apiErr?.code === "NETWORK") {
         pushToast({
           kind: "warn",
-          title: "后端 :8765 不可达 · 用 localStorage 离线缓存",
+          title: "后端不可达 · 用 localStorage 离线缓存",
           detail: "uv run python -m chisha.debug_server",
         });
       }
@@ -195,7 +209,7 @@ export function useSession(): UseSession {
     const seq = ++sessionFetchSeqRef.current;
     try {
       const trace = await fetchSession(sid);
-      if (seq !== sessionFetchSeqRef.current) return null; // 被更新的 fetch 抢占
+      if (seq !== sessionFetchSeqRef.current) return null;
       const s = traceToSession(trace);
       backendSessionCacheRef.current.set(sid, s);
       return s;
@@ -212,17 +226,9 @@ export function useSession(): UseSession {
   }, []);
 
   const setActiveSessionId = useCallback((id: string) => {
-    // Codex round-2 ISSUE 修补: useEffect 同步 activeSessionIdRef 有一帧延迟,
-    // 切 sid 时如果 hydrate 旧 fetch 此刻返回, race-guard 会用 stale ref 通过
-    // 检查覆盖新 session. 这里同步写 ref + bump seq 强制旧 fetch 失效.
     activeSessionIdRef.current = id;
     ++sessionFetchSeqRef.current;
     setActiveSessionIdState(id);
-    if (id === MOCK_SESSION.session_id) {
-      setSession(MOCK_SESSION);
-      return;
-    }
-    // backend row → 异步 fetch (本地 cache 命中则同步)
     const row = history.find((h) => h.id === id);
     if (row?.source === "backend") {
       const cached = backendSessionCacheRef.current.get(id);
@@ -237,10 +243,10 @@ export function useSession(): UseSession {
     }
     const localCached = loadCachedSession(id);
     if (localCached) setSession(localCached);
+    else setSession(null);
   }, [history, loadBackendSession]);
 
   const setActiveSessionLive = useCallback((s: Session, _area: string) => {
-    // 同 setActiveSessionId — 同步写 ref + bump seq 防 race.
     activeSessionIdRef.current = s.session_id;
     ++sessionFetchSeqRef.current;
     setSession(s);
@@ -279,12 +285,10 @@ export function useSession(): UseSession {
         };
         rememberSession(fresh, area, cfg);
       }
-      // 同步更新 ref + bump seq, 让 hydrate 旧 fetch 失效 (Codex round-2 修补)
       activeSessionIdRef.current = newId;
       ++sessionFetchSeqRef.current;
       setSession(fresh);
       setActiveSessionIdState(newId);
-      // 后端在线 → 重新拉 list 拿最新 trace; 否则用 localStorage.
       if (backendOnline) {
         void hydrateFromBackend();
       } else if (!args.live) {
@@ -298,10 +302,10 @@ export function useSession(): UseSession {
       const msg = apiErr?.message ?? (err instanceof Error ? err.message : String(err));
       if (apiErr?.code === "NETWORK") {
         setStatus("offline");
-        setError("后端 :8765 不可达 — 显示 mock 数据。请确认 debug_server 已起。");
+        setError("后端不可达 — 请确认 debug_server 已起.");
         pushToast({
           kind: "warn",
-          title: "后端 offline · 显示 mock",
+          title: "后端 offline",
           detail: "uv run python -m chisha.debug_server",
         });
       } else {
@@ -317,7 +321,45 @@ export function useSession(): UseSession {
     }
   }, [backendOnline, hydrateFromBackend, refreshHistory]);
 
-  // Refresh history on window focus.
+  const runRefine = useCallback(async (refineText: string): Promise<Session | null> => {
+    const sid = activeSessionIdRef.current;
+    if (!sid) {
+      pushToast({ kind: "warn", title: "无 active session", detail: "先选一条 history 或跑一次 Live" });
+      return null;
+    }
+    setStatus("loading");
+    setError(null);
+    try {
+      await postRefine(sid, refineText);
+      // refetch trace — 后端已经把 round2 写进同一文件.
+      backendSessionCacheRef.current.delete(sid);
+      const trace = await fetchSession(sid);
+      const fresh = traceToSession(trace);
+      backendSessionCacheRef.current.set(sid, fresh);
+      setSession(fresh);
+      setStatus("ok");
+      pushToast({
+        kind: "ok",
+        title: `refine round 完成`,
+        detail: fresh.round2
+          ? `round2 ${fresh.round2.final.length} 候选 · ${fresh.round2.total_latency_ms}ms`
+          : "(trace 已更新)",
+      });
+      return fresh;
+    } catch (err) {
+      const apiErr = err instanceof ApiError ? err : null;
+      const msg = apiErr?.message ?? (err instanceof Error ? err.message : String(err));
+      setStatus("error");
+      setError(msg);
+      pushToast({
+        kind: "error",
+        title: `refine 失败 ${apiErr?.status ?? ""}`.trim(),
+        detail: msg.slice(0, 200),
+      });
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     const onFocus = () => {
       if (backendOnline) {
@@ -338,6 +380,7 @@ export function useSession(): UseSession {
     activeSessionId,
     setActiveSessionId,
     runMain,
+    runRefine,
     refreshHistory,
     backendOnline,
     corruptCount,

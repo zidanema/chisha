@@ -33,6 +33,63 @@ function fmtNum(n: number | null | undefined): string {
   return n.toLocaleString();
 }
 
+// CLI 路径 (claude_code_cli) 不支持 tool_use, 走 text+JSON 直出.
+// system_prompt 内的 "# 输出方式" 段会被 _patch_system_prompt_for_cli 替换.
+function CliNoToolCallout() {
+  return (
+    <div
+      style={{
+        margin: 12,
+        padding: "12px 14px",
+        border: "1px dashed var(--accent-edge, var(--line))",
+        background: "var(--bg-2)",
+        borderRadius: 4,
+        fontSize: 12,
+        color: "var(--t-1)",
+        lineHeight: 1.6,
+      }}
+    >
+      <div><strong>CLI 路径不发 tool 定义</strong></div>
+      <div style={{ marginTop: 6 }}>
+        本次 LLM 调用走 <code>claude_code_cli</code>, CLI 不支持 Anthropic
+        tool_use 模式, 因此没有 forced JSON schema 发出. 走 text+JSON 直出路径
+        (system_prompt 内 "# 输出方式" 段被 <code>_patch_system_prompt_for_cli</code>
+        替换为直出 JSON 指令, 见 <code>chisha/rerank.py:1049</code>). LLM 输出的
+        JSON 由调用方解析. 排序仍在 LLM 内部.
+      </div>
+      <div style={{ marginTop: 6 }} className="dim">
+        想看真实 tool spec 切到非 CLI provider (anthropic / openrouter) 重跑一次.
+      </div>
+    </div>
+  );
+}
+
+// 老 trace (backend B-004 修复之前生成) 没有写入这个字段. 新 trace 会有.
+function OldTraceCallout({ what }: { what: string }) {
+  return (
+    <div
+      style={{
+        margin: 12,
+        padding: "12px 14px",
+        border: "1px dashed var(--warn-edge)",
+        background: "var(--bg-2)",
+        borderRadius: 4,
+        fontSize: 12,
+        color: "var(--t-1)",
+        lineHeight: 1.6,
+      }}
+    >
+      <div><strong>本条 trace 没记录 {what}</strong></div>
+      <div style={{ marginTop: 6 }}>
+        backend 写 trace 时增加 <code>system_prompt_full</code> /{" "}
+        <code>tool_definition</code> 字段是 2026-05-17 (B-004) 后才落地的.
+        在此之前生成的 trace 不含这俩字段, 触发 <code>/api/recommend</code>{" "}
+        重新跑一次推荐, 新 trace 就能完整渲染.
+      </div>
+    </div>
+  );
+}
+
 export function PanelL3({
   l3,
   finalRows,
@@ -52,14 +109,35 @@ export function PanelL3({
   const isConfigError = L3.status === "config_error";
   const isSkipped = L3.status === "skipped";
 
+  const isCliPath = L3.resolved_provider === "claude_code_cli";
+
   const renderContent = (): ReactNode => {
     switch (tab) {
       case "system":
+        if (!L3.system_prompt) {
+          return <OldTraceCallout what="system prompt" />;
+        }
         return <CodeBlock text={L3.system_prompt} mode="plain" highlightCache searchTerm={search} />;
       case "user":
         return <CodeBlock text={L3.user_message} mode="plain" searchTerm={search} />;
       case "tool":
-        return <CodeBlock text={L3.tool_input} mode="json" />;
+        if (isCliPath) {
+          return <CliNoToolCallout />;
+        }
+        if (!L3.tool_input) {
+          return <OldTraceCallout what="tool 定义" />;
+        }
+        return (
+          <>
+            <CodeBlock text={JSON.stringify(L3.tool_input, null, 2)} mode="json" />
+            <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--t-2)", lineHeight: 1.5 }}>
+              用法: Anthropic tool_use 当 forced JSON schema 用. 发给 API:
+              <code style={{ marginLeft: 4 }}>tools=[…] + tool_choice</code> 强制调用.
+              LLM 输出符合 input_schema 的 JSON. <strong>本地不执行任何函数</strong>,
+              排序在 LLM 内部.
+            </div>
+          </>
+        );
       case "raw":
         return (
           <div style={{ padding: "6px 0" }}>
