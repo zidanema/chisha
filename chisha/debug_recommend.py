@@ -464,6 +464,10 @@ def _format_ranked_for_trace(
                 k: round(v, 3)
                 for k, v in (c.get("score_breakdown") or {}).items()
             },
+            # D-083: feedback evidence (sibling, 不入 breakdown). 仅写 combo 级
+            # 命中 feedback 短链路时有内容; 没命中 → {}. 前端 combo 卡片用此渲染
+            # "受反馈影响" 角标.
+            "feedback_evidence": c.get("feedback_evidence") or {},
         })
     return out
 
@@ -531,6 +535,8 @@ def _llm_rerank_traced(
         # 同步 rerank.py 的实际取值 (D-048 占位 + cli 4096 / others 2048).
         "max_tokens": 4096 if is_cli else 2048,
         "temperature": 0.0,
+        # D-083: L3 prompt 渲染好的 feedback 段 (live debug 路径同样暴露)
+        "feedback_block_rendered": res.get("feedback_block_rendered"),
     }
 
 
@@ -713,6 +719,20 @@ def debug_recommend(
             trace_target, tagged, rests, l1_trace, ranked, final_candidates
         )
 
+    # D-083: feedback_view_snapshot 顶层节点 (与 production trace 同 schema).
+    fb_snapshot = (
+        feedback_view.get("feedback_trace") if isinstance(feedback_view, dict)
+        else None
+    ) or {
+        "today": today.isoformat(),
+        "windows": {"ratings": 60, "calibrations": 7, "note_tokens": 14},
+        "rating_signals": [], "calibration_rules": [],
+        "note_breakdown": [],
+        "global_token_freq": {"boost": {}, "penalty": {}},
+        "global_active_tokens": {"boost": [], "penalty": []},
+        "empty": True,
+    }
+
     return {
         "config": {
             "meal_type": meal_type,
@@ -734,6 +754,8 @@ def debug_recommend(
         },
         "final": final_view,
         "target_trace": target_trace,
+        # D-083: 顶层 feedback_view_snapshot, 与 Replay (api.py _build_trace) 同 schema
+        "feedback_view_snapshot": fb_snapshot,
     }
 
 
@@ -771,6 +793,9 @@ def _format_final_candidate(rank: int, c: dict) -> dict:
         "taste_match": c.get("taste_match"),
         "one_line_reason":
             c.get("one_line_reason") or c.get("reason_one_line", ""),
+        # D-083: feedback evidence (sibling). 最终 5 候选也带, 前端可在结果卡片角标
+        # "受反馈影响" 给用户解释为什么是这家而不是那家.
+        "feedback_evidence": c.get("feedback_evidence") or {},
     }
 
 

@@ -490,26 +490,43 @@ def _context_block(context: "ContextSnapshot | None") -> str:
     return "\n".join(lines)
 
 
-def _feedback_block(feedback_view: list[dict] | None) -> str | None:
-    """B-001: 渲染 [FEEDBACK_RECENT] 段, 让 L3 LLM 看到近期反馈, 推荐理由可解释.
+def _feedback_block(feedback_view) -> str | None:
+    """B-001 v2: 渲染 3 段反馈给 L3 LLM, 推荐理由可解释.
 
-    返回 None = 不渲染段 (view 空 / 无可显示条目).
-    仅展示近 30 天的 -1 / +1, 给 LLM 解释用. **排序压制靠 L2 score, 不靠 prompt**.
+    feedback_view 兼容 v1 list[dict] (老 frozen / 老 fixture) 与 v2 dict.
+    返回 None = 全 3 段都没东西可渲染.
 
-    格式 (紧凑):
-      [FEEDBACK_RECENT]
+    格式 (任一段空则跳过):
+      [FEEDBACK_RECENT]   ← v1 餐厅级 rating ±1
       最近 7 天 👎: 餐厅A (3d)
       最近 30 天 👎: 餐厅B (12d)
       最近 3 天 👍 (cooldown 避连吃): 餐厅C (1d)
+
+      [LAST_MEAL_SIGNAL]  ← v2 最近餐 calibration
+      上一餐 (1d 前, 灶台): 太油 ✗ / 饱腹感不够 ✗ / 理由弱 ✗
+      (下一餐应: 控油 + 加量 + 换 cuisine)
+
+      [NOTE_HINTS]        ← v2 note + comments[] 词表抽取
+      近 14 天 note 提及: low_oil×3, spicy×1
+      餐厅级: 灶台 - "太油" (2d 前)
+
+    **排序压制靠 L2 score, 不靠 prompt** (与 v1 一致).
     """
-    if not feedback_view:
-        return None
+    from chisha.feedback_store import normalize_feedback_view
+    view = normalize_feedback_view(feedback_view)
+    ratings = view["ratings"]
+    cals = view["calibrations"]
+    notes = view["note_tokens"]
+
+    sections: list[str] = []
+
+    # ── [FEEDBACK_RECENT] (v1 段)
     neg_7d: list[tuple[str, int]] = []
     neg_30d: list[tuple[str, int]] = []
     pos_cooldown: list[tuple[str, int]] = []
     seen_neg: set[str] = set()
     seen_pos: set[str] = set()
-    for entry in feedback_view:
+    for entry in ratings:
         name = entry.get("restaurant_name") or ""
         rating = entry.get("rating")
         age = entry.get("age_days", 0)
@@ -524,25 +541,64 @@ def _feedback_block(feedback_view: list[dict] | None) -> str | None:
         elif rating == 1 and age < 3 and name not in seen_pos:
             seen_pos.add(name)
             pos_cooldown.append((name, age))
-    if not (neg_7d or neg_30d or pos_cooldown):
+    if neg_7d or neg_30d or pos_cooldown:
+        lines = ["[FEEDBACK_RECENT]"]
+        if neg_7d:
+            lines.append("最近 7 天 👎: "
+                         + ", ".join(f"{n} ({a}d)" for n, a in neg_7d))
+        if neg_30d:
+            lines.append("最近 30 天 👎: "
+                         + ", ".join(f"{n} ({a}d)" for n, a in neg_30d))
+        if pos_cooldown:
+            lines.append("最近 3 天 👍 (cooldown 避连吃): "
+                         + ", ".join(f"{n} ({a}d)" for n, a in pos_cooldown))
+        sections.append("\n".join(lines))
+
+    # ── [LAST_MEAL_SIGNAL] (v2 calibration 段)
+    cal_lines: list[str] = []
+    for cal in cals[:3]:
+        flags: list[str] = []
+        if cal.get("oil_calibration") == 2:
+            flags.append("太油 ✗")
+        elif cal.get("oil_calibration") == 0:
+            flags.append("油不足")
+        if cal.get("fullness") == 0:
+            flags.append("饱腹感不够 ✗")
+        elif cal.get("fullness") == 2:
+            flags.append("撑")
+        if cal.get("reason_match") == 0:
+            flags.append("理由弱 ✗")
+        if not flags:
+            continue
+        age = cal.get("age_days", 0)
+        name = cal.get("restaurant_name", "")
+        cal_lines.append(f"{age}d 前 ({name}): " + " / ".join(flags))
+    if cal_lines:
+        sections.append("[LAST_MEAL_SIGNAL]\n" + "\n".join(cal_lines))
+
+    # ── [NOTE_HINTS] (v2 note 段)
+    if notes:
+        from collections import Counter
+        token_freq: Counter = Counter()
+        for n in notes:
+            for t in (n.get("boost") or []) + (n.get("penalty") or []):
+                token_freq[t] += 1
+        n_lines = ["[NOTE_HINTS]"]
+        if token_freq:
+            top = sorted(token_freq.items(), key=lambda x: -x[1])[:5]
+            n_lines.append("近 14 天 note 提及: "
+                           + ", ".join(f"{t}×{c}" for t, c in top))
+        rest_quoted = [n for n in notes[:3] if n.get("raw_text")]
+        if rest_quoted:
+            n_lines.append("餐厅级: " + " | ".join(
+                f"{n['restaurant_name']} - \"{n['raw_text']}\" ({n['age_days']}d 前)"
+                for n in rest_quoted
+            ))
+        sections.append("\n".join(n_lines))
+
+    if not sections:
         return None
-    lines = ["[FEEDBACK_RECENT]"]
-    if neg_7d:
-        lines.append(
-            "最近 7 天 👎: "
-            + ", ".join(f"{n} ({a}d)" for n, a in neg_7d)
-        )
-    if neg_30d:
-        lines.append(
-            "最近 30 天 👎: "
-            + ", ".join(f"{n} ({a}d)" for n, a in neg_30d)
-        )
-    if pos_cooldown:
-        lines.append(
-            "最近 3 天 👍 (cooldown 避连吃): "
-            + ", ".join(f"{n} ({a}d)" for n, a in pos_cooldown)
-        )
-    return "\n".join(lines)
+    return "\n\n".join(sections)
 
 
 def build_user_message(
@@ -1107,6 +1163,11 @@ def _run_llm_rerank(
         "usage": None,
         "max_tokens": None,
         "temperature": None,
+        # D-083: 渲染好的 [FEEDBACK_RECENT]/[LAST_MEAL_SIGNAL]/[NOTE_HINTS] 文本块.
+        # 与 score breakdown 是 *双轨* — 这是 L3 prompt 维度 (LLM 真看到啥),
+        # score breakdown 是 L2 数值维度. 不存这里, 就只能埋在 user_message_full
+        # 一坨 4KB 文本里 ctrl-F. 字段值 = _feedback_block(view) | None.
+        "feedback_block_rendered": None,
     }
     is_cli = (resolved_provider == "claude_code_cli")
     try:
@@ -1123,6 +1184,13 @@ def _run_llm_rerank(
         out["system_prompt_chars"] = len(system_prompt)
         out["user_message_chars"] = len(user_msg)
         out["user_message_full"] = user_msg
+        # D-083: 单独捕获 [FEEDBACK_RECENT]/[LAST_MEAL_SIGNAL]/[NOTE_HINTS]
+        # 文本块到 trace, 不只埋在 user_message_full 4KB 文本里. 调用一次
+        # (build_user_message 内部已调过一次, 重算 O(N) 几 μs 可忽略).
+        try:
+            out["feedback_block_rendered"] = _feedback_block(feedback_view)
+        except Exception:
+            out["feedback_block_rendered"] = None
         kwargs: dict[str, Any] = {
             "model": final_model,
             # D-048 MAJOR 1 (Codex): CLI 路径 max_tokens 是 *假保护* — claude_code_cli
@@ -1437,6 +1505,10 @@ def rerank(
             trace_collector["usage"] = res.get("usage")
             trace_collector["max_tokens"] = res.get("max_tokens")
             trace_collector["temperature"] = res.get("temperature")
+            # D-083: L3 prompt 渲染的 feedback 段 (双轨之一, 与 L2 breakdown 区分)
+            trace_collector["feedback_block_rendered"] = res.get(
+                "feedback_block_rendered"
+            )
             if res.get("status") == "ok":
                 llm_out = res.get("candidates")
                 llm_called = True

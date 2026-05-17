@@ -283,6 +283,10 @@ def what_if_rerun(
         llm_attempted=llm_attempted,
         fallback_reason=fallback_reason,
         base_session_id=base_session_id,
+        # D-083: 把 frozen feedback_view + rerank_collector 透传, _build_what_if_trace
+        # 才能写 feedback_view_snapshot + l3.feedback_block_rendered (Codex S3 BLOCKER)
+        feedback_view_frozen=feedback_view_frozen,
+        rerank_collector=rerank_collector,
     )
 
 
@@ -304,6 +308,9 @@ def _build_what_if_trace(
     llm_attempted: bool,
     fallback_reason: str,
     base_session_id: str,
+    # D-083 Codex S3 BLOCKER fix
+    feedback_view_frozen: list | dict | None = None,
+    rerank_collector: dict | None = None,
 ) -> dict:
     """组装 What-if response trace, shape 对齐 production trace (供前端复用渲染)."""
     from chisha.debug_recommend import (
@@ -356,6 +363,27 @@ def _build_what_if_trace(
         "fallback_reason": fallback_reason,
         "n_returned": len(reranked),
         "used_fallback": not llm_called,
+        # D-083 Codex S3 BLOCKER fix: 与生产 / debug live 同步暴露 prompt 渲染段
+        "feedback_block_rendered": (rerank_collector or {}).get(
+            "feedback_block_rendered"
+        ),
+    }
+
+    # D-083 Codex S3 BLOCKER fix: feedback_view_snapshot 也写 What-if trace.
+    # frozen.feedback_view 已含 feedback_trace (PR-1 落地后 build_feedback_view
+    # 总返 4 个 sibling key, 写 trace 时整包冻结). 老 frozen (pre-D-083) 没此
+    # 字段 → 空骨架兜底 (与 Live 路径一致).
+    fb_trace = None
+    if isinstance(feedback_view_frozen, dict):
+        fb_trace = feedback_view_frozen.get("feedback_trace")
+    fb_snapshot = fb_trace or {
+        "today": today.isoformat(),
+        "windows": {"ratings": 60, "calibrations": 7, "note_tokens": 14},
+        "rating_signals": [], "calibration_rules": [],
+        "note_breakdown": [],
+        "global_token_freq": {"boost": {}, "penalty": {}},
+        "global_active_tokens": {"boost": [], "penalty": []},
+        "empty": True,
     }
 
     final_view = [_format_final_candidate(i + 1, c) for i, c in enumerate(reranked)]
@@ -392,4 +420,6 @@ def _build_what_if_trace(
         "meal_type": meal_type,
         "zone": (base.get("__frozen") or {}).get("zone"),
         "today": today.isoformat(),
+        # D-083 Codex S3 BLOCKER fix: 顶层与 Live/Replay 同名同 schema
+        "feedback_view_snapshot": fb_snapshot,
     }

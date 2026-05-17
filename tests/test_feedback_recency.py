@@ -34,10 +34,16 @@ def _store_with(accepted: dict, feedbacks: dict) -> dict:
 
 
 def test_build_feedback_view_empty_store():
-    assert build_feedback_view({}, dt.date(2026, 5, 17)) == []
-    assert build_feedback_view(
+    # B-001 v2: 返 dict 形态 {ratings, calibrations, note_tokens}, 全空
+    # D-082: + feedback_trace sibling (空骨架, empty=True)
+    v1 = build_feedback_view({}, dt.date(2026, 5, 17))
+    assert v1["ratings"] == [] and v1["calibrations"] == [] and v1["note_tokens"] == []
+    assert v1["feedback_trace"]["empty"] is True
+    v2 = build_feedback_view(
         {"accepted": {}, "feedbacks": {}}, dt.date(2026, 5, 17)
-    ) == []
+    )
+    assert v2["ratings"] == [] and v2["calibrations"] == [] and v2["note_tokens"] == []
+    assert v2["feedback_trace"]["empty"] is True
 
 
 def test_build_feedback_view_basic():
@@ -52,7 +58,7 @@ def test_build_feedback_view_basic():
             "s2": {"rating": 1, "submitted_at": "2026-05-10T13:00:00+00:00"},
         },
     )
-    view = build_feedback_view(store, today)
+    view = build_feedback_view(store, today)["ratings"]
     assert len(view) == 2
     # 排序: age 升序
     assert view[0]["restaurant_name"] == "店A"
@@ -75,7 +81,7 @@ def test_build_feedback_view_window_zero_keeps_today():
             "s_yest": {"rating": -1, "submitted_at": "2026-05-16T13:00:00+00:00"},
         },
     )
-    view = build_feedback_view(store, today, window_days=0)
+    view = build_feedback_view(store, today, window_days=0)["ratings"]
     assert [v["restaurant_name"] for v in view] == ["今店"]
 
 
@@ -91,7 +97,7 @@ def test_build_feedback_view_window_filter():
             "s_new": {"rating": -1, "submitted_at": "2026-05-15T13:00:00+00:00"},
         },
     )
-    view = build_feedback_view(store, today, window_days=60)
+    view = build_feedback_view(store, today, window_days=60)["ratings"]
     assert [v["restaurant_name"] for v in view] == ["新店"]
 
 
@@ -107,7 +113,7 @@ def test_build_feedback_view_skips_zero_rating():
             "s2": {"rating": None, "submitted_at": "2026-05-15T13:00:00+00:00"},
         },
     )
-    assert build_feedback_view(store, today) == []
+    assert build_feedback_view(store, today)["ratings"] == []
 
 
 def test_build_feedback_view_skips_missing_name():
@@ -122,7 +128,7 @@ def test_build_feedback_view_skips_missing_name():
             "s2": {"rating": -1, "submitted_at": "2026-05-15T13:00:00+00:00"},
         },
     )
-    assert build_feedback_view(store, today) == []
+    assert build_feedback_view(store, today)["ratings"] == []
 
 
 def test_build_feedback_view_falls_back_to_submitted_at():
@@ -135,7 +141,7 @@ def test_build_feedback_view_falls_back_to_submitted_at():
             "s1": {"rating": -1, "submitted_at": "2026-05-14T13:00:00+00:00"},
         },
     )
-    view = build_feedback_view(store, today)
+    view = build_feedback_view(store, today)["ratings"]
     assert view == [{"restaurant_name": "店A", "rating": -1, "age_days": 3}]
 
 

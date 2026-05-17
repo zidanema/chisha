@@ -320,63 +320,439 @@ def _parse_iso_date(ts: str | None) -> dt.date | None:
         return None
 
 
+def _parse_iso_datetime(ts: str | None) -> dt.datetime | None:
+    """Codex S5 Q4.2: age_meals 排序需 datetime 粒度 (同日午/晚餐区分).
+    返回 aware datetime (UTC); 失败 None.
+    """
+    if not ts or not isinstance(ts, str):
+        return None
+    s = ts.strip()
+    if not s:
+        return None
+    try:
+        if "T" in s:
+            if s.endswith("Z"):
+                s = s[:-1] + "+00:00"
+            d = dt.datetime.fromisoformat(s)
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=dt.timezone.utc)
+            return d.astimezone(dt.timezone.utc)
+        # 纯 date 字符串视为当日 00:00 UTC
+        return dt.datetime.combine(
+            dt.date.fromisoformat(s[:10]), dt.time(0, 0), dt.timezone.utc
+        )
+    except (ValueError, TypeError):
+        return None
+
+
+def _derive_last_meal_cuisine(
+    sessions: dict, sid: str, accepted_rank: int | None
+) -> str | None:
+    """从 sessions[sid].candidates[rank-1] 推导上一餐 cuisine.
+
+    取 combo 第一道有 cuisine 的菜. 没有 → None (reason_match 信号优雅降级).
+    """
+    if not accepted_rank:
+        return None
+    sp = (sessions or {}).get(sid) or {}
+    cands = sp.get("candidates") or []
+    if not (1 <= accepted_rank <= len(cands)):
+        return None
+    for d in cands[accepted_rank - 1].get("dishes") or []:
+        c = d.get("cuisine")
+        if c:
+            return c
+    return None
+
+
 def build_feedback_view(
     store: dict,
     today: dt.date,
     window_days: int = 60,
-) -> list[dict]:
-    """B-001: 派生 feedback view 给 score/rerank 短链路用.
+    note_window_days: int = 14,
+    calibration_max: int = 3,
+) -> dict:
+    """B-001 v2 + D-083: 派生 3 段 feedback view + observability snapshot.
 
     输入:
       - store: feedback_store.load_store(root) 返回的 dict
       - today: 虚拟时钟 (sandbox / What-if frozen 用)
-      - window_days: 时间窗 (默认 60), 超窗条目过滤掉
+      - window_days: ratings 时间窗 (默认 60)
+      - note_window_days: note/comments 时间窗 (默认 14)
+      - calibration_max: 最近 N 餐 calibration (默认 3)
 
-    输出: list of {"restaurant_name": str, "rating": int (-1/+1), "age_days": int}
-      - rating ∈ {-1, +1} 才入 view (rating=0 / None 不计)
-      - restaurant_name 非空
-      - age_days ∈ [0, window_days]
-      - 按 age_days 升序 (近期靠前)
+    输出: dict {
+      "ratings": [...],        # v1 形态, 兼容旧 feedback_recency 路径
+      "calibrations": [...],   # v2 新, 最近 N 餐 4 维 calibration + last_meal_cuisine
+      "note_tokens": [...],    # v2 新, note + comments[] 词表抽取
+      "feedback_trace": {...}, # D-083 新, 派生层因果快照 (写 trace + DAG 渲染用)
+    }
 
-    设计原则 (B-001 Codex review 拍板):
+    设计原则 (B-001 v2 Codex S2 共识):
       - 仅 restaurant 级 (accepted.summary 自由文本, 不解析菜品)
-      - source-of-truth = feedbacks[sid].rating + accepted[sid].restaurant_name
-      - age_days 取 accepted.accepted_at 优先, fallback feedback.submitted_at
-        (前者是"吃饭时间", 更贴近"距今多久")
+      - source-of-truth = feedbacks[sid] + accepted[sid] + sessions[sid].candidates
+      - age_days 取 accepted.accepted_at 优先 (吃饭时间)
+      - comments[] 用每条 comment 自己的 created_at (Codex Q5)
+      - 否定前缀严格丢弃, 不做语义反转 (Codex Q3)
+      - reason_match=0 需 last_meal_cuisine, 从 sessions[sid].candidates[rank-1] 推
 
     What-if 路径: 调用方不能传 store, 必须读 __frozen.feedback_view (D-079 红线).
     """
+    # D-083 Codex S3 MINOR fix: invalid store / window<0 也走 4-key 契约,
+    # 不能少 feedback_trace (否则 score 路径 normalize → 4 key, view 路径
+    # 在异常分支 → 3 key, 行为不一致).
     if not isinstance(store, dict) or window_days < 0:
-        return []
+        return {
+            "ratings": [], "calibrations": [], "note_tokens": [],
+            "feedback_trace": _empty_feedback_trace_skeleton(today),
+        }
     accepted = store.get("accepted") or {}
     feedbacks = store.get("feedbacks") or {}
-    out: list[dict] = []
+    sessions = store.get("sessions") or {}
+
+    ratings: list[dict] = []
+    calibrations_all: list[dict] = []
+    note_tokens: list[dict] = []
+
+    from chisha.feedback_text_extract import extract_tokens
+
     for sid, fb in feedbacks.items():
         if not isinstance(fb, dict):
-            continue
-        rating = fb.get("rating")
-        try:
-            rating_int = int(rating) if rating is not None else 0
-        except (ValueError, TypeError):
-            continue
-        if rating_int not in (-1, 1):
             continue
         acc = accepted.get(sid) or {}
         name = (acc.get("restaurant_name") or "").strip()
         if not name:
             continue
-        # age 优先用 accepted_at (吃饭时间), fallback submitted_at (反馈时间)
         when_str = acc.get("accepted_at") or fb.get("submitted_at")
-        when = _parse_iso_date(when_str)
-        if when is None:
+        when_dt = _parse_iso_datetime(when_str)  # Codex S5 Q4.2: datetime 粒度
+        if when_dt is None:
             continue
+        when = when_dt.date()
         age = (today - when).days
-        if age < 0 or age > window_days:
+        if age < 0:
             continue
-        out.append({
+
+        # ── ratings (v1)
+        rating = fb.get("rating")
+        try:
+            rating_int = int(rating) if rating is not None else 0
+        except (ValueError, TypeError):
+            rating_int = 0
+        if rating_int in (-1, 1) and age <= window_days:
+            ratings.append({
+                "restaurant_name": name,
+                "rating": rating_int,
+                "age_days": age,
+            })
+
+        # ── calibrations (v2 新)
+        accepted_rank = acc.get("accepted_rank")
+        cal_entry = {
+            "session_id": sid,
             "restaurant_name": name,
-            "rating": rating_int,
             "age_days": age,
+            # Codex S5 Q4.2 + Q4.5: 真序粒度 + 显式 age_meals 字段 (后填)
+            "_when_dt_iso": when_dt.isoformat(),
+            "oil_calibration": fb.get("oil_calibration"),
+            "fullness": fb.get("fullness"),
+            "reason_match": fb.get("reason_match"),
+            "repurchase_intent": fb.get("repurchase_intent"),
+            "last_meal_cuisine": _derive_last_meal_cuisine(
+                sessions, sid, accepted_rank
+            ),
+        }
+        # 任何 4 维非空 + age<=7 才进 (短期信号)
+        has_signal = any(
+            cal_entry[k] is not None
+            for k in ("oil_calibration", "fullness",
+                       "reason_match", "repurchase_intent")
+        )
+        if has_signal and age <= 7:
+            calibrations_all.append(cal_entry)
+
+        # ── note_tokens (v2 新) — note 字段
+        note_text = (fb.get("note") or "").strip()
+        if note_text and age <= note_window_days:
+            tokens = extract_tokens(note_text)
+            if tokens["boost"] or tokens["penalty"]:
+                note_tokens.append({
+                    "restaurant_name": name,
+                    "age_days": age,
+                    "boost": sorted(tokens["boost"]),
+                    "penalty": sorted(tokens["penalty"]),
+                    "raw_text": note_text[:80],
+                    "source": "note",
+                })
+
+        # ── note_tokens (v2 新) — comments[] 字段 (每条独立 created_at)
+        for cmt in fb.get("comments") or []:
+            if not isinstance(cmt, dict):
+                continue
+            cmt_text = (cmt.get("text") or "").strip()
+            if not cmt_text:
+                continue
+            cmt_when = _parse_iso_date(cmt.get("created_at"))
+            if cmt_when is None:
+                continue
+            cmt_age = (today - cmt_when).days
+            if cmt_age < 0 or cmt_age > note_window_days:
+                continue
+            tokens = extract_tokens(cmt_text)
+            if tokens["boost"] or tokens["penalty"]:
+                note_tokens.append({
+                    "restaurant_name": name,
+                    "age_days": cmt_age,
+                    "boost": sorted(tokens["boost"]),
+                    "penalty": sorted(tokens["penalty"]),
+                    "raw_text": cmt_text[:80],
+                    "source": "comment",
+                })
+
+    ratings.sort(key=lambda x: x["age_days"])
+    # Codex S5 Q4.2: 按 datetime 倒序 (最新在前), enumerate 写入显式 age_meals.
+    # 同日午/晚餐由 datetime 区分, 不再依赖 dict iteration 顺序.
+    calibrations_all.sort(key=lambda x: x["_when_dt_iso"], reverse=True)
+    calibrations: list[dict] = []
+    for age_meals, cal in enumerate(calibrations_all[:calibration_max]):
+        cal["age_meals"] = age_meals
+        cal.pop("_when_dt_iso", None)  # 内部字段, 不暴露
+        calibrations.append(cal)
+    note_tokens.sort(key=lambda x: x["age_days"])
+
+    # D-083: feedback_trace 派生层因果快照. 与主 3 段是 sibling 关系 (不嵌进
+    # ratings/calibrations/note_tokens), 避开 normalize_feedback_view 历史剥离
+    # 行为. score.py 主路径不依赖此字段, 只 trace 写盘 + debug-ui 渲染时取.
+    feedback_trace = _build_feedback_trace_snapshot(
+        today=today,
+        windows={
+            "ratings": window_days,
+            "calibrations": _CAL_AGE_DAYS_HARD_LIMIT,
+            "note_tokens": note_window_days,
+        },
+        ratings=ratings,
+        calibrations=calibrations,
+        note_tokens=note_tokens,
+    )
+
+    return {
+        "ratings": ratings,
+        "calibrations": calibrations,
+        "note_tokens": note_tokens,
+        "feedback_trace": feedback_trace,
+    }
+
+
+# ── D-083: feedback_trace 派生层因果快照 ────────────────────────────────────
+
+# calibration 7d 硬闸 (与 score._CAL_AGE_DAYS_HARD_LIMIT 同步, 这里冗余声明只为
+# 让 build_feedback_view 不引入对 score 的反向依赖)
+_CAL_AGE_DAYS_HARD_LIMIT = 7
+
+
+def _empty_feedback_trace_skeleton(today=None) -> dict:
+    """D-083: 给所有"空 view"路径用的统一空骨架. invalid store / window<0 /
+    pre-D-083 v1 trace 都走这条, 让 4-key contract 严格一致.
+    """
+    return {
+        "today": today.isoformat() if hasattr(today, "isoformat") else None,
+        "windows": {"ratings": 60, "calibrations": 7, "note_tokens": 14},
+        "rating_signals": [],
+        "calibration_rules": [],
+        "note_breakdown": [],
+        "global_token_freq": {"boost": {}, "penalty": {}},
+        "global_active_tokens": {"boost": [], "penalty": []},
+        "empty": True,
+    }
+
+
+def _build_feedback_trace_snapshot(
+    today: dt.date,
+    windows: dict,
+    ratings: list,
+    calibrations: list,
+    note_tokens: list,
+) -> dict:
+    """D-083: 派生 feedback_trace 顶层快照, 给 trace + debug-ui 用.
+
+    每段提供 *结构化因子* (peak/tau/decay/age) + 可选 display 串. 不提供"渲染好
+    的公式文本"作为单一字段 — debug-ui 拿到结构化字段后自己组装.
+    """
+    import math
+
+    # rating_signals: 公式 = peak × exp(-age/tau)
+    # Codex Q1: 存结构化 factors, 不存 free-text formula
+    rating_signals = []
+    for r in ratings:
+        rating = r.get("rating")
+        age = r.get("age_days", 0)
+        if rating == -1:
+            peak = _FEEDBACK_NEG_PEAK
+            tau = _FEEDBACK_TAU_NEG
+            signal = peak * math.exp(-age / tau)
+            stage = "neg_decay"
+        elif rating == 1:
+            if age < _FEEDBACK_POS_COOLDOWN_DAYS:
+                peak = _FEEDBACK_POS_COOLDOWN_PEAK
+                tau = None
+                signal = peak * (1.0 - age / _FEEDBACK_POS_COOLDOWN_DAYS)
+                stage = "pos_cooldown"
+            else:
+                peak = _FEEDBACK_POS_BOOST_PEAK
+                tau = _FEEDBACK_TAU_POS
+                signal = peak * math.exp(
+                    -(age - _FEEDBACK_POS_COOLDOWN_DAYS) / tau
+                )
+                stage = "pos_boost"
+        else:
+            continue
+        rating_signals.append({
+            "restaurant_name": r.get("restaurant_name"),
+            "rating": rating,
+            "age_days": age,
+            "signal": round(signal, 4),
+            "factors": {"peak": peak, "tau": tau, "stage": stage},
         })
-    out.sort(key=lambda x: x["age_days"])
-    return out
+
+    # calibration_rules: 因为 next_meal_calibration_score 的规则依赖 combo 本身
+    # (avg_oil / n_dishes / cuisine), 在 view 层只能描述 *上游条件*
+    # (oil=2 触发哪类规则), 实际加分需 combo 维度. 这里给 view 级的 rule_set 描述,
+    # combo 级实际 fired 由 score.py 写到 combo['feedback_evidence'] 里.
+    calibration_rules = []
+    for cal in calibrations:
+        age_meals = cal.get("age_meals", 0)
+        weight = {0: 1.0, 1: 0.5, 2: 0.25}.get(age_meals, 0.0)
+        triggers = []
+        oc = cal.get("oil_calibration")
+        if oc == 2:
+            triggers.append({
+                "field": "oil_calibration", "value": 2,
+                "desc": "太油 → 偏好 avg_oil ≤ 2",
+            })
+        elif oc == 0:
+            triggers.append({
+                "field": "oil_calibration", "value": 0,
+                "desc": "油不足 → 松开 avg_oil ≥ 3",
+            })
+        fl = cal.get("fullness")
+        if fl == 0:
+            triggers.append({
+                "field": "fullness", "value": 0,
+                "desc": "没饱 → 偏好 n_dishes ≥ 4 + protein 充足",
+            })
+        elif fl == 2:
+            triggers.append({
+                "field": "fullness", "value": 2,
+                "desc": "撑 → 偏好 n_dishes ≤ 2",
+            })
+        rm = cal.get("reason_match")
+        last_c = cal.get("last_meal_cuisine")
+        if rm == 0 and last_c:
+            triggers.append({
+                "field": "reason_match", "value": 0,
+                "desc": f"理由弱 → 偏好 cuisine ≠ {last_c}",
+            })
+        if not triggers:
+            continue
+        calibration_rules.append({
+            "session_id": cal.get("session_id"),
+            "restaurant_name": cal.get("restaurant_name"),
+            "age_meals": age_meals,
+            "age_days": cal.get("age_days"),
+            "weight": weight,
+            "last_meal_cuisine": last_c,
+            "triggers": triggers,
+        })
+
+    # note_breakdown: 每条 note/comment 的衰减系数 + 抽出的 token + 命中规则
+    note_breakdown = []
+    boost_unique: dict = {}
+    penalty_unique: dict = {}
+    boost_age: dict = {}
+    penalty_age: dict = {}
+    for n in note_tokens:
+        age = n.get("age_days") or 0
+        decay = math.exp(-age / 7.0)  # _NOTE_TAU_DAYS
+        note_breakdown.append({
+            "restaurant_name": n.get("restaurant_name"),
+            "age_days": age,
+            "decay": round(decay, 4),
+            "boost": list(n.get("boost") or []),
+            "penalty": list(n.get("penalty") or []),
+            "raw_text": n.get("raw_text"),
+            "source": n.get("source"),
+        })
+        r = n.get("restaurant_name") or ""
+        for tok in n.get("boost") or []:
+            boost_unique.setdefault(tok, set()).add(r)
+            boost_age[tok] = min(boost_age.get(tok, 9999), age)
+        for tok in n.get("penalty") or []:
+            penalty_unique.setdefault(tok, set()).add(r)
+            penalty_age[tok] = min(penalty_age.get(tok, 9999), age)
+
+    global_token_freq = {
+        "boost": {tok: len(rs) for tok, rs in boost_unique.items()},
+        "penalty": {tok: len(rs) for tok, rs in penalty_unique.items()},
+    }
+    # _NOTE_GLOBAL_MIN_HITS = 2 (与 score.py 同步)
+    global_active_tokens = {
+        "boost": sorted([t for t, c in global_token_freq["boost"].items() if c >= 2]),
+        "penalty": sorted([t for t, c in global_token_freq["penalty"].items() if c >= 2]),
+    }
+
+    return {
+        "today": today.isoformat() if hasattr(today, "isoformat") else str(today),
+        "windows": windows,
+        "rating_signals": rating_signals,
+        "calibration_rules": calibration_rules,
+        "note_breakdown": note_breakdown,
+        "global_token_freq": global_token_freq,
+        "global_active_tokens": global_active_tokens,
+        # 空骨架 marker — 让前端区分"没数据"vs"没字段"
+        "empty": not (rating_signals or calibration_rules or note_breakdown),
+    }
+
+
+# 与 score.py 同步的常量 (Q1: 结构化 factors 用)
+_FEEDBACK_TAU_NEG = 14.0
+_FEEDBACK_TAU_POS = 14.0
+_FEEDBACK_NEG_PEAK = -1.5
+_FEEDBACK_POS_COOLDOWN_PEAK = -0.7
+_FEEDBACK_POS_COOLDOWN_DAYS = 3
+_FEEDBACK_POS_BOOST_PEAK = 0.25
+
+
+def normalize_feedback_view(view) -> dict:
+    """统一 feedback_view 形态: v1 list[dict] | v2 dict | None → v2 dict.
+
+    用于 score/rerank 内部, 兼容旧 fixture / 旧 frozen trace.
+
+    D-083: feedback_trace 顶层 key 必须保留, 否则 score.py 主路径丢失因果上下文.
+    历史 v1/None 无此字段 → 兜底空骨架 (与 _build_feedback_trace_snapshot empty=True 等价).
+    """
+    empty_trace = {
+        "today": None,
+        "windows": {},
+        "rating_signals": [],
+        "calibration_rules": [],
+        "note_breakdown": [],
+        "global_token_freq": {"boost": {}, "penalty": {}},
+        "global_active_tokens": {"boost": [], "penalty": []},
+        "empty": True,
+    }
+    if view is None:
+        return {"ratings": [], "calibrations": [], "note_tokens": [],
+                "feedback_trace": empty_trace}
+    if isinstance(view, list):
+        # v1: 老的 list[dict] (只有 ratings) → 包成 v2 dict
+        return {"ratings": view, "calibrations": [], "note_tokens": [],
+                "feedback_trace": empty_trace}
+    if isinstance(view, dict):
+        return {
+            "ratings": view.get("ratings") or [],
+            "calibrations": view.get("calibrations") or [],
+            "note_tokens": view.get("note_tokens") or [],
+            # D-083: 保留 feedback_trace, 老 dict 无此字段 → 空骨架兜底
+            "feedback_trace": view.get("feedback_trace") or empty_trace,
+        }
+    return {"ratings": [], "calibrations": [], "note_tokens": [],
+            "feedback_trace": empty_trace}

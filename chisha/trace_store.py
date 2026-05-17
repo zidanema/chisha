@@ -9,7 +9,8 @@
 - fail-closed 读盘: 损坏抛 TraceCorrupt + 备份 .corrupt.{ts}.bak (同 D-066/067 MED-3)
 - 自包含 trace: __frozen 含 ctx + l1_combos + profile_snapshot + l1_prefs_snapshot
   + l2_meal_log_view + today, What-if 重跑零 runtime read
-- schema __version=1, 不识别抛 TraceVersionMismatch (调用方决定 409)
+- schema __version=2 (D-083 bumped), 读侧 LEGACY_TRACE_SCHEMA_VERSIONS={1} 兼容;
+  完全未知 version 才抛 TraceVersionMismatch (调用方决定 409)
 """
 from __future__ import annotations
 
@@ -24,7 +25,11 @@ from chisha import data_root
 
 logger = logging.getLogger(__name__)
 
-TRACE_SCHEMA_VERSION = 1
+TRACE_SCHEMA_VERSION = 2
+# D-083: schema v2 加 feedback_view_snapshot + l3.feedback_block_rendered +
+# combo.feedback_evidence. 读侧兼容 v1: 这些字段缺省 → 前端兜底空骨架.
+# v1 trace 仍可读 (TraceVersionMismatch 不抛, list_traces 不跳过). 写侧总写 v2.
+LEGACY_TRACE_SCHEMA_VERSIONS = {1}
 # D-079 用户决策: trace 大小不省空间, 调试完整性优先 (Phase 0 单 zone 1260 dishes
 # 实测 ~1.3MB 是常态). 这里 50MB 是纯 sanity bound, 防意外/恶意大数据写满磁盘,
 # 不是日常裁剪阈值. 正常 trace (<5MB) 直接写, 不走任何裁剪.
@@ -137,7 +142,9 @@ def read_trace(
             f"moved to {backup.name}"
         )
     version = data.get("__version")
-    if version != TRACE_SCHEMA_VERSION:
+    # D-083: v2 schema 兼容 v1 读 — v1 trace 缺 feedback_view_snapshot 等新字段,
+    # 调用方/前端走空骨架兜底; 写侧总写 v2. 其他未知 version 仍按 mismatch 抛.
+    if version != TRACE_SCHEMA_VERSION and version not in LEGACY_TRACE_SCHEMA_VERSIONS:
         raise TraceVersionMismatch(found=version)
     return data
 
@@ -184,7 +191,9 @@ def list_traces(
                 corrupt_count += 1
                 continue
             version = data.get("__version")
-            if version != TRACE_SCHEMA_VERSION:
+            # D-083: list_traces 也走 v1+v2 兼容. 完全未知 version 才跳过.
+            if (version != TRACE_SCHEMA_VERSION
+                    and version not in LEGACY_TRACE_SCHEMA_VERSIONS):
                 # 版本不匹配的 trace 跳过, 不算 corrupt
                 continue
             frozen = data.get("__frozen") or {}

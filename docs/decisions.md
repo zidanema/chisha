@@ -229,3 +229,29 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 守门：`feedback_view=[]` 或无命中 → **不写** breakdown key（保 16 维 keyset 不变，baseline_l2 EPSILON=1e-6 严格 0 差）
 - 落点：sentinel 区分 `_UNSET_FEEDBACK_VIEW` vs `[]`，What-if 必须显式传 `__frozen.feedback_view`（D-079 零 runtime read 红线）
 - 不动 L1 长链路（双层互补）/ 不做 hard avoid（软扣分够压，且不和 D-073 cuisine_want 冲突）/ 仅餐厅级（菜品/配料留 Phase 1，B-002 并行处理 ingredient 不重叠）
+
+## D-082 · B-001 v2 反馈短链路全字段覆盖 (2026-05-17)
+
+补 D-081 漏的 4 维 calibration + note + comments[] 短链路。dual-codex S2+S5 review 共识。
+
+- 派生 `feedback_store.build_feedback_view` 返 dict `{ratings, calibrations, note_tokens}`, 调用方一次过改完, 通过 `normalize_feedback_view` 兼容旧 list 形态
+- L2 加 2 维: `next_meal_calibration` (跨 1-3 餐, 真 age_meals 字段) + `note_boost` (餐厅×属性 + 跨餐厅去重高频)
+- L3 prompt 加 `[LAST_MEAL_SIGNAL]` + `[NOTE_HINTS]` (仅解释, 不排序)
+- `feedback_text_extract.py` 按*意图* (非 token) 拆 BOOST/PENALTY patterns, 否定前缀严格丢弃
+- 守门: 3 维都"signal=0 不写 key", baseline_l2_snapshot 改成显式 `feedback_view=[]` (修 v1 隐藏假阴性: prod 空时 0 diff 是巧合)
+- 不动: L1 长链路 / feedback schema / 菜品级反馈 / 不调 LLM / 不扩 L1 词表
+- 推 v2.1: normalize entry schema 防御 / note 5 条 cap / last_meal_cuisine meal_log fallback / L3 显示 age_meals
+- 实施 brief 留 `docs/wip/B-001-v2-design-brief.md` (有 4 视角分析 + 完整 S2/S5 review 落实表), 不入 archive
+
+## D-083 · feedback 短链路观测性补齐 (2026-05-17)
+
+**B-001 v2 (D-081/082) 引入 feedback→view→score+L3 派生层, 但 view 在 trace+debug-ui 里完全不可见 → 沙箱调试时无法回答"这次推荐受哪条反馈影响, 衰减多少"。**
+
+- 派生 `feedback_trace` 顶层 sibling 进 `build_feedback_view` 返值, 写 trace `feedback_view_snapshot`. 含 rating_signals (signal+factors{peak,tau,stage}) / calibration_rules (triggers) / note_breakdown (decay) / global_token_freq
+- 3 score 函数加 `with_evidence=True` kwarg, 默认 float 不破 callers; rank_combos 挂 combo['feedback_evidence'] (**sibling, 不入 breakdown** — 避开 `_format_ranked_for_trace` round(v,3) numeric 契约, Codex S2 拍板)
+- `_run_llm_rerank` 同时捕 `feedback_block_rendered` 进 trace, 不再只埋 user_message_full
+- TRACE_SCHEMA_VERSION 1→2, 读侧白名单兼容 v1 (legacy 走空骨架兜底)
+- 守门: 空 view → 不写 breakdown key + collector={}, baseline 严格不变
+- 落地分 3 PR: PR-1 后端 trace+测试 (本决策); PR-2 debug-ui FeedbackInputCard+combo 角标; PR-3 What-if `ignore_feedbacks`
+- 不动: L1 prefs DAG 节点 (留单独决策) / restaurant-id-based 匹配 (本期仍 name) / 编辑 rating-note (只支持忽略)
+- brief: `docs/wip/D-083_feedback_trace_observability_brief.md` (含 Codex S2 review v1.1 共识)

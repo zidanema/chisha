@@ -444,6 +444,9 @@ def _build_trace(
         "usage": l3_collector.get("usage"),
         "max_tokens": l3_collector.get("max_tokens"),
         "temperature": l3_collector.get("temperature"),
+        # D-083: L3 prompt 渲染好的 feedback 段 (与 L2 numeric breakdown 双轨).
+        # 调用方/前端可直接读, 不必再去 user_message_full 4KB 文本里 ctrl-F.
+        "feedback_block_rendered": l3_collector.get("feedback_block_rendered"),
     }
 
     final_view = [_format_final_candidate(i + 1, c) for i, c in enumerate(reranked)]
@@ -485,6 +488,22 @@ def _build_trace(
         "feedback_view": feedback_view or [],
     }
 
+    # D-083: feedback_view_snapshot 顶层节点. 从 feedback_view.feedback_trace
+    # 派生 (build_feedback_view 已计算好 per-entry signal/decay/rules), 给 trace
+    # 持久化 + debug-ui DAG FeedbackInputCard 用. 空 view → 空骨架 (前端隐藏 card).
+    feedback_view_snapshot = (
+        feedback_view.get("feedback_trace") if isinstance(feedback_view, dict)
+        else None
+    ) or {
+        "today": today.isoformat(),
+        "windows": {"ratings": 60, "calibrations": 7, "note_tokens": 14},
+        "rating_signals": [], "calibration_rules": [],
+        "note_breakdown": [],
+        "global_token_freq": {"boost": {}, "penalty": {}},
+        "global_active_tokens": {"boost": [], "penalty": []},
+        "empty": True,
+    }
+
     return {
         "__version": trace_store.TRACE_SCHEMA_VERSION,
         "__source": "production",
@@ -516,6 +535,8 @@ def _build_trace(
         "l3": l3_trace,
         "final": final_view,
         "refine": {"applied": False},
+        # D-083: 派生 feedback 因果快照 (与 L2 breakdown / L3 prompt 三轨之一)
+        "feedback_view_snapshot": feedback_view_snapshot,
     }
 
 

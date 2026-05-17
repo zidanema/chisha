@@ -53,6 +53,12 @@ V2_DEFAULT_WEIGHTS: dict[str, float] = {
     # 近 60 天 feedback rating 直接进打分, 补 L1 长链路盲区.
     # 仅命中时写入 breakdown (baseline_l2 守门 / EPSILON=1e-6 严格 0 差).
     "feedback_recency": 1.0,
+    # ── B-001 v2: 4 维 calibration + note 短链路 (2026-05-17) ──
+    # next_meal_calibration: 最近 1-3 餐 fullness/oil/reason_match → 下一餐微调
+    # note_boost: note + comments[] 词表抽出 token → restaurant × 属性双维度
+    # 同样守门: 信号为空时不写 breakdown key.
+    "next_meal_calibration": 0.8,
+    "note_boost": 0.5,
 }
 
 
@@ -485,28 +491,413 @@ def _feedback_aggregate(signals: list[float]) -> float:
 
 def feedback_recency_score(
     combo: dict,
-    feedback_view: list[dict] | None,
-) -> float:
-    """B-001: 近期 feedback 对单 combo 的影响.
+    feedback_view,  # list[dict] (v1) | dict (v2) | None — 通过 normalize 统一
+    *,
+    with_evidence: bool = False,
+):
+    """B-001: 近期 feedback 对单 combo 的影响 (餐厅级 rating 信号).
 
-    feedback_view = [{"restaurant_name", "rating", "age_days"}, ...] (已派生过滤).
+    v2 接入 dict 形态 {ratings, calibrations, note_tokens}, 取 ratings 段.
+    向后兼容 v1 list[dict] (老 fixture / 老 frozen trace).
     返回 signal in [-1.5, +0.25]; 无命中返 0.
 
     L2 守门: 调用方仅在返回值 != 0 时把 "feedback_recency" 写进 breakdown,
     保持 baseline 老 keyset 不变.
+
+    D-083: with_evidence=True 时返 (signal, evidence_list); evidence_list 每条
+    描述参与聚合的单条 rating + 计算出的 signal. 默认 False 保留旧 float 契约.
     """
-    if not feedback_view:
-        return 0.0
+    from chisha.feedback_store import normalize_feedback_view
+    view = normalize_feedback_view(feedback_view)
+    ratings = view["ratings"]
+    if not ratings:
+        return (0.0, []) if with_evidence else 0.0
     rest = combo.get("restaurant") or {}
     name = (rest.get("name") or "").strip()
     if not name:
-        return 0.0
+        return (0.0, []) if with_evidence else 0.0
+    matched = [e for e in ratings if e.get("restaurant_name") == name]
     signals = [
         _feedback_single_signal(entry["rating"], entry["age_days"])
-        for entry in feedback_view
-        if entry.get("restaurant_name") == name
+        for entry in matched
     ]
-    return _feedback_aggregate(signals)
+    agg = _feedback_aggregate(signals)
+    if not with_evidence:
+        return agg
+    evidence = [
+        {
+            "restaurant_name": e.get("restaurant_name"),
+            "rating": e.get("rating"),
+            "age_days": e.get("age_days"),
+            "signal": round(s, 4),
+        }
+        for e, s in zip(matched, signals)
+    ]
+    return agg, evidence
+
+
+# ────────────────────── B-001 v2: 4 维 calibration + note 短链路 ──────────────────────
+
+# next_meal_calibration 跨餐衰减 (age_meals=0 上一餐取全权; >=3 不算)
+_CAL_AGE_MEALS_WEIGHTS = {0: 1.0, 1: 0.5, 2: 0.25}
+_CAL_AGE_DAYS_HARD_LIMIT = 7  # Codex Q1 共识: 加 days 硬闸防极端
+_CAL_CLAMP_LOW = -1.0
+_CAL_CLAMP_HIGH = 1.0
+
+
+def next_meal_calibration_score(
+    combo: dict,
+    feedback_view,
+    profile: dict,
+    *,
+    with_evidence: bool = False,
+):
+    """B-001 v2: 最近 1-3 餐 4 维 calibration 对下一餐 combo 微调.
+
+    输入 view['calibrations']: 最近 N 餐 (按 age_days 升序), 已过滤 age<=7.
+    映射规则 (Codex Q2 共识 + brief §4):
+      - fullness=0 (没饱) → protein_floor_pass=1 → +0.4 × 该 dish_role_main + 0.3
+      - fullness=2 (撑)   → 总菜数 ≤2 +0.3; ≥4 -0.3
+      - oil_calibration=2 (太油) → combo avg oil_level <=2 +0.5; >=4 -0.5
+      - oil_calibration=0 (太低) → combo avg oil_level >=3 +0.2 (松开)
+      - reason_match=0 + last_meal_cuisine 已知 → combo cuisine 不同 +0.2
+      - repurchase_intent: v2 短链路 no-op (留 L1)
+
+    跨餐衰减: age_meals=0 全权, =1 ×0.5, =2 ×0.25, >=3 丢
+    age_meals 由 calibrations 列表顺序推 (0=最新, 1=次新...)
+    最终 clamp [-1.0, +1.0].
+
+    无信号返 0; 调用方仅 !=0 时写 breakdown key.
+    D-083: with_evidence=True 时返 (signal, evidence_list); 默认 float 不变.
+    """
+    from chisha.feedback_store import normalize_feedback_view
+    view = normalize_feedback_view(feedback_view)
+    cals = view["calibrations"]
+    if not cals:
+        return (0.0, []) if with_evidence else 0.0
+
+    dishes = combo.get("dishes") or []
+    if not dishes:
+        return (0.0, []) if with_evidence else 0.0
+    avg_oil = sum(
+        d.get("nutrition_profile", {}).get("oil_level", 3) for d in dishes
+    ) / len(dishes)
+    n_dishes = len(dishes)
+    # protein_floor: 复用 protein_floor_score 的判定语义
+    total_protein = sum(
+        d.get("nutrition_profile", {}).get("protein_grams_estimate", 0)
+        for d in dishes
+    )
+    floor = (profile.get("plate_rule") or {}).get("min_protein_g", 0)
+
+    # combo "主导 cuisine" — 取第一道有 cuisine 的菜 (与 last_meal_cuisine 对齐)
+    combo_cuisine = None
+    for d in dishes:
+        c = d.get("cuisine")
+        if c:
+            combo_cuisine = c
+            break
+
+    total = 0.0
+    evidence: list[dict] = []  # D-083: per-cal fired rules
+    # Codex S5 Q4.2: 用 view 派生的真 age_meals 字段, 不再 enumerate 推 (同日多餐漂移)
+    for cal in cals:
+        age_meals = cal.get("age_meals", 0)
+        if age_meals >= 3:
+            continue
+        weight = _CAL_AGE_MEALS_WEIGHTS.get(age_meals, 0.0)
+        if weight <= 0:
+            continue
+        if cal.get("age_days", 99) > _CAL_AGE_DAYS_HARD_LIMIT:
+            continue
+
+        cal_fired: list[dict] = []
+
+        # fullness — Codex S5 Q6 收紧: protein_floor 几乎全过 → 全集平移, 改用
+        # "超 1.5× floor" 才 boost, 让 fullness=0 真正成为区分信号
+        fl = cal.get("fullness")
+        if fl == 0:  # 没饱 → 下一餐多 protein / 复杂搭配
+            if floor > 0 and total_protein >= 1.5 * floor:
+                contrib = 0.4 * weight
+                total += contrib
+                cal_fired.append({"rule": "fullness=0 + protein≥1.5×floor",
+                                   "contribution": round(contrib, 4)})
+            if n_dishes >= 4:    # 收紧: 原 >=3 改 >=4 (本来稀有)
+                contrib = 0.3 * weight
+                total += contrib
+                cal_fired.append({"rule": "fullness=0 + n_dishes≥4",
+                                   "contribution": round(contrib, 4)})
+            elif n_dishes <= 2:  # 没饱反而少 → 负向区分
+                contrib = -0.2 * weight
+                total += contrib
+                cal_fired.append({"rule": "fullness=0 + n_dishes≤2 (penalty)",
+                                   "contribution": round(contrib, 4)})
+        elif fl == 2:  # 撑 → 下一餐少
+            if n_dishes <= 2:
+                contrib = 0.3 * weight
+                total += contrib
+                cal_fired.append({"rule": "fullness=2 + n_dishes≤2",
+                                   "contribution": round(contrib, 4)})
+            elif n_dishes >= 4:
+                contrib = -0.3 * weight
+                total += contrib
+                cal_fired.append({"rule": "fullness=2 + n_dishes≥4 (penalty)",
+                                   "contribution": round(contrib, 4)})
+
+        # oil_calibration
+        oc = cal.get("oil_calibration")
+        if oc == 2:  # 太油 → 下一餐控油
+            if avg_oil <= 2:
+                contrib = 0.5 * weight
+                total += contrib
+                cal_fired.append({"rule": "oil=2 (太油) + avg_oil≤2",
+                                   "contribution": round(contrib, 4)})
+            elif avg_oil >= 4:
+                contrib = -0.5 * weight
+                total += contrib
+                cal_fired.append({"rule": "oil=2 (太油) + avg_oil≥4 (penalty)",
+                                   "contribution": round(contrib, 4)})
+        elif oc == 0:  # 太低 → 松开油限
+            if avg_oil >= 3:
+                contrib = 0.2 * weight
+                total += contrib
+                cal_fired.append({"rule": "oil=0 (太低) + avg_oil≥3",
+                                   "contribution": round(contrib, 4)})
+
+        # reason_match: 理由弱 → 想换 cuisine
+        rm = cal.get("reason_match")
+        last_c = cal.get("last_meal_cuisine")
+        if rm == 0 and last_c and combo_cuisine and combo_cuisine != last_c:
+            contrib = 0.2 * weight
+            total += contrib
+            cal_fired.append({"rule": f"reason=0 + cuisine≠{last_c}",
+                               "contribution": round(contrib, 4)})
+
+        # repurchase_intent: v2 no-op (Codex 共识)
+
+        if cal_fired:
+            evidence.append({
+                "session_id": cal.get("session_id"),
+                "restaurant_name": cal.get("restaurant_name"),
+                "age_meals": age_meals,
+                "age_days": cal.get("age_days"),
+                "weight": weight,
+                "rules_fired": cal_fired,
+            })
+
+    clamped = max(_CAL_CLAMP_LOW, min(_CAL_CLAMP_HIGH, total))
+    if with_evidence:
+        return clamped, evidence
+    return clamped
+
+
+# note_boost 衰减 (7 天 e-fold) + clamp
+_NOTE_TAU_DAYS = 7.0
+_NOTE_CLAMP_LOW = -1.0
+_NOTE_CLAMP_HIGH = 1.0
+# 餐厅级 token 单条命中基础信号 (boost +0.5, penalty -0.5)
+_NOTE_REST_TOKEN_PEAK = 0.5
+# 全局 (跨餐厅) 高频 token (>=2 次) 对**所有** combo 的弱影响
+_NOTE_GLOBAL_TOKEN_PEAK = 0.2
+_NOTE_GLOBAL_MIN_HITS = 2
+
+
+def _token_matches_combo(token: str, combo: dict, profile: dict) -> int:
+    """token 是否与 combo 属性命中. 返回 +1 (命中) / -1 (反命中) / 0 (无关).
+
+    - low_oil: combo avg oil <= 2 → +1; avg oil >= 4 → -1
+    - wetness: 任一 dish wetness >=2 或 dish_role=汤 → +1
+    - spicy: 任一 dish spicy_level >=1 → +1; combo 全 0 → -1
+    - sweet_sauce: 任一 dish sweet_sauce_level>=3 → +1 (penalty 时反过来用)
+    - processed_meat: 任一 dish processed_meat_flag → +1
+    - carb_heavy: 主食菜数 >=2 → +1
+    """
+    dishes = combo.get("dishes") or []
+    if not dishes:
+        return 0
+    if token == "low_oil":
+        avg = sum(d.get("nutrition_profile", {}).get("oil_level", 3)
+                  for d in dishes) / len(dishes)
+        if avg <= 2:
+            return 1
+        if avg >= 4:
+            return -1
+        return 0
+    if token == "wetness":
+        if any(
+            (d.get("nutrition_profile", {}).get("wetness", 0) or 0) >= 2
+            or (d.get("nutrition_profile", {}).get("dish_role")
+                == DISH_ROLE_SOUP)
+            for d in dishes
+        ):
+            return 1
+        return 0
+    if token == "spicy":
+        spicies = [
+            (d.get("nutrition_profile", {}).get("spicy_level", 0) or 0)
+            for d in dishes
+        ]
+        if max(spicies, default=0) >= 1:
+            return 1
+        return -1
+    if token == "sweet_sauce":
+        if any(
+            (d.get("nutrition_profile", {}).get("sweet_sauce_level", 0) or 0)
+            >= 3 for d in dishes
+        ):
+            return 1
+        return 0
+    if token == "processed_meat":
+        if any(
+            d.get("nutrition_profile", {}).get("processed_meat_flag")
+            for d in dishes
+        ):
+            return 1
+        return 0
+    if token == "carb_heavy":
+        from chisha.recall import is_carb_dish
+        n_carb = sum(1 for d in dishes if is_carb_dish(d))
+        if n_carb >= 2:
+            return 1
+        return 0
+    return 0
+
+
+def note_boost_score(
+    combo: dict,
+    feedback_view,
+    profile: dict,
+    *,
+    with_evidence: bool = False,
+):
+    """B-001 v2: note + comments[] 词表 token 对 combo 的短链路影响.
+
+    规则 (Codex Q2 + Q5 共识):
+      - 餐厅级 token (note 提到的餐厅 = combo 餐厅):
+        boost token + combo 命中 → +0.5 × decay; combo 反命中 → -0.5 × decay
+        penalty token + combo 命中 → -0.5 × decay
+        (boost/penalty token 同时命中, 取较大绝对值; 同向多 token 累加)
+      - 全局高频 token (跨餐厅出现 >=2 次):
+        对所有 combo 弱信号 +/-0.2 × decay
+      - decay = exp(-age_days / 7)
+
+    最终 clamp [-1.0, +1.0]. 无信号返 0; 守门规则同前.
+    D-083: with_evidence=True 时返 (signal, evidence_list); 默认 float 不变.
+    """
+    from chisha.feedback_store import normalize_feedback_view
+    view = normalize_feedback_view(feedback_view)
+    notes = view["note_tokens"]
+    if not notes:
+        return (0.0, []) if with_evidence else 0.0
+
+    rest_name = ((combo.get("restaurant") or {}).get("name") or "").strip()
+    total = 0.0
+    evidence: list[dict] = []
+
+    # ── 餐厅级 token (note.restaurant == combo.restaurant)
+    for entry in notes:
+        if entry.get("restaurant_name") != rest_name:
+            continue
+        decay = math.exp(-(entry.get("age_days") or 0) / _NOTE_TAU_DAYS)
+        for tok in entry.get("boost") or []:
+            m = _token_matches_combo(tok, combo, profile)
+            if m != 0:
+                contrib = _NOTE_REST_TOKEN_PEAK * m * decay
+                total += contrib
+                evidence.append({
+                    "kind": "restaurant", "token": tok, "polarity": "boost",
+                    "restaurant_name": rest_name,
+                    "age_days": entry.get("age_days"),
+                    "decay": round(decay, 4), "match": m,
+                    "contribution": round(contrib, 4),
+                })
+        for tok in entry.get("penalty") or []:
+            m = _token_matches_combo(tok, combo, profile)
+            if m > 0:
+                contrib = -_NOTE_REST_TOKEN_PEAK * decay
+                total += contrib
+                evidence.append({
+                    "kind": "restaurant", "token": tok, "polarity": "penalty",
+                    "restaurant_name": rest_name,
+                    "age_days": entry.get("age_days"),
+                    "decay": round(decay, 4), "match": m,
+                    "contribution": round(contrib, 4),
+                })
+            elif m < 0:
+                contrib = _NOTE_REST_TOKEN_PEAK * 0.5 * decay
+                total += contrib
+                evidence.append({
+                    "kind": "restaurant", "token": tok, "polarity": "penalty",
+                    "restaurant_name": rest_name,
+                    "age_days": entry.get("age_days"),
+                    "decay": round(decay, 4), "match": m,
+                    "contribution": round(contrib, 4),
+                    "subkind": "reverse_match_bonus",
+                })
+
+    # ── 全局高频 token (跨餐厅, 用户对该属性的短期偏好)
+    # Codex S5 Q4.3 + #4: 按 (token, restaurant) 去重 — 同一餐厅多条 note/comment
+    # 触发同 token 只算 1 次, 防止单店重复 comments 假装全局信号.
+    boost_unique: dict = {}   # tok → set(restaurant_name)
+    penalty_unique: dict = {}
+    boost_age: dict = {}
+    penalty_age: dict = {}
+    for entry in notes:
+        age = entry.get("age_days") or 0
+        r = entry.get("restaurant_name") or ""
+        for tok in entry.get("boost") or []:
+            boost_unique.setdefault(tok, set()).add(r)
+            boost_age[tok] = min(boost_age.get(tok, 9999), age)
+        for tok in entry.get("penalty") or []:
+            penalty_unique.setdefault(tok, set()).add(r)
+            penalty_age[tok] = min(penalty_age.get(tok, 9999), age)
+    # 频次按 unique restaurant 计
+    boost_freq = {tok: len(rs) for tok, rs in boost_unique.items()}
+    penalty_freq = {tok: len(rs) for tok, rs in penalty_unique.items()}
+
+    for tok, cnt in boost_freq.items():
+        if cnt < _NOTE_GLOBAL_MIN_HITS:
+            continue
+        decay = math.exp(-boost_age[tok] / _NOTE_TAU_DAYS)
+        m = _token_matches_combo(tok, combo, profile)
+        if m != 0:
+            contrib = _NOTE_GLOBAL_TOKEN_PEAK * m * decay
+            total += contrib
+            evidence.append({
+                "kind": "global", "token": tok, "polarity": "boost",
+                "freq": cnt, "age_days": boost_age[tok],
+                "decay": round(decay, 4), "match": m,
+                "contribution": round(contrib, 4),
+            })
+    for tok, cnt in penalty_freq.items():
+        if cnt < _NOTE_GLOBAL_MIN_HITS:
+            continue
+        decay = math.exp(-penalty_age[tok] / _NOTE_TAU_DAYS)
+        m = _token_matches_combo(tok, combo, profile)
+        if m > 0:
+            contrib = -_NOTE_GLOBAL_TOKEN_PEAK * decay
+            total += contrib
+            evidence.append({
+                "kind": "global", "token": tok, "polarity": "penalty",
+                "freq": cnt, "age_days": penalty_age[tok],
+                "decay": round(decay, 4), "match": m,
+                "contribution": round(contrib, 4),
+            })
+        elif m < 0:
+            contrib = _NOTE_GLOBAL_TOKEN_PEAK * 0.5 * decay
+            total += contrib
+            evidence.append({
+                "kind": "global", "token": tok, "polarity": "penalty",
+                "freq": cnt, "age_days": penalty_age[tok],
+                "decay": round(decay, 4), "match": m,
+                "contribution": round(contrib, 4),
+                "subkind": "reverse_match_bonus",
+            })
+
+    clamped = max(_NOTE_CLAMP_LOW, min(_NOTE_CLAMP_HIGH, total))
+    if with_evidence:
+        return clamped, evidence
+    return clamped
 
 
 # ─────────────────────── D-073: cuisine/ingredient match helpers ───────────────────────
@@ -989,6 +1380,8 @@ def score_combo(
     meal_type: str | None = None,
     intent=None,  # D-073: RefineIntent | None
     feedback_view: list[dict] | None = None,  # B-001: 近期 feedback 短链路
+    *,
+    feedback_evidence_collector: dict | None = None,  # D-083: 可选 sibling 收集
 ) -> tuple[float, dict[str, float]]:
     """计算 combo 综合分. 返回 (score, breakdown).
 
@@ -998,6 +1391,10 @@ def score_combo(
     B-001: 传 feedback_view (生产 = build_feedback_view, What-if = __frozen)
       且单 combo 命中时, breakdown 加一项 "feedback_recency"; 无命中不写 key
       (保持老 16 维 keyset 严格不变, D-072.1 baseline 守门).
+    D-083: feedback_evidence_collector (dict) 传入时, 把三段 feedback 的 evidence
+      list 写入该 dict ("feedback_recency"/"next_meal_calibration"/"note_boost"
+      为 key), **不入 breakdown** — breakdown 仍保 numeric-only 契约
+      (避开 debug_recommend._format_ranked_for_trace 的 round(v,3) 限制).
     """
     w = profile.get("scoring_weights") or {}
 
@@ -1036,11 +1433,47 @@ def score_combo(
         "intent_ingredient": intent_parts["ingredient"] * _w("intent_ingredient"),
         "intent_flavor": intent_parts["flavor"] * _w("intent_flavor"),
     }
-    # B-001: feedback_recency 仅命中时写 key (baseline 守门: feedback_view=[] 或
-    # 无命中 → keyset 严格不变, EPSILON=1e-6 0 差成立).
-    fb_signal = feedback_recency_score(combo, feedback_view)
+    # B-001 + D-083: feedback_recency. 仅命中时写 breakdown numeric key (老守门).
+    # 同时, evidence 走 collector 旁路 (D-083, 不入 breakdown).
+    if feedback_evidence_collector is not None:
+        fb_signal, fb_ev = feedback_recency_score(
+            combo, feedback_view, with_evidence=True
+        )
+    else:
+        fb_signal, fb_ev = feedback_recency_score(combo, feedback_view), []
     if fb_signal != 0.0:
         parts["feedback_recency"] = fb_signal * _w("feedback_recency")
+        if feedback_evidence_collector is not None and fb_ev:
+            feedback_evidence_collector["feedback_recency"] = fb_ev
+
+    # B-001 v2 + D-083: next_meal_calibration
+    if feedback_evidence_collector is not None:
+        cal_signal, cal_ev = next_meal_calibration_score(
+            combo, feedback_view, profile, with_evidence=True
+        )
+    else:
+        cal_signal, cal_ev = next_meal_calibration_score(
+            combo, feedback_view, profile
+        ), []
+    if cal_signal != 0.0:
+        parts["next_meal_calibration"] = cal_signal * _w("next_meal_calibration")
+        if feedback_evidence_collector is not None and cal_ev:
+            feedback_evidence_collector["next_meal_calibration"] = cal_ev
+
+    # B-001 v2 + D-083: note_boost
+    if feedback_evidence_collector is not None:
+        note_signal, note_ev = note_boost_score(
+            combo, feedback_view, profile, with_evidence=True
+        )
+    else:
+        note_signal, note_ev = note_boost_score(
+            combo, feedback_view, profile
+        ), []
+    if note_signal != 0.0:
+        parts["note_boost"] = note_signal * _w("note_boost")
+        if feedback_evidence_collector is not None and note_ev:
+            feedback_evidence_collector["note_boost"] = note_ev
+
     return sum(parts.values()), parts
 
 
@@ -1126,12 +1559,17 @@ def rank_combos(
         effective_feedback_view = feedback_view or []
     scored = []
     for c in combos:
+        # D-083: 每个 combo 单独收 evidence (sibling, 不入 breakdown 防破坏
+        # debug_recommend._format_ranked_for_trace 的 round(v,3) numeric 契约)
+        ev_collector: dict = {}
         s, br = score_combo(c, profile, meal_log, today,
                             context=context, taste_hints=effective_hints,
                             meal_type=meal_type, intent=intent,
-                            feedback_view=effective_feedback_view)
+                            feedback_view=effective_feedback_view,
+                            feedback_evidence_collector=ev_collector)
         s = apply_unforgivable_penalty(s, c, profile)
-        scored.append({**c, "score": s, "score_breakdown": br})
+        scored.append({**c, "score": s, "score_breakdown": br,
+                        "feedback_evidence": ev_collector or {}})
     scored.sort(key=lambda x: x["score"], reverse=True)
     return scored
 
