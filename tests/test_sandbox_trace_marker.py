@@ -195,6 +195,35 @@ def test_living_force_disabled_also_kills_virtual_clock(tmp_path, monkeypatch):
     assert sandbox.current_date(tmp_path) == dt.date(2030, 1, 15)
 
 
+def test_read_trace_finds_prod_even_when_sandbox_enabled(tmp_path: Path, monkeypatch):
+    """D-085 smoke 实测发现的 bug: read_trace 用 data_root.recommend_trace_dir
+    跟 sandbox.is_enabled 全局状态走 → Lab 启 sandbox 时单条读 Living 写的
+    prod trace 404. 修法: read_trace 跨 prod + sandbox 双目录查找.
+    """
+    monkeypatch.setattr(sandbox, "_project_root", lambda: tmp_path)
+
+    # 写一条 prod trace (sandbox 未启)
+    trace_store.write_trace("sid_prod", _make_trace("sid_prod"), root=tmp_path)
+    assert (data_root.recommend_trace_prod_dir(tmp_path) / "sid_prod.json").exists()
+
+    # 启 sandbox 后再写一条 sandbox trace
+    sandbox.init(start_date="2030-01-15", root=tmp_path)
+    trace_store.write_trace("sid_sb", _make_trace("sid_sb"), root=tmp_path)
+    assert (data_root.recommend_trace_sandbox_dir(tmp_path) / "sid_sb.json").exists()
+
+    # 即便 sandbox 启用, read_trace 仍应找到 prod trace
+    assert sandbox.is_enabled(tmp_path) is True
+    prod = trace_store.read_trace("sid_prod", root=tmp_path)
+    assert prod is not None, "read_trace 必须跨 prod+sandbox 找到 prod trace"
+    assert prod["session_id"] == "sid_prod"
+    assert prod["is_sandbox"] is False
+
+    # sandbox trace 也能找到
+    sb = trace_store.read_trace("sid_sb", root=tmp_path)
+    assert sb is not None
+    assert sb["is_sandbox"] is True
+
+
 def test_lab_sessions_endpoint_exposes_include_sandbox(tmp_path: Path, monkeypatch):
     """/api/lab/sessions 端点 include_sandbox=true 时返回 sandbox trace."""
     from fastapi import FastAPI

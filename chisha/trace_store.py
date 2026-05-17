@@ -132,8 +132,20 @@ def read_trace(
     """
     if "/" in session_id or ".." in session_id or not session_id:
         raise ValueError(f"invalid session_id: {session_id!r}")
-    p = data_root.recommend_trace_dir(root) / f"{session_id}.json"
-    if not p.exists():
+    # D-085: 看 prod + sandbox 两个目录 (trace id 全局唯一). Living force_disabled
+    # 后 Living 写 prod, Lab 演练写 sandbox; 读单条 trace 必须能跨目录命中, 否则
+    # Lab 启 sandbox 时拉 Living 写的 prod trace 会 404 (UI smoke 实测发现).
+    # 先 prod, 后 sandbox (默认查询语义优先 prod, 与 list_traces 一致).
+    candidates = [
+        data_root.recommend_trace_prod_dir(root) / f"{session_id}.json",
+        data_root.recommend_trace_sandbox_dir(root) / f"{session_id}.json",
+    ]
+    p: Optional[Path] = None
+    for c in candidates:
+        if c.exists():
+            p = c
+            break
+    if p is None:
         return None
     raw = p.read_text(encoding="utf-8")
     try:
