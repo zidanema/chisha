@@ -15,6 +15,45 @@
 
 ---
 
+## 当前推进路线 (2026-05-17 拍板)
+
+> 不是 ROADMAP 的复制 — ROADMAP 已部分过时, 这里是基于"自用稳定 → 接个人 agent → 扩同事"终极路径反推的最近 4-6 周做事顺序。每完成一步划掉, 不补不堆。
+
+### 主路径
+
+1. **F-007 debug trace 串接验收** (1-2 天) — claude code 自测过但未验收。**所有后续动作的归因基础设施**, 拿不到可信的 trace 工具, 后面跑沙盒看到怪现象时只能瞎猜
+2. **I-001 摸清 L1 抽取 prompt + 链路** (半天-1 天) — 不学整套系统, 只把 L1 这层看懂, 因为沙盒里 L1 行为最不直观
+3. **沙盒模式 e2e 跑通 + D-080 两个 P0 修复复测** (2-3 天) — D-080 基于实测推断修, 没在沙盒里完整复测过。沙盒主战场, 真实日历日并行后台跑, 不强门
+4. **F-011 + F-012 接个人 agent + context 注入** (捆绑做, 不拆) — 这步才是放大 chisha 价值的拐点。F-011 不带 F-012 = agent 替你按按钮, 没意义
+5. **F-010 同 query 随机性** — 接 agent 后频次拉高才有体感场景, 之前做没数据支撑
+
+### Phase 1 同事推广启动前必收口 (不在当前周次, 但是硬门)
+
+- F-004 第二份 methodology spec (验证抽象解耦)
+- F-003 screener (筛同事)
+- F-006 沙箱动线重设计 (推广前用户心智不能乱)
+- F-001 L1 词表扩 cuisine token (同事 cuisine 比志丹分散)
+
+### 明确划掉的犹豫点
+
+- **macOS launchd 定时拉起** (ROADMAP 唯一未勾选项): 划掉。自用阶段手动开页面没毛病, 不是债
+- **Step 2 真实自用一周作为强门槛**: 改成"沙盒 + 真实日历并行", 真实日历不阻塞下游
+- **系统性深入学链路**: 不专门学, 边跑沙盒边按需问 claude code, 效率高 10 倍
+
+### 不在主路径 (优先级低 / 依赖未到)
+
+- F-008 并发多 LLM 对比: 无痛点别优化
+- F-009 多饮食并行: 依赖 F-004
+- F-002 data zone 拆包: V1.5 工程债
+- F-005 多 Agent 接入: F-011 跑通后再扩
+- B-003 轻食 portion: 先抽样核实是不是真 bug
+
+### 当前阻塞
+
+**F-007** — 在动主路径任何下一步之前, 先把这批未验收代码看清楚 (改了哪些文件 / commit 在哪 / 行为对不对设计预期)。
+
+---
+
 ## Bugs
 
 > 已知但当前不修的 bug。明确触发条件 + 优先级 + 绕过方法。
@@ -33,7 +72,7 @@
 ### B-001 · 近期反馈对推荐影响过弱 (短链路缺口)
 
 - **来源**: 2026-05-17 沙盒实测 (sandbox 8 天 / 11 顿 / 10 反馈, L1 抽取产物全空, 推荐不受任何反馈影响) + 志丹拍板"这是根本问题"
-- **状态**: fixed, 2026-05-17 (走短链路 `feedback_recency_signal`, 见 D-081)
+- **状态**: **fixed v2, 2026-05-17** (v1 D-081 rating 短链路 + v2 D-082 4 维 calibration + note/comments[] 词表, dual-codex S2+S5 共识, brief: docs/wip/B-001-v2-design-brief.md)
 - **现象**: 用户给某餐厅/菜品 👎, 7 天 hard cooldown 后系统**照样推**, 行为与 👍 完全一致。连续吃同一配料 (如香菜, 非 main_ingredient_type) 也无法 cooldown
 - **根因**: 反馈 → 推荐路径**只有一条**, 走 L1 抽取慢路径 (`feedback_store → L1 extractor → long_term_prefs.boost/penalty`)。但:
   - L1 prompt 保守阈值: 信号弱 / 矛盾 / 样本 < 阈值 → 抽空。沙盒 9 餐实测就抽空
@@ -52,6 +91,15 @@
 ## Features
 
 > 已识别但暂不做的功能。多数对应 ROADMAP Phase 1+。
+
+### F-013 · D-083 PR-3 What-if `ignore_feedbacks` patch (遗留)
+
+- **来源**: D-083 主 brief + PR-2/PR-3 设计 brief (`docs/wip/D-083-pr2-pr3-design-brief.md`) Codex S2 共识已落
+- **状态**: open, **设计完成 + Codex S2 共识落定**, 待实施 (单独 session)
+- **What**: What-if 加 `ignore_feedbacks: [sid]` patch — 用户在 FeedbackInputCard 选某条反馈点 "🚫 假如这条不存在", What-if 重跑下游 score+L3 看推荐变化. 验证 "这条反馈对推荐的实际影响"
+- **实施清单** (S2 已定): 后端 `feedback_store.py` 给 ratings/note_tokens 加 sid + `debug_what_if.py` 加 `_filter_view_by_sids` + WhatIfPanel UI 多选 + 加 seq/AbortController race 防护
+- **关键风险**: filtered view 替换 frozen view 后必须传给 L2/L3/trace 全链路 (Codex S2 必改 #6); 老 frozen view (无 sid) 静默不过滤 (S2 Q7=A)
+- **不修原因**: 志丹 2026-05-17 拍板 PR-2 先合, PR-3 留单独 session — D-083 PR-1 (后端 trace) + PR-2 (debug-ui 可视化) 已够志丹用沙盒做归因, ignore_feedbacks 是锦上添花
 
 ### F-001 · L1 词表扩 cuisine 偏好 token
 
