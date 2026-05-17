@@ -42,6 +42,7 @@ LAB_ENDPOINTS = {
     ("GET",  "/api/lab/sandbox/inspect"),
     ("GET",  "/api/lab/sessions"),
     ("GET",  "/api/lab/sessions/{session_id}"),
+    ("GET",  "/api/lab/sessions/{session_id}/summary"),  # D-085 PR-E
     ("POST", "/api/lab/what_if"),
 }
 

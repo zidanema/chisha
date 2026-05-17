@@ -434,6 +434,85 @@ def api_lab_session_detail(request: Request, session_id: str) -> dict:
     return trace
 
 
+@router.get("/sessions/{session_id}/summary")
+def api_lab_session_summary(request: Request, session_id: str) -> dict:
+    """D-085 PR-E: trace 人话层摘要 (haiku ≤ 100 字).
+
+    缓存策略: 写进 trace 顶层 __summary sibling (与 __feedback / __source 一致).
+    fingerprint 任意输入字段变化 → 重生.
+    fail-closed: LLM 失败返 fallback=true, **不**抛 500 (Lab 工具不该让 trace
+    详情页因摘要失败而 500).
+
+    Failure matrix:
+      - 404 trace 不存在
+      - 409 trace schema 版本不匹配
+      - 500 trace 文件损坏 (备份 .corrupt.{ts}.bak)
+      - 200 + fallback=true: LLM 不可用 / 异常 (前端展示 fallback UI + retry)
+    """
+    _require_localhost(request)
+    from chisha import lab_summary, trace_store
+
+    try:
+        trace = trace_store.read_trace(session_id, root=ROOT)
+    except trace_store.TraceCorrupt as e:
+        raise HTTPException(500, f"trace corrupt: {e}")
+    except trace_store.TraceVersionMismatch as e:
+        raise HTTPException(
+            409, f"trace schema version mismatch: found={e.found}, expected={e.expected}"
+        )
+    if trace is None:
+        raise HTTPException(404, f"trace {session_id!r} not found")
+
+    current_fp = lab_summary.compute_fingerprint(trace)
+    cached = trace.get("__summary") or None
+    if (isinstance(cached, dict)
+            and cached.get("fingerprint") == current_fp
+            and cached.get("text")):
+        return {
+            "text": cached["text"],
+            "model": cached.get("model"),
+            "generated_at": cached.get("generated_at"),
+            "fingerprint": cached.get("fingerprint"),
+            "cached": True,
+            "fallback": False,
+        }
+
+    out = lab_summary.summarize(trace)
+    if out["fallback"]:
+        # 不写盘, 直接返
+        return {
+            "text": None,
+            "fallback": True,
+            "error_kind": out["error_kind"],
+            "error_detail": out["error_detail"],
+            "cached": False,
+        }
+
+    # 成功 → 写回 trace 顶层 __summary, best-effort
+    summary_to_persist = {
+        "text": out["text"],
+        "model": out["model"],
+        "generated_at": out["generated_at"],
+        "fingerprint": out["fingerprint"],
+    }
+    # what-if preview trace 不持久化 → 不写盘 (草稿 §2.7)
+    is_what_if = trace.get("__source") == "what_if_preview"
+    if not is_what_if:
+        trace["__summary"] = summary_to_persist
+        ok = trace_store.write_trace(session_id, trace, root=ROOT)
+        if not ok:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "lab_summary write_trace failed for %s, returning uncached", session_id
+            )
+
+    return {
+        **summary_to_persist,
+        "cached": False,
+        "fallback": False,
+    }
+
+
 @router.post("/what_if")
 def api_lab_what_if(request: Request, req: WhatIfReq) -> dict:
     """D-079 §7.3: What-if 重跑. 冻结上游 ctx/L1, 重跑 L2+L3.
