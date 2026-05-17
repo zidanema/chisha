@@ -1,7 +1,8 @@
 """D-077 PR-2: 10 验证锚点 end-to-end 验收测试.
 
-走真实 chisha.web_api router + isolated tmp ROOT, 验证 sandbox + L1
-全链路. LLM 调用 mock (避免烧配额, 测的是机制不是 LLM 输出).
+D-085 后改走真实 chisha.api_living + chisha.api_lab routers + isolated tmp
+ROOT, 验证 sandbox + L1 全链路. LLM 调用 mock (避免烧配额, 测的是机制不是
+LLM 输出).
 
 锚点对应:
 1. Cooldown 7d 不重店          → 验证 diversity_filter 走虚拟时钟
@@ -145,28 +146,34 @@ def test_anchor_2_cooldown_3d_no_same_protein(app_root):
 
 
 # ─────────────────────── Anchor 3: Snooze 24h
+# D-085 调整: Living endpoint (/api/feedback/snooze, /api/feedback/inbox) 已经
+# 被 _force_prod_data dependency 包住, 不会走 sandbox 路径. 验证 sandbox 演练
+# 内 snooze + advance 机制时, 应直接调 feedback_store 模块, 不走 HTTP — 与
+# 实际 Lab 演练场景 (Lab UI 用 module-level 工具 / 脚本) 一致.
 def test_anchor_3_snooze_unblocks_after_one_day(app_root):
     app, root = app_root
+    from chisha import feedback_store
     with TestClient(app) as c:
         c.post("/api/lab/sandbox/init", json={"start_date": "2026-05-20"})
-        # accept 一个 session
-        from chisha import feedback_store
+        # accept + snooze 都走 feedback_store 直接调 (写 sandbox 路径,
+        # 因为 sandbox.is_enabled(root)=True 且无 force_disabled override)
         feedback_store.record_accept(
             root, session_id="sid_s",
             candidate_rank=1, meal_type="lunch",
             restaurant_name="店X", summary="",
         )
-        # snooze
-        c.post("/api/feedback/snooze", json={"session_id": "sid_s"})
-        # 当下 inbox 应不含 sid_s (snoozed)
-        inbox = c.get("/api/feedback/inbox", params={"include_snoozed": 0}).json()
-        sids_visible = [it["session_id"] for it in inbox["items"]]
+        feedback_store.set_snooze(root, "sid_s", hours=24)
+
+        store = feedback_store.load_store(root)
+        items = feedback_store.inbox_items(store, include_snoozed=False)
+        sids_visible = [it["session_id"] for it in items]
         assert "sid_s" not in sids_visible
 
-        # 推进一天, snooze 应过期
+        # 推进一天 (Lab 端点 OK — sandbox 端就在 Lab 上), snooze 过期
         c.post("/api/lab/sandbox/advance", json={"days": 1})
-        inbox2 = c.get("/api/feedback/inbox", params={"include_snoozed": 0}).json()
-        sids_after = [it["session_id"] for it in inbox2["items"]]
+        store2 = feedback_store.load_store(root)
+        items2 = feedback_store.inbox_items(store2, include_snoozed=False)
+        sids_after = [it["session_id"] for it in items2]
         assert "sid_s" in sids_after
 
 
@@ -306,26 +313,32 @@ def test_anchor_8_prod_path_no_regression(app_root):
     assert out == []
 
 
-# ─────────────────────── Anchor 9: profile 切 zone 不污染 prod
-def test_anchor_9_profile_isolated_in_sandbox(app_root):
+# ─────────────────────── Anchor 9 (D-085 改写): Living PUT /api/profile 永远写 prod
+# 原 D-077 语义: sandbox 启用时 PUT /api/profile 走 sandbox 副本.
+# D-085 invariant 3: Living 写真实数据, 即便 Lab 已开 sandbox.
+# 验证: PUT 写 prod profile.yaml; sandbox/profile.yaml 由 init(copy_real_data=
+# True) 保持初始副本不变.
+def test_anchor_9_living_profile_put_writes_prod_even_in_sandbox(app_root):
     app, root = app_root
-    prod_profile = (root / "profile.yaml").read_text(encoding="utf-8")
+    prod_profile_before = (root / "profile.yaml").read_text(encoding="utf-8")
     with TestClient(app) as c:
         c.post("/api/lab/sandbox/init",
                 json={"start_date": "2026-05-20", "copy_real_data": True})
-        # 改 profile (PUT 走 sandbox 副本)
+        sandbox_profile = root / "logs" / "sandbox" / "profile.yaml"
+        sandbox_profile_before = sandbox_profile.read_text(encoding="utf-8")
+
         new_p = {"basics": {"office_zone": "home",
                              "zones": {"lunch": "home",
                                         "dinner": "home"}},
                  "methodology": "harvard_plate"}
         r = c.post("/api/profile", json=new_p)
         assert r.status_code == 200
-        # sandbox 副本应已写
-        sandbox_profile = root / "logs" / "sandbox" / "profile.yaml"
-        assert sandbox_profile.exists()
-        assert "home" in sandbox_profile.read_text(encoding="utf-8")
-    # prod profile.yaml 完好
-    assert (root / "profile.yaml").read_text(encoding="utf-8") == prod_profile
+
+        # D-085: PUT 走 prod (Living invariant 3 — Lab 才能写 sandbox)
+        assert (root / "profile.yaml").read_text(encoding="utf-8") != prod_profile_before
+        assert "home" in (root / "profile.yaml").read_text(encoding="utf-8")
+        # sandbox 副本不应被 Living PUT 修改
+        assert sandbox_profile.read_text(encoding="utf-8") == sandbox_profile_before
 
 
 # ─────────────────────── Anchor 12 (D-078): accept 写 meal_log + cooldown 沙盒生效
@@ -339,7 +352,11 @@ def test_anchor_12_accept_writes_meal_log_and_cooldown_active(app_root):
 
     with TestClient(app) as c:
         c.post("/api/lab/sandbox/init", json={"start_date": "2026-05-20"})
-        # 直接走 /api/accept 模拟前端 RecCard 「定它了」
+        # D-085: Living /api/accept 总写 prod (invariant 3). 要测 sandbox 演练
+        # 内的 meal_log 行为, 直接调 module-level 工具 (Lab 演练场景对应
+        # 调用方 = Lab UI 或脚本, 不走 Living HTTP).
+        from chisha import feedback_store
+        from chisha.recall import append_meal_log_entry
         candidate = {
             "rank": 1,
             "restaurant": {"id": "r_X", "name": "测试餐厅 X"},
@@ -348,17 +365,24 @@ def test_anchor_12_accept_writes_meal_log_and_cooldown_active(app_root):
                  "oil_level": 4},
             ],
         }
-        r = c.post("/api/accept", json={
-            "session_id": "sid_a", "candidate_rank": 1,
-            "candidate": candidate,
-        })
-        assert r.status_code == 200
+        feedback_store.record_accept(
+            root, session_id="sid_a", candidate_rank=1, meal_type="lunch",
+            restaurant_name="测试餐厅 X", summary="红烧肉饭",
+        )
+        append_meal_log_entry(
+            root=root, session_id="sid_a", meal_type="lunch",
+            restaurant_id="r_X", restaurant_name="测试餐厅 X",
+            dishes=candidate["dishes"], zone="shenzhen-bay",
+            accepted_rank=1,
+        )
 
-        # meal_log.jsonl 应当出现在 sandbox 目录
+        # meal_log.jsonl 应当出现在 sandbox 目录 (sandbox.is_enabled=True
+        # 且无 force_disabled override, module-level append_meal_log_entry
+        # 走 data_root.meal_log_path = sandbox 路径)
         sb_log = root / "logs" / "sandbox" / "meal_log.jsonl"
         prod_log = root / "logs" / "meal_log.jsonl"
-        assert sb_log.exists(), "accept 未写 sandbox meal_log.jsonl"
-        assert not prod_log.exists(), "accept 误写 prod meal_log.jsonl"
+        assert sb_log.exists(), "module 直接调用未写 sandbox meal_log.jsonl"
+        assert not prod_log.exists(), "module 直接调用误写 prod meal_log.jsonl"
 
         entries = load_meal_log(root)
         assert len(entries) == 1

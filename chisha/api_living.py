@@ -18,10 +18,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, model_validator
 
 from chisha import feedback_store
+from chisha import sandbox as _sandbox  # for force_disabled()
 from chisha.api import _build_pipeline_trace_block, format_v2_candidate, recommend_meal
 from chisha.recall import (
     load_meal_log,
@@ -35,12 +36,32 @@ PROFILE_PATH = ROOT / "profile.yaml"
 
 
 def _profile_path() -> Path:
-    """D-077 PR-1c: 动态求值. sandbox 启用且有副本 → sandbox/profile.yaml; 否则 prod."""
+    """D-077 PR-1c: 动态求值. sandbox 启用且有副本 → sandbox/profile.yaml; 否则 prod.
+
+    D-085: Living 端点已被 _force_prod_data dependency 包住, sandbox.is_enabled()
+    在 Living 请求上下文里强制返 False, 所以这里始终拿 prod profile.yaml.
+    """
     from chisha import data_root
     return data_root.profile_path(ROOT)
 
 
-router = APIRouter(prefix="/api", tags=["living"])
+def _force_prod_data():
+    """D-085 BLOCKER 修复: 每个 Living 请求强制走 prod 数据 (即便 Lab 已开 sandbox).
+
+    Codex review (Phase 0 P-9): Living API 默认跟 sandbox.is_enabled 全局
+    state 走 → Lab 启 sandbox 后 Living /api/recommend 静默写 sandbox 路径.
+    用 FastAPI dependency + ContextVar override 包住每个 Living 请求,
+    sandbox.is_enabled() 在请求栈内强制返 False, 写盘 / 读盘 / clock 全部走 prod.
+    """
+    with _sandbox.force_disabled():
+        yield
+
+
+router = APIRouter(
+    prefix="/api",
+    tags=["living"],
+    dependencies=[Depends(_force_prod_data)],
+)
 
 
 # ---------- helpers ----------

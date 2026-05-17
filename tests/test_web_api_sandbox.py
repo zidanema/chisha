@@ -1,4 +1,4 @@
-"""D-077 PR-1c: /api/sandbox/* 端点单测.
+"""D-077 PR-1c: /api/lab/sandbox/* 端点单测 (D-085 改前缀).
 
 覆盖:
 - init / advance / reset / disable / state / inspect 5+1 端点

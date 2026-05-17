@@ -110,6 +110,60 @@ def test_list_traces_legacy_no_is_sandbox_defaults_false(tmp_path: Path, monkeyp
     assert legacy["is_sandbox"] is False
 
 
+def test_living_recommend_writes_prod_even_when_sandbox_enabled(
+    tmp_path: Path, monkeypatch
+):
+    """D-085 Codex BLOCKER 修复: Lab 已开 sandbox 时, Living /api/recommend
+    必须仍走 prod 数据落盘. 否则 agent 调 Living 会被 Lab 的 sandbox 状态污染.
+
+    覆盖路径: Living dependency _force_prod_data 包住整个请求, sandbox.is_enabled()
+    返 False → data_root.recommend_log_path / trace_dir / profile_path 全走 prod.
+    """
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from chisha import api_living, data_root
+
+    # 让 sandbox._project_root 指向 tmp_path 以测试隔离 state
+    monkeypatch.setattr(sandbox, "_project_root", lambda: tmp_path)
+    monkeypatch.setattr(api_living, "ROOT", tmp_path)
+    monkeypatch.setattr(api_living, "PROFILE_PATH", tmp_path / "profile.yaml")
+    # mock recommend_meal 验证调用时 sandbox.is_enabled() 是否返 False
+    sandbox_state_during_call: list[bool] = []
+
+    def fake_recommend(**kwargs):
+        sandbox_state_during_call.append(sandbox.is_enabled(tmp_path))
+        return {
+            "session_id": "sid_leak_test",
+            "meal_type": kwargs.get("meal_type"),
+            "zone": "shenzhen-bay", "round": 1, "version": "v2",
+            "generated_at": "2026-05-17T12:00:00+00:00",
+            "context": {}, "stats": {"n_returned": 0}, "candidates": [],
+        }
+
+    monkeypatch.setattr(api_living, "recommend_meal", fake_recommend)
+    monkeypatch.setattr(api_living, "_remember_session_safe",
+                         lambda sid, out: None)
+
+    # 真的开 sandbox state (磁盘上 enabled=True)
+    sandbox.init(start_date="2026-05-20", root=tmp_path)
+    assert sandbox.is_enabled(tmp_path) is True  # 全局确实开了
+
+    app = FastAPI()
+    app.include_router(api_living.router)
+    with TestClient(app) as c:
+        r = c.get("/api/recommend", params={"meal_hint": "lunch"})
+        assert r.status_code == 200, r.text
+
+    # 关键断言: recommend_meal 调用期间 is_enabled 必须返 False
+    assert sandbox_state_during_call == [False], (
+        f"Living /api/recommend 必须强制 prod 数据, 但调用时 sandbox.is_enabled() "
+        f"= {sandbox_state_during_call} (期望 [False])"
+    )
+
+    # 退出请求后 is_enabled 恢复 True (ContextVar 干净清理)
+    assert sandbox.is_enabled(tmp_path) is True
+
+
 def test_lab_sessions_endpoint_exposes_include_sandbox(tmp_path: Path, monkeypatch):
     """/api/lab/sessions 端点 include_sandbox=true 时返回 sandbox trace."""
     from fastapi import FastAPI

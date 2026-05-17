@@ -35,8 +35,9 @@ from __future__ import annotations
 import datetime as dt
 import json
 import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 _STATE_REL = "logs/sandbox/state.json"
@@ -44,6 +45,41 @@ _SANDBOX_DIR_REL = "logs/sandbox"
 
 # 线程锁: 单进程内防 advance / reset 并发互写
 _STATE_LOCK = threading.Lock()
+
+# D-085 BLOCKER 修复: thread-local override 让 Living 请求强制走 prod 数据.
+# 用 threading.local (而非 ContextVar): FastAPI sync 路由每个请求跑在固定线程内,
+# threading.local 干净配对; ContextVar token reset 跨 async context 失败 (生成器
+# dependency 的 cleanup 不一定在 set 时的 context). Codex BLOCKER (P-9 backend
+# 通路修复).
+_LOCAL = threading.local()
+
+
+def _override() -> bool | None:
+    return getattr(_LOCAL, "is_enabled_override", None)
+
+
+@contextmanager
+def force_disabled() -> Iterator[None]:
+    """在 with 块内强制 sandbox.is_enabled() 返 False (无论真实 state 如何).
+
+    用法 — Living 端点 dependency:
+        with sandbox.force_disabled():
+            yield  # 整个请求栈内 is_enabled() = False
+
+    嵌套安全 (会保留 prev 然后还原).
+    """
+    prev = getattr(_LOCAL, "is_enabled_override", None)
+    _LOCAL.is_enabled_override = False
+    try:
+        yield
+    finally:
+        if prev is None:
+            try:
+                del _LOCAL.is_enabled_override
+            except AttributeError:
+                pass
+        else:
+            _LOCAL.is_enabled_override = prev
 
 
 def _project_root() -> Path:
@@ -76,6 +112,11 @@ def state(root: Path | None = None) -> dict:
 
 
 def is_enabled(root: Path | None = None) -> bool:
+    # D-085: Living 端点的 thread-local 覆盖优先 — 哪怕磁盘 state.enabled=True
+    # 也强制返 False, 防 Living 写盘走到 sandbox 路径 (P-9 BLOCKER 修复).
+    override = _override()
+    if override is not None:
+        return override
     return bool(state(root).get("enabled"))
 
 

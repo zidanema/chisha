@@ -1,9 +1,9 @@
-"""D-079 PR-2: /api/debug/* 端点 happy path + failure matrix.
+"""D-079 PR-2: /api/lab/* 端点 happy path + failure matrix (D-085 改前缀).
 
 覆盖:
-- GET /api/debug/sessions: 200 列表 + corrupt_count, 400 非法 source/meal_type
-- GET /api/debug/sessions/{sid}: 200 单条 + feedback, 404 缺失, 409 schema, 500 corrupt
-- POST /api/debug/what_if: 200 happy path, 404 base 不存在, 400 overrides 非法 / source
+- GET /api/lab/sessions: 200 列表 + corrupt_count, 400 非法 source/meal_type
+- GET /api/lab/sessions/{sid}: 200 单条 + feedback, 404 缺失, 409 schema, 500 corrupt
+- POST /api/lab/what_if: 200 happy path, 404 base 不存在, 400 overrides 非法 / source
 """
 from __future__ import annotations
 
