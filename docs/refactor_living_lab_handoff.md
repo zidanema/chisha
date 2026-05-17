@@ -48,20 +48,12 @@ CLAUDE.md 强制 — 改 apps/web 或 apps/debug-ui 必须自驱浏览器验证.
   - **P-9 BLOCKER E2E 实测**: Lab 启 sandbox @2030-01-15 → Living `/api/recommend` 返 `session_id=20260517_...` (真实 today 前缀, NOT 20300115); 拉回 trace `is_sandbox=False + __frozen.today=2026-05-17` ✓
 - 🐛 **smoke 顺手发现 + 修了一个 bug**: `read_trace` 跟 `sandbox.is_enabled` 全局状态走 → Lab 启 sandbox 时单条读 prod trace 返 404. 修法 commit `307a1fa`: 跨 prod + sandbox 双目录顺序查找. 加守门 test `test_read_trace_finds_prod_even_when_sandbox_enabled`. **787 测试全过**.
 
-### ③ Merge 决策点 — 4 个推到下次 PR 的方向题
+### ③ Merge 决策点 — 4 个方向题 (2026-05-17 志丹已拍)
 
-迁移方案 §4.3 列了 4 个**你来定方向**的事项, 现在再列一次给你 review:
-
-- **D-Q1 Lab "人话层" trace render** (Q9 / invariant 9): 工程量大 (LLM 摘要 or 模板生成器). 独立 PR-E.
-  - **问你**: PR-E 起多大优先级? 在 Living Agent 接入之前 or 之后?
-- **D-Q2 Living Agent (MCP/飞书/CC)** 三选一先试 — P2 目标 "2-3 周内硬截止". API 已 agent-ready, 选哪个端先接由你定.
-  - **问你**: MCP / 飞书 bot / Claude Code skill, 哪个先?
-- **D-Q3 What-if 升为横切动作** (Q7 / invariant 7) — debug-ui 现在是独立 panel, 要重组成 "任何 trace 都有 复制+改+重跑" 按钮 + 产物挂当前模式下. 前端工作量大.
-  - **问你**: 这个排在 D-Q1 / D-Q2 哪里?
-- **D-Q4 Sandbox 单次演练加强 (Q10B 推迟项)** — 当前 advance 一次一天, 多日演练靠 UI/脚本循环. 你之前 Q10A 决定先做 A 版, B 版独立开发. 现在要不要把 B 拎出来?
-  - **问你**: 排期上 push 还是再放放?
-
-我没替你做任何技术细节决策 (force_disabled 实现方案 / threading.local vs ContextVar / 测试改写策略 都是和 Codex 商量的), 但上面 4 个是**思路 / 方向**, 留给你定.
+- **D-Q1 Lab "人话层" trace render** → **B (LLM 摘要) + P0 拍定**. 记入 BACKLOG.md F-014, 主路径排第 4 (跟在 trace 验收 / 沙盒 e2e 之后, agent 接入之前). 工程量 2-3 天.
+- **D-Q2 Living Agent 三选一** → 推后 (BACKLOG F-015, open)
+- **D-Q3 What-if 升横切** → 推后 (BACKLOG F-016, open)
+- **D-Q4 Sandbox N 日演练** → 推后 (BACKLOG F-017, open)
 
 ---
 
