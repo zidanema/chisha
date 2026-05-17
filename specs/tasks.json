@@ -1,0 +1,63 @@
+{
+  "_design_brief": "docs/design_briefs/2026-05-18-refine-v2-faithful-refine.md",
+  "_decisions": "D-080~D-085 (待落，指回 design brief)",
+  "_first_principle": "Faithful Refine — 系统对 refine 文本的理解深度和执行忠实度是用户信任的唯一来源",
+  "tasks": [
+    {
+      "id": "T-00",
+      "title": "trace event schema + intent schema 版本号",
+      "regression_risk": "low",
+      "depends_on": [],
+      "status": "pending"
+    },
+    {
+      "id": "T-P1a-01",
+      "title": "methodology 硬契约下沉 L1 (含 L0 三分)",
+      "regression_risk": "high",
+      "depends_on": ["T-00"],
+      "status": "pending"
+    },
+    {
+      "id": "T-P1a-02",
+      "title": "L1 召回参数 refine 分支重写",
+      "regression_risk": "high",
+      "depends_on": ["T-00"],
+      "status": "pending"
+    },
+    {
+      "id": "T-P1a-03",
+      "title": "refine 多 slot LLM 解析层 + 安全带",
+      "regression_risk": "medium",
+      "depends_on": ["T-00"],
+      "status": "pending"
+    },
+    {
+      "id": "T-P1b-01",
+      "title": "顶部 always-on 状态条",
+      "regression_risk": "low",
+      "depends_on": ["T-P1a-01"],
+      "status": "pending"
+    },
+    {
+      "id": "T-P1b-02",
+      "title": "L3 prompt narrative 字段",
+      "regression_risk": "medium",
+      "depends_on": ["T-P1a-01", "T-P1a-02"],
+      "status": "pending"
+    },
+    {
+      "id": "T-P2-01",
+      "title": "reference 块 resolver + 比较器",
+      "regression_risk": "medium",
+      "depends_on": ["T-P1a-03"],
+      "status": "pending"
+    },
+    {
+      "id": "T-P2-02",
+      "title": "簇式输出 (intent 内部子类多样化)",
+      "regression_risk": "medium",
+      "depends_on": ["T-P1a-02", "T-P1a-03"],
+      "status": "pending"
+    }
+  ]
+}
