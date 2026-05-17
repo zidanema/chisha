@@ -29,7 +29,8 @@
       "title": "refine 多 slot LLM 解析层 + 安全带",
       "regression_risk": "medium",
       "depends_on": ["T-00"],
-      "status": "pending"
+      "status": "done_scaffold",
+      "_notes": "scaffold 版: schema + 安全带骨架 + 10 单测. LLM prompt 重写 + 30-50 eval set + 下游消费 留 follow-up."
     },
     {
       "id": "T-P1b-01",
