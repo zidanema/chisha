@@ -18,8 +18,10 @@
     "esModuleInterop": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@chisha/contracts": ["../../packages/contracts/src/index.ts"],
+      "@chisha/contracts/*": ["../../packages/contracts/src/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src", "../../packages/contracts/src"]
 }

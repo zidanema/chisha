@@ -18,8 +18,13 @@
     "resolveJsonModule": true,
     "jsx": "react-jsx",
     "allowImportingTsExtensions": false,
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@chisha/contracts": ["../../packages/contracts/src/index.ts"],
+      "@chisha/contracts/*": ["../../packages/contracts/src/*"]
+    }
   },
-  "include": ["src"],
+  "include": ["src", "../../packages/contracts/src"],
   "exclude": ["dist", "node_modules"]
 }
