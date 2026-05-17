@@ -264,3 +264,19 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 不动: L1 长链路 / feedback schema / 菜品级反馈 / 不调 LLM / 不扩 L1 词表
 - 推 v2.1: normalize entry schema 防御 / note 5 条 cap / last_meal_cuisine meal_log fallback / L3 显示 age_meals
 - 实施 brief 留 `docs/wip/B-001-v2-design-brief.md` (有 4 视角分析 + 完整 S2/S5 review 落实表), 不入 archive
+
+## D-085 · Living + Lab 二分架构 (2026-05-17)
+
+> 重构 topic. 共识/目标见 [docs/refactor_living_lab.md](refactor_living_lab.md), 迁移方案见 [docs/refactor_living_lab_migration.md](refactor_living_lab_migration.md).
+
+后端拆 `chisha/api_living.py` + `chisha/api_lab.py`, prefix=`/api` vs `/api/lab`. `web_api.py` 1102 行退役, `debug_server.py` 退化为 shim, 真入口 `chisha/server.py`. 前端起 `packages/contracts/` 共享 TS types (Living + Lab 各导一份), vite path alias + tsconfig paths, 零 npm build.
+
+Living API agent-ready (`meal_hint` + 可选 `at_time` query); `meal_type` 保留 backward-compat alias. 响应 JSON 自闭包.
+
+invariant 3 用 `sandbox.force_disabled()` thread-local override 在 Living 路由 dependency 层强制兜底 — Lab 已开 sandbox 时, Living `/api/recommend` 等强制走 prod 数据 + prod 时钟. Codex 两轮 review 修了 storage 通路 + 虚拟时钟通路两个 BLOCKER.
+
+trace `is_sandbox` 顶层字段 (`data_root.is_sandbox(root)` 派生), `list_traces(include_sandbox=False)` 默认; Lab `/api/lab/sessions` 显式 `include_sandbox=true` 才显示 sandbox trace.
+
+apps/web 删 `SandboxBar` + `lib/sandbox.ts` — Living UI 不再承载 sandbox 开关 (Lab UI 独占入口).
+
+后续推迟独立 PR: 人话层 trace render (Q9), Living Agent 接入, What-if 横切 (Q7), Sandbox N 日演练 (Q10B).

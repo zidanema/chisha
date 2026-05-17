@@ -97,11 +97,24 @@
 ## 调试台 (D-039 + D-075)
 
 - **老调试台 = 独立 FastAPI on `:8765`，与主推荐链路解耦。** 调试逻辑不要混进生产代码 (`chisha/api.py`)。改打分链路时检查 `chisha/debug_recommend.py` instrumented 管道还能跑（参 D-039）。
-- **新 debug-ui SPA (`apps/debug-ui/`) 独立 Vite 项目，端口 5174，不并入 `apps/web/`。** 只通过 `/api/*` 联调，backend 只在 `chisha/debug_recommend.py` ADD 字段不动既有键（参 D-075）。改 backend trace shape 同步 `apps/debug-ui/src/api/backend-types.ts`。
+- **新 debug-ui SPA (`apps/debug-ui/`) 独立 Vite 项目，端口 5174，不并入 `apps/web/`。** 只通过 `/api/lab/*` 联调 (D-085), backend 只在 `chisha/debug_recommend.py` ADD 字段不动既有键（参 D-075）。改 backend trace shape 同步 `packages/contracts/src/trace.ts`。
 
 ---
 
-## 范围红线 (Phase 0 内不做)
+## Living vs Lab 二分 (D-085)
+
+- **Living API (`chisha/api_living.py`, prefix=`/api`)**: 决策入口, 写真实数据. 请求/响应 JSON 自闭包, 无客户端隐含上下文, agent (MCP/飞书/CC) 可直接调.
+- **Lab API (`chisha/api_lab.py`, prefix=`/api/lab`)**: trace 查询 + sandbox 演练 + what_if + debug_recommend. 完全只读真实数据, 只能写 sandbox 分支 (`data_root` 隔离).
+- **Living 不调 Lab, Lab 不写真实反馈/profile.** 跨界改动必须 decisions.md 留新 D-XXX.
+- **`sandbox.force_disabled()` 是 Living 兜底** (`api_living.py` 路由 `dependencies=[Depends(_force_prod_data)]`). 哪怕 Lab 已开 sandbox, Living 请求栈内 `sandbox.is_enabled()` 强制 False — 存储路径 (`data_root.*`) + 虚拟时钟 (`sandbox.current_date/datetime/datetime_utc` 都走 `is_enabled()`) 全部 fallback 真实. **Lab 端点不得加 `_force_prod_data` dep** (它本来就要看 sandbox state).
+- **trace `is_sandbox`** 来自 `sandbox.is_enabled(root)` (写入时), `trace_store.list_traces(include_sandbox=False)` 默认; Lab `/api/lab/sessions?include_sandbox=true` 才合并 sandbox 目录.
+- **共享只到 `packages/contracts/`** (`living.ts` + `trace.ts` + `index.ts`), UI 不共享. 改 Living API 字段时 contracts 同步, 两边 vite tsc 立刻飘红.
+- **路由前缀守门**: `tests/test_api_split_routing.py` 严格断言 Living/Lab 路径不交叉 + 老路径 (`/api/sandbox/*` / `/api/debug/*` / `/api/debug_recommend`) 必须 404.
+- **`chisha.debug_server` 仍是合法 import** (back-compat shim re-export `chisha.server.app`); 不要往 shim 里加新逻辑.
+
+---
+
+## 范围红线 (Phase 0 内不做, 持续生效)
 
 不要在 Phase 0 内启动以下工作（已被推迟到 Phase 1+，避免 scope creep）：
 - data zone 拆包发布 PyPI
@@ -110,5 +123,6 @@
 - 第二份 methodology spec（减脂 / 糖控变体）
 - L1 词表进一步扩（cuisine 偏好 token 等）
 - 调试台 React 化（D-075 已 partial 实现，更进一步定位拆/合 留 Phase 1）
+- Lab 人话层 trace render (D-085 / Q9), Living Agent 接入 (D-085 P2), What-if 升横切动作 (D-085 / Q7), Sandbox N 日对照演练 (D-085 / Q10B)
 
 如果某 PR 触及上面任一项，先回头读 ROADMAP + decisions.md 确认是否真的要提前。
