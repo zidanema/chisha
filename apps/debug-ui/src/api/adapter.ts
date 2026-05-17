@@ -145,6 +145,8 @@ function adaptL2Combo(c: BackendL2Combo): L2Combo {
     total_price: c.total_price,
     dishes: c.dishes.map(adaptComboDish),
     breakdown: c.breakdown,
+    // D-083 PR-2: passthrough sibling. shape 已与 Session L2Combo.feedback_evidence 类型对齐.
+    feedback_evidence: c.feedback_evidence as L2Combo["feedback_evidence"],
   };
 }
 
@@ -425,6 +427,8 @@ export function traceToSession(trace: BackendDebugTrace): Session {
     l2: adaptL2(trace.l2, trace.l1.summary.n_combos, trace.score_latency_ms ?? 0),
     l3: adaptL3(wrapTraceL3(trace.l3, trace.rerank_latency_ms ?? 0)),
     final: adaptFinal(trace.final),
+    // D-083 PR-2: passthrough. 老 v1 trace 字段缺失 → undefined, FeedbackInputCard 容忍.
+    feedback_view_snapshot: trace.feedback_view_snapshot as Session["feedback_view_snapshot"],
     refine: {
       parent_session: trace.session_id,
       refine_session: trace.refine?.applied ? trace.session_id : "—",
@@ -479,6 +483,9 @@ export function backendToSession(
     l2: adaptL2(raw.l2_score, raw.l1_recall.summary.n_combos),
     l3: adaptL3(raw.l3_rerank),
     final: adaptFinal(raw.final),
+    // D-083 PR-2: Live 路径 (debug_recommend) feedback_view_snapshot 透传.
+    // Replay 路径 (traceToSession) 已单独透传.
+    feedback_view_snapshot: raw.feedback_view_snapshot as Session["feedback_view_snapshot"],
     // Refine trace 不在 /api/debug_recommend 返回里 — Phase 3 才有真数据.
     // 给一个空骨架, 让 panel 至少不崩.
     refine: {

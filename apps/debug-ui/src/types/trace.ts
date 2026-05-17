@@ -66,6 +66,104 @@ export type L2Combo = {
   total_price: number;
   dishes: ComboDish[];
   breakdown: Record<string, number>;
+  // D-083 PR-2: per-combo 反馈影响因果 sibling (不入 breakdown,
+  // breakdown 是 numeric-only 契约). 空 dict 表示该 combo 无反馈影响.
+  feedback_evidence?: FeedbackEvidence;
+};
+
+// D-083 PR-2: feedback_view_snapshot + per-combo feedback_evidence 类型.
+// 与 chisha/feedback_store.py _build_feedback_trace_snapshot 输出对齐 (PR-1 落).
+// 与 chisha/score.py {feedback_recency,next_meal_calibration,note_boost}_score
+// with_evidence=True 分支返值对齐.
+
+export type FeedbackRatingSignal = {
+  session_id?: string;  // PR-3 schema 扩后填; PR-2 渲染时容忍 undefined
+  restaurant_name: string;
+  rating: -1 | 1;
+  age_days: number;
+  signal: number;
+  factors: { peak: number; tau: number | null; stage: string };
+};
+
+export type FeedbackCalibrationRule = {
+  session_id: string;
+  restaurant_name: string;
+  age_meals: number;       // 0 | 1 | 2
+  age_days: number;
+  weight: number;
+  last_meal_cuisine: string | null;
+  triggers: Array<{ field: string; value: number | null; desc: string }>;
+};
+
+export type FeedbackNoteBreakdown = {
+  session_id?: string;     // PR-3 schema 扩后填
+  restaurant_name: string;
+  age_days: number;
+  decay: number;
+  boost: string[];
+  penalty: string[];
+  raw_text: string;
+  source: "note" | "comment";
+};
+
+export type FeedbackViewSnapshot = {
+  today: string | null;
+  windows: { ratings: number; calibrations: number; note_tokens: number };
+  rating_signals: FeedbackRatingSignal[];
+  calibration_rules: FeedbackCalibrationRule[];
+  note_breakdown: FeedbackNoteBreakdown[];
+  global_token_freq: {
+    boost: Record<string, number>;
+    penalty: Record<string, number>;
+  };
+  global_active_tokens: { boost: string[]; penalty: string[] };
+  empty: boolean;
+};
+
+// next_meal_calibration evidence 按 calibration 分组 (Codex S2 验证: chisha/score.py:678-686)
+export type FeedbackEvidenceCalibration = {
+  session_id: string | null;
+  restaurant_name: string | null;
+  age_meals: number;
+  age_days: number | null;
+  weight: number;
+  rules_fired: Array<{ rule: string; contribution: number }>;
+};
+
+// note_boost evidence: restaurant 级和 global 级字段不同 (Codex S2 验证: chisha/score.py:866-895)
+export type FeedbackEvidenceNoteRestaurant = {
+  kind: "restaurant";
+  token: string;
+  polarity: "boost" | "penalty";
+  restaurant_name: string;
+  age_days: number;
+  decay: number;
+  match: -1 | 0 | 1;
+  contribution: number;
+  subkind?: string;
+};
+
+export type FeedbackEvidenceNoteGlobal = {
+  kind: "global";
+  token: string;
+  polarity: "boost" | "penalty";
+  freq: number;            // global 才有, restaurant 没有
+  age_days: number;
+  decay: number;
+  match: -1 | 0 | 1;
+  contribution: number;
+  subkind?: string;
+};
+
+export type FeedbackEvidence = {
+  feedback_recency?: Array<{
+    restaurant_name: string;
+    rating: -1 | 1;
+    age_days: number;
+    signal: number;
+  }>;
+  next_meal_calibration?: FeedbackEvidenceCalibration[];
+  note_boost?: Array<FeedbackEvidenceNoteRestaurant | FeedbackEvidenceNoteGlobal>;
 };
 
 export type L2KPI = {
@@ -256,4 +354,7 @@ export type Session = {
   l3: L3Trace;
   final: FinalRow[];
   refine: RefineTrace;
+  // D-083 PR-2: 顶层 feedback_view_snapshot. 老 v1 trace 没此字段 → undefined,
+  // FeedbackInputCard 必须容忍 (空骨架 / undefined 都不渲染).
+  feedback_view_snapshot?: FeedbackViewSnapshot;
 };

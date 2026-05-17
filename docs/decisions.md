@@ -252,6 +252,6 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - `_run_llm_rerank` 同时捕 `feedback_block_rendered` 进 trace, 不再只埋 user_message_full
 - TRACE_SCHEMA_VERSION 1→2, 读侧白名单兼容 v1 (legacy 走空骨架兜底)
 - 守门: 空 view → 不写 breakdown key + collector={}, baseline 严格不变
-- 落地分 3 PR: PR-1 后端 trace+测试 (本决策); PR-2 debug-ui FeedbackInputCard+combo 角标; PR-3 What-if `ignore_feedbacks`
+- 落地分 3 PR: PR-1 后端 trace+测试 (done); PR-2 debug-ui FeedbackInputCard+combo 角标 (done, Codex S2 共识落 `docs/wip/D-083-pr2-pr3-design-brief.md`); PR-3 What-if `ignore_feedbacks` (待做)
 - 不动: L1 prefs DAG 节点 (留单独决策) / restaurant-id-based 匹配 (本期仍 name) / 编辑 rating-note (只支持忽略)
 - brief: `docs/wip/D-083_feedback_trace_observability_brief.md` (含 Codex S2 review v1.1 共识)

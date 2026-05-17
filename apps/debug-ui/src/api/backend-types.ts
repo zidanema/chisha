@@ -67,6 +67,50 @@ export type BackendL2Dish = {
   vegetable_ratio?: number;
 };
 
+// D-083 PR-1: feedback_evidence sibling on each L2 combo. Not in breakdown
+// (breakdown is numeric-only; this is list of attribution objects per dim).
+// Source: chisha/score.py:1436-1572 rank_combos.
+export type BackendFeedbackEvidence = {
+  feedback_recency?: Array<{
+    restaurant_name: string;
+    rating: number;
+    age_days: number;
+    signal: number;
+  }>;
+  next_meal_calibration?: Array<{
+    session_id: string | null;
+    restaurant_name: string | null;
+    age_meals: number;
+    age_days: number | null;
+    weight: number;
+    rules_fired: Array<{ rule: string; contribution: number }>;
+  }>;
+  note_boost?: Array<
+    | {
+        kind: "restaurant";
+        token: string;
+        polarity: "boost" | "penalty";
+        restaurant_name: string;
+        age_days: number;
+        decay: number;
+        match: number;
+        contribution: number;
+        subkind?: string;
+      }
+    | {
+        kind: "global";
+        token: string;
+        polarity: "boost" | "penalty";
+        freq: number;
+        age_days: number;
+        decay: number;
+        match: number;
+        contribution: number;
+        subkind?: string;
+      }
+  >;
+};
+
 export type BackendL2Combo = {
   rank: number;
   combo_index: number;
@@ -80,6 +124,48 @@ export type BackendL2Combo = {
   dishes: BackendL2Dish[];
   score: number;
   breakdown: Record<string, number>;
+  feedback_evidence?: BackendFeedbackEvidence;  // D-083 PR-1
+};
+
+// D-083 PR-1: feedback_view_snapshot top-level. Source: chisha/api.py:491-539,
+// chisha/feedback_store.py:552-712. Optional because pre-D-083 v1 traces lack it
+// (LEGACY_TRACE_SCHEMA_VERSIONS={1} read path falls back to empty skeleton).
+export type BackendFeedbackViewSnapshot = {
+  today: string | null;
+  windows: { ratings: number; calibrations: number; note_tokens: number };
+  rating_signals: Array<{
+    session_id?: string;
+    restaurant_name: string;
+    rating: number;
+    age_days: number;
+    signal: number;
+    factors: { peak: number; tau: number | null; stage: string };
+  }>;
+  calibration_rules: Array<{
+    session_id: string;
+    restaurant_name: string;
+    age_meals: number;
+    age_days: number;
+    weight: number;
+    last_meal_cuisine: string | null;
+    triggers: Array<{ field: string; value: number | null; desc: string }>;
+  }>;
+  note_breakdown: Array<{
+    session_id?: string;
+    restaurant_name: string;
+    age_days: number;
+    decay: number;
+    boost: string[];
+    penalty: string[];
+    raw_text: string;
+    source: "note" | "comment";
+  }>;
+  global_token_freq: {
+    boost: Record<string, number>;
+    penalty: Record<string, number>;
+  };
+  global_active_tokens: { boost: string[]; penalty: string[] };
+  empty: boolean;
 };
 
 export type BackendL2Score = {
@@ -216,6 +302,9 @@ export type BackendDebugRecommend = {
   l3_rerank: BackendL3Rerank;
   final: BackendFinalRow[];
   target_trace: BackendTargetTrace | null;
+  // D-083 PR-1: debug_recommend.py:758 顶层 feedback_view_snapshot.
+  // Optional 兼容老 chisha 后端 (旧版本不写此字段).
+  feedback_view_snapshot?: BackendFeedbackViewSnapshot;
 };
 
 export type BackendDebugRecommendReq = {
@@ -350,6 +439,8 @@ export type BackendDebugTrace = {
   l3: BackendTraceL3;
   final: BackendFinalRow[];
   refine: BackendTraceRefine;
+  // D-083 PR-1: 顶层 feedback_view_snapshot. 老 v1 trace 无此字段, 读侧空骨架兜底.
+  feedback_view_snapshot?: BackendFeedbackViewSnapshot;
 };
 
 export type BackendWhatIfOverrides = {

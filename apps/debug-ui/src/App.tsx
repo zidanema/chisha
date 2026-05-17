@@ -22,6 +22,7 @@ import { PanelL3 } from "./panels/PanelL3";
 import { PanelFinal } from "./panels/PanelFinal";
 import { PanelRefine } from "./panels/PanelRefine";
 import { PanelTrace } from "./panels/PanelTrace";
+import { FeedbackInputCard } from "./panels/FeedbackInputCard";
 import type { Meal } from "./types/trace";
 
 type Tab = "main" | "refine" | "trace";
@@ -183,6 +184,7 @@ export function App() {
     if (tab !== "main") return;
     const panels: { id: string; sel: string }[] = [
       { id: "l1", sel: '[data-panel="l1"]' },
+      { id: "feedback", sel: '[data-panel="feedback"]' },  // D-083 PR-2
       { id: "l2", sel: '[data-panel="l2"]' },
       { id: "l3", sel: '[data-panel="l3"]' },
       { id: "final", sel: '[data-panel="final"]' },
@@ -453,6 +455,9 @@ export function App() {
           {tab === "main" && (
             <Fragment>
               <div data-panel="l1"><PanelL1 l1={session.l1} /></div>
+              {/* D-083 PR-2: feedback view 派生层卡片. empty/undefined 时
+                  FeedbackInputCard 内部 short-circuit 不渲染, 节省屏幕. */}
+              <FeedbackInputCard snapshot={session.feedback_view_snapshot} />
               <div data-panel="l2"><PanelL2 l2={session.l2} /></div>
               <div data-panel="l3">
                 <PanelL3

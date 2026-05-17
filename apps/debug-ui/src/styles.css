@@ -689,6 +689,7 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
   letter-spacing: 0;
 }
 .dag-strip .chip.l1 { background: var(--L1); }
+.dag-strip .chip.feedback { background: var(--refine); }  /* D-083 PR-2 */
 .dag-strip .chip.l2 { background: var(--L2); }
 .dag-strip .chip.l3 { background: var(--L3); }
 .dag-strip .chip.l3.fb { background: var(--err); color: #fff; }
@@ -793,12 +794,13 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
   display: flex; align-items: center; gap: 6px;
 }
 .dag-node-head .dot { width: 5px; height: 5px; background: rgba(0,0,0,0.4); border-radius: 50%; }
-.dag-node-head.ctx    { background: var(--bg-3); color: var(--t-1); }
-.dag-node-head.l1     { background: var(--L1); }
-.dag-node-head.l2     { background: var(--L2); }
-.dag-node-head.l3     { background: var(--L3); }
-.dag-node-head.final  { background: var(--final); }
-.dag-node-head.refine { background: var(--refine); }
+.dag-node-head.ctx      { background: var(--bg-3); color: var(--t-1); }
+.dag-node-head.l1       { background: var(--L1); }
+.dag-node-head.feedback { background: var(--refine); }  /* D-083 PR-2 */
+.dag-node-head.l2       { background: var(--L2); }
+.dag-node-head.l3       { background: var(--L3); }
+.dag-node-head.final    { background: var(--final); }
+.dag-node-head.refine   { background: var(--refine); }
 
 .dag-node-body { padding: 7px 12px 9px; }
 .dag-node-body .title { font-size: 11px; color: var(--t-2); margin-bottom: 4px; }

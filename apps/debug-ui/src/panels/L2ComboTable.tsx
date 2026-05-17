@@ -1,5 +1,6 @@
 import { Fragment, useState } from "react";
 import { Pill } from "../components/ui/Pill";
+import { FeedbackImpactBadge } from "../components/FeedbackImpactBadge";
 import { comboDiffBadge, type ComboDiff } from "../lib/diffSession";
 import type { L2Combo } from "../types/trace";
 
@@ -49,6 +50,9 @@ function ComboRow({
         <tr className="combo-detail">
           <td colSpan={diff !== undefined ? 10 : 9}>
             <div className="inner">
+              {/* D-083 PR-2: 反馈影响角标 (放展开区头部, 紧贴 dish cards 之上).
+                  feedback_evidence undefined / 全空时组件内部 short-circuit 不渲染. */}
+              <FeedbackImpactBadge ev={combo.feedback_evidence} />
               {combo.dishes.map((d, i) => (
                 <div className="dish-card" key={i}>
                   <div>
