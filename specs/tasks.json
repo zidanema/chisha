@@ -37,14 +37,16 @@
       "title": "顶部 always-on 状态条",
       "regression_risk": "low",
       "depends_on": ["T-P1a-01"],
-      "status": "pending"
+      "status": "blocked_frontend_verify",
+      "_notes": "前端视觉 + chrome-devtools-mcp 验证要求, AI 单次会话难以稳定起 Vite + 后端 servers 自驱. 留给志丹手验 + 实现."
     },
     {
       "id": "T-P1b-02",
       "title": "L3 prompt narrative 字段",
       "regression_risk": "medium",
       "depends_on": ["T-P1a-01", "T-P1a-02"],
-      "status": "pending"
+      "status": "done_backend",
+      "_notes": "backend half done: schema + prompt + trace 持久化 + 3 单测. 前端卡片展示留 follow-up (chrome-devtools-mcp 验证)."
     },
     {
       "id": "T-P2-01",
