@@ -96,6 +96,26 @@ fa13e15 fix(D-085 Codex re-review): force_disabled also kills virtual clock
 
 ---
 
+## D-085 PR-E · Lab 人话层摘要 (追加 2026-05-17 晚)
+
+志丹中断回来后追加完成 (跳 Codex S2 共识, 直接实施), 5 commit 在 PR-A~D 之上:
+
+```
+c555f3b feat(D-085 PR-E E1): lab_summary builder + prompt + 20 单测
+5fa600b feat(D-085 PR-E E2): /api/lab/sessions/{sid}/summary endpoint + cache + fallback
+e3d394f feat(D-085 PR-E E3): SummaryCard + contracts type + apps/debug-ui 接入
+???????  fix (D-085 PR-E BLOCKER): smoke 发现 sandbox 启用时缓存命不中, 走 explicit_path
+???????  docs (D-085 PR-E E4): handoff + BACKLOG ✅ + 草稿移 design_briefs/
+```
+
+**smoke 发现的 BLOCKER**: sandbox enabled 时 `write_trace` 走 sandbox dir, 但 `read_trace` 优先 prod 命中 → 摘要写到 sandbox/__summary, 读回的还是 prod 老版本 → cached=false 永远. 修法 — `trace_store.find_trace_path()` + `write_trace(explicit_path=)` 让 caller 显式"读到哪写哪", 同时 endpoint 也走这条. 加守门 test 防回归. 这个跟 PR-B 那个"sandbox 启用时 Living 写 prod"是对偶 bug, **手动 smoke 才发现 — 单测里 sandbox.is_enabled 默认 False, 暴露不出来**.
+
+**验收 PR-E**: `curl http://127.0.0.1:8765/api/lab/sessions/<sid>/summary` 两次, 第一次 `cached=false` (≈ 15s haiku 调用), 第二次 `cached=true` (~ms). UI 在 `http://127.0.0.1:5174/?sid=<sid>` 顶部 DagHeader 之前看 "摘要" card. Live mode / What-if overlay / 切到 refine/trace tab 不渲染.
+
+设计细节: `docs/design_briefs/D-085-PR-E.md` (v0 草稿 + v1 实施实录).
+
+---
+
 ## 验收清单 (最后核对)
 
 - [x] 4 个 PR (A/B/C/D) + 2 个 Codex fix, 共 6 commit

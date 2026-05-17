@@ -24,7 +24,7 @@
 1. **F-007 debug trace 串接验收** (1-2 天) — claude code 自测过但未验收。**所有后续动作的归因基础设施**, 拿不到可信的 trace 工具, 后面跑沙盒看到怪现象时只能瞎猜
 2. **I-001 摸清 L1 抽取 prompt + 链路** (半天-1 天) — 不学整套系统, 只把 L1 这层看懂, 因为沙盒里 L1 行为最不直观
 3. **沙盒模式 e2e 跑通 + D-080 两个 P0 修复复测** (2-3 天) — D-080 基于实测推断修, 没在沙盒里完整复测过。沙盒主战场, 真实日历日并行后台跑, 不强门
-4. **F-014 D-085 PR-E Lab 人话层 trace render** (2-3 天) — 志丹 2026-05-17 D-Q1=B+P0 拍板, haiku 摘要走 trace 关键字段, debug-ui 详情页头部加"人话层" card 默认展开
+4. ~~**F-014 D-085 PR-E Lab 人话层 trace render**~~ ✅ 完成 2026-05-17 (5 commit, smoke 实测 cached 通过)
 5. **F-011 + F-012 接个人 agent + context 注入** (捆绑做, 不拆) — 这步才是放大 chisha 价值的拐点。F-011 不带 F-012 = agent 替你按按钮, 没意义
 6. **F-010 同 query 随机性** — 接 agent 后频次拉高才有体感场景, 之前做没数据支撑
 
@@ -119,18 +119,13 @@
 
 > 已识别但暂不做的功能。多数对应 ROADMAP Phase 1+。
 
-### F-014 · D-085 PR-E Lab "人话层" trace render (P0, 下一波 PR)
+### F-014 · D-085 PR-E Lab "人话层" trace render ✅ DONE 2026-05-17
 
 - **来源**: D-085 共识 Q9 / invariant 9 — "Lab trace 视图做'人话层'+'技术层'双档"; 志丹 2026-05-17 拍 D-Q1 = B + P0
-- **状态**: open, **方案已定 (B LLM 摘要)**, 待开 PR-E
-- **What**: Lab `/sessions/{sid}` 详情页默认显示自然语言摘要 ("因为你昨天反馈喜欢清淡 + 今天 38℃ + 这家有空调"), 展开看技术层 L1/L2/L3 DAG
-- **实施 sketch**:
-  - 后端 `chisha/api_lab.py:/api/lab/sessions/{sid}` 加可选 `?with_summary=true` query, 走 haiku 4.5 调 trace 关键字段拼 prompt 返 50-100 字摘要
-  - prompt 输入 = top1 候选 + ctx (天气/时段/refine_intent) + L2 命中的 3 个最高分维度 + L3 reason_one_line
-  - 摘要缓存进 trace 文件 (写一次, 改 trace shape 时 invalidate)
-  - 前端 `apps/debug-ui` 详情页头部加 "人话层" card, "展开技术层 ▾" 折叠开关
-- **预估工程量**: 2-3 天 (后端 haiku 调用 + prompt 调 + 前端 UI + 测试)
-- **约束**: 不引入新 LLM provider, 复用 `chisha/llm_providers/`; 摘要失败 fall back "无 LLM 摘要" 不阻断技术层渲染
+- **状态**: **完成**, 落在 `refactor/d085-living-lab-pr-a` 分支 (跟 D-085 主体一起 merge)
+- **实施**: E1/E2/E3/E4 + BLOCKER fix 共 5 commit. 端点 `GET /api/lab/sessions/{sid}/summary` (haiku 4.5, fail-closed); SummaryCard 渲在 DagHeader 之前; 缓存写 trace 顶层 __summary sibling, fingerprint 失效. 单测 29 个 (E1=20 + E2=9) + chrome-devtools-mcp UI smoke 实测 cached=true 通过.
+- **smoke 实测**: 首访 ~16s (haiku 调用), 二访 13ms (缓存命中, 字段对得上)
+- **细节**: 见 `docs/design_briefs/D-085-PR-E.md`
 
 ### F-015 · D-085 PR-G Living Agent 接入 (后续决策)
 
