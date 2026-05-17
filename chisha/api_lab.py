@@ -499,7 +499,13 @@ def api_lab_session_summary(request: Request, session_id: str) -> dict:
     is_what_if = trace.get("__source") == "what_if_preview"
     if not is_what_if:
         trace["__summary"] = summary_to_persist
-        ok = trace_store.write_trace(session_id, trace, root=ROOT)
+        # D-085 PR-E: 必须写回 read_trace 实际命中的文件 (prod 或 sandbox 目录),
+        # 不能跟 sandbox.is_enabled 全局状态走 — 否则 sandbox 启用时写 sandbox
+        # dir 但读优先 prod, 缓存永远命不中.
+        target_path = trace_store.find_trace_path(session_id, root=ROOT)
+        ok = trace_store.write_trace(
+            session_id, trace, root=ROOT, explicit_path=target_path
+        )
         if not ok:
             import logging as _logging
             _logging.getLogger(__name__).warning(

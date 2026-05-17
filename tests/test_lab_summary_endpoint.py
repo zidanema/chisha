@@ -241,6 +241,47 @@ def test_summary_fallback_can_retry_after_recovery(client, monkeypatch):
 
 # ────────────────────────── what-if preview
 
+def test_summary_cache_writes_to_read_hit_dir_even_with_sandbox_enabled(
+    client, monkeypatch,
+):
+    """守门 (PR-E smoke 发现的 bug): sandbox 启用时, write_trace 默认走 sandbox
+    dir, 但 read_trace 优先 prod 命中 → 摘要必须写到 read 命中的 prod 文件,
+    否则缓存永远命不中. find_trace_path + write_trace(explicit_path=) 保证.
+    """
+    from chisha import sandbox
+    c, root = client
+    sid = "sess_in_prod"
+    # 写一条 prod trace (sandbox 未启用)
+    trace_store.write_trace(sid, _make_trace(sid), root=root)
+    # 然后启用 sandbox (模拟用户在 Lab 启了沙盒, 但仍想看 prod trace 摘要)
+    monkeypatch.setattr(sandbox, "_project_root", lambda: root)
+    sandbox.init(start_date="2026-05-20", root=root)
+    assert sandbox.is_enabled(root)
+
+    monkeypatch.setattr(lab_summary, "summarize", _fake_summarize_ok())
+
+    # 首访 — miss
+    r1 = c.get(f"/api/lab/sessions/{sid}/summary")
+    assert r1.status_code == 200
+    assert r1.json()["cached"] is False
+
+    # 二访 — 必须 hit (之前 bug: sandbox 启用 → 写 sandbox dir, 读 prod dir,
+    # 永远 cached=false)
+    r2 = c.get(f"/api/lab/sessions/{sid}/summary")
+    assert r2.status_code == 200
+    assert r2.json()["cached"] is True, (
+        "sandbox 启用时 lab_summary 缓存必须写到 read_trace 命中的 prod 目录, "
+        "不能跟 sandbox.is_enabled 全局状态走"
+    )
+
+    # 验 __summary 确实写到 prod 文件 (而非 sandbox 文件)
+    prod_path = data_root.recommend_trace_prod_dir(root) / f"{sid}.json"
+    sb_path = data_root.recommend_trace_sandbox_dir(root) / f"{sid}.json"
+    prod_data = json.loads(prod_path.read_text())
+    assert "__summary" in prod_data
+    assert not sb_path.exists() or "__summary" not in json.loads(sb_path.read_text())
+
+
 def test_summary_for_what_if_preview_does_not_persist(client, monkeypatch):
     """what-if trace 即便在 prod 目录里 (测试场景), 也不写 __summary 回去."""
     c, root = client

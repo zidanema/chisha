@@ -55,6 +55,8 @@ def write_trace(
     session_id: str,
     trace: dict,
     root: Optional[Path] = None,
+    *,
+    explicit_path: Optional[Path] = None,
 ) -> bool:
     """原子写 trace 文件. 失败 logger.warning, 返 False (不抛, 不阻断 recommend).
 
@@ -62,6 +64,11 @@ def write_trace(
         session_id: trace 文件名 (不带 .json), 不能含 / 或空格.
         trace: 完整 trace dict, 顶层会被强制 set __version=TRACE_SCHEMA_VERSION.
         root: 项目根. None=自动 (sandbox 派生由 data_root 处理).
+        explicit_path: D-085 PR-E. 直接覆盖目标文件路径. 用于"读到哪写哪"场景
+            (lab_summary cache 写回 trace 顶层 __summary 时, 必须写到 read_trace
+            实际命中的那个目录, 否则 sandbox 启用时写 sandbox dir / 读 prod dir
+            会让缓存永远命不中). 若给了 explicit_path, 跳过 sandbox is_sandbox
+            重打标 (保留 trace 原 is_sandbox 字段).
 
     Returns:
         True 写盘成功, False 失败 (warn 已 log).
@@ -75,11 +82,16 @@ def write_trace(
         # D-085: trace 自描述 — 写时记录是否在 sandbox 模式下生成. Lab Replay 不
         # 用读目录就知道. 默认查询过滤掉 sandbox (invariant 4).
         # 老 trace 缺该字段 → 读侧默认 False.
-        try:
-            from chisha import sandbox as _sandbox
-            trace["is_sandbox"] = bool(_sandbox.is_enabled(root))
-        except Exception:
-            # sandbox state 读取异常不阻断写盘
+        # explicit_path 模式 (D-085 PR-E lab_summary 写回): 不重打 is_sandbox,
+        # 因为 sandbox 启用时 caller 可能正在更新一条 prod trace, 重打会污染.
+        if explicit_path is None:
+            try:
+                from chisha import sandbox as _sandbox
+                trace["is_sandbox"] = bool(_sandbox.is_enabled(root))
+            except Exception:
+                # sandbox state 读取异常不阻断写盘
+                trace.setdefault("is_sandbox", False)
+        else:
             trace.setdefault("is_sandbox", False)
         # session_id 反注入: 不允许 / 或 ..
         if "/" in session_id or ".." in session_id or not session_id:
@@ -97,9 +109,13 @@ def write_trace(
                 )
                 return False
 
-        d = data_root.recommend_trace_dir(root)
-        d.mkdir(parents=True, exist_ok=True)
-        p = d / f"{session_id}.json"
+        if explicit_path is not None:
+            p = explicit_path
+            p.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            d = data_root.recommend_trace_dir(root)
+            d.mkdir(parents=True, exist_ok=True)
+            p = d / f"{session_id}.json"
         # D-079 Codex FIX-NOW #7: tmp 文件名加 pid + 短随机后缀, 防并发 write
         # 撞同名 .tmp (即便 sid 撞了, tmp 也独立 → 不破坏对方写盘)
         import os
@@ -115,6 +131,27 @@ def write_trace(
 
 
 # ────────────────────────── 读路径
+
+def find_trace_path(
+    session_id: str,
+    root: Optional[Path] = None,
+) -> Optional[Path]:
+    """找 trace 实际落盘位置. 跨 prod + sandbox 双目录, 与 read_trace 顺序一致.
+
+    用于"读到哪写哪"场景 (D-085 PR-E lab_summary cache 写回 trace 顶层):
+    sandbox 启用时 write_trace 默认走 sandbox dir, 但 read 优先 prod 命中 →
+    需要这个 helper 让 caller 显式 write 到 read 命中的同一文件.
+    """
+    if "/" in session_id or ".." in session_id or not session_id:
+        raise ValueError(f"invalid session_id: {session_id!r}")
+    for c in (
+        data_root.recommend_trace_prod_dir(root) / f"{session_id}.json",
+        data_root.recommend_trace_sandbox_dir(root) / f"{session_id}.json",
+    ):
+        if c.exists():
+            return c
+    return None
+
 
 def read_trace(
     session_id: str,
