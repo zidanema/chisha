@@ -16,19 +16,50 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional, TypedDict
 
 from chisha import data_root
 
 
 logger = logging.getLogger(__name__)
 
-TRACE_SCHEMA_VERSION = 1
+TRACE_SCHEMA_VERSION = 2  # T-00: bump 1→2, 加 l1.hard_filter_events 数组占位
+# v=1 trace 可被 read/list 接受 (on-read migration 注空 hard_filter_events).
+# write_trace 始终落当前版本; 下次 write 把 v=1 升 v=2 是预期行为.
+ACCEPTED_TRACE_VERSIONS: set[int] = {1, 2}
 # D-079 用户决策: trace 大小不省空间, 调试完整性优先 (Phase 0 单 zone 1260 dishes
 # 实测 ~1.3MB 是常态). 这里 50MB 是纯 sanity bound, 防意外/恶意大数据写满磁盘,
 # 不是日常裁剪阈值. 正常 trace (<5MB) 直接写, 不走任何裁剪.
 MAX_TRACE_BYTES = 50 * 1024 * 1024  # 50MB sanity bound
+
+
+# ────────────────────────── L0 三分 + hard_filter_event schema (T-00)
+# 配合 docs/CONTRACTS.md「L0 三分判定表」: A 医学 / B 身份 / C 健康 + methodology
+L0Category = Literal["L0_A_medical", "L0_B_identity", "L0_C_health", "methodology"]
+
+
+class HardFilterEvent(TypedDict, total=False):
+    """L1 hard_filter 触发的事件记录. T-P1a-01 会真实写入. 本任务只建占位.
+
+    顶层位置: trace["l1"]["hard_filter_events"] (list[HardFilterEvent]).
+    """
+    event_type: str            # 固定 "hard_filter"
+    category: L0Category       # 严格枚举, append_hard_filter_event 校验
+    rule: str                  # 人读规则名 "蔬菜占比≥50%" / "no_peanut_allergy"
+    dropped_count: int
+    kept_count: int
+    refine_override: bool      # C 类被 refine 解除时 True
+    timestamp: float           # time.time()
+
+
+_HFE_VALID_CATEGORIES: set[str] = {
+    "L0_A_medical", "L0_B_identity", "L0_C_health", "methodology"
+}
+_HFE_REQUIRED_FIELDS: tuple[str, ...] = (
+    "category", "rule", "dropped_count", "kept_count"
+)
 
 
 class TraceCorrupt(RuntimeError):
@@ -67,6 +98,12 @@ def write_trace(
     """
     try:
         trace["__version"] = TRACE_SCHEMA_VERSION
+        # T-00: v2 兜底注入 l1.hard_filter_events = [] (Codex review blocker #1).
+        # api._build_trace / debug_recommend._build_l1_trace 上游不主动 init 时,
+        # 在写盘前保证字段存在; 上游已 append 的事件保留.
+        l1_block = trace.setdefault("l1", {})
+        if isinstance(l1_block, dict) and "hard_filter_events" not in l1_block:
+            l1_block["hard_filter_events"] = []
         # session_id 反注入: 不允许 / 或 ..
         if "/" in session_id or ".." in session_id or not session_id:
             raise ValueError(f"invalid session_id: {session_id!r}")
@@ -137,8 +174,22 @@ def read_trace(
             f"moved to {backup.name}"
         )
     version = data.get("__version")
-    if version != TRACE_SCHEMA_VERSION:
+    if version not in ACCEPTED_TRACE_VERSIONS:
         raise TraceVersionMismatch(found=version)
+    return _normalize_to_current_version(data)
+
+
+def _normalize_to_current_version(data: dict) -> dict:
+    """v=1 → v=2 on-read migration. 注空 hard_filter_events 让 caller 看到统一 shape.
+
+    **不写回磁盘**, 不改 __version 字段 (保留来源记录).
+    下次 write_trace 会把 __version 强制设为 TRACE_SCHEMA_VERSION (refine merge 走这条).
+    """
+    version = data.get("__version")
+    if version == 1:
+        l1 = data.setdefault("l1", {})
+        if "hard_filter_events" not in l1:
+            l1["hard_filter_events"] = []
     return data
 
 
@@ -184,8 +235,11 @@ def list_traces(
                 corrupt_count += 1
                 continue
             version = data.get("__version")
-            if version != TRACE_SCHEMA_VERSION:
-                # 版本不匹配的 trace 跳过, 不算 corrupt
+            if version not in ACCEPTED_TRACE_VERSIONS:
+                # 版本不在 accepted 集合的 trace 跳过, 不算 corrupt.
+                # 列表路径不需要 normalize (只读 top1_summary 等元信息, 不需要 l1.hard_filter_events).
+                logger.info("list_traces skipped unknown __version=%r at %s",
+                            version, p.name)
                 continue
             frozen = data.get("__frozen") or {}
             mt = frozen.get("meal_type") or data.get("l1", {}).get("meal")
@@ -344,3 +398,58 @@ def _truncate_for_size(trace: dict) -> dict:
 
 def _trace_size_bytes(trace: dict) -> int:
     return len(json.dumps(trace, ensure_ascii=False).encode("utf-8"))
+
+
+# ────────────────────────── hard_filter_event helper (T-00)
+
+def append_hard_filter_event(
+    trace: dict,
+    *,
+    category: str,
+    rule: str,
+    dropped_count: int,
+    kept_count: int,
+    refine_override: bool = False,
+    timestamp: float | None = None,
+) -> bool:
+    """T-P1a-01 真实写事件用. 本任务只建占位 + schema 校验.
+
+    校验规则:
+      - category 必须 ∈ L0Category (A/B/C/methodology), 否则 warn + 不写
+      - rule 必须非空字符串, dropped_count / kept_count 必须 int >= 0
+      - 写入位置: trace.setdefault("l1", {}).setdefault("hard_filter_events", []).append(...)
+
+    Returns:
+        True 写入成功, False 校验失败 (warn 已 log, 与 best-effort 风格一致).
+
+    边界:
+      - 本 helper 不直接 write_trace; 调用方组装 trace 后再写盘.
+      - 同 trace 多事件按调用顺序追加, 后续可加 collapse/dedup 逻辑.
+    """
+    if category not in _HFE_VALID_CATEGORIES:
+        logger.warning("append_hard_filter_event: invalid category=%r, skip", category)
+        return False
+    if not isinstance(rule, str) or not rule.strip():
+        logger.warning("append_hard_filter_event: empty rule, skip")
+        return False
+    # bool 是 int 的子类, 显式排除 (Codex review NOTE).
+    if isinstance(dropped_count, bool) or not isinstance(dropped_count, int) or dropped_count < 0:
+        logger.warning("append_hard_filter_event: bad dropped_count=%r, skip", dropped_count)
+        return False
+    if isinstance(kept_count, bool) or not isinstance(kept_count, int) or kept_count < 0:
+        logger.warning("append_hard_filter_event: bad kept_count=%r, skip", kept_count)
+        return False
+
+    event: HardFilterEvent = {
+        "event_type": "hard_filter",
+        "category": category,  # type: ignore[typeddict-item]
+        "rule": rule.strip(),
+        "dropped_count": dropped_count,
+        "kept_count": kept_count,
+        "refine_override": bool(refine_override),
+        "timestamp": timestamp if timestamp is not None else time.time(),
+    }
+    l1 = trace.setdefault("l1", {})
+    events = l1.setdefault("hard_filter_events", [])
+    events.append(event)
+    return True

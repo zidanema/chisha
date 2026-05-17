@@ -73,6 +73,9 @@ class RefineIntent:
     price_band: str | None = None                               # ∈ PRICE_BANDS
     freeform_note: str = ""                                     # 原文兜底, L3 看
     raw_text: str = ""                                          # 调试/trace 用
+    # T-00: schema 版本号. P1a-03 多 slot 升级时 bump "2.0", What-if/trace 据此识别 shape.
+    # 不属于语义维度, is_empty() 不检查.
+    schema_version: str = "1.0"
 
     def to_log_dict(self) -> dict[str, Any]:
         return asdict(self)

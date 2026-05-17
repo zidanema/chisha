@@ -249,3 +249,41 @@ def test_parse_refine_intent_conflict_returns_raw():
     # 此处仅断言不会崩 + raw_flavor 携带原词
     assert isinstance(p["flavor_tags"], list)
     assert "辣" in p["raw_flavor"] or len(p["raw_flavor"]) > 0
+
+
+# ────────────────────────── T-00: schema_version 字段
+
+
+def test_refine_intent_has_default_schema_version():
+    """RefineIntent 加 schema_version 默认 '1.0', 旧调用方零侵入."""
+    from chisha.refine_intent import RefineIntent, parse_refine_intent
+    # 默认构造
+    intent = RefineIntent()
+    assert intent.schema_version == "1.0"
+    # parse_refine_intent 路径 (text="" 走早返分支)
+    empty = parse_refine_intent("")
+    assert empty.schema_version == "1.0"
+    # parse_refine_intent 路径 (rule_parse 走 to_log_dict 都该有)
+    parsed = parse_refine_intent("想吃湘菜", use_llm=False)
+    assert parsed.schema_version == "1.0"
+
+
+def test_empty_refine_intent_still_empty_with_schema_version():
+    """Codex audit 提示: 加 schema_version 不能让 is_empty() 假阴性.
+
+    is_empty() 只检查语义维度, 不检查 schema_version (元信息).
+    refine.py 用 is_empty() 判断是否注入 ctx, 如果误判会让空 refine 走非空分支.
+    """
+    from chisha.refine_intent import RefineIntent, parse_refine_intent
+    assert RefineIntent().is_empty() is True
+    assert parse_refine_intent("").is_empty() is True
+    # 显式构造 schema_version 不同也不应改变 is_empty
+    assert RefineIntent(schema_version="2.0").is_empty() is True
+
+
+def test_refine_intent_schema_version_in_to_log_dict():
+    """to_log_dict() (走 asdict) 应包含 schema_version → trace 看得见."""
+    from chisha.refine_intent import RefineIntent
+    d = RefineIntent().to_log_dict()
+    assert "schema_version" in d
+    assert d["schema_version"] == "1.0"

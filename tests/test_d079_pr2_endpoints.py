@@ -326,3 +326,62 @@ def test_what_if_with_profile_overrides(app_root):
         assert body["__config"]["profile_overrides"] == {
             "scoring_weights": {"distance": 5.0}
         }
+
+
+# ────────────────────────── T-00: v1 trace 端点级兼容
+
+
+def _write_raw_v1_trace_for_endpoint(root: Path, sid: str) -> None:
+    """绕过 write_trace 落 __version=1 的最小 trace (模拟 bump 前历史)."""
+    p = data_root.recommend_trace_dir(root)
+    p.mkdir(parents=True, exist_ok=True)
+    trace = {
+        "__version": 1,
+        "__source": "production",
+        "session_id": sid,
+        "started_at": "2026-05-01T12:00:00+00:00",
+        "l1": {"summary": {}},
+        "l2": {"summary": {"n_scored": 0}},
+        "l3": {"status": "skipped"},
+        "final": [],
+    }
+    (p / f"{sid}.json").write_text(json.dumps(trace, ensure_ascii=False),
+                                     encoding="utf-8")
+
+
+def test_get_session_detail_accepts_v1_trace_after_bump(app_root):
+    """T-00 bump 1→2 后, v=1 旧 trace 通过 /api/debug/sessions/{sid} 仍能访问.
+
+    Codex audit 重点防线: read_trace 接受 v=1 + on-read migration 注空 hard_filter_events.
+    """
+    app, root = app_root
+    sid = "sess_v1_endpoint_detail_20240101"
+    _write_raw_v1_trace_for_endpoint(root, sid)
+    with TestClient(app) as c:
+        r = c.get(f"/api/debug/sessions/{sid}")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["session_id"] == sid
+        # __version 字段保留磁盘原值 (不被 normalizer 修改)
+        assert body["__version"] == 1
+        # hard_filter_events 被 on-read migration 注入空数组
+        assert body["l1"].get("hard_filter_events") == []
+
+
+def test_list_sessions_includes_v1_after_bump(app_root):
+    """T-00 bump 1→2 后, Sidebar (/api/debug/sessions) 必须仍能列出 v=1 trace.
+
+    Codex audit blocker #1: list_traces 单独做版本门控, 必须同步接受 v=1.
+    """
+    app, root = app_root
+    v1_sid = "sess_v1_listing_20240101"
+    _write_raw_v1_trace_for_endpoint(root, v1_sid)
+    # 再种一条 v=2 trace 走 write_trace
+    v2_sid = _seed_trace(root)
+    with TestClient(app) as c:
+        r = c.get("/api/debug/sessions")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        sids = {item["session_id"] for item in body.get("items", [])}
+        assert v1_sid in sids
+        assert v2_sid in sids
