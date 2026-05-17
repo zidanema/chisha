@@ -15,7 +15,7 @@
       "title": "methodology 硬契约下沉 L1 (含 L0 三分)",
       "regression_risk": "high",
       "depends_on": ["T-00"],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "T-P1a-02",
