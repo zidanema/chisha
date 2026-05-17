@@ -638,20 +638,22 @@ def recall(
     meal_type: str | None = None,
     intent=None,  # D-073: RefineIntent | None, refine 二轮启用
     n: int = 5,
+    *,
+    recall_fallback_events: list[dict] | None = None,
 ) -> list[dict]:
     """主入口. 返回候选 combos: [{restaurant, dishes, meta}, ...].
 
     meal_type 传入则启用 combo 总价硬过滤 (D-041).
-    D-073 (Codex §2/§3): intent 非空时:
-      - combo 生成层注入 intent boost (build_combos_for_restaurant)
-      - 召回后做三桶拼合: exact / soft / 全集兜底
-      - cuisine_avoid + ingredient_avoid 做硬过滤
-      - Q1 决策: cuisine_want 严过滤后 < 阈值时回落全集 (let L2 boost 顶上目标)
+    D-073: intent 非空时三桶拼合 + Q1 回落.
+    T-P1a-02 (D-084): refine 模式参数差异化 (per_rest_max 提到 5) +
+      ingredient_want L1 反查 + 三级回落 (≥30 floor / fill to 60).
 
     Args:
       n: 期望最终输出候选数 (用于计算三桶配额阈值; refine 时下游默认 5).
+      recall_fallback_events: 可选 list, 不为 None 时三级回落写事件追加进去.
     """
     meal_log = meal_log or []
+    has_intent = intent is not None and not intent.is_empty()
 
     # 1. 多样性过滤先算"近期已吃"被禁餐厅
     _, diversity_avoid = diversity_filter([], meal_log, profile, today=today)
@@ -659,8 +661,21 @@ def recall(
     extra_banned = compute_extra_banned_restaurants(restaurants, profile)
     avoid_rests = diversity_avoid | extra_banned
 
-    # 2. 硬过滤 dishes (含 P1 三个黑名单)
+    # 2. 硬过滤 dishes (含 P1 三个黑名单 + L0-A/B 永不可破)
     dishes, _ = hard_filter(dishes_tagged, profile, avoid_rests)
+
+    # T-P1a-02: refine 模式 ingredient_want 进 L1 反查
+    # (复用 l0_constraints helpers, 不调 hard_filter 避免双重事件写入)
+    if has_intent:
+        extra = _ingredient_want_reverse_lookup(
+            dishes_tagged, intent, profile, avoid_rests
+        )
+        if extra:
+            existing = {d.get("dish_id") for d in dishes}
+            for d in extra:
+                if d.get("dish_id") not in existing:
+                    dishes.append(d)
+                    existing.add(d.get("dish_id"))
 
     # 3. 多样性过滤 dishes (主蛋白)
     dishes, _ = diversity_filter(dishes, meal_log, profile, today=today)
@@ -671,7 +686,12 @@ def recall(
         by_rest[d["restaurant_id"]].append(d)
 
     rest_idx = {r["id"]: r for r in restaurants}
-    per_rest_max = profile.get("recall", {}).get("per_restaurant_max", 3)
+    # T-P1a-02: refine 模式 per_rest_max 提到 5 (可配 refine_per_restaurant_max)
+    rcfg = profile.get("recall", {}) or {}
+    if has_intent:
+        per_rest_max = rcfg.get("refine_per_restaurant_max", 5)
+    else:
+        per_rest_max = rcfg.get("per_restaurant_max", 3)
 
     # 5. 每家餐厅生成 combos (intent 进入排序)
     combos: list[dict] = []
@@ -692,17 +712,71 @@ def recall(
 
     # 7. D-073: intent 三桶拼合 + avoid 硬过滤 (仅 refine 二轮)
     if intent is not None:
-        combos = _apply_intent_buckets(combos, intent, n=n)
+        combos = _apply_intent_buckets(
+            combos, intent, n=n,
+            recall_fallback_events=recall_fallback_events,
+        )
 
     return combos
+
+
+def _ingredient_want_reverse_lookup(
+    dishes_tagged: list[dict],
+    intent,
+    profile: dict,
+    avoid_rests: set[str],
+) -> list[dict]:
+    """T-P1a-02: refine 模式下, 把"含 ingredient_want 关键词" 的菜捞回候选池.
+
+    不能调 hard_filter (会双重写 L0 事件 + N+1 偏好过滤). 只复用 l0_constraints
+    helpers + 餐厅黑名单, 让 medical safety / identity 红线穿透.
+
+    避开 hard_filter 的偏好类过滤 (avoid_dishes/spicy_tolerance/avoid_main_ingr 等),
+    让 refine 表达对偏好"穿透" — refine 是用户当下意图, 优先级 > 长期偏好.
+    """
+    from chisha.l0_constraints import (
+        load_l0_constraints, dish_violates_l0_a, dish_violates_l0_b,
+    )
+    ingredient_want = getattr(intent, "ingredient_want", None) or []
+    if not ingredient_want:
+        return []
+    l0c = load_l0_constraints(profile)
+    # 全集 monthly_sales 下限 (不卡 min_sales, 让冷门 ingredient 命中也回来)
+    out: list[dict] = []
+    for d in dishes_tagged:
+        rid = d.get("restaurant_id")
+        if rid in avoid_rests:
+            continue
+        # L0-A/B 永不可破
+        if not l0c.is_empty():
+            if dish_violates_l0_a(d, l0c) or dish_violates_l0_b(d, l0c):
+                continue
+        # ingredient_want 命中 (名字 substring 或 main_ingredient_type 在广义词覆盖范围)
+        name = (d.get("canonical_name") or "") + " " + (d.get("raw_name") or "")
+        np_ = d.get("nutrition_profile") or {}
+        from chisha.score import _INGREDIENT_BROAD
+        hit = False
+        for ing in ingredient_want:
+            if ing and ing in name:
+                hit = True
+                break
+            broad = _INGREDIENT_BROAD.get(ing)
+            if broad and np_.get("main_ingredient_type") in broad:
+                hit = True
+                break
+        if hit:
+            out.append(d)
+    return out
 
 
 def _apply_intent_buckets(
     combos: list[dict],
     intent,
     n: int = 5,
+    *,
+    recall_fallback_events: list[dict] | None = None,
 ) -> list[dict]:
-    """D-073 (Codex §2): 三桶拼合 + Q1 回落.
+    """D-073: 三桶拼合 + Q1 回落. T-P1a-02: 三级回落 + 事件落 trace.
 
     流程:
       1. 硬过滤: cuisine_avoid + ingredient_avoid (用户明确不要)
@@ -710,9 +784,14 @@ def _apply_intent_buckets(
          - bucket_exact: cuisine_exact_match
          - bucket_soft: cuisine_soft_match (店名/菜名子串) 或 ingredient 命中
          - bucket_rest: 全集兜底
-      3. 阈值 max(n*2, L3_INPUT_TOP_K*0.15) ≈ max(10, 9) = 10:
-         - exact 桶 >= 阈值 → 优先保留 [:threshold] + soft + rest
-         - exact 桶 < 阈值 → Q1 回落: 不严过滤, 让 L2 intent_match 自然顶上
+      3. T-P1a-02 三级回落 (brief §6 "保底「至少 30 个 intent 命中」"):
+         - intent_hit = len(exact) + len(soft)
+         - target = L3_INPUT_TOP_K (60)
+         - **30 是 floor 不是 ceiling**, 三级都尽量填到 target=60:
+         - Level 1 (intent_hit ≥ 30): 健康召回, 返 exact + soft + rest (填到 target)
+         - Level 2 (10 ≤ intent_hit < 30): 命中数偏低, 同 Level 1 但 trace 警示
+         - Level 3 (intent_hit < 10): refine 严重偏数据, 返全集 (event 提示)
+      4. avoid 硬过滤始终生效 (在三桶分类前).
     """
     from chisha.score import cuisine_exact_match, cuisine_soft_match, contains_ingredient
     from chisha.rerank import L3_INPUT_TOP_K
@@ -751,13 +830,44 @@ def _apply_intent_buckets(
         else:
             bucket_rest.append(c)
 
-    threshold = max(n * 2, int(L3_INPUT_TOP_K * 0.15))
-    # Q1 回落: 若 exact 桶 < 阈值, 不严过滤 (回落全集), 让 L2 boost 自然顶上
-    if len(bucket_exact) >= threshold:
-        # 命中桶充足, 让命中桶在前, soft + rest 兜底 (依然让 L2 重排)
-        return bucket_exact + bucket_soft + bucket_rest
-    # Q1 回落场景: exact < 阈值, 全集保留多样性
-    return bucket_exact + bucket_soft + bucket_rest
+    # T-P1a-02: 三级回落 (≥30 是 floor, target=60).
+    # 注: 各级实际返回都是 exact + soft + rest 拼合 (尽量填到 target);
+    # 级别仅影响 trace 事件 label, 用于 observability + L3 prompt 上层可见.
+    intent_hit = len(bucket_exact) + len(bucket_soft)
+    target = L3_INPUT_TOP_K  # 60
+    floor = 30
+
+    if intent_hit >= floor:
+        level = 1
+    elif intent_hit >= 10:
+        level = 2
+    else:
+        level = 3
+
+    out = bucket_exact + bucket_soft + bucket_rest
+
+    if recall_fallback_events is not None:
+        # 走 chisha.clock 而非 time.time() — sandbox time-travel 下保证一致性
+        # (Codex review blocker: 与 hard_filter_event timestamp 风格保持一致;
+        # 后者用 time.time, 因不参与 sandbox 时间穿越判定, 此处选择 isoformat
+        # 字符串保留时区信息, 与 What-if frozen 字段同风格)
+        from chisha import clock as _clock
+        recall_fallback_events.append({
+            "event_type": "recall_fallback",
+            "level": level,
+            "intent_hit_count": intent_hit,
+            "exact_count": len(bucket_exact),
+            "soft_count": len(bucket_soft),
+            "rest_count": len(bucket_rest),
+            "total_returned": min(len(out), target),
+            "target_top_k": target,
+            "floor": floor,
+            "timestamp": _clock.now_utc().isoformat(),
+        })
+
+    # 关于 D-073 原 Q1 阈值: 现在三级回落已覆盖. 保留同输出 (exact+soft+rest 拼接),
+    # L2 boost 仍负责重排顺位.
+    return out
 
 
 if __name__ == "__main__":

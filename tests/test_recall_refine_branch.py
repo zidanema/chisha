@@ -1,0 +1,312 @@
+"""T-P1a-02: L1 召回参数 refine 分支 + ingredient_want 反查 + 三级回落.
+
+覆盖:
+  - intent=None / is_empty → 旧行为不变 (baseline 0 diff 子项)
+  - intent 非空 → per_rest_max = refine_per_restaurant_max (默认 5)
+  - ingredient_want 走反查回到候选池
+  - 反查不绕开 L0-A allergy / L0-B identity (medical safety)
+  - 三级回落 trace 事件 level=1/2/3
+  - per_rest_max=5 + brand cap=2 仍正确卡 (apply_caps 不被打破)
+"""
+from __future__ import annotations
+
+import datetime as dt
+
+from chisha.recall import recall, _ingredient_want_reverse_lookup
+from chisha.refine_intent import RefineIntent
+
+
+def _make_dish(dish_id, name, *, restaurant_id="r1",
+               main_ingredient_type="红肉", oil_level=2,
+               protein_grams_estimate=30, vegetable_ratio_estimate=0.0,
+               processed_meat_flag=False, sales=100):
+    return {
+        "dish_id": dish_id,
+        "canonical_name": name,
+        "raw_name": name,
+        "restaurant_id": restaurant_id,
+        "monthly_sales": sales,
+        "cuisine": "潮汕",
+        "nutrition_profile": {
+            "main_ingredient_type": main_ingredient_type,
+            "cooking_method": "煮",
+            "oil_level": oil_level,
+            "protein_grams_estimate": protein_grams_estimate,
+            "vegetable_ratio_estimate": vegetable_ratio_estimate,
+            "is_complete_meal": False,
+            "spicy_level": 0,
+            "processed_meat_flag": processed_meat_flag,
+            "sweet_sauce_level": 0,
+            "wetness": 1,
+            "dish_role": "主菜" if main_ingredient_type in ("红肉", "白肉",
+                                                              "海鲜") else "配菜",
+            "tags": [],
+            "grain_type": "无",
+        },
+    }
+
+
+def _make_veg_dish(dish_id, name, *, restaurant_id="r1"):
+    return _make_dish(dish_id, name, restaurant_id=restaurant_id,
+                       main_ingredient_type="纯素", protein_grams_estimate=3,
+                       vegetable_ratio_estimate=0.95)
+
+
+def _make_rest(rid, name="店", brand=None):
+    return {
+        "id": rid,
+        "name": name,
+        "office_zone": "test",
+        "category": "潮汕",
+        "distance_m": 500,
+        "delivery_eta_min": 20,
+        "monthly_orders": 500,
+        "rating": 4.5,
+        "brand": brand or name,
+    }
+
+
+def _make_profile(*, allergies=None, dietary_law=None,
+                   per_restaurant_max=3, refine_per_restaurant_max=5):
+    p: dict = {
+        "preferences": {"avoid_dishes": [], "avoid_main_ingredients": [],
+                         "avoid_cooking_methods": [], "banned_cuisines": [],
+                         "spicy_tolerance": 5},
+        "plate_rule": {"must_have_vegetable": True, "min_vegetable_dishes": 1,
+                       "min_protein_g": 0, "hard_max_oil_level": 5},
+        "recall": {"per_restaurant_max": per_restaurant_max,
+                   "refine_per_restaurant_max": refine_per_restaurant_max,
+                   "min_monthly_sales": 0,
+                   "max_protein_per_combo": 4, "max_veg_per_combo": 2,
+                   "max_carb_per_combo": 1, "max_dishes_per_combo": 4},
+        "diversity": {"no_same_restaurant_within_days": 7,
+                       "no_same_main_ingredient_within_days": 3},
+        "delivery_constraints": {"hard_max_eta_min": 60},
+    }
+    if allergies is not None or dietary_law is not None:
+        p["l0_constraints"] = {
+            "medical": {"allergies": allergies or []},
+            "identity": {"dietary_law": dietary_law},
+        }
+    return p
+
+
+# ────────────────────────── per_rest_max 分支
+
+
+def test_recall_empty_intent_no_extra_branch():
+    """intent=None → 走默认 per_rest_max, ingredient 反查不触发, fallback events 不写."""
+    dishes = [_make_dish(f"d{i}", f"红烧肉{i}") for i in range(8)] + \
+             [_make_veg_dish("d_veg", "炒油麦菜")]
+    rests = [_make_rest("r1", "潮汕汤店")]
+    p = _make_profile(per_restaurant_max=3)
+    events: list[dict] = []
+    out = recall(p, rests, dishes, recall_fallback_events=events)
+    # 默认 per_rest_max=3 → combo 数 ≤ 3
+    assert len(out) <= 3
+    # intent=None → 不进 _apply_intent_buckets → 不写事件
+    assert events == []
+
+
+def test_recall_with_intent_uses_refine_per_rest_max():
+    """intent 非空 → per_rest_max=5 让一家餐厅出 5 个 combo (严格 == 5).
+
+    Codex review #6 修订: 收紧断言到 == 5 而非 ≤ 5.
+    """
+    # 10 道肉 + 1 道菜, 让 combo 候选数充足
+    dishes = [_make_dish(f"d{i}", f"红烧肉{i}", protein_grams_estimate=30)
+              for i in range(10)] + \
+             [_make_veg_dish("d_veg", "炒油麦菜")]
+    rests = [_make_rest("r1", "潮汕汤店")]
+    p = _make_profile(per_restaurant_max=3, refine_per_restaurant_max=5)
+    intent = RefineIntent(cuisine_want=["潮汕"], raw_text="想吃潮汕")
+    events: list[dict] = []
+    out = recall(p, rests, dishes, intent=intent,
+                 recall_fallback_events=events)
+    # refine 模式 per_rest_max=5: build_combos 输出 == 5 (combo 池足够)
+    # 与 default per_rest_max=3 形成对比 (test_recall_empty_intent ≤ 3)
+    assert len(out) == 5, f"refine 应出 5 combo, 实出 {len(out)}"
+    # 三级回落事件写入
+    assert len(events) == 1
+    assert events[0]["event_type"] == "recall_fallback"
+    # timestamp 是 isoformat 字符串 (Codex review #5: 不用 time.time())
+    assert isinstance(events[0]["timestamp"], str)
+    assert "T" in events[0]["timestamp"]  # ISO 8601 sanity
+
+
+# ────────────────────────── ingredient_want 反查
+
+
+def test_ingredient_want_reverse_lookup_pulls_in_dishes():
+    """ingredient_want=['肉'] → 含'肉'菜被反查回候选, 即便 hard_filter 后不在主池."""
+    # 多餐厅: r1 主要走主流程, r2 仅靠反查回来
+    dishes_in_main = [_make_dish("d_a", "牛肉饭",
+                                   main_ingredient_type="红肉",
+                                   restaurant_id="r1"),
+                       _make_veg_dish("d_av", "油麦菜",
+                                       restaurant_id="r1")]
+    extra_dish = _make_dish("d_b", "猪肉小炒", restaurant_id="r2",
+                              main_ingredient_type="红肉")
+    all_dishes = dishes_in_main + [extra_dish,
+                                     _make_veg_dish("d_bv", "炒空心菜",
+                                                     restaurant_id="r2")]
+    p = _make_profile()
+    avoid_rests: set[str] = set()
+    intent = RefineIntent(ingredient_want=["肉"], raw_text="想吃肉")
+    extras = _ingredient_want_reverse_lookup(all_dishes, intent, p, avoid_rests)
+    extra_ids = {d["dish_id"] for d in extras}
+    assert "d_a" in extra_ids
+    assert "d_b" in extra_ids
+
+
+def test_ingredient_want_reverse_lookup_respects_l0_a():
+    """profile.allergies=['花生'] → 反查不能让"花生酱面"回到池子."""
+    dishes = [
+        _make_dish("d_peanut", "花生酱面", main_ingredient_type="主食"),
+        _make_dish("d_pork", "红烧肉"),
+    ]
+    p = _make_profile(allergies=["花生"])
+    avoid_rests: set[str] = set()
+    intent = RefineIntent(ingredient_want=["肉", "花生"],
+                           raw_text="想吃肉和花生")
+    extras = _ingredient_want_reverse_lookup(dishes, intent, p, avoid_rests)
+    extra_ids = {d["dish_id"] for d in extras}
+    assert "d_peanut" not in extra_ids, "L0-A 必须穿透 ingredient_want"
+    assert "d_pork" in extra_ids
+
+
+def test_ingredient_want_reverse_lookup_respects_l0_b():
+    """dietary_law=vegetarian → 反查不能让 红肉 菜回到池子."""
+    dishes = [
+        _make_dish("d_pork", "红烧肉", main_ingredient_type="红肉"),
+        _make_veg_dish("d_veg_meat_named", "素肉炒饭"),  # 名字含"肉"但是纯素
+    ]
+    p = _make_profile(dietary_law="vegetarian")
+    avoid_rests: set[str] = set()
+    intent = RefineIntent(ingredient_want=["肉"], raw_text="想吃肉")
+    extras = _ingredient_want_reverse_lookup(dishes, intent, p, avoid_rests)
+    extra_ids = {d["dish_id"] for d in extras}
+    assert "d_pork" not in extra_ids, "L0-B vegetarian 必须穿透 ingredient_want"
+    assert "d_veg_meat_named" in extra_ids  # 纯素被允许
+
+
+def test_ingredient_want_reverse_lookup_empty_no_op():
+    """ingredient_want=[] → 反查 noop."""
+    p = _make_profile()
+    intent = RefineIntent(cuisine_want=["潮汕"], raw_text="想吃潮汕")
+    extras = _ingredient_want_reverse_lookup([], intent, p, set())
+    assert extras == []
+
+
+# ────────────────────────── 三级回落 (level 1/2/3 trace)
+
+
+def _build_combos_fixture(n_exact: int, n_soft: int, n_rest: int):
+    """生成 fixture: n_exact 个 cuisine=湘菜 (exact), n_soft 个名字含'肉' (soft),
+    n_rest 个其他.
+    """
+    from chisha.recall import _apply_intent_buckets
+    combos = []
+    # exact: cuisine=湘菜
+    for i in range(n_exact):
+        combos.append({
+            "restaurant": {"id": f"re{i}", "name": f"湘菜{i}",
+                            "brand": f"湘菜{i}"},
+            "dishes": [{"dish_id": f"de{i}", "canonical_name": f"湘菜{i}",
+                         "raw_name": f"湘菜{i}", "cuisine": "湘菜",
+                         "nutrition_profile": {"main_ingredient_type": "红肉"}}],
+        })
+    # soft: 别的 cuisine, 名字含"肉" (ingredient 命中)
+    for i in range(n_soft):
+        combos.append({
+            "restaurant": {"id": f"rs{i}", "name": f"店{i}",
+                            "brand": f"店{i}"},
+            "dishes": [{"dish_id": f"ds{i}", "canonical_name": f"红烧肉{i}",
+                         "raw_name": f"红烧肉{i}", "cuisine": "潮汕",
+                         "nutrition_profile": {"main_ingredient_type": "红肉"}}],
+        })
+    # rest: 完全无关
+    for i in range(n_rest):
+        combos.append({
+            "restaurant": {"id": f"rr{i}", "name": f"日{i}",
+                            "brand": f"日{i}"},
+            "dishes": [{"dish_id": f"dr{i}", "canonical_name": f"寿司{i}",
+                         "raw_name": f"寿司{i}", "cuisine": "日料",
+                         "nutrition_profile": {"main_ingredient_type": "海鲜"}}],
+        })
+    return combos
+
+
+def test_recall_fallback_level1_floor_met():
+    """exact + soft ≥ 30 → level 1."""
+    from chisha.recall import _apply_intent_buckets
+    combos = _build_combos_fixture(n_exact=30, n_soft=5, n_rest=10)
+    intent = RefineIntent(cuisine_want=["湘菜"], ingredient_want=["肉"],
+                           raw_text="想吃湘菜的肉")
+    events: list[dict] = []
+    out = _apply_intent_buckets(combos, intent, n=5,
+                                  recall_fallback_events=events)
+    assert len(events) == 1
+    assert events[0]["level"] == 1
+    assert events[0]["intent_hit_count"] >= 30
+
+
+def test_recall_fallback_level2_below_floor():
+    """10 ≤ intent_hit < 30 → level 2."""
+    from chisha.recall import _apply_intent_buckets
+    combos = _build_combos_fixture(n_exact=12, n_soft=3, n_rest=10)
+    intent = RefineIntent(cuisine_want=["湘菜"], ingredient_want=["肉"],
+                           raw_text="想吃湘菜的肉")
+    events: list[dict] = []
+    _apply_intent_buckets(combos, intent, n=5,
+                            recall_fallback_events=events)
+    assert events[0]["level"] == 2
+    assert 10 <= events[0]["intent_hit_count"] < 30
+
+
+def test_recall_fallback_level3_below_10():
+    """intent_hit < 10 → level 3."""
+    from chisha.recall import _apply_intent_buckets
+    combos = _build_combos_fixture(n_exact=2, n_soft=3, n_rest=20)
+    intent = RefineIntent(cuisine_want=["湘菜"], ingredient_want=["肉"],
+                           raw_text="想吃湘菜的肉")
+    events: list[dict] = []
+    _apply_intent_buckets(combos, intent, n=5,
+                            recall_fallback_events=events)
+    assert events[0]["level"] == 3
+    assert events[0]["intent_hit_count"] < 10
+
+
+def test_recall_fallback_event_not_written_when_list_is_none():
+    """recall_fallback_events=None → 不写事件, 内部跑通."""
+    from chisha.recall import _apply_intent_buckets
+    combos = _build_combos_fixture(n_exact=5, n_soft=5, n_rest=5)
+    intent = RefineIntent(cuisine_want=["湘菜"], raw_text="x")
+    out = _apply_intent_buckets(combos, intent, n=5)
+    assert isinstance(out, list)
+
+
+# ────────────────────────── brand cap interaction
+
+
+def test_per_rest_max_5_brand_cap_still_applies():
+    """refine 模式 per_rest_max=5 让 1 餐厅 5 combo,
+    apply_caps brand cap=2 仍会卡到 2 同品牌.
+    """
+    from chisha.score import apply_caps
+    # 5 个 combo 同品牌 + 各种 dish
+    combos = [
+        {"restaurant": {"id": f"r{i}", "brand": "same_brand", "name": "X"},
+         "dishes": [{"dish_id": f"d{i}", "cuisine": "潮汕",
+                      "nutrition_profile": {"main_ingredient_type": "红肉"}}],
+         "score_breakdown": {}, "fit_score": 1.0 - i * 0.01,
+         "food_form": "饭", "cap_keys": {"restaurant": f"r{i}",
+                                         "brand": "same_brand",
+                                         "cuisine": "潮汕"}}
+        for i in range(5)
+    ]
+    profile = _make_profile()
+    capped = apply_caps(combos, profile)
+    brands = [c["restaurant"]["brand"] for c in capped]
+    # brand cap=2 (默认), 即使 per_rest_max 改了, brand cap 仍生效
+    assert brands.count("same_brand") <= 2

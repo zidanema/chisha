@@ -96,10 +96,13 @@ def refine(
     )
 
     # 3. recall (intent 进 combo 生成 + 三桶 + avoid 硬过滤)
+    # T-P1a-02: recall_fallback_events 累积三级回落事件, web_api 合并到 base_trace.l1
+    recall_fallback_events: list[dict] = []
     combos = recall(profile, rests, tagged, meal_log, today,
                      meal_type=state.meal_type,
                      intent=intent if not intent.is_empty() else None,
-                     n=n)
+                     n=n,
+                     recall_fallback_events=recall_fallback_events)
 
     # 4. L2 打分 (intent 进 intent_match_bonus 三档)
     ranked = rank_combos(combos, profile, meal_log, today,
@@ -179,6 +182,8 @@ def refine(
         "candidates": reranked,
         # T-P1a-01: refine path L0-C 事件 (web_api 合并 base_trace 时 append)
         "_refine_hard_filter_events": refine_hard_filter_events,
+        # T-P1a-02: 三级回落事件 (web_api 合并到 trace.l1.recall_fallback_events)
+        "_refine_recall_fallback_events": recall_fallback_events,
     }
 
 

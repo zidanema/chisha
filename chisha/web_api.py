@@ -192,6 +192,12 @@ def api_refine(req: RefineReq) -> dict:
                 l1_seg = base_trace.setdefault("l1", {})
                 events = l1_seg.setdefault("hard_filter_events", [])
                 events.extend(refine_events)
+            # T-P1a-02: 三级回落事件 → trace.l1.recall_fallback_events
+            fallback_events = raw.get("_refine_recall_fallback_events") or []
+            if fallback_events:
+                l1_seg = base_trace.setdefault("l1", {})
+                fbs = l1_seg.setdefault("recall_fallback_events", [])
+                fbs.extend(fallback_events)
             trace_store.write_trace(req.session_id, base_trace, root=ROOT)
     except trace_store.TraceCorrupt as e:
         import logging as _logging
