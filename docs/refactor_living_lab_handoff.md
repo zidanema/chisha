@@ -31,13 +31,22 @@
 | Lab sandbox 入口正确 | `curl 'http://127.0.0.1:8765/api/lab/sandbox/state'` | 200 + state JSON |
 | 老路径 404 | `curl -i 'http://127.0.0.1:8765/api/debug/sessions'` | 404 (不再被 SPA 吞) |
 
-### ② Chrome-devtools-mcp UI 自测 (我没跑, 因为你的 Chrome 实例占着 user data dir)
+### ② Chrome-devtools-mcp UI 自测 (你回来后我又跑了一遍, 见下)
 
-CLAUDE.md 强制 — 改 apps/web 或 apps/debug-ui 必须自驱浏览器验证. 我跑了:
+CLAUDE.md 强制 — 改 apps/web 或 apps/debug-ui 必须自驱浏览器验证. 跑了:
 - ✅ `apps/web` `npm run build` 0 error (SandboxBar 删干净, 没残留 import)
 - ✅ `apps/debug-ui` `npm run build` 0 error (`/api/lab/*` 路径全部对齐)
 - ✅ `tests/test_api_split_routing.py` 路由 isolation guard 7 个 case 全过
-- ❌ chrome-devtools-mcp 端: 你的 Chrome 实例占着 `~/.cache/chrome-devtools-mcp/chrome-profile`, 我用 `mcp__chrome-devtools__list_pages` 失败 ("browser is already running"). 你回来后用 mcp 走一遍 `/`, `/profile`, `/feedback`, debug-ui `/` 这 4 个页面看 console + network. 应该没问题, 但红线就是红线.
+- ✅ **chrome-devtools-mcp 自驱完整跑过** (5/17 第二轮, 你回来后): kill 老的 :8765/:5174 + chrome profile lock → 起 D-085 server + apps/web :5173 + apps/debug-ui :5174 → mcp navigate 验:
+  - `localhost:5173/` Living homepage: 顶栏 4 link (`今天吃点啥/反馈/历史/偏好`), **无 SandboxBar**, `/api/recommend + /api/feedback/inbox` 200 ✓
+  - `localhost:5173/#/profile`: 全 YAML 渲染, **无 沙盒模式 section** (D-077 SandboxControlSection 已删干净), `/api/profile` 200×2 ✓
+  - `localhost:5173/#/feedback`: `/api/feedback/inbox + recent` 200 ✓
+  - `localhost:5173/#/history`: `/api/history + /api/feedback/*` 全 200 ✓
+  - `localhost:5174/` Lab: `RUN CONFIG / ACTIONS / REFINE / TRACE / RUN HISTORY` 5 panel + `L1 RECALL / L2 SCORE / L3 LLM / Top 5` 全部渲染, 真实 trace 数据 (`/api/lab/sessions + /api/lab/sessions/{sid}` 200) ✓
+  - `localhost:8765/api/debug/sessions` 老路径: **404** (SPA fallback guard work) ✓
+  - 老路径 `meal_type=dinner&mood=neutral` 兼容 alias 也仍 200 (apps/web 老 fetch 没改, 自洽) ✓
+  - **P-9 BLOCKER E2E 实测**: Lab 启 sandbox @2030-01-15 → Living `/api/recommend` 返 `session_id=20260517_...` (真实 today 前缀, NOT 20300115); 拉回 trace `is_sandbox=False + __frozen.today=2026-05-17` ✓
+- 🐛 **smoke 顺手发现 + 修了一个 bug**: `read_trace` 跟 `sandbox.is_enabled` 全局状态走 → Lab 启 sandbox 时单条读 prod trace 返 404. 修法 commit `307a1fa`: 跨 prod + sandbox 双目录顺序查找. 加守门 test `test_read_trace_finds_prod_even_when_sandbox_enabled`. **787 测试全过**.
 
 ### ③ Merge 决策点 — 4 个推到下次 PR 的方向题
 
@@ -78,7 +87,7 @@ CLAUDE.md 强制 — 改 apps/web 或 apps/debug-ui 必须自驱浏览器验证.
 
 ---
 
-## 6 个 commit 摘要 (按时间顺序)
+## 8 个 commit 摘要 (按时间顺序)
 
 ```
 cc5c918 refactor(D-085 PR-A): Living + Lab router 拆分                # API 拆 + SandboxBar 删 + tests path 替换
@@ -87,9 +96,11 @@ c6c4a7c refactor(D-085 PR-C): Living API agent-ready (meal_hint + at_time)
 c072d83 refactor(D-085 PR-D): packages/contracts/ 共享 TS 类型骨架     # vite alias + tsconfig paths
 11b2fdc fix(D-085 Codex BLOCKER): P-9 leak — Living force_disabled sandbox per-request
 fa13e15 fix(D-085 Codex re-review): force_disabled also kills virtual clock
+116af4e docs(D-085): decisions + CONTRACTS + handoff 落定
+307a1fa fix(D-085): read_trace 跨 prod + sandbox 双目录查找             # mcp UI smoke 发现的 bug
 ```
 
-合并到 main 时建议 `--no-ff` 保留 6 个 commit 历史 (溯源方便), 或 rebase 成 4 个 (PR-A/B/C/D) + 1 个 fix 合并都行. **不要 squash 成 1 个**, BLOCKER 修复的认知价值会丢.
+合并到 main 时建议 `--no-ff` 保留 8 个 commit 历史 (溯源方便), 或 rebase 成 4 个 (PR-A/B/C/D) + 1 个 fix 合并都行. **不要 squash 成 1 个**, BLOCKER 修复 + smoke 发现的认知价值会丢.
 
 ---
 
@@ -111,7 +122,6 @@ fa13e15 fix(D-085 Codex re-review): force_disabled also kills virtual clock
 
 ## 我**没**做 (透明)
 
-- ❌ chrome-devtools-mcp 浏览器自测 (你的 Chrome 占着 user data dir, 见 ② 节, 建议你跑一遍)
 - ❌ 端到端 dry_run 验证 (scripts.dry_run 没跑过 D-085 后版本, 但单测 + baseline 已覆盖; 你想多一道保险可以 `uv run python -m scripts.dry_run --n 5 --meal both`)
 - ❌ 真的去掉 `chisha/debug_server.py` shim (P-2 决定保留 back-compat shim, 留一行注释说"新代码改 server.py"). 想纯化的话下次 PR 再删.
 - ❌ 没改 `apps/debug-ui` 目录名 → `apps/lab` (P-6 决定不改, 心智整理可以下次再做)
@@ -120,8 +130,8 @@ fa13e15 fix(D-085 Codex re-review): force_disabled also kills virtual clock
 
 ## 风险 + 回退路径
 
-- **风险 1**: chrome-devtools-mcp 不能自测 → 可能有 UI 微回归 (例如 SandboxBar 删干净但顶部布局 spacing 走样). **回退**: 你 UI 验过发现问题 → `git revert cc5c918` (PR-A) 撤删 SandboxBar 重起一轮.
-- **风险 2**: 我的 `force_disabled` 在 uvicorn 多 worker 场景未经 stress test. **回退**: `git revert fa13e15 11b2fdc` 留 BLOCKER 但 fail-loud — 你可以观察一下真生产场景是否真触发.
+- ~~**风险 1**: chrome-devtools-mcp 不能自测~~ → **已自测**, Living + Lab 5 个页面全绿 (见 ② 节). smoke 还顺手发现 + 修了 read_trace 单条读 bug.
+- **风险 2**: 我的 `force_disabled` 在 uvicorn 多 worker 场景未经 stress test (TestClient 单线程跑通了, 生产 uvicorn `--workers N` 没真打). **回退**: `git revert fa13e15 11b2fdc` 留 BLOCKER 但 fail-loud — 你可以观察一下真生产场景是否真触发.
 - **风险 3**: 老脚本 / 旧书签直接打 `:8765/api/sandbox/state` 现在 404. **不回退**, 但你可能要更新自己的 bookmark.
 
 无破坏性回退路径, 每个 PR 都是独立 commit, revert 干净.
