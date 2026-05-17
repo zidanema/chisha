@@ -22,7 +22,7 @@
       "title": "L1 召回参数 refine 分支重写",
       "regression_risk": "high",
       "depends_on": ["T-00"],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "T-P1a-03",
