@@ -60,19 +60,67 @@ def _remember_session_safe(session_id: str, payload: dict) -> None:
 
 # ---------- /api/recommend ----------
 
+_VALID_MEAL_HINTS = {"lunch", "dinner"}
+
+
+def _parse_at_time(at_time: str | None) -> dt.date | None:
+    """D-085 PR-C: 接受 YYYY-MM-DD 或 ISO datetime, 都取 date 部分.
+
+    返 None 表示 "现在" (recommend_meal 内部走 clock.today()).
+    非法格式 → HTTPException(400).
+    """
+    if not at_time:
+        return None
+    raw = at_time.strip()
+    # 先试 date
+    try:
+        return dt.date.fromisoformat(raw)
+    except ValueError:
+        pass
+    # 再试 datetime (含 tz 或不含)
+    try:
+        normalized = raw.replace("Z", "+00:00")
+        return dt.datetime.fromisoformat(normalized).date()
+    except ValueError:
+        raise HTTPException(
+            400,
+            f"at_time must be YYYY-MM-DD or ISO datetime, got {at_time!r}",
+        )
+
+
 @router.get("/recommend")
 def api_recommend(
-    meal_type: str = "lunch",
+    meal_hint: str | None = None,
+    meal_type: str | None = None,
     mood: str = "neutral",
+    at_time: str | None = None,
 ) -> dict:
-    """GET /api/recommend?meal_type=&mood= → RecommendResponse (5 候选)."""
-    if meal_type not in ("lunch", "dinner"):
-        raise HTTPException(400, f"meal_type must be lunch|dinner, got {meal_type!r}")
+    """GET /api/recommend → RecommendResponse (5 候选).
+
+    D-085 PR-C agent-ready 参数 (invariants 1 + 2):
+    - meal_hint: lunch|dinner — 推荐当下哪一餐. 这是 agent 首选语义.
+    - meal_type: backward-compat 别名 (apps/web 老调用方仍在用), 与 meal_hint
+      等价. 同时传 → meal_hint 优先.
+    - at_time: 可选, YYYY-MM-DD 或 ISO datetime. 不传 = 现在 (走 clock.today()).
+      Agent 想"提前规划晚餐"或者重算特定日期时显式传.
+    - mood: 可选 daily_mood (lunch_explore / want_soup / ...), neutral 等价空.
+
+    JSON 自闭包 (invariant 1): 响应包含 session_id + 5 候选完整结构,
+    无客户端隐含上下文; Agent 拿响应即可决策, 不需要再调其他端点.
+    """
+    chosen = meal_hint or meal_type or "lunch"
+    if chosen not in _VALID_MEAL_HINTS:
+        raise HTTPException(
+            400,
+            f"meal_hint must be {sorted(_VALID_MEAL_HINTS)}, got {chosen!r}",
+        )
     daily_mood = mood if mood and mood != "neutral" else None
+    today = _parse_at_time(at_time)
     out = recommend_meal(
-        meal_type=meal_type,
+        meal_type=chosen,
         daily_mood=daily_mood,
         log_to_file=True,
+        today=today,
     )
     _remember_session_safe(out["session_id"], out)
     return out
