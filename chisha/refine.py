@@ -178,6 +178,29 @@ def refine(
     # D-073 followup: 传 intent, cuisine_want 命中的菜系免 cuisine cap (「换日料」bug)
     ranked = apply_caps(ranked, profile,
                         intent=intent if not intent.is_empty() else None)
+    # T-P2-01: reference 块软重排. user_input 含"昨天/上次/更清淡/换一家"
+    # → parse_reference_text → resolve_reference (读 trace_store) → apply_relation
+    # 在 top_k 切片前对 ranked 软重排; baseline_l2_snapshot 行为不变 (无 refine 时不触发).
+    # 失败/未命中静默降级, 不阻断 refine.
+    resolved_reference: object | None = None
+    try:
+        from chisha.reference_resolver import (
+            parse_reference_text, resolve_reference, apply_relation,
+        )
+        ref_query = parse_reference_text(user_input)
+        if ref_query is not None:
+            resolved_reference = resolve_reference(
+                ref_query, today=today, root=root,
+            )
+            if resolved_reference is not None:
+                ranked = apply_relation(ranked, resolved_reference)
+    except Exception as _e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "reference resolve/apply failed (non-fatal): %s: %s",
+            type(_e).__name__, _e,
+        )
+
     # D-046: top60 给 L3
     from chisha.rerank import L3_INPUT_TOP_K
     top_k = ranked[:L3_INPUT_TOP_K]
@@ -214,6 +237,20 @@ def refine(
                            ",".join(d.get("canonical_name", "")
                                      for d in c.get("dishes", [])[:2])
                           for c in reranked[:5]],
+        # T-P2-01: reference resolve 命中时记一条 (debug + 用户语言交互可视化)
+        "reference_resolved": (
+            {
+                "relation": resolved_reference.relation,
+                "raw_text": resolved_reference.raw_text,
+                "base_session_id": resolved_reference.base_session_id,
+                "base_meal_type": resolved_reference.base_meal_type,
+                "base_started_at": resolved_reference.base_started_at,
+                "n_base_combos": len(resolved_reference.base_combos or []),
+                "notes": list(resolved_reference.notes or []),
+            }
+            if resolved_reference is not None
+            else None
+        ),
     }
     _append_intent_trace(trace, root)
 

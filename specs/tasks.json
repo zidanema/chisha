@@ -67,7 +67,7 @@
         "T-P1a-03"
       ],
       "status": "done",
-      "_notes": "resolver + 3 comparator 完整 + 17 单测. refine path 真接入留 follow-up."
+      "_notes": "resolver + 3 comparator + 17 单测; refine.py 真接入: rank_combos 后切 top_k 前调 parse_reference_text → resolve_reference (读 trace_store) → apply_relation 软重排; trace.reference_resolved 落 base session/relation/notes. 7 集成测试 + 17 unit + 768 全测试通过. baseline_l2_snapshot 无变 (refine 内改, 空路径不触发)."
     },
     {
       "id": "T-P2-02",
