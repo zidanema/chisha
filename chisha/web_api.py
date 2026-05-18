@@ -168,6 +168,7 @@ def api_refine(req: RefineReq) -> dict:
         "stats": raw["stats"],
         "candidates": candidates_fmt,
         "status_bar": status_bar,
+        "narrative": raw.get("narrative", ""),
         # 调试用 (前端忽略):
         "refine_input": raw.get("refine_input"),
         "refine_intent": raw.get("refine_intent"),  # D-073: 替代 parsed_feedback/taste_hints

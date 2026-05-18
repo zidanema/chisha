@@ -60,6 +60,7 @@ export function HomePage() {
       },
       loading: false,
       statusBar: resp.status_bar ?? null,
+      narrative: resp.narrative ?? "",
     });
   }
 
@@ -88,6 +89,7 @@ export function HomePage() {
       },
       loading: false,
       statusBar: resp.status_bar ?? home.statusBar,
+      narrative: resp.narrative ?? home.narrative,
     });
   }
 
@@ -123,6 +125,7 @@ export function HomePage() {
       },
       loading: false,
       statusBar: resp.status_bar ?? home.statusBar,
+      narrative: resp.narrative ?? home.narrative,
     });
     scrollToRecs();
   }
@@ -135,6 +138,7 @@ export function HomePage() {
       session: { ...home.session, candidates: hist.candidates, round: hist.round },
       pickedRank: null,
       statusBar: hist.status_bar ?? home.statusBar,
+      narrative: hist.narrative ?? home.narrative,
     });
     scrollToRecs();
   }
@@ -147,6 +151,7 @@ export function HomePage() {
       refineHistory: [],
       pickedRank: null,
       statusBar: first.status_bar ?? home.statusBar,
+      narrative: first.narrative ?? home.narrative,
     });
     scrollToRecs();
   }
@@ -236,6 +241,17 @@ export function HomePage() {
               onJumpRound={onJumpRound}
               onReset={onResetRefine}
             />
+
+            {/* T-P1b-02: L3 narrative ("为什么推这 5 道" ≤ 50 字摘要) */}
+            {!home.loading && home.narrative && (
+              <div
+                data-testid="l3-narrative"
+                className="mb-3 px-3 py-2 rounded border border-[color:var(--border)] bg-[color:var(--bg-soft,#f9f9f9)] text-[12.5px] text-[color:var(--fg)] leading-snug"
+              >
+                <span className="text-[color:var(--muted)] mr-1.5">为什么</span>
+                {home.narrative}
+              </div>
+            )}
 
             <div className="space-y-3" ref={recsRef}>
               {home.loading

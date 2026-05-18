@@ -186,9 +186,11 @@ def refine(
     # D-078.2 Codex S2 FIX-NOW: root 必须透传, 否则 refine 二轮 _profile_block
     # 走默认 (project root 兜底), sandbox 启用时读不到沙盒 long_term_prefs.json
     # (或反过来污染 prod), 行为信号在 refine 链路静默缺失.
+    # T-P1b-02: 注入 trace_collector dict, 拿 narrative 给前端展示.
+    l3_collector: dict = {}
     reranked = rerank(top_k, profile, context=ctx, meal_log=meal_log,
                        n=n, n_explore=0, refine=True, use_llm=use_llm,
-                       root=root)
+                       root=root, trace_collector=l3_collector)
 
     # 6. 更新 session
     state.round += 1
@@ -230,6 +232,9 @@ def refine(
             refine_override=True,
         ))
 
+    # T-P1b-02: L3 narrative (从 collector 取出, 给前端 RecCard 上方展示)
+    narrative = l3_collector.get("narrative", "")
+
     # 8. 返回 §5.7-style (字段对前端兼容)
     return {
         "session_id": session_id,
@@ -248,6 +253,7 @@ def refine(
             "n_returned": len(reranked),
         },
         "candidates": reranked,
+        "narrative": narrative,
         # T-P1a-01: refine path L0-C 事件 (web_api 合并 base_trace 时 append)
         "_refine_hard_filter_events": refine_hard_filter_events,
         # T-P1a-02: 三级回落事件 (web_api 合并到 trace.l1.recall_fallback_events)

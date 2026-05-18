@@ -28,6 +28,8 @@ export interface HomeState {
   // T-P1b-01: 后端 /api/recommend & /api/refine 返回的状态条 payload.
   // null = 尚未拉取过 (initial 或 server 旧版本不带 status_bar).
   statusBar: StatusBarPayload | null;
+  // T-P1b-02: L3 narrative. 空串 = LLM 路径没生成 (fallback / 旧版).
+  narrative: string;
 }
 
 interface ToastState {
@@ -69,6 +71,7 @@ export function ChishaProvider({ children }: { children: React.ReactNode }) {
     skipped: false,
     skipReason: null,
     statusBar: null,
+    narrative: "",
   });
   const setHome = useCallback(
     (patch: Partial<HomeState>) => setHomeState((p) => ({ ...p, ...patch })),

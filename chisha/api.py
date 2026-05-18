@@ -155,7 +155,9 @@ def recommend_meal(
     from chisha.rerank import L3_INPUT_TOP_K
     top_k = ranked[:L3_INPUT_TOP_K]
     # D-079: trace_collector 捕获 LLM 中间状态 (Codex Q3: 传 today 防 fallback 漂移)
-    l3_collector: dict = {} if persist_trace else None
+    # T-P1b-02: collector 始终是 dict, narrative 也要在 Live (persist_trace=False)
+    # 模式下拿到给前端展示. _build_trace 只在 persist_trace=True 时跑.
+    l3_collector: dict = {}
     _t0 = _time.monotonic()
     reranked = v2_rerank(top_k, profile, context=ctx, meal_log=meal_log,
                           n=5, n_explore=2, refine=False, use_llm=use_llm_rerank,
@@ -187,6 +189,10 @@ def recommend_meal(
         from chisha.status_bar import build_status_bar
         status_bar = build_status_bar(profile, [])
 
+    # T-P1b-02: L3 narrative (顶层"为什么推这 5 道"摘要)
+    # collector 里若 LLM 路径触发, narrative 已写入; fallback / 旧 trace 为空
+    narrative = l3_collector.get("narrative", "") if isinstance(l3_collector, dict) else ""
+
     out = {
         "session_id": session_id,
         "meal_type": meal_type,
@@ -204,6 +210,7 @@ def recommend_meal(
         "candidates": [_format_v2_candidate(i + 1, c)
                         for i, c in enumerate(reranked)],
         "status_bar": status_bar,
+        "narrative": narrative,
     }
 
     if log_to_file:

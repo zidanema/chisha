@@ -99,6 +99,9 @@ export interface RecommendResponse {
   };
   candidates: Candidate[];
   status_bar?: StatusBarPayload;
+  // T-P1b-02: L3 narrative ("为什么推这 5 道" ≤ 50 字)
+  // 空字符串 = LLM 路径未生成 (fallback / 旧 trace), 前端不渲染
+  narrative?: string;
 }
 
 // ── T-P1b-01 顶部 always-on 状态条 ────────────────────────────────────────────

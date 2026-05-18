@@ -14,21 +14,27 @@
       "id": "T-P1a-01",
       "title": "methodology 硬契约下沉 L1 (含 L0 三分)",
       "regression_risk": "high",
-      "depends_on": ["T-00"],
+      "depends_on": [
+        "T-00"
+      ],
       "status": "done"
     },
     {
       "id": "T-P1a-02",
       "title": "L1 召回参数 refine 分支重写",
       "regression_risk": "high",
-      "depends_on": ["T-00"],
+      "depends_on": [
+        "T-00"
+      ],
       "status": "done"
     },
     {
       "id": "T-P1a-03",
       "title": "refine 多 slot LLM 解析层 + 安全带",
       "regression_risk": "medium",
-      "depends_on": ["T-00"],
+      "depends_on": [
+        "T-00"
+      ],
       "status": "done",
       "_notes": "follow-up 完成: 多 slot LLM prompt (prompts/parse_refine_intent_v2.md) + 真 LLM extractor + 6 失败降级路径单测 + 43 条 eval set + runner 跑过 96.2% 准确率 (≥ 85% 阈值) + refine.py 接 intent_v2 双存 trace. 新 slot (brand_avoid / cooking_method_avoid / functional / reference) 在 trace 已存, 下游 L1/L2 真消费留 T-P2-01/02 接入."
     },
@@ -36,7 +42,9 @@
       "id": "T-P1b-01",
       "title": "顶部 always-on 状态条",
       "regression_risk": "low",
-      "depends_on": ["T-P1a-01"],
+      "depends_on": [
+        "T-P1a-01"
+      ],
       "status": "done",
       "_notes": "后端 chisha/status_bar.py 派生 active_methodology + l0_protections + override_events; recommend / refine 响应均带 status_bar 字段. 前端 apps/web/src/components/MethodologyBar.tsx (挂在 HomePage StatusBar 之前) 渲三态: baseline / l0_a/b_block / l0_c_relaxed. 9 单测 + 761 全测试通过. chrome-devtools-mcp 自驱实测三态全通: 空输入展示 哈佛餐盘+蔬菜≥1+蛋白≥40g+油≤4; 注入花生过敏 → 红色保护 chip + 事件行 (dropped_count=70); refine '今晚就放纵' → 琥珀色破戒模式提示."
     },
@@ -44,15 +52,20 @@
       "id": "T-P1b-02",
       "title": "L3 prompt narrative 字段",
       "regression_risk": "medium",
-      "depends_on": ["T-P1a-01", "T-P1a-02"],
-      "status": "done_backend",
-      "_notes": "backend half done: schema + prompt + trace 持久化 + 3 单测. 前端卡片展示留 follow-up (chrome-devtools-mcp 验证)."
+      "depends_on": [
+        "T-P1a-01",
+        "T-P1a-02"
+      ],
+      "status": "done",
+      "_notes": "backend half + 前端全部完成: schema/prompt/trace/3 单测 + collector 透传 (rerank → recommend_meal/refine → web_api) + RecCard 上方独立 narrative 卡 + HomePage 4 个 set 调用点同步. chrome-devtools-mcp 实测 narrative 渲染通过 ('力量训练期+真实口味...' / '晚餐想吃锅气重口下饭菜→...'). 761 单测过."
     },
     {
       "id": "T-P2-01",
       "title": "reference 块 resolver + 比较器",
       "regression_risk": "medium",
-      "depends_on": ["T-P1a-03"],
+      "depends_on": [
+        "T-P1a-03"
+      ],
       "status": "done",
       "_notes": "resolver + 3 comparator 完整 + 17 单测. refine path 真接入留 follow-up."
     },
@@ -60,7 +73,10 @@
       "id": "T-P2-02",
       "title": "簇式输出 (intent 内部子类多样化)",
       "regression_risk": "medium",
-      "depends_on": ["T-P1a-02", "T-P1a-03"],
+      "depends_on": [
+        "T-P1a-02",
+        "T-P1a-03"
+      ],
       "status": "done",
       "_notes": "核心算法 + 8 菜系子类词表 + 11 单测. refine path 接入留 follow-up."
     }
