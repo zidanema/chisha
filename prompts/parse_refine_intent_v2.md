@@ -12,7 +12,14 @@
 
 ## 任务
 
-读用户的 refine 文本, 输出 JSON。**严格输出 JSON, 不要 markdown 代码块, 不要解释, 直接 `{...}`**。
+读用户的 refine 文本, 输出 JSON。
+
+**输出格式硬约束 (违反 = 整次输出被丢弃, 走兜底)**:
+- 首字符必须是 `{`, 末字符必须是 `}`。
+- 禁止 ` ```json ` / ` ``` ` / 任何 markdown 包裹。
+- 禁止前言 / 总结 / 解释 / "好的" / "以下是"。
+- 数字必须是阿拉伯数字 (30 不是"三十"); 布尔必须是 `true` / `false` 不是"是" / "否"。
+- 下面"示例"章节用代码块**仅为文档展示**, 你**实际回答**只能是裸 JSON, 不能带 fence。
 
 ## Schema (多 slot)
 
@@ -61,7 +68,13 @@
 
 ## 字段空洞 (你照填, 数据层暂不消费)
 
-`constrain.quality_floor / delivery_only / max_distance_km / reference` 这几个字段下游 L1/L2 暂不消费, 只透传给 L3。你**仍要正确解析**, 听懂但暂时做不到 > 假装没听见。
+`constrain.quality_floor / delivery_only / max_distance_km / reference` 这几个字段下游 L1/L2 暂不消费, 只透传给 L3。**即使下游暂时做不到, 你仍要按语义如实填**, 让 trace 反映"系统听懂了"。漏填 = 系统装作没听见, 用户信任崩塌。
+
+正例:
+- `"今晚不要快餐"` → `constrain.quality_floor: "non_fast_food"` (不能因为"下游不消费"就留 null)
+- `"今天只吃外卖"` → `constrain.delivery_only: true`
+- `"走路 10 分钟以内的"` → `constrain.max_distance_km: 1.0` (10 分钟步行≈1 公里)
+- `"和上次那家差不多"` → `reference: {"reference_meal_id": null, "relation": "similar_but_different_venue"}` (你不知道 meal_id, 填 null 让 L3 解析, 但 relation 必填)
 
 ## 示例
 
@@ -95,13 +108,34 @@
 {"redirect":{"cuisine_want":[],"cuisine_avoid":[],"cuisine_candidates_expanded":[],"ingredient_want":[],"ingredient_avoid":[],"ingredient_synonyms":[],"brand_avoid":[],"cooking_method_avoid":[],"food_form_avoid":[]},"constrain":{"oil":null,"price_max":null,"quality_floor":null,"delivery_only":null,"max_distance_km":null,"functional":{"low_caffeine":null,"low_satiety_drowsy":true}},"reference":null,"reject_previous":false,"raw_understanding":"下午要开会, 不要吃完容易犯困的 (低饱腹犯困型)","schema_version":"2.0"}
 ```
 
-**输入**: `"想吃辣但别太辣"`
+**输入**: `"想吃辣但别太辣"` (冲突表达)
 **输出**:
 ```json
-{"redirect":{"cuisine_want":[],"cuisine_avoid":[],"cuisine_candidates_expanded":["川菜","湘菜","贵州菜"],"ingredient_want":[],"ingredient_avoid":[],"ingredient_synonyms":[],"brand_avoid":[],"cooking_method_avoid":[],"food_form_avoid":[]},"constrain":{"oil":null,"price_max":null,"quality_floor":null,"delivery_only":null,"max_distance_km":null,"functional":{"low_caffeine":null,"low_satiety_drowsy":null}},"reference":null,"reject_previous":false,"raw_understanding":"冲突表达: 想吃辣但不要太辣, 留 L3 看原文判断辣度","schema_version":"2.0"}
+{"redirect":{"cuisine_want":[],"cuisine_avoid":[],"cuisine_candidates_expanded":[],"ingredient_want":[],"ingredient_avoid":[],"ingredient_synonyms":[],"brand_avoid":[],"cooking_method_avoid":[],"food_form_avoid":[]},"constrain":{"oil":null,"price_max":null,"quality_floor":null,"delivery_only":null,"max_distance_km":null,"functional":{"low_caffeine":null,"low_satiety_drowsy":null}},"reference":null,"reject_previous":false,"raw_understanding":"冲突表达: 想吃辣但不要太辣, 不擅自扩展辣味菜系, 交给 L3 按原文把握辣度","schema_version":"2.0"}
+```
+(说明: 第一原则要求冲突表达**对应 slot 全部留空** — 包括 `cuisine_candidates_expanded`。任何"主动推断"都违反 Faithful Refine。把决策权留给 L3。)
+
+**输入**: `"随便, 你看着来"` (用户放权)
+**输出**:
+```json
+{"redirect":{"cuisine_want":[],"cuisine_avoid":[],"cuisine_candidates_expanded":[],"ingredient_want":[],"ingredient_avoid":[],"ingredient_synonyms":[],"brand_avoid":[],"cooking_method_avoid":[],"food_form_avoid":[]},"constrain":{"oil":null,"price_max":null,"quality_floor":null,"delivery_only":null,"max_distance_km":null,"functional":{"low_caffeine":null,"low_satiety_drowsy":null}},"reference":null,"reject_previous":false,"raw_understanding":"用户授权系统按日常偏好挑选, 无具体诉求","schema_version":"2.0"}
 ```
 
-**输入**: `""`
+**输入**: `"今天加班好累"` (用户陈述场景, 无诉求)
+**输出**:
+```json
+{"redirect":{"cuisine_want":[],"cuisine_avoid":[],"cuisine_candidates_expanded":[],"ingredient_want":[],"ingredient_avoid":[],"ingredient_synonyms":[],"brand_avoid":[],"cooking_method_avoid":[],"food_form_avoid":[]},"constrain":{"oil":null,"price_max":null,"quality_floor":null,"delivery_only":null,"max_distance_km":null,"functional":{"low_caffeine":null,"low_satiety_drowsy":null}},"reference":null,"reject_previous":false,"raw_understanding":"用户提到加班场景, 但未表达任何菜系/口味/价格诉求, 不擅自推断 (例如推断要外卖/要辣/要提神)","schema_version":"2.0"}
+```
+(说明: 用户讲场景 ≠ 用户提诉求。**禁止脑补** "加班→外卖", "周末→大餐"。第一原则: 不联想。)
+
+**输入**: `"周末来个大餐"` (用户场景 + 模糊量词)
+**输出**:
+```json
+{"redirect":{"cuisine_want":[],"cuisine_avoid":[],"cuisine_candidates_expanded":[],"ingredient_want":[],"ingredient_avoid":[],"ingredient_synonyms":[],"brand_avoid":[],"cooking_method_avoid":[],"food_form_avoid":[]},"constrain":{"oil":null,"price_max":null,"quality_floor":null,"delivery_only":null,"max_distance_km":null,"functional":{"low_caffeine":null,"low_satiety_drowsy":null}},"reference":null,"reject_previous":false,"raw_understanding":"用户想吃大餐, 但未指定菜系/价格上限/品质门槛, 不擅自推断为高价或精致餐厅","schema_version":"2.0"}
+```
+(说明: "大餐"模糊。不要主动填 `quality_floor:"non_fast_food"` 或 `price_max=200`。如果用户明确说"不要快餐"才填。)
+
+**输入**: `""` (空 refine)
 **输出**:
 ```json
 {"redirect":{"cuisine_want":[],"cuisine_avoid":[],"cuisine_candidates_expanded":[],"ingredient_want":[],"ingredient_avoid":[],"ingredient_synonyms":[],"brand_avoid":[],"cooking_method_avoid":[],"food_form_avoid":[]},"constrain":{"oil":null,"price_max":null,"quality_floor":null,"delivery_only":null,"max_distance_km":null,"functional":{"low_caffeine":null,"low_satiety_drowsy":null}},"reference":null,"reject_previous":false,"raw_understanding":"(空 refine)","schema_version":"2.0"}
