@@ -201,6 +201,22 @@ def refine(
             type(_e).__name__, _e,
         )
 
+    # T-P2-02: 簇式输出 — cuisine_want 非空时按子类重排, 解决 D-073.1 副作用
+    # (同 cuisine 免 3 层 cap 后单品牌刷屏). 不影响空 refine 路径 / 非 cuisine refine.
+    # 不砍数量, round-robin 让前 N 个 combo 覆盖 ≥ 3 个 subtype.
+    subtype_diversified: bool = False
+    try:
+        if intent.cuisine_want:
+            from chisha.subtype_diversity import diversify_by_subtype
+            ranked = diversify_by_subtype(ranked)
+            subtype_diversified = True
+    except Exception as _e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "subtype diversify failed (non-fatal): %s: %s",
+            type(_e).__name__, _e,
+        )
+
     # D-046: top60 给 L3
     from chisha.rerank import L3_INPUT_TOP_K
     top_k = ranked[:L3_INPUT_TOP_K]
@@ -251,6 +267,8 @@ def refine(
             if resolved_reference is not None
             else None
         ),
+        # T-P2-02: cuisine_want 触发子类多样化时记一条
+        "subtype_diversified": subtype_diversified,
     }
     _append_intent_trace(trace, root)
 

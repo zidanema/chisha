@@ -78,7 +78,7 @@
         "T-P1a-03"
       ],
       "status": "done",
-      "_notes": "核心算法 + 8 菜系子类词表 + 11 单测. refine path 接入留 follow-up."
+      "_notes": "subtype_diversity 模块 + 8 菜系子类词表 + 11 单测 + refine.py 真接入: intent.cuisine_want 非空时 ranked 走 diversify_by_subtype (round-robin 让 top N 覆盖 ≥ 3 subtype). 5 集成测试 + 773 全测试通过. trace.subtype_diversified 落 debug. baseline_l2_snapshot 0 diff (空 refine 不触发)."
     }
   ]
 }
