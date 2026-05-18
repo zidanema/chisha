@@ -98,6 +98,32 @@ export interface RecommendResponse {
     n_returned: number;
   };
   candidates: Candidate[];
+  status_bar?: StatusBarPayload;
+}
+
+// ── T-P1b-01 顶部 always-on 状态条 ────────────────────────────────────────────
+// 后端 chisha/status_bar.py:build_status_bar() 派生; 三态:
+//   - baseline: override_events 为空, 仅展示 active_methodology + l0_protections
+//   - l0_a/b_block: 永久保护触发, 不可破
+//   - l0_c_relaxed: refine 解除 methodology (破戒模式)
+export type OverrideEventKind = "l0_a_block" | "l0_b_block" | "l0_c_relaxed";
+
+export interface OverrideEvent {
+  kind: OverrideEventKind;
+  term: string | null;
+  dropped_count: number;
+  message: string;
+}
+
+export interface StatusBarPayload {
+  active_methodology: {
+    labels: string[];
+  };
+  l0_protections: {
+    allergies: string[];
+    dietary_law: "vegetarian" | "halal" | null;
+  };
+  override_events: OverrideEvent[];
 }
 
 // ── Banner / accept queue (V1.1 D-060) ──────────────────────────────────────

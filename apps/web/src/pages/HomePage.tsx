@@ -8,6 +8,7 @@ import type { Candidate, MealType, Mood } from "@/lib/types";
 import { PageShell, FooterBar } from "@/components/PageShell";
 import { PendingFeedbackBanner } from "@/components/PendingFeedbackBanner";
 import { StatusBar } from "@/components/StatusBar";
+import { MethodologyBar } from "@/components/MethodologyBar";
 import { SectionHeader } from "@/components/atoms";
 import { RefineCrumb } from "@/components/RefineCrumb";
 import { RefineInput } from "@/components/RefineInput";
@@ -58,6 +59,7 @@ export function HomePage() {
         history: [resp],
       },
       loading: false,
+      statusBar: resp.status_bar ?? null,
     });
   }
 
@@ -85,6 +87,7 @@ export function HomePage() {
         history: [...home.session.history, resp],
       },
       loading: false,
+      statusBar: resp.status_bar ?? home.statusBar,
     });
   }
 
@@ -119,6 +122,7 @@ export function HomePage() {
         history: [...home.session.history, resp],
       },
       loading: false,
+      statusBar: resp.status_bar ?? home.statusBar,
     });
     scrollToRecs();
   }
@@ -130,6 +134,7 @@ export function HomePage() {
     setHome({
       session: { ...home.session, candidates: hist.candidates, round: hist.round },
       pickedRank: null,
+      statusBar: hist.status_bar ?? home.statusBar,
     });
     scrollToRecs();
   }
@@ -141,6 +146,7 @@ export function HomePage() {
       session: { ...home.session, candidates: first.candidates, round: first.round },
       refineHistory: [],
       pickedRank: null,
+      statusBar: first.status_bar ?? home.statusBar,
     });
     scrollToRecs();
   }
@@ -200,6 +206,8 @@ export function HomePage() {
         onStop={onBannerStop}
         onOpenInbox={() => navigate("/feedback")}
       />
+
+      <MethodologyBar payload={home.statusBar} />
 
       <StatusBar
         meal={home.meal}

@@ -3,7 +3,7 @@
 // shape via context — pages stay unmounted-friendly.
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import type { Candidate, MealType, Mood, RecommendResponse, SkipReason, UnfedSession } from "./types";
+import type { Candidate, MealType, Mood, RecommendResponse, SkipReason, StatusBarPayload, UnfedSession } from "./types";
 import type { RefineHistoryEntry } from "@/components/RefineCrumb";
 import { api, isMock } from "./api";
 import { sandboxApi, type SandboxState } from "./sandbox";
@@ -25,6 +25,9 @@ export interface HomeState {
   pickedRank: number | null;
   skipped: boolean;
   skipReason: SkipReason;
+  // T-P1b-01: 后端 /api/recommend & /api/refine 返回的状态条 payload.
+  // null = 尚未拉取过 (initial 或 server 旧版本不带 status_bar).
+  statusBar: StatusBarPayload | null;
 }
 
 interface ToastState {
@@ -65,6 +68,7 @@ export function ChishaProvider({ children }: { children: React.ReactNode }) {
     pickedRank: null,
     skipped: false,
     skipReason: null,
+    statusBar: null,
   });
   const setHome = useCallback(
     (patch: Partial<HomeState>) => setHomeState((p) => ({ ...p, ...patch })),

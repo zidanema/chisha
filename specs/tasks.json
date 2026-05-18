@@ -37,8 +37,8 @@
       "title": "顶部 always-on 状态条",
       "regression_risk": "low",
       "depends_on": ["T-P1a-01"],
-      "status": "blocked_frontend_verify",
-      "_notes": "前端视觉 + chrome-devtools-mcp 验证要求, AI 单次会话难以稳定起 Vite + 后端 servers 自驱. 留给志丹手验 + 实现."
+      "status": "done",
+      "_notes": "后端 chisha/status_bar.py 派生 active_methodology + l0_protections + override_events; recommend / refine 响应均带 status_bar 字段. 前端 apps/web/src/components/MethodologyBar.tsx (挂在 HomePage StatusBar 之前) 渲三态: baseline / l0_a/b_block / l0_c_relaxed. 9 单测 + 761 全测试通过. chrome-devtools-mcp 自驱实测三态全通: 空输入展示 哈佛餐盘+蔬菜≥1+蛋白≥40g+油≤4; 注入花生过敏 → 红色保护 chip + 事件行 (dropped_count=70); refine '今晚就放纵' → 琥珀色破戒模式提示."
     },
     {
       "id": "T-P1b-02",

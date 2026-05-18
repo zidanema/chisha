@@ -167,6 +167,26 @@ def recommend_meal(
     state.last_candidates = [_minimize_candidate(c) for c in reranked]
     save_session(state, root)
 
+    # T-P1b-01: status_bar payload. 跑一次轻量 _build_l1_trace 拿 hard_filter_events
+    # (recall path 的 L0-A/B 事件), 给前端 always-on 状态条派生数据.
+    # ~50ms 开销 (同 _build_trace 的二跑 _build_l1_trace, 此处 best-effort).
+    try:
+        from chisha.debug_recommend import _build_l1_trace
+        from chisha.status_bar import build_status_bar
+        _l1_trace, _ = _build_l1_trace(
+            profile, rests, tagged, meal_log, today, meal_type=meal_type
+        )
+        _hfe = _l1_trace.get("hard_filter_events") or []
+        status_bar = build_status_bar(profile, _hfe)
+    except Exception as _e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "status_bar build failed (non-fatal): %s: %s", type(_e).__name__, _e,
+        )
+        # 降级到 baseline (无 events), 不阻断 response
+        from chisha.status_bar import build_status_bar
+        status_bar = build_status_bar(profile, [])
+
     out = {
         "session_id": session_id,
         "meal_type": meal_type,
@@ -183,6 +203,7 @@ def recommend_meal(
         },
         "candidates": [_format_v2_candidate(i + 1, c)
                         for i, c in enumerate(reranked)],
+        "status_bar": status_bar,
     }
 
     if log_to_file:

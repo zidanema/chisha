@@ -131,6 +131,32 @@ def api_refine(req: RefineReq) -> dict:
         refine_intent=raw.get("refine_intent"),  # D-073
     )
 
+    # T-P1b-01: refine 路径 status_bar
+    # = recall path L0-A/B (与 recommend 同源, 重跑 _build_l1_trace)
+    # + refine path L0-C 解除事件 (来自 raw["_refine_hard_filter_events"])
+    try:
+        from chisha.debug_recommend import _build_l1_trace
+        from chisha.status_bar import build_status_bar
+        _l1_trace, _ = _build_l1_trace(
+            profile, rests, tagged, meal_log,
+            __import__("chisha.clock", fromlist=["today"]).today(),
+            meal_type=state.meal_type,
+        )
+        _hfe = list(_l1_trace.get("hard_filter_events") or [])
+        # 合并 refine 自身的 L0-C override 事件
+        _hfe.extend(raw.get("_refine_hard_filter_events") or [])
+        status_bar = build_status_bar(profile, _hfe)
+    except Exception as _e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "refine status_bar build failed (non-fatal): %s: %s",
+            type(_e).__name__, _e,
+        )
+        from chisha.status_bar import build_status_bar
+        status_bar = build_status_bar(
+            profile, raw.get("_refine_hard_filter_events") or []
+        )
+
     out = {
         "session_id": raw["session_id"],
         "meal_type": raw["meal_type"],
@@ -141,6 +167,7 @@ def api_refine(req: RefineReq) -> dict:
         "context": ctx.to_llm_dict(),
         "stats": raw["stats"],
         "candidates": candidates_fmt,
+        "status_bar": status_bar,
         # 调试用 (前端忽略):
         "refine_input": raw.get("refine_input"),
         "refine_intent": raw.get("refine_intent"),  # D-073: 替代 parsed_feedback/taste_hints
