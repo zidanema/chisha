@@ -9,9 +9,11 @@ Done When: 准确率 ≥ 85% (per-slot check 命中率).
 
 Eval 维度 (expected JSON 支持以下 assertion 操作符):
   - <field>: <value>            字面相等
-  - <field>_contains: <substr>  当字段是 list[str] 或 str 时检查 substring
-  - <field>_contains_any: [...] list 含 any 一个
-  - <field>_nonempty: true      list/str 非空
+  - <field>_contains: <substr>  list[str] 任一元素 substring 命中, 或 str substring (粒度粗, 谨慎用)
+  - <field>_has_exact: <str>    list[str] 含 exact 元素 (字面相等, 修 substring 假阳性)
+  - <field>_contains_any: [...] list 含白名单中任一 (字面相等, 不走 substring)
+  - <field>_contains_all: [...] list 含白名单中全部 (字面相等, 用于拆分检查)
+  - <field>_nonempty: true      list/str 非空 (宽松, 不验内容)
   - <field>_nonnull: true       字段非 null
   - is_empty: true              v2.is_empty()
   - is_empty_redirect: true     v2.redirect 全空
@@ -58,23 +60,15 @@ def _check_assertion(v2_dict: dict, key: str, expected: Any) -> tuple[bool, str]
         passed = bool(expected) == _all_empty_lists(v2_dict.get("redirect", {}))
         return passed, f"redirect empty={_all_empty_lists(v2_dict.get('redirect', {}))}"
     if key == "is_empty_strict":
-        redirect_empty = _all_empty_lists(v2_dict.get("redirect", {}))
-        constrain = v2_dict.get("constrain") or {}
-        constrain_empty = all(
-            v in (None, False, [], "", {}) or
-            (k == "functional" and isinstance(v, dict) and
-             all(x in (None, False) for x in v.values()))
-            for k, v in constrain.items()
-        )
-        ref_empty = not v2_dict.get("reference")
-        rp_empty = not v2_dict.get("reject_previous")
-        passed = bool(expected) == (redirect_empty and constrain_empty and
-                                       ref_empty and rp_empty)
-        return passed, (f"strict_empty=redir{redirect_empty}/"
-                        f"constrain{constrain_empty}/ref{ref_empty}/rp{rp_empty}")
+        # Codex H5 修: 直接复用 _v2_is_empty (覆盖 legacy_v1 字段),
+        # 与 RefineIntentV2.is_empty 行为一致, 防止"LLM 输出落到 legacy 字段"漏检.
+        passed = bool(expected) == _v2_is_empty(v2_dict)
+        return passed, f"v2_is_empty={_v2_is_empty(v2_dict)} (expected {expected})"
     if key == "is_empty_redirect_avoid_assoc":
-        passed = bool(expected) == _all_empty_lists(v2_dict.get("redirect", {}))
-        return passed, f"redirect={v2_dict.get('redirect')}"
+        # Codex H4 修: 别名实质等同 is_empty_strict, 也走全检查 (含 constrain / reference / legacy_v1).
+        # 命名保留是为 eval set 可读性 ("此 case 重点是不联想").
+        passed = bool(expected) == _v2_is_empty(v2_dict)
+        return passed, f"v2_is_empty={_v2_is_empty(v2_dict)} (expected {expected})"
     if key == "raw_understanding_nonempty":
         ru = v2_dict.get("raw_understanding") or ""
         passed = bool(expected) == (len(ru.strip()) > 0)
@@ -97,13 +91,24 @@ def _check_assertion(v2_dict: dict, key: str, expected: Any) -> tuple[bool, str]
             passed = False
         return passed, f"{path}={v} contains {expected!r}? {passed}"
     if key.endswith("_contains_any"):
+        # Codex M2: 严格化 — 默认要求 list 元素**字面相等**白名单中任一项, 不走 substring.
+        # ("海鲜粥" 字面 != "海鲜", 避免误判.)
         path = key[: -len("_contains_any")]
         v = _get_path(v2_dict, path) or []
-        passed = isinstance(v, list) and any(
-            any(e in item for item in v if isinstance(item, str))
-            for e in expected
-        )
+        passed = isinstance(v, list) and bool(set(v) & set(expected))
         return passed, f"{path}={v} contains_any {expected}? {passed}"
+    if key.endswith("_contains_all"):
+        # Codex H3 新增: list 必须包含 expected 中**全部**元素 (字面相等). 用于"肯德基麦当劳"拆分检查.
+        path = key[: -len("_contains_all")]
+        v = _get_path(v2_dict, path) or []
+        passed = isinstance(v, list) and set(expected).issubset(set(v))
+        return passed, f"{path}={v} contains_all {expected}? {passed}"
+    if key.endswith("_has_exact"):
+        # Codex M1: list 是否含 exact 元素 (字面相等, 非 substring), 修 "海鲜粥" 通过 "不要海鲜" 漏洞.
+        path = key[: -len("_has_exact")]
+        v = _get_path(v2_dict, path) or []
+        passed = isinstance(v, list) and expected in v
+        return passed, f"{path}={v} has_exact {expected!r}? {passed}"
     if key.endswith("_nonempty"):
         path = key[: -len("_nonempty")]
         v = _get_path(v2_dict, path)
