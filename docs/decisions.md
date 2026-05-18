@@ -258,3 +258,10 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 字段空洞 (quality_floor / delivery_only / reference) 务实降级: schema 抽出但 L1/L2 不消费, 只透传 L3 prompt + trace 标 `unsupported_in_recall=true`, 不假装做了
 - 联动改造 (≠ 无侵入): API 契约 + 前端卡片 + trace schema bump + 旧结果兼容, 至少 4 处
 - 详见 brief §5 §8
+
+## D-086
+**回滚 main 05-17 D-080~D-085 过渡版, 合并 worktree-recommand-v3 framework 重构版。** (2026-05-18) · 修双路线并行错配
+- 根因: worktree 创建时 Claude Code 基于 `origin/main` (落后本地 main 24 commit), 没拉本地 main, 导致双线并行实施同组 D-080~D-085
+- 取舍: main D-080/D-081 是过渡版 (B-001 v2 brief 已认定要重做); D-082/D-083 trace + D-085 PR-A router 拆分 + D-085 PR-E lab_summary 全回滚 — debug-ui 动线本就要重设计, router 拆分待 Phase 1 推广前重做
+- backlog (main 回滚后仍需后做): B-001 v2 全字段反馈短链路 / Living/Lab router 重拆 / Living API agent-ready 参数化 / debug-ui 动线重设计后再吸收
+- tag 备份: archive/main-pre-rollback-2026-05-18 + archive/refine-v2-framework-2026-05-18
