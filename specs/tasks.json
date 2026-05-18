@@ -29,8 +29,8 @@
       "title": "refine 多 slot LLM 解析层 + 安全带",
       "regression_risk": "medium",
       "depends_on": ["T-00"],
-      "status": "done_scaffold",
-      "_notes": "scaffold 版: schema + 安全带骨架 + 10 单测. LLM prompt 重写 + 30-50 eval set + 下游消费 留 follow-up."
+      "status": "done",
+      "_notes": "follow-up 完成: 多 slot LLM prompt (prompts/parse_refine_intent_v2.md) + 真 LLM extractor + 6 失败降级路径单测 + 43 条 eval set + runner 跑过 96.2% 准确率 (≥ 85% 阈值) + refine.py 接 intent_v2 双存 trace. 新 slot (brand_avoid / cooking_method_avoid / functional / reference) 在 trace 已存, 下游 L1/L2 真消费留 T-P2-01/02 接入."
     },
     {
       "id": "T-P1b-01",
