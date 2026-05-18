@@ -55,9 +55,6 @@ def _derive_l0_protections(profile: dict) -> dict[str, Any]:
     }
 
 
-_DIETARY_LAW_LABEL = {"vegetarian": "素食", "halal": "清真"}
-
-
 def _format_override_event(ev: dict) -> dict[str, Any] | None:
     """把 hard_filter_event 转成用户语言的 status_bar 事件.
 

@@ -33,17 +33,19 @@ export function MethodologyBar({
   payload: StatusBarPayload | null;
 }) {
   if (!payload) return null;
-  const { active_methodology, l0_protections, override_events } = payload;
+  const { active_methodology, l0_protections } = payload;
   const labels = active_methodology?.labels ?? [];
   const allergies = l0_protections?.allergies ?? [];
   const dietaryLaw = l0_protections?.dietary_law ?? null;
+  // Codex LOW: override_events 可能在旧后端响应里缺失, 兜底空数组防 crash
+  const overrideEvents = payload.override_events ?? [];
 
   // baseline 没东西可展示时不渲染 (避免空条占位)
   if (
     labels.length === 0 &&
     allergies.length === 0 &&
     !dietaryLaw &&
-    override_events.length === 0
+    overrideEvents.length === 0
   ) {
     return null;
   }
@@ -84,9 +86,9 @@ export function MethodologyBar({
       </div>
 
       {/* override events 行: 本次推荐触发的事件 */}
-      {override_events.length > 0 && (
+      {overrideEvents.length > 0 && (
         <div className="space-y-1">
-          {override_events.map((ev, i) => (
+          {overrideEvents.map((ev, i) => (
             <div
               key={`ev-${i}`}
               data-testid={`methodology-event-${ev.kind}`}

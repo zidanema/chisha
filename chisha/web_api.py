@@ -101,6 +101,11 @@ def api_refine(req: RefineReq) -> dict:
     rests, tagged = load_zone_data(zone, ROOT)
     meal_log = load_meal_log(ROOT)
 
+    # Codex M2: 在 web_api 端单次取 today (clock 走 sandbox 友好), 一路传到
+    # refine_session / build_context / _build_l1_trace, 避免跨午夜/sandbox 边界漂移.
+    from chisha import clock
+    today = clock.today(ROOT)
+
     raw = refine_session(
         session_id=req.session_id,
         user_input=req.refine_text or "",
@@ -109,6 +114,7 @@ def api_refine(req: RefineReq) -> dict:
         tagged=tagged,
         meal_log=meal_log,
         root=ROOT,
+        today=today,
     )
 
     # refine() 返回的 candidates 是 raw rerank dict, 需要走 format_v2_candidate
@@ -119,8 +125,6 @@ def api_refine(req: RefineReq) -> dict:
 
     # 拼成与 recommend 一致的 RecommendResponse 形状 (前端 useChishaState 直接消费)
     from chisha.context import build_context
-    from chisha import clock
-    today = clock.today()
     ctx = build_context(
         profile=profile,
         meal_log=meal_log,
@@ -134,12 +138,13 @@ def api_refine(req: RefineReq) -> dict:
     # T-P1b-01: refine 路径 status_bar
     # = recall path L0-A/B (与 recommend 同源, 重跑 _build_l1_trace)
     # + refine path L0-C 解除事件 (来自 raw["_refine_hard_filter_events"])
+    # Codex M2: 与 refine_session 内部共用同一个 today (clock.today, sandbox 友好)
     try:
         from chisha.debug_recommend import _build_l1_trace
         from chisha.status_bar import build_status_bar
         _l1_trace, _ = _build_l1_trace(
             profile, rests, tagged, meal_log,
-            __import__("chisha.clock", fromlist=["today"]).today(),
+            today,
             meal_type=state.meal_type,
         )
         _hfe = list(_l1_trace.get("hard_filter_events") or [])
@@ -198,6 +203,12 @@ def api_refine(req: RefineReq) -> dict:
                 "applied": True,
                 "user_input": req.refine_text or "",
                 "intent": raw.get("refine_intent"),
+                # Codex H1 修: V2 多 slot + 执行证据进 base_trace, debug-ui Replay 可审计
+                "intent_v2": raw.get("refine_intent_v2"),
+                "reference_resolved": raw.get("_reference_resolved"),
+                "subtype_diversified": bool(raw.get("_subtype_diversified")),
+                # Codex H2 修: narrative 同步落 base_trace["refine"], 与 L3 trace narrative 对齐
+                "narrative": raw.get("narrative", ""),
                 "round": raw.get("round"),
                 "n_combos_recalled": raw.get("stats", {}).get("n_combos_recalled"),
                 "n_after_l2": raw.get("stats", {}).get("n_combos_after_score"),

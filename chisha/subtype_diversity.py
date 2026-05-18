@@ -170,9 +170,11 @@ def diversify_by_subtype(
         if not progress:
             break
     # 若有桶 max_per_subtype 卡到, 但还有内容 (overflow), 把剩下的按原相对顺序续上
+    # Codex M4: 用 id() 集合去重, 避免不同候选内容相同时被 dict equality 误砍.
+    seen_ids = {id(c) for c in out}
     overflow: list[tuple[int, dict]] = []
     for idx, (sa, c) in enumerate(annotated):
-        if c in out:
+        if id(c) in seen_ids:
             continue
         overflow.append((idx, c))
     overflow.sort(key=lambda x: x[0])

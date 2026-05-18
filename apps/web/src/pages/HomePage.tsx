@@ -134,11 +134,12 @@ export function HomePage() {
     if (!home.session?.history) return;
     const hist = home.session.history.find((r) => r.round === targetRound);
     if (!hist) return;
+    // Codex LOW: 旧 history 缺 status_bar/narrative → 置空, 不沿用当前轮 (避免错位)
     setHome({
       session: { ...home.session, candidates: hist.candidates, round: hist.round },
       pickedRank: null,
-      statusBar: hist.status_bar ?? home.statusBar,
-      narrative: hist.narrative ?? home.narrative,
+      statusBar: hist.status_bar ?? null,
+      narrative: hist.narrative ?? "",
     });
     scrollToRecs();
   }
@@ -150,8 +151,8 @@ export function HomePage() {
       session: { ...home.session, candidates: first.candidates, round: first.round },
       refineHistory: [],
       pickedRank: null,
-      statusBar: first.status_bar ?? home.statusBar,
-      narrative: first.narrative ?? home.narrative,
+      statusBar: first.status_bar ?? null,
+      narrative: first.narrative ?? "",
     });
     scrollToRecs();
   }

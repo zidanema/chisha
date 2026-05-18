@@ -165,6 +165,61 @@ def test_refine_merges_into_base_trace(app_with_root):
     assert len(files) == 1
 
 
+def test_refine_base_trace_falls_through_new_fields(app_with_root, monkeypatch):
+    """Codex H1: base_trace["refine"] 必须含 reference_resolved/subtype_diversified/narrative.
+
+    用真 raw 字段 mock _fake_refine_session 返回, 验证 web_api 真把这些字段
+    merge 进 base_trace["refine"] (不能只看 response 顶层).
+    """
+    app, root, trace_store = app_with_root
+    sid = "sess_refine_new_fields_04"
+    _write_base_trace(trace_store, root, sid)
+
+    # 重新覆盖 refine_session, 带 _reference_resolved / _subtype_diversified / narrative
+    from chisha import web_api as web_api_mod
+
+    def _refine_with_fields(**kwargs):
+        return {
+            "session_id": kwargs["session_id"],
+            "meal_type": "lunch", "zone": "shenzhen-bay", "round": 2,
+            "generated_at": "2026-05-16T12:34:56+00:00",
+            "refine_input": kwargs.get("user_input", ""),
+            "refine_intent": {"cuisine_want": "湘菜"},
+            "refine_intent_v2": {"schema_version": "2.0",
+                                   "raw_text": "比昨天清淡"},
+            "stats": {"n_dishes_total": 10, "n_combos_recalled": 10,
+                       "n_combos_after_score": 10, "n_returned": 5},
+            "candidates": [],
+            "narrative": "mock-narrative-for-trace",
+            "_reference_resolved": {
+                "relation": "lighter", "raw_text": "比昨天清淡",
+                "base_session_id": "sess-base", "base_meal_type": "lunch",
+                "base_started_at": "", "n_base_combos": 1,
+                "notes": [], "source": "v2_intent",
+            },
+            "_subtype_diversified": True,
+            "_refine_hard_filter_events": [],
+            "_refine_recall_fallback_events": [],
+        }
+    monkeypatch.setattr(web_api_mod, "refine_session", _refine_with_fields)
+
+    client = TestClient(app)
+    r = _post_refine(client, sid)
+    assert r.status_code == 200, r.text
+
+    p = trace_store.data_root.recommend_trace_dir(root) / f"{sid}.json"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    refine_blob = data["refine"]
+    assert refine_blob["narrative"] == "mock-narrative-for-trace"
+    assert refine_blob["subtype_diversified"] is True
+    rr = refine_blob["reference_resolved"]
+    assert rr is not None
+    assert rr["relation"] == "lighter"
+    assert rr["source"] == "v2_intent"
+    assert rr["base_session_id"] == "sess-base"
+    assert refine_blob["intent_v2"]["schema_version"] == "2.0"
+
+
 def test_refine_with_missing_base_trace_warns_not_persists(app_with_root, caplog):
     """base trace 缺失 (首轮 best-effort 失败): refine 仍返 200, 但不创 orphan trace."""
     app, root, trace_store = app_with_root

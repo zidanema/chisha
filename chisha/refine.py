@@ -114,7 +114,11 @@ def refine(
             f"Session {session_id!r} 不存在或已过期, 请先调 recommend_meal"
         )
 
-    today = today or dt.date.today()
+    # Codex M2: 统一走 clock.today() (sandbox 启用时返虚拟 date).
+    # 之前 dt.date.today() vs clock.today() 不一致, 跨午夜/sandbox 边界会让
+    # "昨天/上次" reference resolver 跟主推荐链路时间漂移.
+    from chisha import clock
+    today = today or clock.today(root)
 
     # 1. parse_refine_intent: user_input → 结构化意图 (V1, 下游 recall/score 消费)
     intent: RefineIntent = parse_refine_intent(
@@ -182,18 +186,55 @@ def refine(
     # → parse_reference_text → resolve_reference (读 trace_store) → apply_relation
     # 在 top_k 切片前对 ranked 软重排; baseline_l2_snapshot 行为不变 (无 refine 时不触发).
     # 失败/未命中静默降级, 不阻断 refine.
+    #
+    # Codex M3 修: 优先消费 V2 intent_v2.reference (LLM 已结构化), raw_text parser
+    # 作 fallback. 若 LLM 给了 relation 词表没命中的 raw_text → 不再静默忽略
+    # (违反 Faithful Refine 的 "执行用户表达" 第一原则).
     resolved_reference: object | None = None
+    reference_source: str = "none"  # "v2_intent" / "raw_parser" / "none"
     try:
         from chisha.reference_resolver import (
             parse_reference_text, resolve_reference, apply_relation,
+            ReferenceQuery, _extract_days_back, _extract_meal_hint,
         )
-        ref_query = parse_reference_text(user_input)
+        ref_query = None
+        # 1) V2 优先: intent_v2.reference 存在且 relation 在 resolver 支持的集合
+        v2_ref = intent_v2.reference if intent_v2.reference else None
+        v2_rel = (v2_ref or {}).get("relation")
+        # V2 relation 集合: lighter / similar_but_different_venue / avoid_pattern
+        # resolver/apply 当前消费: lighter / similar_but_different_venue / similar
+        if v2_rel in ("lighter", "similar_but_different_venue"):
+            db = _extract_days_back(user_input)
+            mh = _extract_meal_hint(user_input)
+            # 没时间线索 → 走 -2 sentinel (上次), 与 raw parser 行为一致
+            if db is None and mh is None:
+                db = -2
+            ref_query = ReferenceQuery(
+                raw_text=user_input,
+                relation=v2_rel,
+                days_back=db,
+                meal_hint=mh,
+            )
+            reference_source = "v2_intent"
+        # 2) Fallback: raw text parser (V2 缺失 / avoid_pattern / unknown relation)
+        if ref_query is None:
+            ref_query = parse_reference_text(user_input)
+            if ref_query is not None:
+                reference_source = "raw_parser"
         if ref_query is not None:
             resolved_reference = resolve_reference(
                 ref_query, today=today, root=root,
             )
+            # 边界: relation=unknown 时 resolved 不为 None 但 apply 是 no-op,
+            # 此时不当作"已执行 reference"上报 (避免 trace 误导).
             if resolved_reference is not None:
-                ranked = apply_relation(ranked, resolved_reference)
+                if resolved_reference.relation in (
+                    "lighter", "similar_but_different_venue", "similar"
+                ):
+                    ranked = apply_relation(ranked, resolved_reference)
+                else:
+                    resolved_reference = None
+                    reference_source = "none"
     except Exception as _e:
         import logging as _logging
         _logging.getLogger(__name__).warning(
@@ -254,6 +295,7 @@ def refine(
                                      for d in c.get("dishes", [])[:2])
                           for c in reranked[:5]],
         # T-P2-01: reference resolve 命中时记一条 (debug + 用户语言交互可视化)
+        # Codex M3: source 字段标 "v2_intent" / "raw_parser", debug-ui 可见执行来源
         "reference_resolved": (
             {
                 "relation": resolved_reference.relation,
@@ -263,6 +305,7 @@ def refine(
                 "base_started_at": resolved_reference.base_started_at,
                 "n_base_combos": len(resolved_reference.base_combos or []),
                 "notes": list(resolved_reference.notes or []),
+                "source": reference_source,
             }
             if resolved_reference is not None
             else None
@@ -290,6 +333,24 @@ def refine(
     # T-P1b-02: L3 narrative (从 collector 取出, 给前端 RecCard 上方展示)
     narrative = l3_collector.get("narrative", "")
 
+    # Codex H1 修: reference_resolved / subtype_diversified 必须透传给 web_api,
+    # 让 base_trace["refine"] 落执行证据 (Faithful Refine 可审计性). 之前只写到
+    # _append_intent_trace 本地 dict, 主 trace 看不到, debug-ui Replay 不可证.
+    reference_resolved_field = (
+        {
+            "relation": resolved_reference.relation,
+            "raw_text": resolved_reference.raw_text,
+            "base_session_id": resolved_reference.base_session_id,
+            "base_meal_type": resolved_reference.base_meal_type,
+            "base_started_at": resolved_reference.base_started_at,
+            "n_base_combos": len(resolved_reference.base_combos or []),
+            "notes": list(resolved_reference.notes or []),
+            "source": reference_source,
+        }
+        if resolved_reference is not None
+        else None
+    )
+
     # 8. 返回 §5.7-style (字段对前端兼容)
     return {
         "session_id": session_id,
@@ -309,6 +370,9 @@ def refine(
         },
         "candidates": reranked,
         "narrative": narrative,
+        # Codex H1: 给 web_api 落 base_trace["refine"] 用 (执行证据)
+        "_reference_resolved": reference_resolved_field,
+        "_subtype_diversified": subtype_diversified,
         # T-P1a-01: refine path L0-C 事件 (web_api 合并 base_trace 时 append)
         "_refine_hard_filter_events": refine_hard_filter_events,
         # T-P1a-02: 三级回落事件 (web_api 合并到 trace.l1.recall_fallback_events)

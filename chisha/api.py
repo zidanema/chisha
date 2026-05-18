@@ -171,14 +171,16 @@ def recommend_meal(
 
     # T-P1b-01: status_bar payload. 跑一次轻量 _build_l1_trace 拿 hard_filter_events
     # (recall path 的 L0-A/B 事件), 给前端 always-on 状态条派生数据.
-    # ~50ms 开销 (同 _build_trace 的二跑 _build_l1_trace, 此处 best-effort).
+    # Codex M1 修: status_bar 与 _build_trace 共用同一份 _build_l1_trace 结果,
+    # 之前 status_bar 跑一次 + _build_trace 又跑一次 → 100ms 重复开销 + 边界漂移风险.
+    l1_trace_cache: dict | None = None
     try:
         from chisha.debug_recommend import _build_l1_trace
         from chisha.status_bar import build_status_bar
-        _l1_trace, _ = _build_l1_trace(
+        l1_trace_cache, _ = _build_l1_trace(
             profile, rests, tagged, meal_log, today, meal_type=meal_type
         )
-        _hfe = _l1_trace.get("hard_filter_events") or []
+        _hfe = l1_trace_cache.get("hard_filter_events") or []
         status_bar = build_status_bar(profile, _hfe)
     except Exception as _e:
         import logging
@@ -188,6 +190,7 @@ def recommend_meal(
         # 降级到 baseline (无 events), 不阻断 response
         from chisha.status_bar import build_status_bar
         status_bar = build_status_bar(profile, [])
+        l1_trace_cache = None
 
     # T-P1b-02: L3 narrative (顶层"为什么推这 5 道"摘要)
     # collector 里若 LLM 路径触发, narrative 已写入; fallback / 旧 trace 为空
@@ -250,6 +253,8 @@ def recommend_meal(
                 l3_collector=l3_collector or {},
                 use_llm_rerank=use_llm_rerank,
                 root=root,
+                # Codex M1: 复用 status_bar 已经跑过的 l1_trace, 避免二次重跑
+                l1_trace_precomputed=l1_trace_cache,
             )
             from chisha import trace_store
             trace_store.write_trace(session_id, trace, root=root)
@@ -377,12 +382,13 @@ def _build_trace(
     l3_collector: dict,
     use_llm_rerank: bool | None,
     root: Path | None,
+    l1_trace_precomputed: dict | None = None,
 ) -> dict:
     """D-079: 组装完整 trace dict (与 apps/debug-ui Session type 对齐 + __frozen).
 
-    所有 L1/L2/L3 中间状态都已经在 recommend_meal 链路里算好, 这里只做组装,
-    L1 trace 用 debug_recommend._build_l1_trace 二次跑 (内部用同样的 production
-    hard_filter, 行为等价, ~50ms 开销).
+    所有 L1/L2/L3 中间状态都已经在 recommend_meal 链路里算好, 这里只做组装.
+    Codex M1 修: l1_trace_precomputed 注入时跳过重跑 (recommend_meal 已为 status_bar
+    跑过一次), 否则 fallback 跑一次 (debug_what_if / 测试调用兼容).
     """
     from chisha import trace_store
     from chisha.debug_recommend import (
@@ -393,9 +399,12 @@ def _build_trace(
     from chisha.score import combo_food_form, resolve_caps
 
     # L1 trace
-    l1_trace, _combos_traced = _build_l1_trace(
-        profile, rests, tagged, meal_log, today, meal_type=meal_type
-    )
+    if l1_trace_precomputed is not None:
+        l1_trace = l1_trace_precomputed
+    else:
+        l1_trace, _ = _build_l1_trace(
+            profile, rests, tagged, meal_log, today, meal_type=meal_type
+        )
 
     # L2 trace (复用 ranked, 不重算)
     import statistics
@@ -448,6 +457,9 @@ def _build_trace(
         "stop_reason": l3_collector.get("stop_reason"),
         "fallback_reason": l3_collector.get("fallback_reason"),
         "parsed_candidates": l3_collector.get("parsed_candidates"),
+        # Codex H2 修: narrative 必须落 trace, 否则 Faithful Refine 执行证据链断裂
+        # (response 顶层有 narrative, trace 缺会让 debug-ui Replay 找不到 narrative 来源).
+        "narrative": l3_collector.get("narrative", ""),
         "payload_to_llm": payload,
         "n_returned": len(reranked),
         "used_fallback": bool(l3_collector.get("used_fallback")),
