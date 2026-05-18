@@ -1,11 +1,8 @@
 // Thin fetch wrappers. ALL backend rename / shape coercion happens in adapter.ts.
 
 import type {
-  BackendDebugRecommend,
-  BackendDebugRecommendReq,
   BackendDebugTrace,
   BackendSessionsResp,
-  BackendWhatIfReq,
 } from "./backend-types";
 
 export class ApiError extends Error {
@@ -46,22 +43,15 @@ async function fetchJson<T>(input: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function postDebugRecommend(
-  req: BackendDebugRecommendReq,
-): Promise<BackendDebugRecommend> {
-  return fetchJson<BackendDebugRecommend>("/api/debug_recommend", {
-    method: "POST",
-    body: JSON.stringify(req),
-  });
-}
-
 export type ProfileResponse = Record<string, unknown>;
 
 export function getProfile(): Promise<ProfileResponse> {
   return fetchJson<ProfileResponse>("/api/profile");
 }
 
-// ---------- D-079: trace replay ----------
+// ---------- D-079: trace replay (read-only) ----------
+// 注: D-087 后写入路径全删 (postDebugRecommend / postWhatIf). 这两个 GET 端点
+// 保留, 让 useWaTrace 在 v3 endpoint 出 500 时 fallback 走老 sessions 列表.
 
 export function fetchSessions(params: {
   limit?: number;
@@ -82,9 +72,82 @@ export function fetchSession(sid: string): Promise<BackendDebugTrace> {
   );
 }
 
-export function postWhatIf(req: BackendWhatIfReq): Promise<BackendDebugTrace> {
-  return fetchJson<BackendDebugTrace>("/api/debug/what_if", {
-    method: "POST",
-    body: JSON.stringify(req),
-  });
+// ---------- D-087 Workflow A: 4 个新 read-only endpoint ----------
+
+import type { IntentFieldDescriptor, TraceMeta } from "../types/trace";
+
+// Backend rounds 字段不含 l1/l2/l3/final body (stub).
+export type BackendRoundStub = {
+  id: string;
+  label?: string | null;
+  started_at?: string | null;
+  user_input?: string | null;
+  intent_v2?: unknown;
+  narrative?: string | null;
+  kpi?: {
+    combos?: number;
+    l2_top?: number;
+    top1?: string;
+    latency_ms?: number;
+  };
+  diff?: {
+    vs: string; in: number; out: number; up: number; down: number;
+  } | null;
+};
+
+export type BackendTraceDetail = {
+  meta: BackendTraceMeta;
+  rounds: BackendRoundStub[];
+};
+
+export type BackendTraceMeta = {
+  session_id?: string;
+  started_at?: string | null;
+  meal_type?: string | null;
+  zone?: string | null;
+  top1_summary?: string | null;
+  total_latency_ms?: number | null;
+  l3_status?: string | null;
+  round_ids?: string[];
+  latest_round?: string;
+  refine_count?: number;
+  __source?: string;
+  feedback?: { type: string; rank?: number; count?: number } | null;
+};
+
+export type BackendRoundFull = BackendRoundStub & {
+  l1?: unknown;
+  l2?: unknown;
+  l3?: unknown;
+  final?: unknown;
+  __frozen?: unknown;
+};
+
+export function fetchTraces(params: {
+  limit?: number;
+  meal_type?: "lunch" | "dinner" | null;
+} = {}): Promise<TraceMeta[]> {
+  const q = new URLSearchParams();
+  if (params.limit != null) q.set("limit", String(params.limit));
+  if (params.meal_type) q.set("meal_type", params.meal_type);
+  const qs = q.toString();
+  return fetchJson<TraceMeta[]>(`/api/traces${qs ? `?${qs}` : ""}`);
+}
+
+export function fetchTraceDetail(sid: string): Promise<BackendTraceDetail> {
+  return fetchJson<BackendTraceDetail>(
+    `/api/trace/${encodeURIComponent(sid)}`,
+  );
+}
+
+export function fetchRoundFull(
+  sid: string, roundId: string,
+): Promise<BackendRoundFull> {
+  return fetchJson<BackendRoundFull>(
+    `/api/trace/${encodeURIComponent(sid)}/round/${encodeURIComponent(roundId)}`,
+  );
+}
+
+export function fetchIntentSchema(): Promise<IntentFieldDescriptor[]> {
+  return fetchJson<IntentFieldDescriptor[]>("/api/intent_schema");
 }

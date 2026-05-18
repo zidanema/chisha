@@ -265,3 +265,11 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 取舍: main D-080/D-081 是过渡版 (B-001 v2 brief 已认定要重做); D-082/D-083 trace + D-085 PR-A router 拆分 + D-085 PR-E lab_summary 全回滚 — debug-ui 动线本就要重设计, router 拆分待 Phase 1 推广前重做
 - backlog (main 回滚后仍需后做): B-001 v2 全字段反馈短链路 / Living/Lab router 重拆 / Living API agent-ready 参数化 / debug-ui 动线重设计后再吸收
 - tag 备份: archive/main-pre-rollback-2026-05-18 + archive/refine-v2-framework-2026-05-18
+
+## D-087
+**Debug 工具台收敛到 Workflow A · 分析 trace (100% read-only) + trace_store v3 (多 round 持久化)。** (2026-05-19) · debug-ui 重构
+- Workflow A 是唯一动线: 浏览历史 trace + 比较 refine 轮次, 写入路径 (Live / What-if / Refine submit) 全删 — debug 工具 ≠ 用户视图, 加写入只会污染数据
+- trace_store v3 目录布局 `{sid}/meta.json` + `{sid}/rounds/R{n}.json` + 文件锁 `{recommend_trace_dir}/.lock-{sid}` 序列化 append, 解决 refine 多轮 + 并发安全 + 分页读
+- 4 个 GET endpoint: `/api/traces`, `/api/trace/{sid}`, `/api/trace/{sid}/round/{rid}`, `/api/intent_schema`; LookupDrawer 反查走前端内存 (零后端调用)
+- Intent UI schema-driven: backend `INTENT_SCHEMA` 单一可信源, 前端 fallback `constants/intentSchema.ts`, V2 RefineIntent 扩字段不动 UI 代码
+- 详见 brief: docs/design_briefs/2026-05-18-debug-console-workflow-a.md

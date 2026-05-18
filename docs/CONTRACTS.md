@@ -106,15 +106,18 @@
 - **trace 落盘走 `trace_store.write_trace`，失败仅 `logger.warning` 不阻断 recommend。** `read_trace` fail-closed：损坏抛 `TraceCorrupt` + 备份 `.corrupt.{ts}.bak`（与 D-066/067 一致）。改 trace schema 必 bump `TRACE_SCHEMA_VERSION`。
 - **What-if 零 runtime read。** `chisha/debug_what_if.py:what_if_rerun` 必须 100% 用 `__frozen.{ctx, today, l1_combos, l1_prefs_snapshot, l2_meal_log_view, profile_snapshot}`，**严禁** `clock.today()` / `dt.date.today()` / `load_prefs(root)` 任何 runtime state read。加新冻结字段 → 同步 `_build_trace` 写入 + 测试守门。
 - **Live 模式永不写盘。** `/api/debug_recommend`（老 D-039 端点）+ `chisha/api.py:recommend_meal(persist_trace=False)` 是 Live 入口，永不调 `trace_store.write_trace`——为"好调试"加 trace 写盘会污染 Replay 列表。
-- **refine 二轮写 trace 必须先 `read_trace(sid)` merge 进同一文件。** Sidebar 一条 session 一行不分裂。missing → warn + 不持久化；corrupt → error + 不持久化。**绝不**创 refine-only 孤儿 trace（参 D-079 PR-4）。
-- **改 debug-ui 前端时：** 后端是单一可信源，`localStorage` 只作 7 天离线 fallback，永不参与后端列表合并；不动 `L1 / L2 / L3 / Final / Refine / Trace` 6 个 panel 组件——What-if 是 overlay 不重设计；URL state 用 `replaceState` 不 push。
+- **refine 二轮写 trace 走 `trace_store.append_round` (D-087 v3)。** 同 sid 多轮持久化到 `{sid}/meta.json` + `{sid}/rounds/R{n}.json`，文件锁 `{recommend_trace_dir}/.lock-{sid}` 序列化。missing base → warn + 不持久化；corrupt → error + 不持久化（孤儿 v2 文件原地不动）。**绝不**创 refine-only 孤儿 trace。
+- **改 debug-ui 前端时：** 后端是单一可信源，`localStorage` 只作 7 天离线 fallback，永不参与后端列表合并；URL state 用 `replaceState` 不 push。
 
 ---
 
-## 调试台 (D-039 + D-075)
+## 调试台 (D-039 + D-075 + D-087)
 
 - **老调试台 = 独立 FastAPI on `:8765`，与主推荐链路解耦。** 调试逻辑不要混进生产代码 (`chisha/api.py`)。改打分链路时检查 `chisha/debug_recommend.py` instrumented 管道还能跑（参 D-039）。
-- **新 debug-ui SPA (`apps/debug-ui/`) 独立 Vite 项目，端口 5174，不并入 `apps/web/`。** 只通过 `/api/*` 联调，backend 只在 `chisha/debug_recommend.py` ADD 字段不动既有键（参 D-075）。改 backend trace shape 同步 `apps/debug-ui/src/api/backend-types.ts`。
+- **新 debug-ui SPA (`apps/debug-ui/`) 独立 Vite 项目，端口 5174，不并入 `apps/web/`。** 只通过 `/api/*` 联调，backend 只在 `chisha/debug_recommend.py` ADD 字段不动既有键（参 D-075）。改 backend trace shape 同步 `apps/debug-ui/src/api/backend-types.ts` + `traceToSession` adapter。
+- **Refine round 的 `l1/l2/l3` 切片当前为 None (backlog)。** `refine_session` 没暴露完整 trace, 所以 `append_round` 落盘的 R2+ round 只有 `final` + `intent_v2` + `kpi`. Frontend `useWaTrace.stubToRound` 给 RoundRecord 加 `__partial=true` flag, LookupDrawer 见此 flag 警告"反查跑在 mock 数据上不可信". 修法: 扩 `refine_session` 返回值含 l1/l2/l3 切片, 改 `_build_round_payload_from_refine`. 在改之前**不要**把 partial mock 数据当真实数据展示给用户.
+- **D-087 Workflow A 后 SPA 100% read-only。** Live / What-if / Refine submit 路径全删；4 个 endpoint (`/api/traces`, `/api/trace/{sid}`, `/api/trace/{sid}/round/{rid}`, `/api/intent_schema`) 都是 GET。反查走前端内存 LookupDrawer 不调后端。新加写入入口前先翻 D-087 brief 确认是否要破坏 read-only 约束。
+- **Trace v3 目录布局是 append_round / 多 round 持久化的唯一形式。** `read_trace_v3_view` 走 on-read migrate (v2 单文件 → 转 v3 目录); 任何工具 (scripts/baseline_l2_snapshot, inspect_candidates) 应用 v3 reader 而非直接 json.load。`TRACE_SCHEMA_VERSION = 3`, `ACCEPTED_TRACE_VERSIONS = {1, 2, 3}`。
 
 ---
 

@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>chisha debug · V12 palette options</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; }
+
+    /* ─────────────────────────────────────────────
+       Shared V12 structural styles — all use --vars
+       ───────────────────────────────────────────── */
+    .pal {
+      width: 720px; height: 920px;
+      background: var(--bg-0);
+      color: var(--t-0);
+      font-family: "IBM Plex Sans", system-ui, sans-serif;
+      font-size: 12px;
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+    .pal *, .pal *::before, .pal *::after { box-sizing: border-box; }
+
+    .pal .topline {
+      padding: 8px 14px;
+      display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px solid var(--line);
+      background: var(--bg-1);
+    }
+    .pal .brand {
+      display: flex; align-items: center; gap: 6px;
+      font-weight: 600; font-size: 13px; color: var(--t-0);
+    }
+    .pal .brand-dot {
+      width: 8px; height: 8px;
+      background: var(--accent);
+      transform: rotate(45deg);
+    }
+    .pal .meta {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 10px; color: var(--t-2);
+    }
+    .pal .meta .ok { color: var(--ok); }
+    .pal .meta .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--ok); display: inline-block;
+      margin-right: 4px; vertical-align: middle;
+    }
+
+    /* DAG canvas */
+    .pal .dag {
+      position: relative;
+      height: 230px;
+      background:
+        radial-gradient(circle, var(--dot-color) 1px, transparent 1px) 0 0 / 16px 16px,
+        var(--bg-0);
+      border-bottom: 1px solid var(--line);
+      overflow: hidden;
+    }
+    .pal .dag svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .pal .node {
+      position: absolute;
+      width: 124px;
+      background: var(--bg-1);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      box-shadow: 0 3px 10px var(--shadow);
+      overflow: hidden;
+    }
+    .pal .node.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 3px 10px var(--shadow); }
+    .pal .node-head {
+      padding: 4px 8px;
+      font-family: "JetBrains Mono", monospace; font-size: 10px; font-weight: 600;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      display: flex; align-items: center; gap: 6px;
+      color: var(--head-text);
+    }
+    .pal .node-head .d { width: 5px; height: 5px; background: rgba(0,0,0,0.4); border-radius: 50%; }
+    .pal .node-head.l1    { background: var(--L1); }
+    .pal .node-head.l2    { background: var(--L2); }
+    .pal .node-head.l3    { background: var(--L3); }
+    .pal .node-head.final { background: var(--final); }
+    .pal .node-head.refine{ background: var(--refine); }
+    .pal .node-head.ctx   { background: var(--bg-3); color: var(--t-1); }
+    .pal .node-body { padding: 7px 10px; }
+    .pal .node-body .t { font-size: 10px; color: var(--t-2); margin-bottom: 3px; }
+    .pal .node-body .m { font-family: "JetBrains Mono", monospace; font-size: 17px; font-weight: 600; color: var(--t-0); line-height: 1.1; }
+    .pal .node-body .m.warn { color: var(--warn); }
+    .pal .node-body .m .s { font-size: 10px; font-weight: 400; color: var(--t-2); margin-left: 3px; }
+    .pal .node-body .lat { font-family: "JetBrains Mono", monospace; font-size: 9px; color: var(--t-3); margin-top: 3px; display: flex; justify-content: space-between; }
+    .pal .edge-lbl {
+      position: absolute;
+      font-family: "JetBrains Mono", monospace; font-size: 9px;
+      color: var(--t-2);
+      background: var(--bg-0);
+      padding: 1px 5px; border-radius: 2px;
+      border: 1px solid var(--line);
+      transform: translate(-50%, -50%);
+    }
+    .pal .legend {
+      position: absolute; left: 12px; bottom: 8px;
+      display: flex; gap: 10px;
+      font-family: "JetBrains Mono", monospace; font-size: 9px;
+      color: var(--t-2);
+      background: var(--bg-1);
+      padding: 3px 7px; border-radius: 3px;
+      border: 1px solid var(--line);
+    }
+    .pal .legend .sw { width: 8px; height: 8px; display: inline-block; margin-right: 3px; vertical-align: middle; }
+
+    /* sections */
+    .pal .sec {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .pal .sec-head {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 8px;
+    }
+    .pal .layer-chip {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 9px; font-weight: 700;
+      padding: 2px 7px; border-radius: 2px;
+      letter-spacing: 0.06em;
+      color: var(--head-text);
+    }
+    .pal .layer-chip.l1    { background: var(--L1); }
+    .pal .layer-chip.l2    { background: var(--L2); }
+    .pal .layer-chip.l3    { background: var(--L3); }
+    .pal .layer-chip.final { background: var(--final); }
+    .pal .sec-head h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--t-0); }
+    .pal .sec-head .sub { font-size: 11px; color: var(--t-3); }
+    .pal .sec-head .r { margin-left: auto; font-family: "JetBrains Mono", monospace; font-size: 10px; color: var(--t-2); }
+
+    /* L1 funnel mini */
+    .pal .funnel { background: var(--bg-1); border: 1px solid var(--line); border-radius: 3px; padding: 8px 10px; }
+    .pal .fr {
+      display: grid; grid-template-columns: 100px 1fr 56px 50px;
+      gap: 8px; align-items: center; padding: 3px 0;
+      font-family: "JetBrains Mono", monospace; font-size: 10px;
+      border-top: 1px solid var(--line);
+    }
+    .pal .fr:first-child { border-top: 0; }
+    .pal .fr .n { color: var(--t-1); text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; }
+    .pal .fr .bar { height: 7px; background: var(--bg-2); border: 1px solid var(--line); }
+    .pal .fr .bar .fill { height: 100%; background: var(--L1); }
+    .pal .fr .v { color: var(--warn); text-align: right; font-weight: 600; }
+    .pal .fr .p { color: var(--ok); text-align: right; }
+    .pal .fr .p.dim { color: var(--t-3); }
+
+    /* L2 heatmap mini */
+    .pal .heatmap-wrap { background: var(--bg-1); border: 1px solid var(--line); border-radius: 3px; padding: 6px; }
+    .pal .heat { border-collapse: separate; border-spacing: 0; font-family: "JetBrains Mono", monospace; font-size: 9px; width: 100%; table-layout: fixed; }
+    .pal .heat th { padding: 0 3px; color: var(--t-2); font-weight: 500; }
+    .pal .heat th.col { height: 50px; vertical-align: bottom; overflow: visible; }
+    .pal .heat th.col span { display: inline-block; transform: rotate(-50deg); transform-origin: left bottom; white-space: nowrap; position: relative; left: 50%; font-size: 9px; }
+    .pal .heat .w-row td { background: var(--bg-2); color: var(--accent); font-weight: 600; font-size: 9px; padding: 3px 0; text-align: center; }
+    .pal .heat .w-row td.neg { color: var(--err); }
+    .pal .heat .rk { color: var(--t-3); text-align: right; padding: 2px 4px; width: 28px; }
+    .pal .heat .total { color: var(--t-0); font-weight: 600; text-align: right; padding: 2px 4px; background: var(--bg-2); width: 50px; }
+    .pal .heat .cell { text-align: center; height: 18px; color: var(--t-0); font-size: 9px; border: 1px solid var(--bg-0); }
+
+    /* final card */
+    .pal .final-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .pal .final {
+      background: var(--bg-1);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .pal .final-stripe { height: 4px; background: var(--final); }
+    .pal .final.explore .final-stripe { background: var(--refine); }
+    .pal .final-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+    .pal .final-rk {
+      display: flex; align-items: center; gap: 6px;
+      font-family: "JetBrains Mono", monospace; font-size: 11px;
+    }
+    .pal .final-rk .num { background: var(--bg-3); color: var(--t-0); padding: 1px 6px; font-weight: 700; border-radius: 2px; border: 1px solid var(--line-strong); }
+    .pal .final.explore .final-rk .num { background: var(--refine); color: var(--head-text); border-color: var(--refine); }
+    .pal .final-rk .kind { color: var(--t-3); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; }
+    .pal .final-rk .cid { margin-left: auto; color: var(--t-3); font-size: 9px; }
+    .pal .final h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--t-0); letter-spacing: -0.005em; }
+    .pal .final-meta { display: flex; gap: 10px; font-family: "JetBrains Mono", monospace; font-size: 10px; color: var(--t-2); }
+    .pal .final-meta .price { color: var(--warn); margin-left: auto; font-weight: 600; }
+    .pal .final-score { display: flex; justify-content: space-between; padding-top: 6px; border-top: 1px solid var(--line); font-family: "JetBrains Mono", monospace; font-size: 10px; }
+    .pal .final-score .k { color: var(--t-3); }
+    .pal .final-score .v { color: var(--t-0); font-weight: 600; }
+    .pal .final .reason {
+      font-size: 10px; color: var(--t-1);
+      padding: 6px 8px;
+      background: var(--bg-inset);
+      border-left: 2px solid var(--accent);
+      line-height: 1.5;
+    }
+    .pal .flags { display: flex; flex-wrap: wrap; gap: 3px; }
+    .pal .flag {
+      font-family: "JetBrains Mono", monospace; font-size: 9px;
+      padding: 1px 5px; border-radius: 2px;
+      color: var(--ok); border: 1px solid var(--ok-edge); background: var(--ok-bg);
+    }
+
+    /* ─────────────────────────────────────────────
+       A · Dark Cool Multi-color (current V12)
+       ───────────────────────────────────────────── */
+    .pal.pa {
+      --bg-0: #14171c;
+      --bg-1: #1a1e25;
+      --bg-2: #20252e;
+      --bg-3: #2a313d;
+      --bg-inset: #0d1015;
+      --line: #2b323f;
+      --line-strong: #3a4154;
+      --dot-color: #2a313d;
+      --shadow: rgba(0,0,0,0.4);
+      --t-0: #e8ecf3;
+      --t-1: #aab3c2;
+      --t-2: #6c7689;
+      --t-3: #4a5364;
+      --L1:     oklch(0.74 0.13 195);
+      --L2:     oklch(0.74 0.13 145);
+      --L3:     oklch(0.78 0.14 70);
+      --final:  oklch(0.72 0.14 270);
+      --refine: oklch(0.72 0.16 340);
+      --accent: oklch(0.72 0.14 270);
+      --head-text: #000;
+      --ok:    oklch(0.74 0.13 145);
+      --ok-bg: oklch(0.30 0.06 145 / 0.35);
+      --ok-edge: oklch(0.50 0.10 145 / 0.5);
+      --warn:  oklch(0.78 0.14 70);
+      --err:   oklch(0.70 0.18 25);
+    }
+    /* arrow stroke color shared per variant */
+    .pal.pa .arrow { stroke: #6c7689; }
+    .pal.pa .arrow-refine { stroke: oklch(0.72 0.16 340); }
+
+    /* ─────────────────────────────────────────────
+       B · Dark Warm Reduced (dusty)
+       ───────────────────────────────────────────── */
+    .pal.pb {
+      --bg-0: #181410;
+      --bg-1: #1f1a14;
+      --bg-2: #271f16;
+      --bg-3: #322618;
+      --bg-inset: #100c08;
+      --line: #2f261c;
+      --line-strong: #3e3225;
+      --dot-color: #2a2014;
+      --shadow: rgba(0,0,0,0.5);
+      --t-0: #ebe6dc;
+      --t-1: #c2b8a4;
+      --t-2: #8a8170;
+      --t-3: #5e5648;
+      --L1:     oklch(0.74 0.08 195);
+      --L2:     oklch(0.74 0.10 130);
+      --L3:     oklch(0.74 0.12 60);
+      --final:  oklch(0.74 0.09 270);
+      --refine: oklch(0.74 0.10 350);
+      --accent: oklch(0.74 0.10 60);
+      --head-text: #0d0a05;
+      --ok:    oklch(0.74 0.10 130);
+      --ok-bg: oklch(0.32 0.05 130 / 0.4);
+      --ok-edge: oklch(0.52 0.08 130 / 0.5);
+      --warn:  oklch(0.78 0.12 60);
+      --err:   oklch(0.70 0.14 25);
+    }
+    .pal.pb .arrow { stroke: #8a8170; }
+    .pal.pb .arrow-refine { stroke: oklch(0.74 0.10 350); }
+
+    /* ─────────────────────────────────────────────
+       C · Dark Mono Indigo (Linear-style)
+       ───────────────────────────────────────────── */
+    .pal.pc {
+      --bg-0: #0c0e14;
+      --bg-1: #14171f;
+      --bg-2: #1b1f29;
+      --bg-3: #232836;
+      --bg-inset: #07090e;
+      --line: #1f2330;
+      --line-strong: #2c3142;
+      --dot-color: #1f2330;
+      --shadow: rgba(0,0,0,0.5);
+      --t-0: #e8ecf3;
+      --t-1: #aab3c2;
+      --t-2: #6c7689;
+      --t-3: #4a5364;
+      --L1:     oklch(0.72 0.14 270);
+      --L2:     oklch(0.62 0.14 270);
+      --L3:     oklch(0.52 0.14 270);
+      --final:  oklch(0.78 0.14 270);
+      --refine: oklch(0.72 0.16 340);
+      --accent: oklch(0.72 0.14 270);
+      --head-text: #07091a;
+      --ok:    oklch(0.74 0.13 145);
+      --ok-bg: oklch(0.30 0.06 145 / 0.35);
+      --ok-edge: oklch(0.50 0.10 145 / 0.5);
+      --warn:  oklch(0.78 0.14 70);
+      --err:   oklch(0.70 0.18 25);
+    }
+    .pal.pc .arrow { stroke: #4a5364; }
+    .pal.pc .arrow-refine { stroke: oklch(0.72 0.16 340); }
+
+    /* ─────────────────────────────────────────────
+       D · Light Paper (warm off-white)
+       ───────────────────────────────────────────── */
+    .pal.pd {
+      --bg-0: #efeae0;
+      --bg-1: #f7f3ea;
+      --bg-2: #fbf8f1;
+      --bg-3: #ede5d2;
+      --bg-inset: #e3dcc8;
+      --line: #d6cdb5;
+      --line-strong: #b6ab8c;
+      --dot-color: rgba(0,0,0,0.12);
+      --shadow: rgba(60,40,10,0.10);
+      --t-0: #2b251c;
+      --t-1: #5a4f3f;
+      --t-2: #847660;
+      --t-3: #ad9f88;
+      --L1:     oklch(0.56 0.11 195);
+      --L2:     oklch(0.50 0.13 145);
+      --L3:     oklch(0.62 0.14 50);
+      --final:  oklch(0.50 0.14 270);
+      --refine: oklch(0.58 0.16 350);
+      --accent: oklch(0.50 0.14 270);
+      --head-text: #ffffff;
+      --ok:    oklch(0.50 0.13 145);
+      --ok-bg: oklch(0.85 0.08 145 / 0.5);
+      --ok-edge: oklch(0.60 0.10 145 / 0.6);
+      --warn:  oklch(0.62 0.14 50);
+      --err:   oklch(0.55 0.18 25);
+    }
+    .pal.pd .arrow { stroke: #847660; }
+    .pal.pd .arrow-refine { stroke: oklch(0.58 0.16 350); }
+
+    /* ─────────────────────────────────────────────
+       E · Light Modern (cool clean white)
+       ───────────────────────────────────────────── */
+    .pal.pe {
+      --bg-0: #f6f7f9;
+      --bg-1: #ffffff;
+      --bg-2: #fafbfc;
+      --bg-3: #eef0f4;
+      --bg-inset: #f1f3f6;
+      --line: #e1e4e8;
+      --line-strong: #c8ccd2;
+      --dot-color: rgba(0,0,0,0.06);
+      --shadow: rgba(15,30,60,0.06);
+      --t-0: #0d1117;
+      --t-1: #4a5260;
+      --t-2: #7d8492;
+      --t-3: #b0b6c0;
+      --L1:     oklch(0.62 0.13 195);
+      --L2:     oklch(0.58 0.14 145);
+      --L3:     oklch(0.68 0.13 60);
+      --final:  oklch(0.55 0.14 270);
+      --refine: oklch(0.62 0.16 340);
+      --accent: oklch(0.55 0.14 270);
+      --head-text: #ffffff;
+      --ok:    oklch(0.55 0.14 145);
+      --ok-bg: oklch(0.94 0.04 145 / 0.7);
+      --ok-edge: oklch(0.70 0.10 145 / 0.6);
+      --warn:  oklch(0.68 0.13 60);
+      --err:   oklch(0.60 0.18 25);
+    }
+    .pal.pe .arrow { stroke: #7d8492; }
+    .pal.pe .arrow-refine { stroke: oklch(0.62 0.16 340); }
+
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script type="text/babel" src="design-canvas.jsx"></script>
+
+  <script type="text/babel">
+    // Shared layout content used by every palette card
+    const HEAT_DIMS_P = [
+      { k: "fit_diet",  w: +0.18 }, { k: "protein",  w: +0.14 },
+      { k: "oil_pen",   w: -0.12 }, { k: "variety",  w: +0.10 },
+      { k: "novelty",   w: +0.08 }, { k: "price",    w: +0.07 },
+      { k: "eta",       w: +0.06 }, { k: "wetness",  w: +0.05 },
+    ];
+    const FUNNEL_MINI = [
+      { name: "raw_dishes",  v: 11123, pass: null },
+      { name: "hard_filter", v: 4286,  pass: 38.5 },
+      { name: "diversity",   v: 2914,  pass: 68.0 },
+      { name: "price_filter",v: 1207,  pass: 65.5 },
+    ];
+    function rng(seed) { let s = seed; return () => { s = (s * 9301 + 49297) % 233280; return s / 233280; }; }
+    function buildRows(n, seed) {
+      const r = rng(seed);
+      const rows = [];
+      for (let i = 0; i < n; i++) {
+        const vals = HEAT_DIMS_P.map(() => Math.round((r() * 1.4 - 0.2) * 100) / 100);
+        const total = vals.reduce((a, v, j) => a + v * HEAT_DIMS_P[j].w, 0) + (n - i)/n * 0.35;
+        rows.push({ id: `cmb_${String(i+1).padStart(3,"0")}`, vals, total: Math.round(total*1000)/1000 });
+      }
+      rows.sort((a,b) => b.total - a.total);
+      return rows;
+    }
+    const HEAT_ROWS = buildRows(6, 17);
+
+    function logPct(v, max) {
+      return (Math.log10(v + 1) / Math.log10(max + 1)) * 100;
+    }
+
+    function heatColor(v, w, palette) {
+      const sign = w >= 0 ? 1 : -1;
+      const eff = (v * sign - 0.3) / 0.9;
+      const c = Math.max(-1, Math.min(1, eff));
+      if (c >= 0) return `oklch(${palette.posL} ${palette.posC * (0.4 + c * 0.7)} ${palette.posH} / ${0.18 + c * 0.6})`;
+      return `oklch(${palette.negL} ${palette.negC * (0.4 + (-c) * 0.7)} ${palette.negH} / ${0.18 + (-c) * 0.55})`;
+    }
+
+    // Palette-specific heatmap color anchors
+    const HEAT_PALETTES = {
+      pa: { posL: 0.30, posC: 0.14, posH: 270, negL: 0.30, negC: 0.12, negH: 25 },
+      pb: { posL: 0.32, posC: 0.10, posH: 130, negL: 0.32, negC: 0.10, negH: 30 },
+      pc: { posL: 0.30, posC: 0.14, posH: 270, negL: 0.30, negC: 0.12, negH: 25 },
+      pd: { posL: 0.75, posC: 0.12, posH: 270, negL: 0.78, negC: 0.10, negH: 25 },
+      pe: { posL: 0.85, posC: 0.10, posH: 270, negL: 0.88, negC: 0.08, negH: 25 },
+    };
+
+    function PaletteCard({ variant, title }) {
+      // DAG node layout inside 720-px-wide artboard (minus padding inside .dag canvas)
+      // canvas inner width ~ 720, height 230. Place 5 nodes.
+      const N = {
+        ctx:   { x: 8,   y: 70 },
+        l1:    { x: 148, y: 70 },
+        l2:    { x: 288, y: 70 },
+        l3:    { x: 428, y: 70 },
+        final: { x: 568, y: 70 },
+      };
+      const W = 124, H = 80;
+      const portR = n => ({ x: n.x + W, y: n.y + H/2 });
+      const portL = n => ({ x: n.x,    y: n.y + H/2 });
+      const palHeat = HEAT_PALETTES[variant];
+
+      return (
+        <div className={`pal ${variant}`}>
+          <div className="topline">
+            <div className="brand">
+              <span className="brand-dot"></span>chisha
+              <span style={{ color: "var(--t-3)", fontFamily: "var(--mono, JetBrains Mono)", fontSize: 10, marginLeft: 4 }}>
+                / pipeline · {title}
+              </span>
+            </div>
+            <div className="meta"><span className="dot"></span>sess_a7f1 · 2,841ms · <span className="ok">OK</span></div>
+          </div>
+
+          <div className="dag">
+            <svg>
+              <defs>
+                <marker id={`arr-${variant}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+                  <path d="M0,0 L10,5 L0,10 z" className="arrow" fill="currentColor" />
+                </marker>
+              </defs>
+              <line x1={portR(N.ctx).x} y1={portR(N.ctx).y} x2={portL(N.l1).x} y2={portL(N.l1).y}    className="arrow" strokeWidth="1.5" markerEnd={`url(#arr-${variant})`} />
+              <line x1={portR(N.l1).x}  y1={portR(N.l1).y}  x2={portL(N.l2).x}  y2={portL(N.l2).y}    className="arrow" strokeWidth="1.5" markerEnd={`url(#arr-${variant})`} />
+              <line x1={portR(N.l2).x}  y1={portR(N.l2).y}  x2={portL(N.l3).x}  y2={portL(N.l3).y}    className="arrow" strokeWidth="1.5" markerEnd={`url(#arr-${variant})`} />
+              <line x1={portR(N.l3).x}  y1={portR(N.l3).y}  x2={portL(N.final).x} y2={portL(N.final).y} className="arrow" strokeWidth="1.5" markerEnd={`url(#arr-${variant})`} />
+            </svg>
+
+            <div className="node" style={{ left: N.ctx.x, top: N.ctx.y }}>
+              <div className="node-head ctx"><span className="d"></span>CTX</div>
+              <div className="node-body">
+                <div className="t">build_context</div>
+                <div className="m" style={{ fontSize: 14 }}>profile</div>
+                <div className="lat"><span>lunch</span><span>14ms</span></div>
+              </div>
+            </div>
+            <div className="node" style={{ left: N.l1.x, top: N.l1.y }}>
+              <div className="node-head l1"><span className="d"></span>L1 · RECALL</div>
+              <div className="node-body">
+                <div className="t">11k dishes</div>
+                <div className="m">1,207<span className="s">combo</span></div>
+                <div className="lat"><span>31 rest</span><span>194ms</span></div>
+              </div>
+            </div>
+            <div className="node" style={{ left: N.l2.x, top: N.l2.y }}>
+              <div className="node-head l2"><span className="d"></span>L2 · SCORE</div>
+              <div className="node-body">
+                <div className="t">12-dim · cap K=4</div>
+                <div className="m">60<span className="s">top</span></div>
+                <div className="lat"><span>84→31</span><span>38ms</span></div>
+              </div>
+            </div>
+            <div className="node selected" style={{ left: N.l3.x, top: N.l3.y }}>
+              <div className="node-head l3"><span className="d"></span>L3 · LLM</div>
+              <div className="node-body">
+                <div className="t">opus-4-7</div>
+                <div className="m warn">2,148<span className="s">ms</span></div>
+                <div className="lat"><span>cache 82%</span><span style={{ color: "var(--ok)" }}>OK</span></div>
+              </div>
+            </div>
+            <div className="node" style={{ left: N.final.x, top: N.final.y }}>
+              <div className="node-head final"><span className="d"></span>FINAL</div>
+              <div className="node-body">
+                <div className="t">3 exploit + 2 explore</div>
+                <div className="m">5<span className="s">picks</span></div>
+                <div className="lat"><span>¥90</span><span>18ms</span></div>
+              </div>
+            </div>
+
+            <div className="edge-lbl" style={{ left: 268, top: 110 }}>1,207</div>
+            <div className="edge-lbl" style={{ left: 408, top: 110 }}>60 top</div>
+            <div className="edge-lbl" style={{ left: 548, top: 110 }}>5 picks</div>
+
+            <div className="legend">
+              <span><span className="sw" style={{ background: "var(--L1)" }}></span>L1</span>
+              <span><span className="sw" style={{ background: "var(--L2)" }}></span>L2</span>
+              <span><span className="sw" style={{ background: "var(--L3)" }}></span>L3</span>
+              <span><span className="sw" style={{ background: "var(--final)" }}></span>final</span>
+              <span><span className="sw" style={{ background: "var(--refine)" }}></span>refine</span>
+            </div>
+          </div>
+
+          {/* L1 funnel mini */}
+          <div className="sec">
+            <div className="sec-head">
+              <span className="layer-chip l1">L1</span>
+              <h3>recall · 漏斗</h3>
+              <span className="sub">log scale</span>
+              <span className="r">−9,916 dropped</span>
+            </div>
+            <div className="funnel">
+              {FUNNEL_MINI.map((f, i) => {
+                const pct = logPct(f.v, 11123);
+                return (
+                  <div key={i} className="fr">
+                    <span className="n">{f.name}</span>
+                    <div className="bar"><div className="fill" style={{ width: `${pct}%` }}></div></div>
+                    <span className="v">{f.v.toLocaleString()}</span>
+                    <span className={`p ${f.pass == null ? "dim" : ""}`}>{f.pass == null ? "100%" : `${f.pass}%`}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* L2 heatmap mini */}
+          <div className="sec">
+            <div className="sec-head">
+              <span className="layer-chip l2">L2</span>
+              <h3>score breakdown</h3>
+              <span className="sub">top 6 · 8 dims</span>
+              <span className="r">38ms</span>
+            </div>
+            <div className="heatmap-wrap">
+              <table className="heat">
+                <thead>
+                  <tr>
+                    <th style={{ width: 28 }}></th>
+                    <th style={{ width: 50, color: "var(--accent)", textAlign: "right" }}>total</th>
+                    {HEAT_DIMS_P.map(d => (
+                      <th key={d.k} className="col"><span>{d.k}</span></th>
+                    ))}
+                  </tr>
+                  <tr className="w-row">
+                    <td className="rk" style={{ color: "var(--accent)" }}>w→</td>
+                    <td className="total" style={{ color: "var(--accent)" }}>—</td>
+                    {HEAT_DIMS_P.map(d => (
+                      <td key={d.k} className={d.w < 0 ? "neg" : ""}>{d.w > 0 ? "+" : ""}{d.w.toFixed(2)}</td>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {HEAT_ROWS.map((row, i) => (
+                    <tr key={row.id}>
+                      <td className="rk">#{i+1}</td>
+                      <td className="total">{row.total.toFixed(3)}</td>
+                      {row.vals.map((v, j) => (
+                        <td key={j} className="cell" style={{ background: heatColor(v, HEAT_DIMS_P[j].w, palHeat) }}>
+                          {v.toFixed(2)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Final cards */}
+          <div className="sec" style={{ borderBottom: 0 }}>
+            <div className="sec-head">
+              <span className="layer-chip final">FINAL</span>
+              <h3>top 5 — exploit / explore</h3>
+              <span className="r">3 + 2</span>
+            </div>
+            <div className="final-grid">
+              <div className="final">
+                <div className="final-stripe"></div>
+                <div className="final-body">
+                  <div className="final-rk">
+                    <span className="num">1</span>
+                    <span className="kind">exploit</span>
+                    <span className="cid">cmb_001</span>
+                  </div>
+                  <h4>椰客椰子鸡 (科兴店)</h4>
+                  <div className="final-meta"><span>1.4km</span><span>22min</span><span className="price">¥90</span></div>
+                  <div className="flags">
+                    <span className="flag">✓veg</span>
+                    <span className="flag">✓protein</span>
+                    <span className="flag">✓oil</span>
+                    <span className="flag">✓wetness</span>
+                  </div>
+                  <div className="final-score">
+                    <span><span className="k">score </span><span className="v">1.187</span></span>
+                    <span><span className="k">fit </span><span className="v">0.78</span></span>
+                  </div>
+                  <div className="reason">椰子汤底打底，鸡腿肉 36g 蛋白；wet + low 油，今天对口。</div>
+                </div>
+              </div>
+              <div className="final explore">
+                <div className="final-stripe"></div>
+                <div className="final-body">
+                  <div className="final-rk">
+                    <span className="num">5</span>
+                    <span className="kind">explore</span>
+                    <span className="cid">cmb_034</span>
+                  </div>
+                  <h4>真功夫 (科兴店)</h4>
+                  <div className="final-meta"><span>1.7km</span><span>24min</span><span className="price">¥46</span></div>
+                  <div className="flags">
+                    <span className="flag">✓veg</span>
+                    <span className="flag">✓protein</span>
+                    <span className="flag">✓oil</span>
+                    <span className="flag">✓wetness</span>
+                  </div>
+                  <div className="final-score">
+                    <span><span className="k">score </span><span className="v">0.984</span></span>
+                    <span><span className="k">fit </span><span className="v">0.69</span></span>
+                  </div>
+                  <div className="reason">海带排骨汤补液 + 杂粮饭，wet/低油，今天偏热想喝汤。</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <DesignCanvas>
+          <DCSection id="palette" title="V12 palette options" subtitle="同结构 · 5 套配色 — 包括 2 套浅色">
+            <DCArtboard id="pa" label="A · Dark Cool · 多色 (你已经看过)" width={720} height={920}>
+              <PaletteCard variant="pa" title="dark cool" />
+            </DCArtboard>
+            <DCArtboard id="pb" label="B · Dark Warm · 暖灰 + 哑色" width={720} height={920}>
+              <PaletteCard variant="pb" title="dark warm" />
+            </DCArtboard>
+            <DCArtboard id="pc" label="C · Dark Mono · 单 accent (Linear 风)" width={720} height={920}>
+              <PaletteCard variant="pc" title="dark mono · indigo" />
+            </DCArtboard>
+            <DCArtboard id="pd" label="D · Light Paper · 暖牛皮纸" width={720} height={920}>
+              <PaletteCard variant="pd" title="light paper" />
+            </DCArtboard>
+            <DCArtboard id="pe" label="E · Light Modern · 冷净白" width={720} height={920}>
+              <PaletteCard variant="pe" title="light modern" />
+            </DCArtboard>
+          </DCSection>
+        </DesignCanvas>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

@@ -101,7 +101,7 @@
     ]
   },
   "trace": {
-    "__version": 2,
+    "__version": 3,
     "__source": "production",
     "__llm_called": false,
     "__parent_session_id": null,

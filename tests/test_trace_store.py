@@ -261,7 +261,9 @@ def test_v2_trace_roundtrip_with_hard_filter_events(tmp_path: Path) -> None:
     assert ok
     got = trace_store.read_trace("sess_v2_events", root=tmp_path)
     assert got is not None
-    assert got["__version"] == 2
+    # D-087: TRACE_SCHEMA_VERSION 升 v3 后, write_trace 总落 v=3.
+    # 旧 v=2 测试改成断言 == TRACE_SCHEMA_VERSION (动态), 表达 "当前最新版".
+    assert got["__version"] == trace_store.TRACE_SCHEMA_VERSION
     events = got["l1"]["hard_filter_events"]
     assert len(events) == 1
     assert events[0]["category"] == "L0_A_medical"
@@ -328,7 +330,8 @@ def test_fresh_write_v2_trace_has_hard_filter_events(tmp_path: Path) -> None:
     assert ok
     got = trace_store.read_trace("sess_fresh_v2", root=tmp_path)
     assert got is not None
-    assert got["__version"] == 2
+    # D-087: write_trace 现在落 v=3 (最新). 用动态常量避免再次 schema bump 漏改.
+    assert got["__version"] == trace_store.TRACE_SCHEMA_VERSION
     assert got["l1"]["hard_filter_events"] == []
 
 

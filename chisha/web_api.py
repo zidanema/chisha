@@ -180,79 +180,84 @@ def api_refine(req: RefineReq) -> dict:
     }
     _remember_session_safe(out["session_id"], out)
 
-    # D-079 PR-4: refine 同 session 二轮 → 把 refine 信息 merge 进同一 trace 文件
-    # (Sidebar 一条 session 一行, 不分裂). DESIGN §3.5.
-    #
-    # base trace 缺失/损坏分支:
-    #   - read_trace 返 None (首轮 trace 写盘失败 best-effort 降级了)
-    #     → logger.warning + 不持久化 refine trace (没 base 可附着, 也不创 refine-only 孤儿)
-    #   - read_trace 抛 TraceCorrupt → logger.error + 同上不持久化
-    #   - 都不阻断 refine 自身响应
+    # D-087 v3: refine = append 新 round 到 v3 trace ({sid}/rounds/R{n}.json).
+    # 上游 v2 单文件 trace 由 append_round 内部自动 migrate. 写盘失败 best-effort
+    # logger.warning, 不阻断 refine response (与 D-079 风格一致).
     try:
         from chisha import trace_store
-        base_trace = trace_store.read_trace(req.session_id, root=ROOT)
-        if base_trace is None:
+        # 构造 round payload (debug-ui /api/trace/{id}/round/{rid} 完整 body)
+        # 注: l1/l2/l3/final 完整 trace 数据 refine_session 不直接产生; 需要重跑
+        # _build_l1_trace + score + rerank 拿. 但 refine_session 内部已经跑过完整
+        # 链路 — _build_l1_trace 再跑一遍只是为了 emit hard_filter_events,
+        # 真正 L1/L2/L3 trace 重建留给后续 task (本轮 Phase 2a 先存 stub: kpi +
+        # intent_v2 + narrative + diff, l1/l2/l3/final 标记 None 让前端兜底处理).
+        # FUTURE: 把 refine_session 返回值扩展含完整 trace 切片, 这里直接落.
+        new_round = _build_round_payload_from_refine(raw, req)
+        round_id = trace_store.append_round(
+            req.session_id, new_round, root=ROOT,
+        )
+        if round_id is None:
             import logging as _logging
             _logging.getLogger(__name__).warning(
-                "refine trace skip persist: base trace %s missing (recommend write "
-                "may have best-effort failed); refine response unaffected",
-                req.session_id,
+                "refine append_round %s skip persist (no base trace or write failed); "
+                "response unaffected", req.session_id,
             )
-        else:
-            refine_field = {
-                "applied": True,
-                "user_input": req.refine_text or "",
-                "intent": raw.get("refine_intent"),
-                # Codex H1 修: V2 多 slot + 执行证据进 base_trace, debug-ui Replay 可审计
-                "intent_v2": raw.get("refine_intent_v2"),
-                "reference_resolved": raw.get("_reference_resolved"),
-                "subtype_diversified": bool(raw.get("_subtype_diversified")),
-                # Codex H2 修: narrative 同步落 base_trace["refine"], 与 L3 trace narrative 对齐
-                "narrative": raw.get("narrative", ""),
-                "round": raw.get("round"),
-                "n_combos_recalled": raw.get("stats", {}).get("n_combos_recalled"),
-                "n_after_l2": raw.get("stats", {}).get("n_combos_after_score"),
-                "n_returned": raw.get("stats", {}).get("n_returned"),
-                "ts": raw.get("generated_at"),
-                "candidate_ids": [
-                    f"{(c.get('restaurant') or {}).get('name', '')}|"
-                    f"{','.join((d.get('name') or '') for d in (c.get('dishes') or [])[:2])}"
-                    for c in (raw.get("candidates") or [])[:5]
-                ],
-            }
-            base_trace["refine"] = refine_field
-            # __config 也同步标 refine_text (Sidebar/Replay 展示)
-            cfg = base_trace.get("__config") or {}
-            cfg["refine_text"] = req.refine_text or ""
-            base_trace["__config"] = cfg
-            # T-P1a-01: 把 refine path 的 L0-C 事件 append 到 base_trace l1.hard_filter_events
-            refine_events = raw.get("_refine_hard_filter_events") or []
-            if refine_events:
-                l1_seg = base_trace.setdefault("l1", {})
-                events = l1_seg.setdefault("hard_filter_events", [])
-                events.extend(refine_events)
-            # T-P1a-02: 三级回落事件 → trace.l1.recall_fallback_events
-            fallback_events = raw.get("_refine_recall_fallback_events") or []
-            if fallback_events:
-                l1_seg = base_trace.setdefault("l1", {})
-                fbs = l1_seg.setdefault("recall_fallback_events", [])
-                fbs.extend(fallback_events)
-            trace_store.write_trace(req.session_id, base_trace, root=ROOT)
-    except trace_store.TraceCorrupt as e:
-        import logging as _logging
-        _logging.getLogger(__name__).error(
-            "refine trace skip persist: base trace %s corrupt: %s",
-            req.session_id, e,
-        )
     except Exception as e:
-        # 任何 trace 写盘失败都不阻断 refine response (best-effort 原则).
         import logging as _logging
         _logging.getLogger(__name__).warning(
-            "refine trace persist failed (non-fatal): %s: %s",
+            "refine append_round failed (non-fatal): %s: %s",
             type(e).__name__, e,
         )
 
     return out
+
+
+def _build_round_payload_from_refine(raw: dict, req: "RefineReq") -> dict:
+    """从 refine_session 返回 + req 构造 round payload (供 trace_store.append_round).
+
+    含: user_input, intent (V1), intent_v2, narrative, kpi, l1/l2/l3/final stub.
+    完整 l1/l2/l3 trace 暂用 stub (refine_session 没暴露完整切片), 后续 task
+    扩展 refine_session 返回值后这里 1:1 落.
+    """
+    cands = raw.get("candidates") or []
+    top1_name = ""
+    if cands:
+        top1_name = (cands[0].get("restaurant") or {}).get("name") or ""
+    stats = raw.get("stats") or {}
+    return {
+        "started_at": raw.get("generated_at"),
+        "label": (req.refine_text or "追问")[:20],
+        "user_input": req.refine_text or "",
+        "intent": raw.get("refine_intent"),
+        "intent_v2": raw.get("refine_intent_v2"),
+        "narrative": raw.get("narrative") or "",
+        "reference_resolved": raw.get("_reference_resolved"),
+        "subtype_diversified": bool(raw.get("_subtype_diversified")),
+        "refine_hard_filter_events": raw.get("_refine_hard_filter_events") or [],
+        "refine_recall_fallback_events": raw.get("_refine_recall_fallback_events") or [],
+        "kpi": {
+            "combos": stats.get("n_combos_recalled") or 0,
+            "l2_top": stats.get("n_combos_after_score") or 0,
+            "top1": top1_name,
+            "latency_ms": 0,   # refine_session 内部 latency 没暴露; 后续扩展
+        },
+        "diff": None,    # diff vs 上一轮: 留给前端按 round.final 集合算 (后端可后续填)
+        # l1/l2/l3/final stub — refine_session 当前不暴露完整 trace 切片;
+        # debug-ui 切到 R{n>=2} 时显示 "刷新 refine 暂未存完整链路, 等扩展" 兜底.
+        "l1": None,
+        "l2": None,
+        "l3": None,
+        "final": [
+            {
+                "rank": i + 1,
+                "restaurant": c.get("restaurant") or {},
+                "dishes": c.get("dishes") or [],
+                "score": c.get("score"),
+                "kind": c.get("kind") or ("exploit" if i < 3 else "explore"),
+            }
+            for i, c in enumerate(cands[:5])
+        ],
+    }
 
 
 # ---------- /api/accept ----------
@@ -1111,3 +1116,202 @@ def api_sandbox_inspect(request: Request) -> dict:
         "meal_log_recent": meal_log_recent,
         "accepted_count": accepted_count,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════
+# D-087 Workflow A 「分析 trace」 debug-ui 端点
+# ══════════════════════════════════════════════════════════════════════
+
+def _attach_feedback_to_meta(item: dict, store_data: dict) -> dict:
+    """从 feedback_store 派生 TraceMeta.feedback 字段 (前端 TraceBrowser 用)."""
+    sid = item.get("session_id")
+    accepted = (store_data.get("accepted") or {}).get(sid)
+    fb = (store_data.get("feedbacks") or {}).get(sid)
+    if accepted and not (accepted or {}).get("skipped"):
+        out: dict = {"type": "accepted"}
+        if (accepted or {}).get("accepted_rank"):
+            out["rank"] = accepted["accepted_rank"]
+        return out
+    if accepted and (accepted or {}).get("stopped"):
+        return {"type": "stopped"}
+    if fb and (fb or {}).get("rating") is not None:
+        return {"type": "rated", "count": int(fb["rating"])}
+    return None  # type: ignore[return-value]
+
+
+def _enrich_meta_for_traces(item: dict, today_iso: str) -> dict:
+    """list_traces_v3 item → 前端 TraceMeta (含 daysAgo / date / time / meal / status)."""
+    started_at = item.get("started_at") or ""
+    date_str = ""
+    time_str = ""
+    days_ago = 0
+    try:
+        if "T" in started_at or " " in started_at:
+            # ISO-ish
+            sep = "T" if "T" in started_at else " "
+            date_str, _, hms = started_at.partition(sep)
+            time_str = hms[:5]  # HH:MM
+            today = dt.date.fromisoformat(today_iso)
+            d0 = dt.date.fromisoformat(date_str)
+            days_ago = max(0, (today - d0).days)
+    except Exception:
+        pass
+    top1 = item.get("top1_summary") or ""
+    # 取 top1 第一个 · 之前的部分作为 restaurant (UI 显示)
+    rest_name = top1.split(" · ")[0] if top1 else ""
+    status = "ok"
+    l3 = item.get("l3_status")
+    if l3 == "fallback":
+        status = "fallback"
+    elif l3 == "config_error" or l3 == "warn":
+        status = "warn"
+    refine_count = int(item.get("refine_count") or 0)
+    return {
+        "id": item.get("session_id"),
+        "date": date_str,
+        "time": time_str,
+        "daysAgo": days_ago,
+        "meal": item.get("meal_type") or "lunch",
+        "finalTop1": rest_name,
+        "refineCount": refine_count,
+        "latestRound": item.get("latest_round") or "R1",
+        "source": "sandbox" if item.get("source") == "sandbox" else "real",
+        "sandboxDay": None,
+        "feedback": item.get("feedback"),
+        "status": status,
+        "latency_ms": int(item.get("total_latency_ms") or 0),
+    }
+
+
+@router.get("/traces")
+def api_traces(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    meal_type: str | None = Query(default=None),
+) -> list[dict]:
+    """D-087 Workflow A: list traces (TraceBrowser 数据源).
+
+    返扁平 list of TraceMeta. 与旧 /api/debug/sessions 并存 (旧端点不删).
+    """
+    _require_localhost(request)
+    if meal_type is not None and meal_type not in ("lunch", "dinner"):
+        raise HTTPException(400, f"meal_type must be lunch|dinner|null, got {meal_type!r}")
+    from chisha import trace_store
+    items, _corrupt = trace_store.list_traces_v3(
+        root=ROOT, limit=limit, meal_type=meal_type,
+    )
+    # attach feedback
+    try:
+        store = feedback_store.load_store(ROOT)
+    except Exception:
+        store = {}
+    today_iso = dt.date.today().isoformat()
+    out: list[dict] = []
+    for it in items:
+        it["feedback"] = _attach_feedback_to_meta(it, store)
+        out.append(_enrich_meta_for_traces(it, today_iso))
+    return out
+
+
+@router.get("/trace/{session_id}")
+def api_trace_detail(request: Request, session_id: str) -> dict:
+    """D-087 Workflow A: 单 trace 详情 = meta + rounds[stub] (不含 l1/l2/l3/final body).
+
+    Failure matrix:
+      - 404 不存在
+      - 409 schema version 不识别
+      - 500 损坏
+    """
+    _require_localhost(request)
+    from chisha import trace_store
+    try:
+        view = trace_store.read_trace_v3_view(session_id, root=ROOT)
+    except trace_store.TraceCorrupt as e:
+        raise HTTPException(500, f"trace corrupt: {e}")
+    except trace_store.TraceVersionMismatch as e:
+        raise HTTPException(
+            409, f"trace schema version mismatch: found={e.found}, expected={e.expected}",
+        )
+    if view is None:
+        raise HTTPException(404, f"trace {session_id!r} not found")
+    # 附 feedback 到 meta
+    try:
+        store = feedback_store.load_store(ROOT)
+        view["meta"]["feedback"] = _attach_feedback_to_meta(
+            {"session_id": session_id}, store,
+        )
+    except Exception:
+        view["meta"]["feedback"] = None
+    return view
+
+
+@router.get("/trace/{session_id}/round/{round_id}")
+def api_trace_round(
+    request: Request, session_id: str, round_id: str,
+) -> dict:
+    """D-087 Workflow A: 单 round 完整 body (l1/l2/l3/final/__frozen).
+
+    Failure matrix:
+      - 404 trace 或 round 不存在
+      - 500 损坏
+    """
+    _require_localhost(request)
+    from chisha import trace_store
+    try:
+        rd = trace_store.read_round_full(session_id, round_id, root=ROOT)
+    except trace_store.TraceCorrupt as e:
+        raise HTTPException(500, f"round corrupt: {e}")
+    if rd is None:
+        raise HTTPException(
+            404, f"round {session_id!r}/{round_id!r} not found",
+        )
+    return rd
+
+
+@router.get("/intent_schema")
+def api_intent_schema(request: Request) -> list[dict]:
+    """D-087 Workflow A: IntentStrip 字段描述符 (schema-driven).
+
+    Codex 推荐: 字段集由后端 owner, 前端按 descriptor 渲染. V2 schema 后续扩字段
+    无需动前端. 未知字段前端进 'other' 分组兜底.
+    """
+    _require_localhost(request)
+    # 与 apps/debug-ui/src/constants/intentSchema.ts INTENT_SCHEMA 一一对应.
+    # 若后续扩 V2 schema, 加 entry 即可; 前端 schema-driven 自动渲染.
+    return [
+        {"key": "redirect.cuisine_want", "label": "菜系想", "tone": "want",
+         "group": "redirect", "slot_path": ["redirect", "cuisine_want"]},
+        {"key": "redirect.cuisine_avoid", "label": "菜系不想", "tone": "avoid",
+         "group": "redirect", "slot_path": ["redirect", "cuisine_avoid"]},
+        {"key": "redirect.cuisine_candidates_expanded", "label": "菜系扩展",
+         "tone": "want", "group": "redirect",
+         "slot_path": ["redirect", "cuisine_candidates_expanded"]},
+        {"key": "redirect.ingredient_want", "label": "食材想", "tone": "want",
+         "group": "redirect", "slot_path": ["redirect", "ingredient_want"]},
+        {"key": "redirect.ingredient_avoid", "label": "食材不想", "tone": "avoid",
+         "group": "redirect", "slot_path": ["redirect", "ingredient_avoid"]},
+        {"key": "redirect.ingredient_synonyms", "label": "食材同义",
+         "tone": "neutral", "group": "redirect",
+         "slot_path": ["redirect", "ingredient_synonyms"]},
+        {"key": "redirect.brand_avoid", "label": "品牌拒绝", "tone": "avoid",
+         "group": "redirect", "slot_path": ["redirect", "brand_avoid"]},
+        {"key": "redirect.cooking_method_avoid", "label": "烹饪方式拒绝",
+         "tone": "avoid", "group": "redirect",
+         "slot_path": ["redirect", "cooking_method_avoid"]},
+        {"key": "redirect.food_form_avoid", "label": "形态拒绝", "tone": "avoid",
+         "group": "redirect", "slot_path": ["redirect", "food_form_avoid"]},
+        {"key": "constrain.oil", "label": "油控", "tone": "neutral",
+         "group": "constrain", "slot_path": ["constrain", "oil"], "scalar": True},
+        {"key": "constrain.price_max", "label": "价格上限", "tone": "neutral",
+         "group": "constrain", "slot_path": ["constrain", "price_max"], "scalar": True},
+        {"key": "constrain.functional", "label": "功能性", "tone": "neutral",
+         "group": "constrain", "slot_path": ["constrain", "functional"], "scalar": True},
+        {"key": "reference", "label": "引用上一轮", "tone": "neutral",
+         "group": "meta", "slot_path": ["reference"], "scalar": True},
+        {"key": "reject_previous", "label": "否决前轮", "tone": "neutral",
+         "group": "meta", "slot_path": ["reject_previous"], "scalar": True},
+        {"key": "raw_understanding", "label": "LLM 自述理解", "tone": "neutral",
+         "group": "meta", "slot_path": ["raw_understanding"], "freeform": True},
+        {"key": "raw_text", "label": "原始输入", "tone": "neutral",
+         "group": "meta", "slot_path": ["raw_text"], "freeform": True},
+    ]

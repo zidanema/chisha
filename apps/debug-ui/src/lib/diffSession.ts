@@ -1,7 +1,7 @@
-// Pure functions that compare two sessions and emit diff metadata for
-// PanelL2 combo-table badges and PanelFinal tri-state coloring.
-
-import type { FinalRow, L2Combo, Session } from "../types/trace";
+// Per-combo / per-final diff helpers, consumed by L2ComboTable + PanelFinal.
+// Phase 0 瘦身: 砍掉 Session-level computeSessionDiff (旧 refine tab 专用,
+// Workflow A round 比较走 trace.rounds[i].diff 后端给的 in/out/up/down 摘要,
+// 加上前端按需算 combo 集合差). 仅保留 panel 组件还在 import 的 type + badge formatter.
 
 export type ComboDiffKind = "NEW" | "DROPPED" | "UP" | "DOWN" | "SAME";
 
@@ -14,74 +14,6 @@ export type ComboDiff = {
 };
 
 export type FinalDiffKind = "new" | "kept" | "dropped";
-
-export type SessionDiff = {
-  // Union of all combo_ids present in either session. Key = combo_id.
-  combos: Map<string, ComboDiff>;
-  // Map of FinalRow.combo_id → tri-state. Includes BOTH second-round entries
-  // (new/kept) AND first-round entries that got dropped (dropped) so PanelFinal
-  // can render them as ghost cards.
-  final: Map<string, FinalDiffKind>;
-  // First-round final rows that didn't survive to the second round —
-  // PanelFinal renders these inline (half-transparent) for the "踢出 −" state.
-  droppedFinals: FinalRow[];
-};
-
-function indexByCombo<T extends { combo_id: string }>(rows: T[]): Map<string, T> {
-  const m = new Map<string, T>();
-  for (const r of rows) m.set(r.combo_id, r);
-  return m;
-}
-
-export function computeSessionDiff(first: Session, second: Session): SessionDiff {
-  const combos = new Map<string, ComboDiff>();
-
-  const firstIdx = indexByCombo<L2Combo>(first.l2.combos);
-  const secondIdx = indexByCombo<L2Combo>(second.l2.combos);
-
-  // O(n + m): one pass per side.
-  for (const [id, fc] of firstIdx) {
-    const sc = secondIdx.get(id);
-    if (!sc) {
-      combos.set(id, {
-        combo_id: id, kind: "DROPPED",
-        firstRank: fc.rank, secondRank: null, delta: 0,
-      });
-    } else {
-      const delta = sc.rank - fc.rank;
-      const kind: ComboDiffKind = delta === 0 ? "SAME" : delta < 0 ? "UP" : "DOWN";
-      combos.set(id, {
-        combo_id: id, kind,
-        firstRank: fc.rank, secondRank: sc.rank, delta,
-      });
-    }
-  }
-  for (const [id, sc] of secondIdx) {
-    if (!combos.has(id)) {
-      combos.set(id, {
-        combo_id: id, kind: "NEW",
-        firstRank: null, secondRank: sc.rank, delta: 0,
-      });
-    }
-  }
-
-  // Final tri-state.
-  const finalDiff = new Map<string, FinalDiffKind>();
-  const firstFinalIds = new Set(first.final.map((c) => c.combo_id));
-  const secondFinalIds = new Set(second.final.map((c) => c.combo_id));
-  for (const id of secondFinalIds) {
-    finalDiff.set(id, firstFinalIds.has(id) ? "kept" : "new");
-  }
-  const droppedFinals: FinalRow[] = [];
-  for (const fr of first.final) {
-    if (!secondFinalIds.has(fr.combo_id)) {
-      finalDiff.set(fr.combo_id, "dropped");
-      droppedFinals.push(fr);
-    }
-  }
-
-  return { combos, final: finalDiff, droppedFinals };
-}
 
 // User-facing badge formatting. abs() guards against "↑ -N" / "↓ -N" footguns.
 export function comboDiffBadge(d: ComboDiff): { text: string; tone: "green" | "red" | "blue" | "orange" } | null {

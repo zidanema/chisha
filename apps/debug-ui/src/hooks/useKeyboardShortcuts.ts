@@ -1,70 +1,63 @@
+// Workflow A 全局快捷键. 在 App 顶层挂一次.
+//   Cmd/Ctrl + K   → 打开 LookupDrawer
+//   Cmd/Ctrl + /   → focus TraceBrowser 搜索框 ([data-tb-search])
+//   1-9            → 切到 R{n} (若存在)
+//   Esc            → 关 LookupDrawer (其它 drawer 自管)
+//
+// 注: 当焦点在 INPUT/TEXTAREA 时, 数字键不抢; Cmd+K/Cmd+/ 始终生效.
+
 import { useEffect } from "react";
 
-export type ShortcutCallbacks = {
-  onRunMain: () => void;
-  onRunRefine: () => void;
-  isRunDisabled: () => boolean;
-  hasRefineText: () => boolean;
+type Opts = {
+  onOpenLookup: () => void;
+  onCloseLookup: () => void;
+  lookupOpen: boolean;
+  rounds: { id: string }[];
+  setActiveRound: (rid: string) => void;
 };
 
-// IME composition guard: ignore composing keystrokes so Chinese pinyin Enter
-// doesn't accidentally fire Run.
-function isComposing(e: KeyboardEvent): boolean {
-  return e.isComposing || (e as KeyboardEvent & { keyCode?: number }).keyCode === 229;
-}
-
-function isInteractiveTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return (
-    target.tagName === "INPUT" ||
-    target.tagName === "TEXTAREA" ||
-    target.isContentEditable
-  );
-}
-
-function isInsideSidebar(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.closest(".sidebar") != null;
-}
-
 export function useKeyboardShortcuts({
-  onRunMain,
-  onRunRefine,
-  isRunDisabled,
-  hasRefineText,
-}: ShortcutCallbacks): void {
+  onOpenLookup, onCloseLookup, lookupOpen, rounds, setActiveRound,
+}: Opts) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (isComposing(e)) return;
+      const target = e.target as HTMLElement | null;
+      const inEditable = !!target && (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      );
 
-      const mod = e.metaKey || e.ctrlKey;
+      const meta = e.metaKey || e.ctrlKey;
 
-      // Cmd/Ctrl + Enter inside a sidebar textarea → trigger main run.
-      if (mod && e.key === "Enter") {
-        if (!isInsideSidebar(e.target) && !isInteractiveTarget(e.target)) {
-          // global Cmd+Enter outside any input: still trigger.
-        }
-        if (isRunDisabled()) return;
+      if (meta && e.key === "k") {
         e.preventDefault();
-        onRunMain();
+        onOpenLookup();
         return;
       }
-
-      // Cmd/Ctrl + R: intercept browser reload, run refine if text present
-      // otherwise re-run main. Cmd+Shift+R is left untouched (escape hatch
-      // to force-reload).
-      if (mod && (e.key === "r" || e.key === "R") && !e.shiftKey && !e.altKey) {
-        if (isRunDisabled()) return;
+      if (meta && e.key === "/") {
         e.preventDefault();
-        if (hasRefineText()) {
-          onRunRefine();
-        } else {
-          onRunMain();
-        }
+        const el = document.querySelector<HTMLInputElement>("[data-tb-search]");
+        if (el) { el.focus(); el.select(); }
         return;
+      }
+      if (e.key === "Escape" && lookupOpen) {
+        e.preventDefault();
+        onCloseLookup();
+        return;
+      }
+      if (!inEditable && !meta && !e.altKey && !e.shiftKey) {
+        if (/^[1-9]$/.test(e.key)) {
+          const n = parseInt(e.key, 10);
+          const target = `R${n}`;
+          if (rounds.some((r) => r.id === target)) {
+            e.preventDefault();
+            setActiveRound(target);
+          }
+        }
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onRunMain, onRunRefine, isRunDisabled, hasRefineText]);
+  }, [onOpenLookup, onCloseLookup, lookupOpen, rounds, setActiveRound]);
 }

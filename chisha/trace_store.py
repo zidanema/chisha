@@ -25,10 +25,12 @@ from chisha import data_root
 
 logger = logging.getLogger(__name__)
 
-TRACE_SCHEMA_VERSION = 2  # T-00: bump 1→2, 加 l1.hard_filter_events 数组占位
+TRACE_SCHEMA_VERSION = 3  # D-087: bump 2→3, refine 单 dict → rounds[] 数组, 同时拆目录存储
 # v=1 trace 可被 read/list 接受 (on-read migration 注空 hard_filter_events).
-# write_trace 始终落当前版本; 下次 write 把 v=1 升 v=2 是预期行为.
-ACCEPTED_TRACE_VERSIONS: set[int] = {1, 2}
+# v=2 trace 同上 (单文件 + refine 单 dict). v=3 = {sid}/meta.json + {sid}/rounds/R{n}.json
+# 拆目录, on-read 把 v2 单文件视图升 v3 view (不写回); /api/refine 写盘走 append_round
+# 自动 migrate v2 → v3.
+ACCEPTED_TRACE_VERSIONS: set[int] = {1, 2, 3}
 # D-079 用户决策: trace 大小不省空间, 调试完整性优先 (Phase 0 单 zone 1260 dishes
 # 实测 ~1.3MB 是常态). 这里 50MB 是纯 sanity bound, 防意外/恶意大数据写满磁盘,
 # 不是日常裁剪阈值. 正常 trace (<5MB) 直接写, 不走任何裁剪.
@@ -453,3 +455,487 @@ def append_hard_filter_event(
     events = l1.setdefault("hard_filter_events", [])
     events.append(event)
     return True
+
+
+# ══════════════════════════════════════════════════════════════════════
+# D-087 trace_store v3: 拆目录存储 + meta lock + 多 round
+# ══════════════════════════════════════════════════════════════════════
+# 布局:
+#   {recommend_trace_dir}/{sid}/meta.json     ← TRACES item shape + round_ids
+#   {recommend_trace_dir}/{sid}/rounds/R{n}.json  ← 单 round 完整 (l1/l2/l3/final)
+#   {recommend_trace_dir}/{sid}/.lock             ← fcntl.flock 临界区
+#
+# v2 单文件 ({sid}.json) 仍可被 read_trace_v3 读 (内存升 v3 view, 不写回).
+# /api/refine 调 append_round 时自动触发 v2 → v3 文件迁移.
+# ══════════════════════════════════════════════════════════════════════
+
+import fcntl
+import contextlib
+from typing import Callable, Iterator
+
+
+def _sid_dir(sid: str, root: Optional[Path] = None) -> Path:
+    """v3 trace 目录 path. 不创建."""
+    return data_root.recommend_trace_dir(root) / sid
+
+
+def _v2_file(sid: str, root: Optional[Path] = None) -> Path:
+    """v2 单文件 path. 不创建."""
+    return data_root.recommend_trace_dir(root) / f"{sid}.json"
+
+
+def _meta_path(sid: str, root: Optional[Path] = None) -> Path:
+    return _sid_dir(sid, root) / "meta.json"
+
+
+def _round_path(sid: str, round_id: str, root: Optional[Path] = None) -> Path:
+    return _sid_dir(sid, root) / "rounds" / f"{round_id}.json"
+
+
+def _lock_path(sid: str, root: Optional[Path] = None) -> Path:
+    # 不放 {sid}/ 内 — 避免空目录在 no-base/corrupt 分支被预先创出来.
+    # 用 parent dir 的 hidden lockfile, sid 编码进文件名.
+    return data_root.recommend_trace_dir(root) / f".lock-{sid}"
+
+
+def is_v3_trace(sid: str, root: Optional[Path] = None) -> bool:
+    """v3 = {sid}/meta.json 存在. 检测便宜, 不读文件."""
+    return _meta_path(sid, root).exists()
+
+
+def has_v2_trace(sid: str, root: Optional[Path] = None) -> bool:
+    return _v2_file(sid, root).exists()
+
+
+@contextlib.contextmanager
+def lock_meta(sid: str, root: Optional[Path] = None) -> Iterator[None]:
+    """fcntl.flock 互斥锁, 包住 read_meta → mutate → write_meta + write_round.
+
+    {sid}/.lock 是独立 file, 单纯当 lockfile 用 (不写内容). 这样 meta.json 可以
+    走 tmp+rename 原子替换, 同时锁不丢.
+
+    Cross-process safe (fcntl 系统调用), 同进程多线程不需要 (单 worker FastAPI).
+    """
+    if "/" in sid or ".." in sid or not sid:
+        raise ValueError(f"invalid session_id: {sid!r}")
+    # 只确保 parent dir (recommend_trace) 存在, **不**预创 {sid}/.
+    # 这样 no-base / corrupt 分支不会留空 v3 dir 给 list_traces_v3 误识别.
+    lock_p = _lock_path(sid, root)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    # 用 "a+" 创建 lockfile, 不写内容
+    with open(lock_p, "a+") as fp:
+        fcntl.flock(fp, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fp, fcntl.LOCK_UN)
+
+
+def read_meta(sid: str, root: Optional[Path] = None) -> Optional[dict]:
+    """读 v3 meta.json. 不存在返 None. 损坏抛 TraceCorrupt + 备份."""
+    p = _meta_path(sid, root)
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        backup = _backup_corrupt(p)
+        raise TraceCorrupt(
+            f"meta {sid} corrupt, moved to {backup.name}: "
+            f"{type(e).__name__}: {e}"
+        ) from e
+    if not isinstance(data, dict):
+        backup = _backup_corrupt(p)
+        raise TraceCorrupt(f"meta {sid} root must be dict, moved to {backup.name}")
+    return data
+
+
+def write_meta_atomic(sid: str, meta: dict, root: Optional[Path] = None) -> bool:
+    """原子写 meta.json (tmp + rename). best-effort, 失败 warn + 返 False.
+    调用方应在 lock_meta 内调用."""
+    try:
+        meta["__version"] = TRACE_SCHEMA_VERSION
+        p = _meta_path(sid, root)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        import os
+        import secrets as _secrets
+        tmp = p.with_suffix(f".json.tmp.{os.getpid()}.{_secrets.token_hex(4)}")
+        tmp.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(p)
+        return True
+    except Exception as e:
+        logger.warning("write_meta_atomic failed for %s: %s: %s",
+                       sid, type(e).__name__, e)
+        return False
+
+
+def read_round(sid: str, round_id: str, root: Optional[Path] = None) -> Optional[dict]:
+    """读 {sid}/rounds/R{n}.json. 不存在返 None."""
+    p = _round_path(sid, round_id, root)
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        backup = _backup_corrupt(p)
+        raise TraceCorrupt(
+            f"round {sid}/{round_id} corrupt, moved to {backup.name}: "
+            f"{type(e).__name__}: {e}"
+        ) from e
+    if not isinstance(data, dict):
+        backup = _backup_corrupt(p)
+        raise TraceCorrupt(f"round {sid}/{round_id} root must be dict, moved to {backup.name}")
+    return data
+
+
+def write_round_atomic(
+    sid: str, round_id: str, payload: dict, root: Optional[Path] = None,
+) -> bool:
+    """原子写 round 文件. 与 write_trace 一样的 size + tmp+rename 模式."""
+    try:
+        payload = dict(payload)
+        payload["id"] = round_id
+        body = json.dumps(payload, ensure_ascii=False)
+        if len(body.encode("utf-8")) > MAX_TRACE_BYTES:
+            # round 单文件超大 — 走老 _truncate_for_size 兜底
+            payload = _truncate_for_size(payload)
+            body = json.dumps(payload, ensure_ascii=False)
+            if len(body.encode("utf-8")) > MAX_TRACE_BYTES:
+                logger.error("round %s/%s still over %dKB, skip write",
+                             sid, round_id, MAX_TRACE_BYTES // 1024)
+                return False
+        p = _round_path(sid, round_id, root)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        import os
+        import secrets as _secrets
+        tmp = p.with_suffix(f".json.tmp.{os.getpid()}.{_secrets.token_hex(4)}")
+        tmp.write_text(body, encoding="utf-8")
+        tmp.replace(p)
+        return True
+    except Exception as e:
+        logger.warning("write_round_atomic failed for %s/%s: %s: %s",
+                       sid, round_id, type(e).__name__, e)
+        return False
+
+
+def _build_meta_from_v2(v2_trace: dict) -> dict:
+    """从 v2 单文件 trace dict 派生 v3 meta. v2 refine 信息丢弃 (本来就被覆盖了)."""
+    sid = v2_trace.get("session_id") or ""
+    frozen = v2_trace.get("__frozen") or {}
+    return {
+        "__version": TRACE_SCHEMA_VERSION,
+        "__source": v2_trace.get("__source") or "production",
+        "session_id": sid,
+        "started_at": v2_trace.get("started_at"),
+        "meal_type": frozen.get("meal_type") or v2_trace.get("l1", {}).get("meal"),
+        "zone": frozen.get("zone"),
+        "top1_summary": _extract_top1_summary(v2_trace),
+        "total_latency_ms": v2_trace.get("total_latency_ms"),
+        "l3_status": (v2_trace.get("l3") or {}).get("status"),
+        "round_ids": ["R1"],
+        "latest_round": "R1",
+        "refine_count": 0,
+        "__migrated_from_v2": True,
+    }
+
+
+def _build_r1_round_from_v2(v2_trace: dict) -> dict:
+    """从 v2 单文件 trace dict 派生 R1 round 文件. l1/l2/l3/final + __frozen 全搬."""
+    return {
+        "id": "R1",
+        "started_at": v2_trace.get("started_at"),
+        "user_input": None,
+        "intent": None,
+        "intent_v2": None,
+        "narrative": "",
+        "kpi": {
+            "combos": _extract_combo_count(v2_trace.get("l1") or {}),
+            "l2_top": (v2_trace.get("l2") or {}).get("candidates_to_l3") or 0,
+            "top1": _extract_top1_summary(v2_trace),
+            "latency_ms": v2_trace.get("total_latency_ms") or 0,
+        },
+        "diff": None,
+        "ctx_latency_ms": v2_trace.get("ctx_latency_ms"),
+        "recall_latency_ms": v2_trace.get("recall_latency_ms"),
+        "score_latency_ms": v2_trace.get("score_latency_ms"),
+        "rerank_latency_ms": v2_trace.get("rerank_latency_ms"),
+        "final_latency_ms": v2_trace.get("final_latency_ms"),
+        "l1": v2_trace.get("l1"),
+        "l2": v2_trace.get("l2"),
+        "l3": v2_trace.get("l3"),
+        "final": v2_trace.get("final"),
+        "__frozen": v2_trace.get("__frozen"),
+        "__config": v2_trace.get("__config"),
+    }
+
+
+def _extract_combo_count(l1: dict) -> int:
+    funnel = l1.get("funnel") or []
+    if not funnel:
+        return 0
+    last = funnel[-1] or {}
+    return int(last.get("value") or 0)
+
+
+def migrate_v2_to_v3(sid: str, root: Optional[Path] = None) -> bool:
+    """惰性迁移: 把 {sid}.json (v2) 拆成 {sid}/meta.json + rounds/R1.json.
+    调用方应在 lock_meta 内调用. 成功后删除 v2 文件; 失败保留 v2.
+
+    Idempotent: 如果 v3 已存在 + v2 不存在 → 直接 True.
+    """
+    if is_v3_trace(sid, root):
+        # 已迁移. v2 残留先不删 (谨慎), 让 caller 决定.
+        return True
+    v2_p = _v2_file(sid, root)
+    if not v2_p.exists():
+        return False  # 既没有 v3 也没有 v2
+    try:
+        v2_data = json.loads(v2_p.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("migrate_v2_to_v3 read v2 failed for %s: %s: %s",
+                       sid, type(e).__name__, e)
+        return False
+    if not isinstance(v2_data, dict):
+        logger.warning("migrate_v2_to_v3 v2 not dict for %s", sid)
+        return False
+    meta = _build_meta_from_v2(v2_data)
+    r1 = _build_r1_round_from_v2(v2_data)
+    if not write_round_atomic(sid, "R1", r1, root=root):
+        return False
+    if not write_meta_atomic(sid, meta, root=root):
+        return False
+    # 迁移成功 → 删 v2 单文件 (留 .migrated_v2 备份)
+    try:
+        v2_p.rename(v2_p.with_suffix(".json.migrated_v2"))
+    except Exception as e:
+        logger.warning("migrate_v2_to_v3 rename v2 file failed for %s: %s",
+                       sid, e)
+    return True
+
+
+def append_round(
+    sid: str,
+    round_payload: dict,
+    *,
+    root: Optional[Path] = None,
+) -> Optional[str]:
+    """加新 round 到 v3 trace. 自动 migrate v2 → v3 (如果需要).
+
+    Args:
+        sid: session_id
+        round_payload: 单 round 完整 dict (id 字段会被覆盖为服务端签发的 round_id).
+            必须含: user_input, intent_v2, narrative, kpi, l1, l2, l3, final.
+            可选: diff (调用方算好), __frozen.
+    Returns:
+        新签发的 round_id ("R{n}"), 失败返 None (warn 已 log).
+
+    Best-effort 同 write_trace; 失败不抛, 由 caller 决定是否影响主响应.
+    """
+    if "/" in sid or ".." in sid or not sid:
+        raise ValueError(f"invalid session_id: {sid!r}")
+    try:
+        with lock_meta(sid, root):
+            # migrate v2 → v3 (无副作用 if v3 已存在)
+            if not is_v3_trace(sid, root):
+                if not migrate_v2_to_v3(sid, root):
+                    logger.warning(
+                        "append_round %s: no v2/v3 trace base, refusing to "
+                        "create orphan refine trace", sid,
+                    )
+                    return None
+            meta = read_meta(sid, root)
+            if meta is None:
+                logger.warning("append_round %s: meta vanished after migrate", sid)
+                return None
+            round_ids: list[str] = list(meta.get("round_ids") or [])
+            n = len(round_ids) + 1
+            round_id = f"R{n}"
+            round_payload = dict(round_payload)
+            round_payload["id"] = round_id
+            # 写 round 文件
+            if not write_round_atomic(sid, round_id, round_payload, root=root):
+                return None
+            # 更新 meta (round_ids + latest + refine_count + 顶层 latency / l3_status 镜像)
+            round_ids.append(round_id)
+            meta["round_ids"] = round_ids
+            meta["latest_round"] = round_id
+            meta["refine_count"] = len(round_ids) - 1
+            kpi = round_payload.get("kpi") or {}
+            if kpi.get("top1"):
+                meta["top1_summary"] = kpi["top1"]
+            if kpi.get("latency_ms"):
+                meta["total_latency_ms"] = kpi["latency_ms"]
+            l3 = round_payload.get("l3") or {}
+            if l3.get("status"):
+                meta["l3_status"] = l3["status"]
+            if not write_meta_atomic(sid, meta, root=root):
+                return None
+            return round_id
+    except Exception as e:
+        logger.warning("append_round failed for %s: %s: %s",
+                       sid, type(e).__name__, e)
+        return None
+
+
+def read_trace_v3_view(
+    sid: str, root: Optional[Path] = None,
+) -> Optional[dict]:
+    """统一 v3 view 读: 返 {meta, rounds: [round_stub]}, **不含** round body.
+
+    - v3 dir 存在 → 读 meta.json + 每个 round 文件的 stub (id/user_input/intent/kpi/diff)
+    - 仅 v2 单文件 → 内存构造 view (rounds = [R1 from top-level]), 不写回
+    - 都不存在 → None
+
+    round_stub 不含 l1/l2/l3/final body (大), 调 read_round 单独拉.
+    """
+    # v3 优先
+    meta = read_meta(sid, root)
+    if meta is not None:
+        round_ids = list(meta.get("round_ids") or [])
+        stubs = []
+        for rid in round_ids:
+            r = read_round(sid, rid, root)
+            if r is None:
+                continue
+            stubs.append({
+                "id": r.get("id") or rid,
+                "label": r.get("label") or ("原始" if rid == "R1" else "追问"),
+                "started_at": r.get("started_at"),
+                "user_input": r.get("user_input"),
+                "intent_v2": r.get("intent_v2"),
+                "narrative": r.get("narrative"),
+                "kpi": r.get("kpi"),
+                "diff": r.get("diff"),
+            })
+        return {"meta": meta, "rounds": stubs}
+    # v2 fallback (in-memory migrate)
+    if has_v2_trace(sid, root):
+        v2 = read_trace(sid, root)
+        if v2 is None:
+            return None
+        meta = _build_meta_from_v2(v2)
+        r1 = _build_r1_round_from_v2(v2)
+        return {
+            "meta": meta,
+            "rounds": [{
+                "id": "R1", "label": "原始",
+                "started_at": r1["started_at"], "user_input": None, "intent_v2": None,
+                "narrative": "", "kpi": r1["kpi"], "diff": None,
+            }],
+        }
+    return None
+
+
+def read_round_full(
+    sid: str, round_id: str, root: Optional[Path] = None,
+) -> Optional[dict]:
+    """读 round 完整 body (l1/l2/l3/final). v2 单文件 trace → R1 = 整个 trace."""
+    if is_v3_trace(sid, root):
+        return read_round(sid, round_id, root)
+    if has_v2_trace(sid, root):
+        if round_id != "R1":
+            # v2 只有 R1, 其他 round 不存在
+            return None
+        v2 = read_trace(sid, root)
+        if v2 is None:
+            return None
+        return _build_r1_round_from_v2(v2)
+    return None
+
+
+def list_traces_v3(
+    root: Optional[Path] = None,
+    limit: int = 30,
+    meal_type: Optional[str] = None,
+) -> tuple[list[dict], int]:
+    """v3-aware list: 扫 v3 目录 + v2 单文件, 合并按 mtime desc.
+
+    返 [TraceMeta dict] + corrupt_count. TraceMeta 字段:
+      session_id, started_at, meal_type, zone, top1_summary, total_latency_ms,
+      l3_status, source, round_ids, latest_round, refine_count.
+    feedback 由 attach_feedback_links 后挂.
+    """
+    d = data_root.recommend_trace_dir(root)
+    if not d.exists():
+        return [], 0
+
+    candidates: list[tuple[float, str, str]] = []   # (mtime, layout, path/sid)
+    for entry in d.iterdir():
+        if entry.is_dir():
+            mp = entry / "meta.json"
+            if mp.exists():
+                try:
+                    candidates.append((mp.stat().st_mtime, "v3", entry.name))
+                except OSError:
+                    continue
+        elif entry.suffix == ".json" and not entry.name.startswith("."):
+            try:
+                candidates.append((entry.stat().st_mtime, "v2", entry.stem))
+            except OSError:
+                continue
+    candidates.sort(reverse=True)
+
+    items: list[dict] = []
+    corrupt = 0
+    seen_sids: set[str] = set()
+    for _mtime, layout, sid in candidates:
+        if sid in seen_sids:
+            continue
+        try:
+            if layout == "v3":
+                meta = read_meta(sid, root)
+                if meta is None:
+                    continue
+                mt = meta.get("meal_type")
+                if meal_type and mt != meal_type:
+                    continue
+                items.append({
+                    "session_id": meta.get("session_id") or sid,
+                    "started_at": meta.get("started_at"),
+                    "meal_type": mt,
+                    "zone": meta.get("zone"),
+                    "top1_summary": meta.get("top1_summary"),
+                    "total_latency_ms": meta.get("total_latency_ms"),
+                    "l3_status": meta.get("l3_status"),
+                    "source": meta.get("__source") or "production",
+                    "round_ids": list(meta.get("round_ids") or ["R1"]),
+                    "latest_round": meta.get("latest_round") or "R1",
+                    "refine_count": int(meta.get("refine_count") or 0),
+                })
+            else:
+                p = d / f"{sid}.json"
+                raw = p.read_text(encoding="utf-8")
+                data = json.loads(raw)
+                if not isinstance(data, dict):
+                    corrupt += 1
+                    continue
+                version = data.get("__version")
+                if version not in ACCEPTED_TRACE_VERSIONS:
+                    continue
+                frozen = data.get("__frozen") or {}
+                mt = frozen.get("meal_type") or data.get("l1", {}).get("meal")
+                if meal_type and mt != meal_type:
+                    continue
+                items.append({
+                    "session_id": data.get("session_id") or sid,
+                    "started_at": data.get("started_at"),
+                    "meal_type": mt,
+                    "zone": frozen.get("zone"),
+                    "top1_summary": _extract_top1_summary(data),
+                    "total_latency_ms": data.get("total_latency_ms"),
+                    "l3_status": (data.get("l3") or {}).get("status"),
+                    "source": data.get("__source") or "production",
+                    "round_ids": ["R1"],
+                    "latest_round": "R1",
+                    "refine_count": 0,
+                })
+            seen_sids.add(sid)
+        except Exception as e:
+            corrupt += 1
+            logger.warning("list_traces_v3 skipped %s/%s: %s: %s",
+                           layout, sid, type(e).__name__, e)
+            continue
+        if len(items) >= limit:
+            break
+
+    return items, corrupt

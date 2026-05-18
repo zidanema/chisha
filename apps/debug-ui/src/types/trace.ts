@@ -257,3 +257,111 @@ export type Session = {
   final: FinalRow[];
   refine: RefineTrace;
 };
+
+// ═══════════════════════════════════════════════════════════════════
+// Workflow A · 分析 trace 类型 (D-086+)
+// ═══════════════════════════════════════════════════════════════════
+
+// V2 RefineIntent schema (chisha/refine_intent_v2.py: RefineIntentV2).
+// open-schema: 后端 V2 schema 扩字段时自动透传, 前端按 intent_schema descriptor 渲染.
+export type RoundIntentV2 = {
+  redirect?: {
+    cuisine_want?: string[];
+    cuisine_avoid?: string[];
+    cuisine_candidates_expanded?: string[];
+    ingredient_want?: string[];
+    ingredient_avoid?: string[];
+    ingredient_synonyms?: string[];
+    brand_avoid?: string[];
+    cooking_method_avoid?: string[];
+    food_form_avoid?: string[];
+  };
+  constrain?: {
+    oil?: string | null;
+    price_max?: number | null;
+    quality_floor?: string | null;
+    delivery_only?: boolean | null;
+    max_distance_km?: number | null;
+    functional?: {
+      low_caffeine?: boolean | null;
+      low_satiety_drowsy?: boolean | null;
+    };
+  };
+  reference?: { round?: string; pick?: string } | null;
+  reject_previous?: boolean;
+  raw_understanding?: string;
+  raw_text?: string;
+  schema_version?: string;
+  unsupported_in_recall?: string[];
+  // legacy_v1 / 后端将来扩字段 — open schema
+  [key: string]: unknown;
+};
+
+// 单 round 对应的完整 pipeline 数据 + intent + 与上一轮的 diff 摘要.
+export type RoundRecord = {
+  id: string;                  // "R1" / "R2" / ...
+  label: string;               // "原始" / "换一组" / 用户自命名 (后端可能无)
+  started_at: string;          // ISO 或 "HH:MM" 简化形式
+  user_input: string | null;   // R1 = null
+  intent_v2: RoundIntentV2 | null; // R1 = null (静态来自 profile)
+  kpi: {
+    combos: number;            // L1 出 combo 数
+    l2_top: number;            // L2 top60 = candidates_to_l3
+    top1: string;              // final[0] 餐厅名
+    latency_ms: number;
+  };
+  diff: {
+    vs: string;                // 上一轮 round id
+    in: number;                // final 新进
+    out: number;               // final 踢出
+    up: number;                // 位次上升
+    down: number;              // 位次下降
+  } | null;
+  l1: L1Trace;
+  l2: L2Trace;
+  l3: L3Trace;
+  final: FinalRow[];
+  // 后端 refine round (R2+) 暂未存 l1/l2/l3 切片 (refine_session 不暴露), 当前用 mock R1
+  // 兜底让 panel 不崩 — 这种情况标 __partial=true, LookupDrawer 警告用户反查不可信.
+  __partial?: boolean;
+};
+
+// TraceBrowser 单行 meta (来自 backend GET /api/traces 单条).
+export type TraceFeedback = {
+  type: "accepted" | "rated" | "stopped";
+  rank?: number;               // accepted 用
+  count?: number;              // rated 用 (heart count)
+};
+
+export type TraceMeta = {
+  id: string;
+  date: string;                // YYYY-MM-DD
+  time: string;                // HH:MM
+  daysAgo: number;
+  meal: Meal;
+  finalTop1: string;
+  refineCount: number;         // = len(rounds) - 1
+  latestRound: string;         // "R{1+refineCount}"
+  source: "real" | "sandbox";
+  sandboxDay?: number | null;
+  feedback: TraceFeedback | null;
+  status: "ok" | "fallback" | "warn";
+  latency_ms: number;
+};
+
+// 完整 Workflow A trace = meta + rounds 数组.
+export type WaTrace = {
+  meta: TraceMeta;
+  rounds: RoundRecord[];
+};
+
+// Intent schema descriptor (Phase 2a 来自 GET /api/intent_schema).
+export type IntentFieldDescriptor = {
+  key: string;                 // 唯一 ID, 例: "redirect.cuisine_want"
+  label: string;               // 中文标签
+  tone: "want" | "avoid" | "neutral";
+  group: "redirect" | "constrain" | "meta" | "other";
+  slot_path: string[];         // ["redirect", "cuisine_want"]
+  scalar?: boolean;            // true = 单值 (constrain.oil), false = 数组 (redirect.cuisine_want)
+  freeform?: boolean;          // true = 长文本 (raw_understanding)
+};

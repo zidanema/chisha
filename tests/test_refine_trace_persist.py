@@ -1,12 +1,12 @@
-"""D-079 PR-4: /api/refine 持久化 trace.refine 字段 + missing/corrupt 分支.
+"""D-079 PR-4 + D-087 v3: /api/refine 持久化分支.
 
-DESIGN §3.5:
-  - read_trace 返 None (base trace 缺失, 首轮 best-effort 失败) → warn + 不持久化
-  - read_trace 抛 TraceCorrupt → error log + 同上不持久化
-  - 任何情况下 refine 自身响应不阻断 (best-effort)
+D-087 v3 改造:
+  - refine 写盘不再 merge 进 base_trace["refine"], 改 append 新 round 到 v3 trace
+    ({sid}/rounds/R{n}.json + 更新 {sid}/meta.json)
+  - v2 单文件 base trace 在 append_round 内部自动 migrate v2 → v3
+  - 缺/损坏 base trace 仍是 best-effort warn + 不创 orphan, refine response 不阻断
 
-测试策略: 直接打 FastAPI router, 用 monkeypatch 把 refine_session + load_session
-mock 掉 (refine 主链路 D-073 自带测试), 只关注 trace 落盘分支.
+测试策略同 D-079: monkeypatch refine_session + load_session, 只验落盘形状.
 """
 from __future__ import annotations
 
@@ -139,8 +139,8 @@ def _write_base_trace(trace_store, root: Path, sid: str) -> Path:
     return p
 
 
-def test_refine_merges_into_base_trace(app_with_root):
-    """正常路径: base trace 存在 → refine 把 refine 字段 merge 进同一文件."""
+def test_refine_appends_v3_round(app_with_root):
+    """D-087: refine 走 append_round, 落 {sid}/rounds/R2.json + 更新 meta."""
     app, root, trace_store = app_with_root
     sid = "sess_refine_ok_01"
     _write_base_trace(trace_store, root, sid)
@@ -152,17 +152,22 @@ def test_refine_merges_into_base_trace(app_with_root):
     assert body["session_id"] == sid
     assert body["round"] == 2
 
-    # trace 文件被更新, refine.applied = True + user_input 透传 + 同 sid 不分裂
-    p = trace_store.data_root.recommend_trace_dir(root) / f"{sid}.json"
-    data = json.loads(p.read_text(encoding="utf-8"))
-    assert data["refine"]["applied"] is True
-    assert data["refine"]["user_input"] == "想吃湖南菜, 肉多一点"
-    assert data["refine"]["round"] == 2
-    assert data["refine"]["intent"] == {"cuisine_want": "湘菜"}
-    assert data["__config"]["refine_text"] == "想吃湖南菜, 肉多一点"
-    # 不创 refine-only 孤儿: 只有这一个 trace 文件
-    files = list(trace_store.data_root.recommend_trace_dir(root).glob("*.json"))
-    assert len(files) == 1
+    d = trace_store.data_root.recommend_trace_dir(root)
+    # 自动 migrate: v2 单文件 rename → .migrated_v2; v3 dir 出现
+    assert (d / f"{sid}.json.migrated_v2").exists()
+    assert not (d / f"{sid}.json").exists()
+    assert (d / sid / "meta.json").exists()
+    assert (d / sid / "rounds" / "R1.json").exists()
+    assert (d / sid / "rounds" / "R2.json").exists()
+
+    meta = json.loads((d / sid / "meta.json").read_text("utf-8"))
+    assert meta["round_ids"] == ["R1", "R2"]
+    assert meta["latest_round"] == "R2"
+    assert meta["refine_count"] == 1
+
+    r2 = json.loads((d / sid / "rounds" / "R2.json").read_text("utf-8"))
+    assert r2["user_input"] == "想吃湖南菜, 肉多一点"
+    assert r2["intent"] == {"cuisine_want": "湘菜"}
 
 
 def test_refine_base_trace_falls_through_new_fields(app_with_root, monkeypatch):
@@ -207,21 +212,21 @@ def test_refine_base_trace_falls_through_new_fields(app_with_root, monkeypatch):
     r = _post_refine(client, sid)
     assert r.status_code == 200, r.text
 
-    p = trace_store.data_root.recommend_trace_dir(root) / f"{sid}.json"
-    data = json.loads(p.read_text(encoding="utf-8"))
-    refine_blob = data["refine"]
-    assert refine_blob["narrative"] == "mock-narrative-for-trace"
-    assert refine_blob["subtype_diversified"] is True
-    rr = refine_blob["reference_resolved"]
+    # D-087: round R2 文件应含 intent_v2 / reference_resolved / subtype_diversified / narrative
+    d = trace_store.data_root.recommend_trace_dir(root)
+    r2 = json.loads((d / sid / "rounds" / "R2.json").read_text("utf-8"))
+    assert r2["narrative"] == "mock-narrative-for-trace"
+    assert r2["subtype_diversified"] is True
+    rr = r2["reference_resolved"]
     assert rr is not None
     assert rr["relation"] == "lighter"
     assert rr["source"] == "v2_intent"
     assert rr["base_session_id"] == "sess-base"
-    assert refine_blob["intent_v2"]["schema_version"] == "2.0"
+    assert r2["intent_v2"]["schema_version"] == "2.0"
 
 
 def test_refine_with_missing_base_trace_warns_not_persists(app_with_root, caplog):
-    """base trace 缺失 (首轮 best-effort 失败): refine 仍返 200, 但不创 orphan trace."""
+    """D-087: base trace 缺失 → append_round 返 None, refine 仍 200, 无 orphan."""
     app, root, trace_store = app_with_root
     sid = "sess_refine_no_base_02"
     # 不 _write_base_trace; trace_dir 为空
@@ -231,18 +236,22 @@ def test_refine_with_missing_base_trace_warns_not_persists(app_with_root, caplog
         r = _post_refine(client, sid)
     assert r.status_code == 200, r.text
 
-    # 没有 orphan trace 被创出来
+    # 没有 orphan trace 被创: 无 v2 单文件, 无 v3 dir
     d = trace_store.data_root.recommend_trace_dir(root)
     if d.exists():
         assert list(d.glob("*.json")) == []
+        assert not (d / sid).exists(), "must not create orphan v3 dir"
 
-    # warn 日志包含 sid
-    assert any(sid in rec.message and "missing" in rec.message
+    # warn 日志包含 sid + "skip persist"
+    assert any(sid in rec.message and "skip persist" in rec.message
                 for rec in caplog.records)
 
 
 def test_refine_with_corrupt_base_trace_warns_not_persists(app_with_root, caplog):
-    """base trace 损坏: refine 仍返 200, 不覆盖 (损坏文件已被备份)."""
+    """D-087: 损坏 v2 base → migrate_v2_to_v3 失败, append_round 返 None.
+
+    v2 文件本身保留 (不再走 read_trace TraceCorrupt 备份路径), 由用户/ops 手工处理.
+    """
     app, root, trace_store = app_with_root
     sid = "sess_refine_corrupt_03"
     d = trace_store.data_root.recommend_trace_dir(root)
@@ -251,15 +260,14 @@ def test_refine_with_corrupt_base_trace_warns_not_persists(app_with_root, caplog
     p.write_text("{not json", encoding="utf-8")
 
     client = TestClient(app)
-    with caplog.at_level("ERROR"):
+    with caplog.at_level("WARNING"):
         r = _post_refine(client, sid)
     assert r.status_code == 200, r.text
 
-    # 原文件被 read_trace 备份到 .corrupt.*.bak (TraceCorrupt 行为, D-066/067 一致)
-    # refine 走 error 分支 → 不重新写一个 trace
-    assert not p.exists(), "corrupt file should have been renamed to .bak"
-    healthy = [pp for pp in d.glob("*.json") if pp.is_file()]
-    assert healthy == [], "refine must not create a fresh trace on corrupt base"
+    # append_round 内部 migrate_v2_to_v3 fail (json 解析报错), 返 False;
+    # 损坏文件原位保留 (不再被 silently rename). 也没有 v3 dir 被部分创建.
+    assert p.exists(), "corrupt v2 file should remain in place"
+    assert not (d / sid).exists(), "no partial v3 dir should be created"
 
-    assert any(sid in rec.message and "corrupt" in rec.message
+    assert any(sid in rec.message and "skip persist" in rec.message
                 for rec in caplog.records)

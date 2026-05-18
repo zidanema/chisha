@@ -17,6 +17,8 @@ logs/
 # 临时输出
 *.tmp
 *.failed.json
+# chrome-devtools-mcp 本地自测截图 (debug-ui 改动验证产物)
+.tmp_screenshots/
 # D-072.1 L2 trace 回归基线 (本地工具产物, scripts/baseline_l2_snapshot.py 可重生成)
 tmp/
 
