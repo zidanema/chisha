@@ -79,6 +79,17 @@
       ],
       "status": "done",
       "_notes": "subtype_diversity 模块 + 8 菜系子类词表 + 11 单测 + refine.py 真接入: intent.cuisine_want 非空时 ranked 走 diversify_by_subtype (round-robin 让 top N 覆盖 ≥ 3 subtype). 5 集成测试 + 773 全测试通过. trace.subtype_diversified 落 debug. baseline_l2_snapshot 0 diff (空 refine 不触发)."
+    },
+    {
+      "id": "Debug",
+      "title": "Debug UI (D-080~D-085) 验收 bug fix (B1-B6)",
+      "regression_risk": "medium",
+      "depends_on": [
+        "T-P2-02"
+      ],
+      "status": "done",
+      "_spec": "specs/Debug.md",
+      "_notes": "D-088 落地: 6 bug 全修 + chrome-devtools-mcp golden path 全过. pytest 796 (基线 791 + 5 新增). Codex 3 轮 plan 审 + 1 轮 diff review APPROVED. 主要修法: adapter.ts B6 (config_error 透传) + App.tsx B1 (activeRound 读 latestRound) + useWaTrace.ts B1/B3/B5 (stale guard + zero-state + 5s 轮询) + RefineTimeline B2 (button + a11y) + web_api.py B4 (restaurant_name 派生) + TraceBrowser B4 (★ + 餐厅名渲染) + PanelL3 B6 (fallback_reason 显示)."
     }
   ]
 }

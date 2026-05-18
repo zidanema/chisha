@@ -99,21 +99,27 @@ export function RefineTimeline({
           {rounds.map((r, i) => {
             const isBase = r.id === base;
             const isTarget = r.id === target;
+            const ariaLabel = `切到 ${r.id}${r.user_input ? ': ' + r.user_input.slice(0, 40) : (r.label ? ': ' + r.label : '')}`;
             return (
-              <div
+              // D-088 (B2): 改成 button — a11y 明确可点 + 键盘 Tab/Enter/Space 支持.
+              // modifier-click (shift/alt/cmd) 和 right-click 语义保留 (button 也支持).
+              <button
+                type="button"
                 key={r.id}
                 className={`rt-node ${isBase ? "is-base" : ""} ${isTarget ? "is-target" : ""}`}
                 style={{ left: nodeLeft(i), top: 0 }}
                 onClick={(e) => handleClick(e, i)}
                 onContextMenu={(e) => handleContext(e, i)}
                 title={r.user_input || r.label}
+                aria-label={ariaLabel}
+                aria-pressed={isTarget}
               >
                 <span className="lbl">{r.id}</span>
                 <span className="ball"></span>
                 <span className="when">{r.started_at}</span>
                 <span className="role"></span>
                 <span className="desc">{r.label}</span>
-              </div>
+              </button>
             );
           })}
         </div>

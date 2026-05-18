@@ -238,7 +238,12 @@ export function PanelL3({
         <div className="callout" style={{ background: "var(--warn-bg)", borderColor: "var(--warn-edge)" }}>
           <span className="icon" style={{ color: "var(--warn)" }}>▲</span>
           <div className="body">
-            <strong style={{ color: "var(--warn)" }}>config_error</strong> — LLM provider 配置错, L3 未跑.
+            <strong style={{ color: "var(--warn)" }}>config_error</strong>
+            {L3.fallback_reason ? (
+              <span style={{ marginLeft: 8 }}>— {L3.fallback_reason}</span>
+            ) : (
+              <span style={{ marginLeft: 8 }}>— LLM provider 配置错, L3 未跑.</span>
+            )}
             <div className="dim mono" style={{ marginTop: 4, fontSize: 11 }}>
               # 检查 profile_overrides JSON / LLM provider env vars (CHISHA_LLM_PROVIDER, ANTHROPIC_API_KEY, OPENROUTER_API_KEY).
               <br />
@@ -253,7 +258,9 @@ export function PanelL3({
           <span className="icon" style={{ color: "var(--t-2)" }}>·</span>
           <div className="body">
             <strong style={{ color: "var(--t-1)" }}>L3 SKIPPED</strong>
-            <span className="dim" style={{ marginLeft: 8 }}>LLM rerank 关闭, Final 来自 L2 fallback rerank.</span>
+            <span className="dim" style={{ marginLeft: 8 }}>
+              {L3.fallback_reason || "LLM rerank 关闭, Final 来自 L2 fallback rerank."}
+            </span>
           </div>
         </div>
       )}

@@ -273,3 +273,11 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 4 个 GET endpoint: `/api/traces`, `/api/trace/{sid}`, `/api/trace/{sid}/round/{rid}`, `/api/intent_schema`; LookupDrawer 反查走前端内存 (零后端调用)
 - Intent UI schema-driven: backend `INTENT_SCHEMA` 单一可信源, 前端 fallback `constants/intentSchema.ts`, V2 RefineIntent 扩字段不动 UI 代码
 - 详见 brief: docs/design_briefs/2026-05-18-debug-console-workflow-a.md
+
+## D-088
+**Debug UI (D-085~D-087) 渲染层 6 bug 修复, refine 流程在调试台从"看不见"变"默认可见"。** (2026-05-19) · debug-ui follow-up
+- 根因 1 (B6): `adapter.ts:adaptL3` 把 backend `l3.status=config_error` 硬转 `"skipped"`, 违反 CONTRACTS §39 精神. 修法: `wrapTraceL3` 不再走 skipped 简壳, 始终建完整 BackendL3Llm + `used: l3.used` 真值; PanelL3 callout 直显 `fallback_reason`
+- 根因 2 (B1): `App.tsx:activeRound` 硬编码 `"R1"` 不读 `trace.meta.latestRound`, refine 完默认看不到 R2. 修法: useEffect key on `[trace.meta.id, trace.meta.latestRound]` + stale guard 下沉到 `useWaTrace`(success/catch 双路) 防快切 trace race
+- 根因 3 (B4): `web_api._attach_feedback_to_meta` 只派生 `type/rank`, TraceBrowser 显示 `+2` 神秘. 修法: 派生加 `restaurant_name`, 前端用 ASCII `★` + 餐厅名截断显示
+- 顺手修: RefineTimeline `<div>` 改 `<button>` + `aria-pressed` (B2); stubToRound mock R1 兜底改 zero-state skeleton (B3); useWaTrace 5s 轮询 `/api/traces` (B5)
+- 验证: 全 pytest 796 passed (基线 791 + 5 新增 backend test) + chrome-devtools-mcp golden path 全过. spec/plan: `specs/Debug.md` / `plans/Debug.plan.md`

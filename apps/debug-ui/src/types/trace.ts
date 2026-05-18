@@ -330,6 +330,7 @@ export type RoundRecord = {
 export type TraceFeedback = {
   type: "accepted" | "rated" | "stopped";
   rank?: number;               // accepted 用
+  restaurant_name?: string;    // accepted 用, D-088 (B4)
   count?: number;              // rated 用 (heart count)
 };
 

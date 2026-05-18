@@ -209,7 +209,8 @@ function isLiveL3(llm: BackendL3Rerank["llm"]): llm is BackendL3Llm {
 
 function adaptL3(l3: BackendL3Rerank): L3Trace {
   if (!isLiveL3(l3.llm)) {
-    // L3 skipped: provide a typed shell so the panel can render the "skipped" state.
+    // L3 skipped (debug_recommend path with non-llm shape): 保留 skipped_reason
+    // 作为 fallback_reason, 让 PanelL3 isSkipped callout 能显示真实原因 (B6).
     return {
       status: "skipped",
       resolved_provider: "—",
@@ -226,6 +227,7 @@ function adaptL3(l3: BackendL3Rerank): L3Trace {
       temperature: 0,
       candidates_returned: l3.n_returned,
       fallback_chain: [],
+      fallback_reason: l3.llm.skipped_reason || undefined,
       system_prompt: "",
       user_message: "",
       tool_input: { name: "", description: "", input_schema: {} },
@@ -348,13 +350,9 @@ export type AdaptOptions = {
 // 顶层 rerank_latency_ms 兜底, 让 DagHeader 不显示 0ms.
 function wrapTraceL3(l3: BackendTraceL3,
                      rerankLatencyFallback: number = 0): BackendL3Rerank {
-  if (!l3.used) {
-    return {
-      llm: { used: false, skipped_reason: l3.fallback_reason ?? "skipped" },
-      payload_to_llm: l3.payload_to_llm,
-      n_returned: l3.n_returned,
-    };
-  }
+  // D-088: 不再因 !l3.used 走 skipped 简壳 — 那条路径会丢 l3.status (e.g. config_error)
+  // 和 fallback_reason, 导致 PanelL3 把 config_error 渲染成 "L3 SKIPPED LLM rerank 关闭".
+  // 总是建完整 BackendL3Llm shape, used=l3.used 真值, status 透传 (CONTRACTS §39 精神).
   // D-079 followup: 把 provider 统一后的 OpenAI 风格 usage (prompt_tokens 等)
   // 映射成前端 view-model 的 Anthropic 风格 (input_tokens 等). 语义差异:
   //   - Anthropic: input_tokens = prompt 总 tokens (含 cache 部分),
@@ -387,10 +385,10 @@ function wrapTraceL3(l3: BackendTraceL3,
       })()
     : null;
   const llm: BackendL3Llm = {
-    status: (l3.status as BackendL3Llm["status"]) ?? "ok",
+    status: (l3.status as BackendL3Llm["status"]) ?? (l3.used ? "ok" : "fallback"),
     config_error: l3.status === "config_error",
     resolved_provider: l3.resolved_provider,
-    used: true,
+    used: l3.used,
     model: l3.model,
     system_prompt_chars: l3.system_prompt_chars ?? 0,
     system_prompt_full: "",

@@ -78,11 +78,22 @@ export function App() {
 
   // 当前 trace + 所有 round (来自 hook, backend / mock fallback 自动处理)
   const rounds = trace.rounds;
-
-  // 切 trace + rounds 实际变化时, 把 round selection 归到合法值 (latest).
-  // 用 round_ids 签名替代 ref 判定, 覆盖 "切 trace 后 hook async fetch detail
-  // 让 rounds 第二次到达" 的 race (此前 target 可能停在不存在的 R4).
   const roundsSignature = rounds.map((r) => r.id).join(",");
+
+  // D-088 (B1): trace 加载完成时 → 强制 reset 到 meta.latestRound. 不再 sticky 在
+  // 上一 trace 的 round. useWaTrace 的 stale guard 已保证 trace.meta.id === activeTrace,
+  // 所以这里直接 key on trace.meta.id 即可.
+  useEffect(() => {
+    if (rounds.length === 0) return;
+    const latest = trace.meta.latestRound || rounds[rounds.length - 1].id;
+    const first = rounds[0].id;
+    setActiveRound(latest);
+    setBase(first);
+    setTarget(latest);
+  }, [trace.meta.id, trace.meta.latestRound]);
+
+  // 兜底: rounds 签名变化但 trace.meta.id 没变 (同 trace 加 round 罕见 case) →
+  // 仅修无效值 (preserve 用户已主动切到的 round).
   useEffect(() => {
     if (rounds.length === 0) return;
     const latest = rounds[rounds.length - 1].id;
@@ -90,7 +101,7 @@ export function App() {
     setActiveRound((prev) => rounds.find((r) => r.id === prev) ? prev : latest);
     setBase((prev) => rounds.find((r) => r.id === prev) ? prev : first);
     setTarget((prev) => rounds.find((r) => r.id === prev) ? prev : latest);
-  }, [activeTrace, roundsSignature, rounds]);
+  }, [roundsSignature]);
 
   // activeRound 改变 → target 跟随
   useEffect(() => { setTarget(activeRound); }, [activeRound]);

@@ -1123,7 +1123,11 @@ def api_sandbox_inspect(request: Request) -> dict:
 # ══════════════════════════════════════════════════════════════════════
 
 def _attach_feedback_to_meta(item: dict, store_data: dict) -> dict:
-    """从 feedback_store 派生 TraceMeta.feedback 字段 (前端 TraceBrowser 用)."""
+    """从 feedback_store 派生 TraceMeta.feedback 字段 (前端 TraceBrowser 用).
+
+    D-088 (B4): accepted 分支带 restaurant_name. 没它前端列表只能显示笼统 #2,
+    用户看不出实际选了哪家.
+    """
     sid = item.get("session_id")
     accepted = (store_data.get("accepted") or {}).get(sid)
     fb = (store_data.get("feedbacks") or {}).get(sid)
@@ -1131,6 +1135,8 @@ def _attach_feedback_to_meta(item: dict, store_data: dict) -> dict:
         out: dict = {"type": "accepted"}
         if (accepted or {}).get("accepted_rank"):
             out["rank"] = accepted["accepted_rank"]
+        if (accepted or {}).get("restaurant_name"):
+            out["restaurant_name"] = accepted["restaurant_name"]
         return out
     if accepted and (accepted or {}).get("stopped"):
         return {"type": "stopped"}

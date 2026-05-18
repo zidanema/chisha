@@ -29,9 +29,15 @@ function dayLabel(traceDate: string, daysAgo: number): string {
 function feedbackGlyph(fb: TraceFeedback | null | undefined): ReactNode {
   if (!fb) return null;
   if (fb.type === "accepted") {
+    // D-088 (B4): 显式 ★ (U+2605, ASCII fallback 字体表现稳) + 餐厅名 + #rank.
+    // 餐厅名缺失时仍能 fallback 到旧渲染.
+    const name = fb.restaurant_name || "";
+    const title = name ? `accepted: ${name} · rank ${fb.rank}` : `accepted rank ${fb.rank}`;
     return (
-      <span title={`accepted rank ${fb.rank}`}>
-        ⭐ <span className="mono">#{fb.rank}</span>
+      <span title={title}>
+        <span className="fb-star">★</span>
+        {name && <span className="fb-name"> {name}</span>}
+        <span className="mono"> #{fb.rank}</span>
       </span>
     );
   }
@@ -158,7 +164,8 @@ export function TraceBrowser({
       const cur = Math.max(0, idxInFiltered);
       const next = (cur + delta + filtered.length) % filtered.length;
       setActiveTrace(filtered[next].id);
-      setActiveRound("R1");
+      // D-088 (B1): 不再硬切 R1 — App.tsx (A) effect 会在 trace detail 到达时
+      // reset 到新 trace 的 latestRound. 这里硬切 R1 会和 (A) effect race.
     }
     return (
       <aside className="tb-sidebar collapsed">
@@ -213,7 +220,7 @@ export function TraceBrowser({
                           className={`tb-row ${isActive ? "active" : ""}`}
                           onClick={() => {
                             setActiveTrace(t.id);
-                            setActiveRound("R1");
+                            // D-088 (B1): App.tsx (A) effect 接管 round reset.
                             setPickerOpen(false);
                           }}
                         >
@@ -325,7 +332,7 @@ export function TraceBrowser({
                 <Fragment key={t.id}>
                   <div
                     className={`tb-row ${isActive ? "active" : ""}`}
-                    onClick={() => { setActiveTrace(t.id); setActiveRound("R1"); }}
+                    onClick={() => { setActiveTrace(t.id); /* D-088: App.tsx 接管 round reset */ }}
                   >
                     <div className={`dot ${t.status === "ok" ? "ok" : t.status === "fallback" ? "fb" : "warn"}`}></div>
                     <div className="body">
