@@ -17,13 +17,51 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
+import threading
 from pathlib import Path
 from typing import Any
 
 from chisha.context import build_context
 from chisha.recall import recall
 from chisha.refine_intent import RefineIntent, parse_refine_intent
-from chisha.refine_intent_v2 import extract_refine_intent_v2
+from chisha.refine_intent_v2 import RefineIntentV2, extract_refine_intent_v2
+
+
+# Codex H7 修: V2 抽取额外 ~6s LLM call, 仅 trace 用, 不该阻塞用户响应.
+# 三种 mode:
+#   "sync"  (默认): 同步抽 V2, 阻塞但 response 字段完整 (开发 / eval 时用)
+#   "async":        后台线程抽 V2, response 立即给 placeholder, trace 后台补 (生产推荐)
+#   "off":          完全跳过 V2 抽取, response/trace 给 placeholder (紧急 disable)
+# 通过 env CHISHA_REFINE_V2_TRACE 控制.
+def _v2_mode() -> str:
+    return (os.environ.get("CHISHA_REFINE_V2_TRACE") or "sync").lower()
+
+
+_V2_ASYNC_TRACE_FILENAME = "logs/refine_intent_v2_async_trace.jsonl"
+
+
+def _async_extract_and_log(text: str, use_llm: bool | None,
+                            profile_llm: dict | None,
+                            session_id: str, round_n: int,
+                            root: Path) -> None:
+    """后台线程: 抽 V2 + 追加 trace, 失败静默. 主路径已返回."""
+    try:
+        v2 = extract_refine_intent_v2(text=text, use_llm=use_llm,
+                                        profile_llm=profile_llm)
+        entry = {
+            "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "session_id": session_id,
+            "round": round_n,
+            "intent_v2": v2.to_log_dict(),
+        }
+        p = root / _V2_ASYNC_TRACE_FILENAME
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        # daemon thread, 失败不影响任何已返回的主请求.
+        pass
 from chisha.rerank import rerank
 from chisha.score import apply_caps, rank_combos
 from chisha.session import SessionState, load_session, save_session
@@ -85,14 +123,30 @@ def refine(
         profile_llm=profile.get("llm"),
     )
 
-    # T-P1a-03 follow-up: 并行抽 V2 多 slot (Faithful Refine), 仅供 trace 双存.
-    # 下游 recall/score/L3 仍消费 V1 (T-P2-01/02 接入新 slot 时再切换).
-    # 安全带: extract_refine_intent_v2 LLM 失败时自动降级 V1 from_legacy, 不抛.
-    intent_v2 = extract_refine_intent_v2(
-        text=user_input,
-        use_llm=use_llm,
-        profile_llm=profile.get("llm"),
-    )
+    # T-P1a-03 follow-up: V2 多 slot (Faithful Refine), trace 双存. 下游 recall/
+    # score/L3 仍消费 V1 (T-P2-01/02 接入新 slot 时再切换). Codex H7 修: V2 多耗
+    # ~6s LLM call, 仅 trace 用不该阻塞响应, 用 _v2_mode() 切 sync/async/off.
+    v2_mode = _v2_mode()
+    if v2_mode == "off":
+        intent_v2 = RefineIntentV2(raw_text=user_input,
+                                     raw_understanding="(V2 trace disabled)")
+    elif v2_mode == "async":
+        intent_v2 = RefineIntentV2(raw_text=user_input,
+                                     raw_understanding="(V2 trace async pending)")
+        # fire-and-forget: 后台抽 + 写 async trace 文件, 主路径不等
+        # round 还未 +1 (state.round += 1 在下面), 这里用 state.round + 1 预测
+        threading.Thread(
+            target=_async_extract_and_log,
+            args=(user_input, use_llm, profile.get("llm"),
+                  session_id, state.round + 1, root),
+            daemon=True,
+        ).start()
+    else:  # "sync" (default)
+        intent_v2 = extract_refine_intent_v2(
+            text=user_input,
+            use_llm=use_llm,
+            profile_llm=profile.get("llm"),
+        )
 
     # 2. 重建 ContextSnapshot, 注入 refine_input (原文) + refine_intent (结构化)
     ctx = build_context(

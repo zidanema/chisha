@@ -203,12 +203,19 @@ def validate_v2_schema(d: dict) -> tuple[bool, list[str]]:
 # ─────────────────────────── 清洗 helpers ─────────────────────────────────
 
 def _clean_str_list(items: Any) -> list[str]:
-    """LLM 返回 list 时去 None / 空 / 重复 / strip; 非 list 时返 []."""
+    """LLM 返回 list 时清洗成 list[str].
+
+    Codex M6 修: 非 str/int/float/bool 标量直接丢弃, 不再 str(dict) 产
+    "{'foo': 'bar'}" 字符串污染 trace.
+    """
     if not isinstance(items, list):
         return []
     out: list[str] = []
     for x in items:
         if x is None:
+            continue
+        # 只接受标量, 拒 list/dict 等容器 (Codex M6)
+        if not isinstance(x, (str, int, float, bool)):
             continue
         s = str(x).strip()
         if s and s not in out:
@@ -216,36 +223,108 @@ def _clean_str_list(items: Any) -> list[str]:
     return out
 
 
+# Codex M7: 中文 truthy / falsy 映射. LLM 偶尔会用中文 (虽然 prompt 已禁).
+_BOOL_CN_TRUTHY = {"true", "yes", "是", "对", "要", "好", "1"}
+_BOOL_CN_FALSY = {"false", "no", "否", "不", "不要", "不用", "0"}
+
+
 def _coerce_bool_or_null(v: Any) -> bool | None:
-    """LLM 可能给 'true'/'false' 字符串, 也可能直接 bool/None."""
+    """LLM 可能给 'true'/'false' 字符串或中文是否字串, 也可能直接 bool/None."""
     if isinstance(v, bool):
         return v
     if v is None:
         return None
+    if isinstance(v, (int, float)):
+        return bool(v) if v in (0, 1) else None
     if isinstance(v, str):
         s = v.strip().lower()
-        if s in ("true", "yes"):
+        if s in _BOOL_CN_TRUTHY:
             return True
-        if s in ("false", "no"):
+        if s in _BOOL_CN_FALSY:
             return False
     return None
 
 
+# Codex M8: 中文数字最小映射. prompt 已强制阿拉伯数字, 这里是兜底.
+_CN_NUMERAL = {
+    "零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+    "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+}
+
+
+def _parse_cn_int(s: str) -> int | None:
+    """支持「十/二十/三十五/一百/一百二十」级别. 复杂表达式不支持, 返 None."""
+    s = s.strip()
+    if not s:
+        return None
+    # 纯单字
+    if s in _CN_NUMERAL:
+        return _CN_NUMERAL[s]
+    # 「N十M」: 二十/三十五/...
+    m = re.fullmatch(r"([一二三四五六七八九])?十([一二三四五六七八九])?", s)
+    if m:
+        tens = _CN_NUMERAL[m.group(1)] if m.group(1) else 1
+        ones = _CN_NUMERAL[m.group(2)] if m.group(2) else 0
+        return tens * 10 + ones
+    # 「N百」/「N百M十K」: 一百/一百二十/一百二十五
+    m = re.fullmatch(
+        r"([一二三四五六七八九])百"
+        r"(?:([一二三四五六七八九])(?:十([一二三四五六七八九])?)?)?",
+        s,
+    )
+    if m:
+        hundreds = _CN_NUMERAL[m.group(1)] * 100
+        # 中间位: "一百二" → 120, "一百二十五" → 125
+        if m.group(2):
+            mid = _CN_NUMERAL[m.group(2)]
+            tens = mid * 10 if "十" in s else mid * 10  # 简化: 见百必出十
+            ones = _CN_NUMERAL[m.group(3)] if m.group(3) else 0
+            return hundreds + tens + ones
+        return hundreds
+    return None
+
+
 def _coerce_number_or_null(v: Any) -> float | int | None:
-    """price_max / max_distance_km 类字段, 接受 int/float, 字符串可解析数字, 否则 None."""
+    """price_max / max_distance_km. 接受 int/float, 字符串可解析阿拉伯数字或简单中文数字, 否则 None.
+
+    Codex M8 修: 加中文数字最小映射 (十/二十/三十五/一百二十). prompt 已强制
+    阿拉伯数字, 这里是兜底, 不试图覆盖所有表达 (如"两千" "几十").
+    """
     if v is None:
         return None
-    if isinstance(v, (int, float)) and not isinstance(v, bool):
+    if isinstance(v, bool):  # bool 也是 int 子类, 先排除
+        return None
+    if isinstance(v, (int, float)):
         return v
     if isinstance(v, str):
+        # 优先阿拉伯数字 + 小数
         m = re.search(r"-?\d+(?:\.\d+)?", v)
         if m:
             try:
                 f = float(m.group(0))
                 return int(f) if f.is_integer() else f
             except ValueError:
-                return None
+                pass
+        # 中文数字兜底: 必须从字符串开头匹配 (allow 末尾单位 "块" "公里" "元")
+        # "几十" / "两千" 这种 helper 接不住的, 走 None (LLM 走 V1 兜底 / 让 L3 看原文)
+        m = re.match(r"^([零一二三四五六七八九十百两]+)(?:\s*(?:块|元|公里|分钟))?$",
+                       v.strip())
+        if m:
+            n = _parse_cn_int(m.group(1))
+            if n is not None:
+                return n
     return None
+
+
+# Codex M9: reference_meal_id 格式校验. 防 LLM 把 raw 文本 ("昨天的那一顿") 当 id 注入.
+# 合法格式: alphanumeric + dash + underscore, 长度 4-64.
+_MEAL_ID_PAT = re.compile(r"^[A-Za-z0-9_\-]{4,64}$")
+
+
+def _is_valid_meal_id(s: Any) -> bool:
+    if not isinstance(s, str):
+        return False
+    return bool(_MEAL_ID_PAT.match(s))
 
 
 def _coerce_enum_or_null(v: Any, allowed: set[str]) -> str | None:
@@ -292,9 +371,12 @@ def _clean_parsed_to_v2(parsed: dict, *, raw_text: str) -> RefineIntentV2:
         rel = _coerce_enum_or_null(reference_raw.get("relation"),
                                      _REFERENCE_RELATIONS)
         if rel is not None:
-            ref_id = reference_raw.get("reference_meal_id")
+            # Codex M9: ref_meal_id 必须满足 alphanumeric/-/_ 长度 4-64, 否则丢弃 (设 None).
+            # 防 LLM 把 raw 文本 ("昨天的那一顿") 当 id 注入下游 L3.
+            raw_ref_id = reference_raw.get("reference_meal_id")
+            ref_id = raw_ref_id if _is_valid_meal_id(raw_ref_id) else None
             reference = {
-                "reference_meal_id": str(ref_id) if ref_id else None,
+                "reference_meal_id": ref_id,
                 "relation": rel,
             }
 
@@ -400,15 +482,20 @@ def extract_refine_intent_v2(
     if parsed is None:
         return _fallback_to_legacy("LLM 解析失败, 走 V1 兜底")
 
-    # 给 parsed 注入 raw_text / schema_version 后做 schema validate
-    parsed.setdefault("schema_version", "2.0")
+    # Codex H6 修: schema 关键字段 LLM 必须主动给, 漏了就视为"LLM 没理解 schema"
+    # → 降级 V1, 不能 setdefault 静默补默认值绕过安全带.
+    # 必填 = LLM 必须输出, 框架不补的: schema_version / redirect / constrain / raw_understanding
+    required_keys = ("schema_version", "redirect", "constrain", "raw_understanding")
+    missing = [k for k in required_keys if k not in parsed]
+    if missing:
+        print(f"  [refine_intent_v2] LLM 漏必填字段 {missing}, 降级 V1")
+        return _fallback_to_legacy(
+            f"LLM 漏必填字段 {missing[0]}, 走 V1 兜底")
+
+    # 可选字段补默认值 (这些是 framework 控制, LLM 漏掉不算"没理解 schema")
     parsed.setdefault("raw_text", text)
-    # 先做 shape 修正再 validate (LLM 可能少给某字段)
-    parsed.setdefault("redirect", _empty_redirect())
-    parsed.setdefault("constrain", _empty_constrain())
     parsed.setdefault("reference", None)
     parsed.setdefault("reject_previous", False)
-    parsed.setdefault("raw_understanding", "")
     parsed.setdefault("unsupported_in_recall",
                        list(DATA_LAYER_UNSUPPORTED_FIELDS))
     parsed.setdefault("legacy_v1", {})

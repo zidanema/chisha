@@ -230,16 +230,34 @@ def test_extract_v2_reference_relation_only_valid_enum():
 
 
 def test_extract_v2_reference_relation_valid_enum_kept():
+    """Codex M9: ref_meal_id 合法格式 (alphanumeric/-/_ len 4-64) 才保留."""
     parsed = {
         "redirect": _empty_redirect_for_test(),
         "constrain": _empty_constrain_for_test(),
-        "reference": {"reference_meal_id": "m1", "relation": "lighter"},
+        "reference": {"reference_meal_id": "meal-2026-05-17-lunch",
+                       "relation": "lighter"},
         "reject_previous": False,
         "raw_understanding": "比昨天清淡", "schema_version": "2.0",
     }
     with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed):
         v2 = extract_refine_intent_v2("比昨天清淡", use_llm=True)
-    assert v2.reference == {"reference_meal_id": "m1", "relation": "lighter"}
+    assert v2.reference == {"reference_meal_id": "meal-2026-05-17-lunch",
+                             "relation": "lighter"}
+
+
+def test_extract_v2_reference_meal_id_invalid_format_dropped():
+    """Codex M9: ref_meal_id 是 raw 文本 ("昨天的那一顿") → 设 None, relation 保留."""
+    parsed = {
+        "redirect": _empty_redirect_for_test(),
+        "constrain": _empty_constrain_for_test(),
+        "reference": {"reference_meal_id": "昨天的那一顿",
+                       "relation": "lighter"},
+        "reject_previous": False,
+        "raw_understanding": "比昨天清淡", "schema_version": "2.0",
+    }
+    with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed):
+        v2 = extract_refine_intent_v2("比昨天清淡", use_llm=True)
+    assert v2.reference == {"reference_meal_id": None, "relation": "lighter"}
 
 
 def test_extract_v2_llm_returns_none_falls_back_to_legacy():
@@ -343,6 +361,105 @@ def test_extract_v2_trace_dual_store_has_three_fields():
     assert d["raw_understanding"] == "LLM 听到了想吃辣"
     assert d["redirect"]["cuisine_candidates_expanded"] == ["川菜", "湘菜"]
     # 三份都进了 to_log_dict, trace 持久化时一锅写
+
+
+def test_extract_v2_missing_required_keys_falls_back():
+    """Codex H6: LLM 漏 schema_version / redirect / constrain / raw_understanding
+    任一必填字段 → 走 V1 兜底 (不 setdefault 静默补)."""
+    # 1. 漏 schema_version
+    bad_no_sv = {
+        "redirect": _empty_redirect_for_test(),
+        "constrain": _empty_constrain_for_test(),
+        "raw_understanding": "test",
+    }
+    with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=bad_no_sv):
+        v2 = extract_refine_intent_v2("想吃湘菜", use_llm=True)
+    assert "schema_version" in v2.raw_understanding or "兜底" in v2.raw_understanding
+
+    # 2. 漏 redirect
+    bad_no_redirect = {
+        "schema_version": "2.0",
+        "constrain": _empty_constrain_for_test(),
+        "raw_understanding": "test",
+    }
+    with patch("chisha.refine_intent_v2._llm_parse_v2",
+                return_value=bad_no_redirect):
+        v2 = extract_refine_intent_v2("想吃湘菜", use_llm=True)
+    assert "redirect" in v2.raw_understanding or "兜底" in v2.raw_understanding
+
+    # 3. 漏 raw_understanding (体现"LLM 真理解 schema"的必填)
+    bad_no_ru = {
+        "schema_version": "2.0",
+        "redirect": _empty_redirect_for_test(),
+        "constrain": _empty_constrain_for_test(),
+    }
+    with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=bad_no_ru):
+        v2 = extract_refine_intent_v2("想吃湘菜", use_llm=True)
+    assert "raw_understanding" in v2.raw_understanding or "兜底" in v2.raw_understanding
+
+
+def test_clean_str_list_rejects_non_scalar():
+    """Codex M6: list 内 dict/list 容器 → 丢弃, 不 str() 强转污染 trace."""
+    from chisha.refine_intent_v2 import _clean_str_list
+    assert _clean_str_list(["湘菜", {"foo": "bar"}, "川菜", ["nested"]]) == ["湘菜", "川菜"]
+    assert _clean_str_list(["a", 1, 2.5, True, None]) == ["a", "1", "2.5", "True"]
+
+
+def test_coerce_bool_or_null_chinese():
+    """Codex M7: 中文是/否/对/不/要/不要 都能映射."""
+    from chisha.refine_intent_v2 import _coerce_bool_or_null
+    assert _coerce_bool_or_null("是") is True
+    assert _coerce_bool_or_null("对") is True
+    assert _coerce_bool_or_null("要") is True
+    assert _coerce_bool_or_null("否") is False
+    assert _coerce_bool_or_null("不") is False
+    assert _coerce_bool_or_null("不要") is False
+    assert _coerce_bool_or_null("true") is True
+    assert _coerce_bool_or_null("false") is False
+    assert _coerce_bool_or_null("乱填") is None
+    assert _coerce_bool_or_null(None) is None
+    assert _coerce_bool_or_null(True) is True
+
+
+def test_coerce_number_or_null_chinese():
+    """Codex M8: 中文数字最小映射 (兜底, prompt 已强制阿拉伯)."""
+    from chisha.refine_intent_v2 import _coerce_number_or_null
+    # 阿拉伯优先
+    assert _coerce_number_or_null("30 块以内") == 30
+    assert _coerce_number_or_null("3.5 公里") == 3.5
+    # 中文兜底 (必须整串都是中文数字 + 可选单位)
+    assert _coerce_number_or_null("三十") == 30
+    assert _coerce_number_or_null("三十五块") == 35
+    assert _coerce_number_or_null("十") == 10
+    assert _coerce_number_or_null("一百") == 100
+    # 不识别 → None (helper 兜底就这么粗, 复杂表达式由 prompt 约束 LLM 输阿拉伯)
+    assert _coerce_number_or_null("便宜点") is None
+    assert _coerce_number_or_null("几十") is None  # 前缀非中文数字, 拒
+    assert _coerce_number_or_null("两千") is None  # 千位未支持, 整串不匹配
+    assert _coerce_number_or_null(None) is None
+    assert _coerce_number_or_null(True) is None  # bool 不算 number
+
+
+def test_v2_mode_env_off(tmp_path, monkeypatch):
+    """Codex H7: CHISHA_REFINE_V2_TRACE=off → V2 不调 LLM, response 给 placeholder."""
+    monkeypatch.setenv("CHISHA_REFINE_V2_TRACE", "off")
+    # 跳到 refine 入口验证. 不调真 refine (太重), 单测 _v2_mode 即可.
+    from chisha.refine import _v2_mode
+    assert _v2_mode() == "off"
+
+
+def test_v2_mode_env_async(monkeypatch):
+    """Codex H7: CHISHA_REFINE_V2_TRACE=async → 进 fire-and-forget 分支."""
+    monkeypatch.setenv("CHISHA_REFINE_V2_TRACE", "async")
+    from chisha.refine import _v2_mode
+    assert _v2_mode() == "async"
+
+
+def test_v2_mode_default_sync(monkeypatch):
+    """无 env → sync (兼容老行为, eval / 开发用)."""
+    monkeypatch.delenv("CHISHA_REFINE_V2_TRACE", raising=False)
+    from chisha.refine import _v2_mode
+    assert _v2_mode() == "sync"
 
 
 def _empty_redirect_for_test() -> dict:
