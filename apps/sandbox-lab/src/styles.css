@@ -1,0 +1,369 @@
+/* ============================================================
+   Sandbox Lab — S-01 scaffold tokens + demo
+   完整 styles 1:1 搬运在 S-02. 此处仅含 :root tokens + theme-dark +
+   本任务 demo 区块样式.
+   源: chidiansha-sandbox/project/sandbox-lab/styles.css
+   ============================================================ */
+
+:root {
+  /* Type */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "PingFang SC",
+    "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas,
+    monospace;
+
+  /* Neutrals (cool white) */
+  --bg: #f7f8fa;
+  --bg-soft: #f1f2f6;
+  --surface: #ffffff;
+  --surface-tinted: #fafbff;
+  --surface-elev: #ffffff;
+  --border: #e6e8ee;
+  --border-strong: #d4d7e0;
+  --divider: #eef0f4;
+
+  /* Text */
+  --text-1: #111827;
+  --text-2: #4b5563;
+  --text-3: #6b7280;
+  --text-4: #9ca3af;
+
+  /* Accent (indigo default; useTweaks 切色板时整套换) */
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+  --accent-soft: #eef0ff;
+  --accent-softer: #f5f6ff;
+  --accent-ink: #3730a3;
+  --accent-ring: rgba(99, 102, 241, 0.18);
+
+  /* Semantic */
+  --eat: #10b981;
+  --eat-soft: #ecfdf5;
+  --eat-ink: #047857;
+
+  --skip: #9ca3af;
+  --skip-soft: #f3f4f6;
+
+  --refine: #f59e0b;
+  --refine-soft: #fffbeb;
+  --refine-ink: #b45309;
+
+  --conflict: #ef4444;
+  --conflict-soft: #fef2f2;
+  --conflict-ink: #b91c1c;
+
+  --explore: #8b5cf6;
+  --explore-soft: #f5f3ff;
+
+  /* Radii / shadows */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 18px;
+  --shadow-sm: 0 1px 2px rgba(17, 24, 39, 0.04);
+  --shadow-md: 0 4px 14px rgba(17, 24, 39, 0.06),
+    0 1px 2px rgba(17, 24, 39, 0.04);
+  --shadow-lg: 0 12px 32px rgba(17, 24, 39, 0.12),
+    0 4px 8px rgba(17, 24, 39, 0.06);
+
+  /* Layout */
+  --topbar-h: 56px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-sans);
+  color: var(--text-1);
+  background: var(--bg);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+  padding: 0;
+}
+
+button:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* ============================================================
+   Dark theme (源原型 styles.css 2173 行)
+   ============================================================ */
+
+.theme-dark {
+  --bg: #0f1115;
+  --bg-soft: #181b22;
+  --surface: #1a1d24;
+  --surface-tinted: #1d2029;
+  --surface-elev: #21242d;
+  --border: #2a2e38;
+  --border-strong: #3a3f4d;
+  --divider: #232631;
+  --text-1: #e6e8ee;
+  --text-2: #b9beca;
+  --text-3: #8e95a3;
+  --text-4: #5d6473;
+  --accent-soft: #20243a;
+  --accent-softer: #1a1d2d;
+  --accent-ring: rgba(99, 102, 241, 0.28);
+  --eat-soft: #0f2a1f;
+  --eat-ink: #34d399;
+  --refine-soft: #2b220c;
+  --refine-ink: #fbbf24;
+  --conflict-soft: #2b1414;
+  --conflict-ink: #f87171;
+  --explore-soft: #1c1830;
+  --skip-soft: #1d2029;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5), 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* ============================================================
+   S-01 demo shell
+   ============================================================ */
+
+.demo-shell {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text-1);
+}
+
+.demo-header {
+  height: var(--topbar-h);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 16px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  box-shadow: 0 2px 8px var(--accent-ring);
+}
+
+.brand-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text-1);
+}
+
+.brand-sub {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.demo-controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.control-label {
+  color: var(--text-3);
+  font-size: 12px;
+  margin-left: 10px;
+}
+
+.pill {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+.pill.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.swatch[data-accent="#6366f1"] {
+  background: #6366f1;
+}
+.swatch[data-accent="#059669"] {
+  background: #059669;
+}
+.swatch[data-accent="#e11d48"] {
+  background: #e11d48;
+}
+.swatch[data-accent="#d97706"] {
+  background: #d97706;
+}
+
+.swatch.on {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+  border-color: var(--surface);
+}
+
+.demo-main {
+  max-width: 980px;
+  margin: 28px auto 60px;
+  padding: 0 20px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.demo-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 18px 20px 20px;
+}
+
+.demo-h {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.demo-p {
+  margin: 6px 0;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.demo-p-muted {
+  color: var(--text-3);
+}
+
+.demo-p code.mono {
+  background: var(--accent-softer);
+  color: var(--accent-ink);
+  border-radius: var(--r-sm);
+  padding: 2px 6px;
+  font-size: 12.5px;
+}
+
+.demo-row {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.demo-row-tight {
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-radius: var(--r-md);
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 120ms;
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.btn-ghost {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  border-radius: var(--r-md);
+  padding: 7px 13px;
+  font-size: 13px;
+}
+
+.chip {
+  background: var(--eat-soft);
+  color: var(--eat-ink);
+  border-radius: var(--r-sm);
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.chip.warn {
+  background: var(--conflict-soft);
+  color: var(--conflict-ink);
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  margin: 0 4px 0 8px;
+}
+
+.dot-eat {
+  background: var(--eat);
+}
+
+.dot-skip {
+  background: var(--skip);
+}
+
+.dot-refine {
+  background: var(--refine);
+}
+
+.dot-conflict {
+  background: var(--conflict);
+}
+
+.dot-explore {
+  background: var(--explore);
+}

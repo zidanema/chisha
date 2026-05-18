@@ -79,6 +79,114 @@
       ],
       "status": "done",
       "_notes": "subtype_diversity 模块 + 8 菜系子类词表 + 11 单测 + refine.py 真接入: intent.cuisine_want 非空时 ranked 走 diversify_by_subtype (round-robin 让 top N 覆盖 ≥ 3 subtype). 5 集成测试 + 773 全测试通过. trace.subtype_diversified 落 debug. baseline_l2_snapshot 0 diff (空 refine 不触发)."
+    },
+    {
+      "id": "S-01",
+      "title": "sandbox-lab scaffold + 主题切换",
+      "regression_risk": "low",
+      "depends_on": [],
+      "status": "pending"
+    },
+    {
+      "id": "S-02",
+      "title": "视觉 + 静态布局 (mock data)",
+      "regression_risk": "low",
+      "depends_on": [
+        "S-01"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "S-03",
+      "title": "交互骨架 mock (eat/skip/refine/timeline/rollback/branch)",
+      "regression_risk": "low",
+      "depends_on": [
+        "S-01",
+        "S-02"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "S-04",
+      "title": "sandbox_context + data_root session_id 显式参",
+      "regression_risk": "high",
+      "depends_on": [],
+      "status": "pending"
+    },
+    {
+      "id": "S-05",
+      "title": "多 session 落盘改造 + migration",
+      "regression_risk": "high",
+      "depends_on": [
+        "S-04"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "S-06a",
+      "title": "sessions CRUD 端点",
+      "regression_risk": "medium",
+      "depends_on": [
+        "S-05"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "S-06b",
+      "title": "per-meal 时钟 helper + decision diff 派生器",
+      "regression_risk": "medium",
+      "depends_on": [
+        "S-05"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "S-06c",
+      "title": "eat / skip / swap / refine 端点",
+      "regression_risk": "high",
+      "depends_on": [
+        "S-06a",
+        "S-06b"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "S-07",
+      "title": "rollback / branch 端点 + 文件原子裁剪",
+      "regression_risk": "high",
+      "depends_on": [
+        "S-06c"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "S-08",
+      "title": "前后端联调 + adapter (验收清单 11 条全过)",
+      "regression_risk": "medium",
+      "depends_on": [
+        "S-03",
+        "S-07"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "S-09",
+      "title": "trace 跳转到 debug-ui",
+      "regression_risk": "low",
+      "depends_on": [
+        "S-08"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "S-10",
+      "title": "文档收尾 + neat-freak",
+      "regression_risk": "low",
+      "depends_on": [
+        "S-09"
+      ],
+      "status": "pending"
     }
-  ]
+  ],
+  "_sandbox_lab_brief": "docs/design_briefs/2026-05-19-sandbox-lab.md"
 }
