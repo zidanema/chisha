@@ -162,6 +162,29 @@ def test_refine_intent_attached(tmp_path, small_profile, tiny_zone):
     assert "more_meat" in intent["portion"]
 
 
+def test_refine_intent_v2_attached(tmp_path, small_profile, tiny_zone):
+    """T-P1a-03 follow-up: refine 输出携带 V2 多 slot trace 双存."""
+    rests, dishes = tiny_zone
+    sid = "sid_intent_v2"
+    s = create_session(sid, "lunch", "test")
+    save_session(s, tmp_path)
+    out = refine(sid, "想吃湘菜, 肉多一点", small_profile, rests, dishes, [],
+                  root=tmp_path, today=dt.date(2026, 5, 13), use_llm=False)
+    # 1. response 携带 refine_intent_v2 字段
+    assert "refine_intent_v2" in out
+    v2 = out["refine_intent_v2"]
+    # 2. trace 双存三份 都在
+    assert v2["schema_version"] == "2.0"
+    assert v2["raw_text"] == "想吃湘菜, 肉多一点"
+    assert v2["raw_understanding"]   # 非空 (use_llm=False 走 V1 兜底, raw_understanding 填降级原因)
+    # 3. redirect.cuisine_want 从 V1 from_legacy 同步 (rule_parse 抓"湘菜"→"湖南菜")
+    assert "湖南菜" in v2["redirect"]["cuisine_want"]
+    # 4. 数据层不支持字段列出 (brief §5)
+    assert "constrain.quality_floor" in v2["unsupported_in_recall"]
+    # 5. V1 字段保留 (legacy_v1)
+    assert v2["legacy_v1"].get("portion") == ["more_meat"]
+
+
 def test_refine_avoid_hard_filter(tmp_path, small_profile, tiny_zone):
     """D-073: cuisine_avoid 硬过滤, 二轮候选不含目标菜系."""
     rests, dishes = tiny_zone

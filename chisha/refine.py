@@ -23,6 +23,7 @@ from typing import Any
 from chisha.context import build_context
 from chisha.recall import recall
 from chisha.refine_intent import RefineIntent, parse_refine_intent
+from chisha.refine_intent_v2 import extract_refine_intent_v2
 from chisha.rerank import rerank
 from chisha.score import apply_caps, rank_combos
 from chisha.session import SessionState, load_session, save_session
@@ -77,8 +78,17 @@ def refine(
 
     today = today or dt.date.today()
 
-    # 1. parse_refine_intent: user_input → 结构化意图
+    # 1. parse_refine_intent: user_input → 结构化意图 (V1, 下游 recall/score 消费)
     intent: RefineIntent = parse_refine_intent(
+        text=user_input,
+        use_llm=use_llm,
+        profile_llm=profile.get("llm"),
+    )
+
+    # T-P1a-03 follow-up: 并行抽 V2 多 slot (Faithful Refine), 仅供 trace 双存.
+    # 下游 recall/score/L3 仍消费 V1 (T-P2-01/02 接入新 slot 时再切换).
+    # 安全带: extract_refine_intent_v2 LLM 失败时自动降级 V1 from_legacy, 不抛.
+    intent_v2 = extract_refine_intent_v2(
         text=user_input,
         use_llm=use_llm,
         profile_llm=profile.get("llm"),
@@ -132,13 +142,15 @@ def refine(
     state.refine_history.append(user_input)
     save_session(state, root)
 
-    # 7. trace 写入 (D-073: 替代 D-071 mood_trace)
+    # 7. trace 写入 (D-073: 替代 D-071 mood_trace; T-P1a-03 follow-up: 加 intent_v2 双存)
     trace = {
         "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
         "session_id": session_id,
         "round": state.round,
         "user_input": user_input,
         "intent": intent.to_log_dict(),
+        # T-P1a-03 follow-up trace 双存: raw_text + 结构化 V2 + raw_understanding 三份
+        "intent_v2": intent_v2.to_log_dict(),
         "n_combos_recalled": len(combos),
         "n_after_l2": len(ranked),
         "n_returned": len(reranked),
@@ -173,6 +185,8 @@ def refine(
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "refine_input": user_input,
         "refine_intent": intent.to_log_dict(),  # D-073: 替代 parsed_feedback
+        # T-P1a-03 follow-up: 响应里 + trace 都带 V2, 前端 / debug-ui / L3 可读
+        "refine_intent_v2": intent_v2.to_log_dict(),
         "stats": {
             "n_dishes_total": len(tagged),
             "n_combos_recalled": len(combos),
