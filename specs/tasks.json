@@ -85,7 +85,8 @@
       "title": "sandbox-lab scaffold + 主题切换",
       "regression_risk": "low",
       "depends_on": [],
-      "status": "pending"
+      "status": "done",
+      "_notes": "apps/sandbox-lab/ Vite+React+TS SPA :5175 (VITE_PORT 可覆盖). useTweaks 持久 theme+accent (chisha:sandboxTweaks). styles.css 4 accent palette + .theme-dark + demo 区. npm install/typecheck/build 全绿; pytest 791 passed; chrome-devtools-mcp 视觉验证留 S-02."
     },
     {
       "id": "S-02",
@@ -94,7 +95,8 @@
       "depends_on": [
         "S-01"
       ],
-      "status": "pending"
+      "status": "done",
+      "_notes": "17 新组件 (TopBar/Banners/Timeline+OpBar/DecisionArea/RecCard/ReviewCard/RightCol/TweaksPanel + panels A/B/C/D + modals Summary/Confirm/Refine) + types/sandbox.ts (HandoffXxx 严格契约 + sandbox 视图扩展) + mocks/sbxMocks.ts (删 ttl/taste.color) + styles.css 全量搬 (2585 行) + useTweaks 扩 5 字段 + S-01→S-02 migration. 验证: npm typecheck/build 全绿; backend pytest 791 passed 0 regressions; codex review APPROVED 无 blocking; chrome-devtools-mcp 因 profile 锁不可用 → 视觉验证按 plan §7.3 (Codex Q9) 推迟. 交互逻辑 / 后端 fetch / trace 跳转 不在本任务范围 (S-03/S-08/S-09)."
     },
     {
       "id": "S-03",
