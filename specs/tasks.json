@@ -154,7 +154,8 @@
         "S-06a",
         "S-06b"
       ],
-      "status": "pending"
+      "status": "done",
+      "_notes": "6 new endpoints (/recs/eat/skip/swap/refine/jobs/{jid}) + async BG task + mock_recommend flag + adapter. scope 比原 spec 多: 同时改 sandbox.create_session 修订 A (seed state.json 让 POST /sessions 创建的桶可直接用), 提抽 _impl_l1_refresh 修订 C (复用 + lock 互斥), swap 改用 recommend_meal + post-filter 不调 _impl_refine 修订 B (保 Faithful Refine), _build_decision_async BG task 显式 `with _sandbox_ctx(sid):` 包修订 D (ContextVar 跨 thread), _ensure_not_done 修订 E (done sentinel guard), _atomic_write_json 修订 F (4 类落盘原子). chisha/sandbox_adapter.py 新建 format_v2_to_rec + 5 条 MOCK_CURRENT_RECS 复刻 sbxMocks. 28 单测全 mock 路径 (18 eat_skip + 10 swap_refine) + 917 全测试通过 (+29). baseline_l2_snapshot 0 diff. Codex plan 3 iter (BLOCKED 5→2→APPROVED v3): iter1 5 BLOCKERs (create_session 不 seed state / swap _impl_refine 违反 Faithful Refine / _impl_l1_refresh 不存在 / picked_rec name 嵌套 KeyError / /recs 缺 done guard) → v2 修订 A-G; iter2 2 BLOCKERs (Q3 文字残留 / BG task 不持锁) → v2 iter2 修订; iter3 APPROVED. Codex diff 1 iter APPROVED."
     },
     {
       "id": "S-07",
