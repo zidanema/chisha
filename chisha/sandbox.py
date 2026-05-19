@@ -46,6 +46,22 @@ _SANDBOX_DIR_REL = "logs/sandbox"
 _STATE_LOCK = threading.Lock()
 
 
+# S-04 Codex adversarial fix: destructive / mutating API 必须 fail-loud
+# (S-04 没实现 per-session state, init/advance/reset/disable/record_l1_extraction
+# 都是全局副作用. 接受非 default sid 会让 caller 误以为是 scoped 操作).
+def _reject_nondefault_sid(api: str, sid: object) -> None:
+    """destructive API 拒绝非 default sid (S-05 才真支持 per-session 改写)."""
+    if sid is None:
+        return
+    if sid == "_default":
+        return
+    raise NotImplementedError(
+        f"sandbox.{api}(session_id={sid!r}) is not yet supported in S-04 "
+        f"(state.json is still a single global file). S-05 will add "
+        f"per-session state. Pass session_id=None or '_default' for now."
+    )
+
+
 def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
@@ -58,11 +74,19 @@ def _sandbox_dir(root: Path | None = None) -> Path:
     return (root or _project_root()) / _SANDBOX_DIR_REL
 
 
-def state(root: Path | None = None) -> dict:
+def state(
+    root: Path | None = None,
+    *,
+    session_id: str | None = None,
+) -> dict:
     """读 state. 未 init / 文件不存在 / 已 reset → {enabled: False}.
 
     损坏 → 视为 disabled (派生数据 fail-open, 与 l1_prefs 风格一致)
+
+    S-04: ``session_id`` 签名预留, 本任务内不消费 (仍读单 ``logs/sandbox/state.json``).
+    S-05 拆 ``sessions/{sid}/state.json`` 时此处真用 sid 派生路径.
     """
+    del session_id  # S-04 stub: implementation ignores sid
     p = _state_path(root)
     if not p.exists():
         return {"enabled": False}
@@ -75,12 +99,22 @@ def state(root: Path | None = None) -> dict:
     return data
 
 
-def is_enabled(root: Path | None = None) -> bool:
-    return bool(state(root).get("enabled"))
+def is_enabled(
+    root: Path | None = None,
+    *,
+    session_id: str | None = None,
+) -> bool:
+    """S-04: ``session_id`` 签名预留, 实现忽略 (单 state.json)."""
+    return bool(state(root, session_id=session_id).get("enabled"))
 
 
-def current_date(root: Path | None = None) -> dt.date | None:
-    s = state(root)
+def current_date(
+    root: Path | None = None,
+    *,
+    session_id: str | None = None,
+) -> dt.date | None:
+    """S-04: ``session_id`` 签名预留, 实现忽略 (单 state.json)."""
+    s = state(root, session_id=session_id)
     if not s.get("enabled"):
         return None
     raw = s.get("current_date")
@@ -92,7 +126,11 @@ def current_date(root: Path | None = None) -> dt.date | None:
         return None
 
 
-def current_datetime(root: Path | None = None) -> dt.datetime | None:
+def current_datetime(
+    root: Path | None = None,
+    *,
+    session_id: str | None = None,
+) -> dt.datetime | None:
     """虚拟 datetime: 取 sandbox date + 真实 wall-clock 时分秒.
 
     设计: 沙盒推进按"日"为粒度, 时分秒沿用真机, 让 snooze (24h)、session
@@ -100,17 +138,26 @@ def current_datetime(root: Path | None = None) -> dt.datetime | None:
     的 hour 部分相对真实时间不变, 但 date 部分已跳到虚拟日).
 
     Returns: aware datetime (local naive 兼容旧 dt.datetime.now() 行为) 或 None.
+
+    S-04: ``session_id`` 签名预留, 实现忽略.
     """
-    d = current_date(root)
+    d = current_date(root, session_id=session_id)
     if d is None:
         return None
     now_real = dt.datetime.now()
     return dt.datetime.combine(d, now_real.time())
 
 
-def current_datetime_utc(root: Path | None = None) -> dt.datetime | None:
-    """虚拟 UTC datetime: 沙盒 date + 真实 UTC 时分秒. aware tz=UTC."""
-    d = current_date(root)
+def current_datetime_utc(
+    root: Path | None = None,
+    *,
+    session_id: str | None = None,
+) -> dt.datetime | None:
+    """虚拟 UTC datetime: 沙盒 date + 真实 UTC 时分秒. aware tz=UTC.
+
+    S-04: ``session_id`` 签名预留, 实现忽略.
+    """
+    d = current_date(root, session_id=session_id)
     if d is None:
         return None
     now_utc = dt.datetime.now(dt.timezone.utc)
@@ -126,6 +173,7 @@ def init(
     *,
     root: Path | None = None,
     copy_real_data: bool = False,
+    session_id: str | None = None,
 ) -> dict:
     """开启 sandbox 模式. start_date 默认 = 真实 today.
 
@@ -134,6 +182,7 @@ def init(
 
     返回新 state.
     """
+    _reject_nondefault_sid("init", session_id)
     if isinstance(start_date, str):
         start_date = dt.date.fromisoformat(start_date)
     start_date = start_date or dt.date.today()
@@ -157,11 +206,19 @@ def init(
         return new_state
 
 
-def advance(days: int = 1, *, root: Path | None = None) -> dict:
+def advance(
+    days: int = 1,
+    *,
+    root: Path | None = None,
+    session_id: str | None = None,
+) -> dict:
     """虚拟时钟前进 N 天. sandbox 必须已 enabled, 否则抛 RuntimeError.
 
     不直接触发 L1 抽取 (PR-1c 在 web 端点层做异步 trigger). 本函数纯 state.
+
+    S-04: ``session_id`` 签名预留, 实现忽略 (单 state.json).
     """
+    _reject_nondefault_sid("advance", session_id)
     if days < 1:
         raise ValueError(f"days must be >= 1, got {days}")
     with _STATE_LOCK:
@@ -180,12 +237,20 @@ def advance(days: int = 1, *, root: Path | None = None) -> dict:
         return s
 
 
-def reset(*, root: Path | None = None) -> dict:
+def reset(
+    *,
+    root: Path | None = None,
+    session_id: str | None = None,
+) -> dict:
     """删 sandbox 全部数据 + state. prod 数据零风险.
 
     清理 logs/sandbox/ 整个目录 (含 state + 所有派生 meal_log / feedback /
-    prefs / sessions).
+    prefs / sessions / sessions/{sid}/ 子树).
+
+    S-04: ``session_id`` 签名预留, 实现忽略 (一刀切整个 sandbox 目录).
+    Codex adversarial fix: 非 default sid raise — 防 caller 以为 scoped delete.
     """
+    _reject_nondefault_sid("reset", session_id)
     import shutil
     with _STATE_LOCK:
         d = _sandbox_dir(root)
@@ -194,8 +259,16 @@ def reset(*, root: Path | None = None) -> dict:
         return {"ok": True, "reset_at": _now_real_iso()}
 
 
-def disable(*, root: Path | None = None) -> dict:
-    """退出 sandbox 但保留数据 (与 reset 区分). state.enabled=False, 文件保留."""
+def disable(
+    *,
+    root: Path | None = None,
+    session_id: str | None = None,
+) -> dict:
+    """退出 sandbox 但保留数据 (与 reset 区分). state.enabled=False, 文件保留.
+
+    S-04: ``session_id`` 签名预留, 实现忽略 (单 state.json).
+    """
+    _reject_nondefault_sid("disable", session_id)
     with _STATE_LOCK:
         s = state(root)
         if not s.get("enabled"):
@@ -215,11 +288,15 @@ def record_l1_extraction(
     based_on_meals: int | None = None,
     error: str | None = None,
     root: Path | None = None,
+    session_id: str | None = None,
 ) -> None:
     """PR-1c 端点用: advance 后异步抽取完成时落 last_l1_extraction 字段.
 
     status ∈ {"pending", "ok", "failed", "skipped"}.
+
+    S-04: ``session_id`` 签名预留, 实现忽略 (单 state.json).
     """
+    _reject_nondefault_sid("record_l1_extraction", session_id)
     with _STATE_LOCK:
         s = state(root)
         if not s.get("enabled"):
