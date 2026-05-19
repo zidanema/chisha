@@ -165,7 +165,8 @@
       "depends_on": [
         "S-06c"
       ],
-      "status": "pending"
+      "status": "done",
+      "_notes": "3 新端点 (POST .../rollback, POST .../branch, GET .../sessions/{sid} FullSnapshot — 补 S-06a 漏项) + per-sid op lock 基础设施 (_SESSION_OP_LOCK_REGISTRY + _session_op_lock ctx mgr) + 既有 5 端点入口加 lock guard (recs/eat/skip/swap/refine) + BG _build_decision_async 加 _L1_EXTRACTION_LOCK + per-sid lock + stale-meal-idx guard (rollback 已 truncate → 早退) + reset/disable 改用 _l1_extraction_lock_or_409 持锁穿透 lifecycle mutation (废 _block_until_l1_idle_or_409 probe-release) + rollback/branch 入口持 L1 lock 防 reset rmtree 与 rollback 写并发. 全事务 rollback (state.json 列尾 commit barrier, backup-restore on failure, trace v2/v3 + decisions + last_recs + D-039 session + recommend_log/meal_log 全部纳入 actions). 15 单测 (含 atomicity 2 case / D-039 + uneaten last_recs / OSError 阶段失败 / reset L1 lock 持锁 / per-sid lock 409 等) + 932 全测试通过 + baseline_l2_snapshot 0 diff. Codex plan 3 iter (BLOCKED→BLOCKED→APPROVED), Codex diff 5 iter (BLOCKED 4→4→1→1→APPROVED): iter1-4 BLOCKERs 全 fix (post-commit 在事务外 / _JOB_TABLE TOCTOU / FullSnapshot 不全 / GET 缺 / /recs 未加锁 / last_recs sid 不在 trash / OSError swallow / D-039 session 漏删 / BG 不持 L1 / reset/disable probe-release leak / reset rmtree vs rollback 写并发). 没动 refine / score / l1 / trace_store, Faithful Refine 不变."
     },
     {
       "id": "S-08",

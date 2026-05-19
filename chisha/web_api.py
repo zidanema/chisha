@@ -1103,6 +1103,41 @@ _JOB_LOCK = _threading.Lock()
 
 _DEFAULT_SID_C = "_default"
 
+# S-07: per-sid op lock 防 eat/skip/swap/refine/rollback/branch 并发污染.
+# Handler 入口拿锁 timeout=30 → 409; BG task body 无 timeout 等. branch 持
+# src+new 两把 (src 外 new 内).
+_SESSION_OP_LOCK_REGISTRY: dict[str, _threading.Lock] = {}
+_REGISTRY_LOCK = _threading.Lock()
+
+
+def _get_session_op_lock(sid_key: str) -> _threading.Lock:
+    with _REGISTRY_LOCK:
+        return _SESSION_OP_LOCK_REGISTRY.setdefault(sid_key, _threading.Lock())
+
+
+from contextlib import contextmanager as _contextmanager
+
+
+@_contextmanager
+def _session_op_lock(routed_sid: str | None, *, timeout: float | None = 30.0,
+                     action: str = "operation"):
+    """S-07: 抢 per-sid op lock, timeout 抢不到 → 409. timeout=None 无限等 (BG)."""
+    sid_key = routed_sid or _DEFAULT_SID_C
+    lock = _get_session_op_lock(sid_key)
+    if timeout is None:
+        lock.acquire()
+        ok = True
+    else:
+        ok = lock.acquire(timeout=timeout)
+    if not ok:
+        raise HTTPException(
+            409, f"{action} blocked: sandbox sid={sid_key!r} busy >{timeout:.0f}s",
+        )
+    try:
+        yield
+    finally:
+        lock.release()
+
 
 def _atomic_write_json(path: Path, data: Any) -> None:
     """S-06c 修订 F: tmp + os.replace 原子写 JSON."""
@@ -1250,53 +1285,56 @@ def api_sandbox_recs(
     """S-06c: 拉 5 条推荐, 落 sessions/{sid}/last_recs.json.
 
     mock_recommend=1 → 5 条固定 Rec (复刻 sbxMocks.CURRENT_RECS), 不调 LLM.
+
+    S-07: 入口 per-sid op lock, 防 rollback 与 /recs 并发污染 last_recs.
     """
     _require_localhost(request)
     routed_sid = _validate_and_route_sid(sid)
-    s = _ensure_not_done(routed_sid, ROOT)
-    cur_idx = int(s.get("current_meal_idx", 0))
-    meal_type = req.meal_type
-    if meal_type not in ("lunch", "dinner"):
-        meal_type, _day = _sandbox.meal_idx_to_slot(cur_idx)
+    with _session_op_lock(routed_sid, action="recs"):
+        s = _ensure_not_done(routed_sid, ROOT)
+        cur_idx = int(s.get("current_meal_idx", 0))
+        meal_type = req.meal_type
+        if meal_type not in ("lunch", "dinner"):
+            meal_type, _day = _sandbox.meal_idx_to_slot(cur_idx)
 
-    is_mock = mock_recommend == 1
-    if is_mock:
-        current_recs = _mock_recs_data()
-        recommend_session_id = f"mock_{_secrets.token_hex(4)}"
-        # 构造 v2-shape candidates 用于后续 eat 端点 / adapter (mock 路径里 candidates = currentRecs)
-        candidates = current_recs
-    else:
-        with _sandbox_ctx(routed_sid):
-            try:
-                out = recommend_meal(
-                    meal_type=meal_type,
-                    daily_mood=None,
-                    log_to_file=True,
-                    root=ROOT,
-                )
-            except Exception as e:
-                raise HTTPException(500, f"recommend_meal failed: {type(e).__name__}: {e}")
-        candidates = out["candidates"]   # v2 dict
-        current_recs = [format_v2_to_rec(c) for c in candidates]
-        recommend_session_id = out["session_id"]
+        is_mock = mock_recommend == 1
+        if is_mock:
+            current_recs = _mock_recs_data()
+            recommend_session_id = f"mock_{_secrets.token_hex(4)}"
+            # 构造 v2-shape candidates 用于后续 eat 端点 / adapter (mock 路径里 candidates = currentRecs)
+            candidates = current_recs
+        else:
+            with _sandbox_ctx(routed_sid):
+                try:
+                    out = recommend_meal(
+                        meal_type=meal_type,
+                        daily_mood=None,
+                        log_to_file=True,
+                        root=ROOT,
+                    )
+                except Exception as e:
+                    raise HTTPException(500, f"recommend_meal failed: {type(e).__name__}: {e}")
+            candidates = out["candidates"]   # v2 dict
+            current_recs = [format_v2_to_rec(c) for c in candidates]
+            recommend_session_id = out["session_id"]
 
-    last_recs_payload = {
-        "recommend_session_id": recommend_session_id,
-        "candidates": candidates,
-        "currentRecs": current_recs,
-        "applied_refine": None,
-        "meal_idx": cur_idx,
-        "is_mock": is_mock,
-        "saved_at": _now_real_iso(),
-    }
-    _atomic_write_json(_last_recs_path(routed_sid, ROOT), last_recs_payload)
+        last_recs_payload = {
+            "recommend_session_id": recommend_session_id,
+            "candidates": candidates,
+            "currentRecs": current_recs,
+            "applied_refine": None,
+            "meal_idx": cur_idx,
+            "is_mock": is_mock,
+            "saved_at": _now_real_iso(),
+        }
+        _atomic_write_json(_last_recs_path(routed_sid, ROOT), last_recs_payload)
 
-    return {
-        "currentRecs": current_recs,
-        "recommend_session_id": recommend_session_id,
-        "applied_refine": None,
-        "meal_idx": cur_idx,
-    }
+        return {
+            "currentRecs": current_recs,
+            "recommend_session_id": recommend_session_id,
+            "applied_refine": None,
+            "meal_idx": cur_idx,
+        }
 
 
 # ---------- POST /sandbox/sessions/{sid}/eat ----------
@@ -1316,7 +1354,12 @@ def _build_decision_async(
     mock: bool,
     root: Path,
 ) -> None:
-    """BG task: 在 thread pool 跑. 必须显式重 set ContextVar (S-06c 修订 D)."""
+    """BG task: 在 thread pool 跑. 必须显式重 set ContextVar (S-06c 修订 D).
+
+    S-07: 入口 per-sid op lock (timeout=None 无限等, BG 不能返 409). 拿锁后
+    reload state; 若 ``state.current_meal_idx <= meal_idx`` 说明 rollback 把
+    我们的 meal_idx 已 truncate, 早退记 ``cancelled_by_rollback``.
+    """
     started = _now_real_iso()
     with _JOB_LOCK:
         _JOB_TABLE[job_id] = {
@@ -1326,39 +1369,67 @@ def _build_decision_async(
             "meal_idx": meal_idx,
         }
     try:
-        with _sandbox_ctx(sid):
-            if mock:
-                prev_prefs: dict = {}
-                new_prefs: dict = {}
-            else:
-                prev_prefs = _load_prefs_safe(root)
-                _impl_l1_refresh(
-                    root,
-                    force_no_llm=False,
-                    window_days=None,
-                    acquire_lock=True,    # S-06c 修订 N2: 保 reset/disable 互斥
-                )
-                new_prefs = _load_prefs_safe(root)
+        # S-07 Phase 4 Codex iter 2 #1: 持 _L1_EXTRACTION_LOCK 包整个 BG 周期, 让
+        # reset/disable 的 _block_until_l1_idle_or_409 在 BG 跑期间 block. 与
+        # CONTRACTS.md:98 reset/disable 互斥不变式对齐. 必须 BEFORE per-sid lock
+        # 防 BG 进度被 reset 见缝插针 (status='running' 但 L1 lock 仍 free 的间隙).
+        # _impl_l1_refresh 内部 acquire_lock=False 防 re-entrant 死锁.
+        with _L1_EXTRACTION_LOCK:
+            with _session_op_lock(sid, timeout=None, action="bg-decision"):
+                # S-07 stale guard: 锁内 reload state; rollback 已截掉时早退
+                state_p = _sandbox._state_path_for_sid(sid, root)
+                if state_p.exists():
+                    try:
+                        cur_state = json.loads(state_p.read_text(encoding="utf-8"))
+                        cur_idx_now = int(cur_state.get("current_meal_idx", 0))
+                    except (OSError, json.JSONDecodeError):
+                        cur_idx_now = meal_idx + 1   # 视为 ok, 继续 (state 损坏后续兜底)
+                else:
+                    cur_idx_now = 0
+                if cur_idx_now <= meal_idx:
+                    with _JOB_LOCK:
+                        _JOB_TABLE[job_id] = {
+                            "status": "cancelled_by_rollback",
+                            "sid": sid,
+                            "meal_idx": meal_idx,
+                            "started_at": started,
+                            "ended_at": _now_real_iso(),
+                        }
+                    return
 
-            decision = build_decision(
-                sid=sid or _DEFAULT_SID_C,
-                meal_idx=meal_idx,
-                picked_rec=picked_rec_view,
-                prev_long_term_prefs=prev_prefs,
-                new_long_term_prefs=new_prefs,
-                history=history,
-                root=root,
-            )
-            _atomic_write_json(_decision_path(sid, meal_idx, root), decision)
-        with _JOB_LOCK:
-            _JOB_TABLE[job_id] = {
-                "status": "done",
-                "sid": sid,
-                "meal_idx": meal_idx,
-                "started_at": started,
-                "ended_at": _now_real_iso(),
-                "result": {"decision": decision, "meal_idx": meal_idx},
-            }
+                with _sandbox_ctx(sid):
+                    if mock:
+                        prev_prefs: dict = {}
+                        new_prefs: dict = {}
+                    else:
+                        prev_prefs = _load_prefs_safe(root)
+                        _impl_l1_refresh(
+                            root,
+                            force_no_llm=False,
+                            window_days=None,
+                            acquire_lock=False,   # outer with _L1_EXTRACTION_LOCK 已持
+                        )
+                        new_prefs = _load_prefs_safe(root)
+
+                decision = build_decision(
+                    sid=sid or _DEFAULT_SID_C,
+                    meal_idx=meal_idx,
+                    picked_rec=picked_rec_view,
+                    prev_long_term_prefs=prev_prefs,
+                    new_long_term_prefs=new_prefs,
+                    history=history,
+                    root=root,
+                )
+                _atomic_write_json(_decision_path(sid, meal_idx, root), decision)
+            with _JOB_LOCK:
+                _JOB_TABLE[job_id] = {
+                    "status": "done",
+                    "sid": sid,
+                    "meal_idx": meal_idx,
+                    "started_at": started,
+                    "ended_at": _now_real_iso(),
+                    "result": {"decision": decision, "meal_idx": meal_idx},
+                }
     except Exception as e:
         import logging as _logging
         _logging.getLogger(__name__).warning(
@@ -1382,101 +1453,105 @@ def api_sandbox_eat(
     req: SandboxEatReq,
     background_tasks: BackgroundTasks,
 ) -> dict:
-    """S-06c: 选择第 rec_rank 条吃掉; advance + 启 BackgroundTask 抽 L1 + 派生 decision."""
+    """S-06c: 选择第 rec_rank 条吃掉; advance + 启 BackgroundTask 抽 L1 + 派生 decision.
+
+    S-07: 入口加 per-sid op lock 防与 rollback/branch 并发污染.
+    """
     _require_localhost(request)
     routed_sid = _validate_and_route_sid(sid)
-    s = _ensure_not_done(routed_sid, ROOT)
-    cur_idx = int(s.get("current_meal_idx", 0))
+    with _session_op_lock(routed_sid, action="eat"):
+        s = _ensure_not_done(routed_sid, ROOT)
+        cur_idx = int(s.get("current_meal_idx", 0))
 
-    last_p = _last_recs_path(routed_sid, ROOT)
-    if not last_p.exists():
-        raise HTTPException(404, "no last_recs.json; POST /recs first")
-    try:
-        last_recs = json.loads(last_p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        raise HTTPException(500, f"last_recs.json corrupt: {e}")
-
-    candidates = last_recs.get("candidates") or []
-    if not (1 <= req.rec_rank <= len(candidates)):
-        raise HTTPException(400, f"rec_rank {req.rec_rank} out of range (have {len(candidates)} candidates)")
-
-    is_mock = bool(last_recs.get("is_mock"))
-    picked_raw = candidates[req.rec_rank - 1]
-    recommend_session_id = last_recs.get("recommend_session_id", "")
-
-    # mock 路径: candidates 本身就是 Rec 视图; 真实路径: 转换
-    if is_mock:
-        picked_rec_view = dict(picked_raw)
-    else:
-        picked_rec_view = format_v2_to_rec(picked_raw)
-
-    # meal_to_trace[idx] = recommend_session_id
-    _update_meal_to_trace(routed_sid, ROOT, cur_idx, recommend_session_id)
-
-    # 真实路径: 调 _impl_accept 写 feedback_store + meal_log (mock 跳过)
-    if not is_mock:
+        last_p = _last_recs_path(routed_sid, ROOT)
+        if not last_p.exists():
+            raise HTTPException(404, "no last_recs.json; POST /recs first")
         try:
-            with _sandbox_ctx(routed_sid):
-                accept_req = AcceptReq(
-                    session_id=recommend_session_id,
-                    candidate_rank=req.rec_rank,
-                    candidate=picked_raw,
-                )
-                _impl_accept(accept_req)
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(500, f"accept failed: {type(e).__name__}: {e}")
+            last_recs = json.loads(last_p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            raise HTTPException(500, f"last_recs.json corrupt: {e}")
 
-    # history append
-    history_entry = {
-        "idx": cur_idx,
-        "state": "eat",
-        "dish": picked_rec_view.get("name", ""),
-        "session_id": recommend_session_id,
-        "accepted_at": _now_real_iso(),
-        "rank": req.rec_rank,
-    }
-    history_after = _append_history(routed_sid, ROOT, history_entry)
+        candidates = last_recs.get("candidates") or []
+        if not (1 <= req.rec_rank <= len(candidates)):
+            raise HTTPException(400, f"rec_rank {req.rec_rank} out of range (have {len(candidates)} candidates)")
 
-    # advance meal clock
-    try:
-        new_state = _sandbox.advance_meal(sid=routed_sid, root=ROOT)
-    except RuntimeError as e:
-        raise HTTPException(500, f"advance_meal failed: {e}")
+        is_mock = bool(last_recs.get("is_mock"))
+        picked_raw = candidates[req.rec_rank - 1]
+        recommend_session_id = last_recs.get("recommend_session_id", "")
 
-    # 清 last_recs (下顿要重 POST /recs)
-    try:
-        last_p.unlink()
-    except OSError:
-        pass
+        # mock 路径: candidates 本身就是 Rec 视图; 真实路径: 转换
+        if is_mock:
+            picked_rec_view = dict(picked_raw)
+        else:
+            picked_rec_view = format_v2_to_rec(picked_raw)
 
-    # 启 BackgroundTask: build decision diff
-    job_id = _secrets.token_hex(8)
-    with _JOB_LOCK:
-        _JOB_TABLE[job_id] = {
-            "status": "pending",
-            "sid": routed_sid,
-            "meal_idx": cur_idx,
-            "started_at": _now_real_iso(),
+        # meal_to_trace[idx] = recommend_session_id
+        _update_meal_to_trace(routed_sid, ROOT, cur_idx, recommend_session_id)
+
+        # 真实路径: 调 _impl_accept 写 feedback_store + meal_log (mock 跳过)
+        if not is_mock:
+            try:
+                with _sandbox_ctx(routed_sid):
+                    accept_req = AcceptReq(
+                        session_id=recommend_session_id,
+                        candidate_rank=req.rec_rank,
+                        candidate=picked_raw,
+                    )
+                    _impl_accept(accept_req)
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(500, f"accept failed: {type(e).__name__}: {e}")
+
+        # history append
+        history_entry = {
+            "idx": cur_idx,
+            "state": "eat",
+            "dish": picked_rec_view.get("name", ""),
+            "session_id": recommend_session_id,
+            "accepted_at": _now_real_iso(),
+            "rank": req.rec_rank,
         }
-    background_tasks.add_task(
-        _build_decision_async,
-        sid=routed_sid,
-        meal_idx=cur_idx,
-        picked_rec_view=picked_rec_view,
-        history=history_after,
-        job_id=job_id,
-        mock=is_mock,
-        root=ROOT,
-    )
+        history_after = _append_history(routed_sid, ROOT, history_entry)
 
-    return {
-        "job_id": job_id,
-        "status": "running",
-        "new_meal_idx": int(new_state.get("current_meal_idx", cur_idx + 1)),
-        "meal_idx_eaten": cur_idx,
-    }
+        # advance meal clock
+        try:
+            new_state = _sandbox.advance_meal(sid=routed_sid, root=ROOT)
+        except RuntimeError as e:
+            raise HTTPException(500, f"advance_meal failed: {e}")
+
+        # 清 last_recs (下顿要重 POST /recs)
+        try:
+            last_p.unlink()
+        except OSError:
+            pass
+
+        # 启 BackgroundTask: build decision diff
+        job_id = _secrets.token_hex(8)
+        with _JOB_LOCK:
+            _JOB_TABLE[job_id] = {
+                "status": "pending",
+                "sid": routed_sid,
+                "meal_idx": cur_idx,
+                "started_at": _now_real_iso(),
+            }
+        background_tasks.add_task(
+            _build_decision_async,
+            sid=routed_sid,
+            meal_idx=cur_idx,
+            picked_rec_view=picked_rec_view,
+            history=history_after,
+            job_id=job_id,
+            mock=is_mock,
+            root=ROOT,
+        )
+
+        return {
+            "job_id": job_id,
+            "status": "running",
+            "new_meal_idx": int(new_state.get("current_meal_idx", cur_idx + 1)),
+            "meal_idx_eaten": cur_idx,
+        }
 
 
 # ---------- POST /sandbox/sessions/{sid}/skip ----------
@@ -1492,53 +1567,57 @@ def api_sandbox_skip(
     sid: str,
     req: SandboxSkipReq,
 ) -> dict:
-    """S-06c: 跳过本顿. 同步落 decision (skip 不触发 L1 抽取)."""
+    """S-06c: 跳过本顿. 同步落 decision (skip 不触发 L1 抽取).
+
+    S-07: 入口 per-sid op lock.
+    """
     _require_localhost(request)
     if req.reason is not None and req.reason not in _VALID_SKIP_REASONS:
         raise HTTPException(422, f"invalid skip reason: {req.reason!r}")
     routed_sid = _validate_and_route_sid(sid)
-    s = _ensure_not_done(routed_sid, ROOT)
-    cur_idx = int(s.get("current_meal_idx", 0))
+    with _session_op_lock(routed_sid, action="skip"):
+        s = _ensure_not_done(routed_sid, ROOT)
+        cur_idx = int(s.get("current_meal_idx", 0))
 
-    history_entry = {
-        "idx": cur_idx,
-        "state": "skip",
-        "reason": req.reason,
-        "session_id": None,
-        "accepted_at": None,
-    }
-    history_after = _append_history(routed_sid, ROOT, history_entry)
+        history_entry = {
+            "idx": cur_idx,
+            "state": "skip",
+            "reason": req.reason,
+            "session_id": None,
+            "accepted_at": None,
+        }
+        history_after = _append_history(routed_sid, ROOT, history_entry)
 
-    try:
-        new_state = _sandbox.advance_meal(sid=routed_sid, root=ROOT)
-    except RuntimeError as e:
-        raise HTTPException(500, f"advance_meal failed: {e}")
-
-    # 清 last_recs best-effort
-    last_p = _last_recs_path(routed_sid, ROOT)
-    if last_p.exists():
         try:
-            last_p.unlink()
-        except OSError:
-            pass
+            new_state = _sandbox.advance_meal(sid=routed_sid, root=ROOT)
+        except RuntimeError as e:
+            raise HTTPException(500, f"advance_meal failed: {e}")
 
-    # 同步 decision (skip 路径 prefs 都空, build_decision 返"跳过未学习")
-    decision = build_decision(
-        sid=routed_sid or _DEFAULT_SID_C,
-        meal_idx=cur_idx,
-        picked_rec=None,
-        prev_long_term_prefs={},
-        new_long_term_prefs={},
-        history=history_after,
-        root=ROOT,
-    )
-    _atomic_write_json(_decision_path(routed_sid, cur_idx, ROOT), decision)
+        # 清 last_recs best-effort
+        last_p = _last_recs_path(routed_sid, ROOT)
+        if last_p.exists():
+            try:
+                last_p.unlink()
+            except OSError:
+                pass
 
-    return {
-        "new_meal_idx": int(new_state.get("current_meal_idx", cur_idx + 1)),
-        "meal_idx_skipped": cur_idx,
-        "decision": decision,
-    }
+        # 同步 decision (skip 路径 prefs 都空, build_decision 返"跳过未学习")
+        decision = build_decision(
+            sid=routed_sid or _DEFAULT_SID_C,
+            meal_idx=cur_idx,
+            picked_rec=None,
+            prev_long_term_prefs={},
+            new_long_term_prefs={},
+            history=history_after,
+            root=ROOT,
+        )
+        _atomic_write_json(_decision_path(routed_sid, cur_idx, ROOT), decision)
+
+        return {
+            "new_meal_idx": int(new_state.get("current_meal_idx", cur_idx + 1)),
+            "meal_idx_skipped": cur_idx,
+            "decision": decision,
+        }
 
 
 # ---------- POST /sandbox/sessions/{sid}/swap ----------
@@ -1555,58 +1634,62 @@ def api_sandbox_swap(
     req: SandboxSwapReq,
     mock_recommend: int = 0,
 ) -> dict:
-    """S-06c 修订 B: swap = recommend_meal 重跑 + post-filter exclude_ids. 不调 refine."""
+    """S-06c 修订 B: swap = recommend_meal 重跑 + post-filter exclude_ids. 不调 refine.
+
+    S-07: 入口 per-sid op lock.
+    """
     _require_localhost(request)
     routed_sid = _validate_and_route_sid(sid)
-    s = _ensure_not_done(routed_sid, ROOT)
-    cur_idx = int(s.get("current_meal_idx", 0))
+    with _session_op_lock(routed_sid, action="swap"):
+        s = _ensure_not_done(routed_sid, ROOT)
+        cur_idx = int(s.get("current_meal_idx", 0))
 
-    last_p = _last_recs_path(routed_sid, ROOT)
-    if not last_p.exists():
-        raise HTTPException(404, "no last_recs.json; POST /recs first")
-    try:
-        last_recs = json.loads(last_p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        raise HTTPException(500, f"last_recs.json corrupt: {e}")
+        last_p = _last_recs_path(routed_sid, ROOT)
+        if not last_p.exists():
+            raise HTTPException(404, "no last_recs.json; POST /recs first")
+        try:
+            last_recs = json.loads(last_p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            raise HTTPException(500, f"last_recs.json corrupt: {e}")
 
-    is_mock = bool(last_recs.get("is_mock")) or mock_recommend == 1
-    exclude_ids = list(req.exclude_ids or [])
+        is_mock = bool(last_recs.get("is_mock")) or mock_recommend == 1
+        exclude_ids = list(req.exclude_ids or [])
 
-    if is_mock:
-        current_recs = _mock_recs_data(exclude_ids=exclude_ids)
-        candidates = current_recs
-        recommend_session_id = f"mock_{_secrets.token_hex(4)}"
-    else:
-        meal_type, _day = _sandbox.meal_idx_to_slot(cur_idx)
-        with _sandbox_ctx(routed_sid):
-            try:
-                out = recommend_meal(
-                    meal_type=meal_type,
-                    daily_mood=None,
-                    log_to_file=True,
-                    root=ROOT,
-                )
-            except Exception as e:
-                raise HTTPException(500, f"recommend_meal failed: {type(e).__name__}: {e}")
-        excl = set(exclude_ids)
-        candidates = [c for c in out["candidates"] if (c.get("id") or "") not in excl]
-        current_recs = [format_v2_to_rec(c) for c in candidates]
-        recommend_session_id = out["session_id"]
+        if is_mock:
+            current_recs = _mock_recs_data(exclude_ids=exclude_ids)
+            candidates = current_recs
+            recommend_session_id = f"mock_{_secrets.token_hex(4)}"
+        else:
+            meal_type, _day = _sandbox.meal_idx_to_slot(cur_idx)
+            with _sandbox_ctx(routed_sid):
+                try:
+                    out = recommend_meal(
+                        meal_type=meal_type,
+                        daily_mood=None,
+                        log_to_file=True,
+                        root=ROOT,
+                    )
+                except Exception as e:
+                    raise HTTPException(500, f"recommend_meal failed: {type(e).__name__}: {e}")
+            excl = set(exclude_ids)
+            candidates = [c for c in out["candidates"] if (c.get("id") or "") not in excl]
+            current_recs = [format_v2_to_rec(c) for c in candidates]
+            recommend_session_id = out["session_id"]
 
-    new_payload = {
-        "recommend_session_id": recommend_session_id,
-        "candidates": candidates,
-        "currentRecs": current_recs,
-        "applied_refine": last_recs.get("applied_refine"),   # swap 不清 refine
-        "meal_idx": cur_idx,
-        "is_mock": is_mock,
-        "saved_at": _now_real_iso(),
-    }
-    _atomic_write_json(last_p, new_payload)
-    return {
-        "currentRecs": current_recs,
-        "recommend_session_id": recommend_session_id,
-    }
+        new_payload = {
+            "recommend_session_id": recommend_session_id,
+            "candidates": candidates,
+            "currentRecs": current_recs,
+            "applied_refine": last_recs.get("applied_refine"),   # swap 不清 refine
+            "meal_idx": cur_idx,
+            "is_mock": is_mock,
+            "saved_at": _now_real_iso(),
+        }
+        _atomic_write_json(last_p, new_payload)
+        return {
+            "currentRecs": current_recs,
+            "recommend_session_id": recommend_session_id,
+        }
 
 
 # ---------- POST /sandbox/sessions/{sid}/refine ----------
@@ -1623,75 +1706,79 @@ def api_sandbox_refine(
     req: SandboxRefineReq,
     mock_recommend: int = 0,
 ) -> dict:
-    """S-06c: refine 同 round; 覆盖 last_recs + 写 applied_refine."""
+    """S-06c: refine 同 round; 覆盖 last_recs + 写 applied_refine.
+
+    S-07: 入口 per-sid op lock.
+    """
     _require_localhost(request)
     routed_sid = _validate_and_route_sid(sid)
-    s = _ensure_not_done(routed_sid, ROOT)
-    cur_idx = int(s.get("current_meal_idx", 0))
+    with _session_op_lock(routed_sid, action="refine"):
+        s = _ensure_not_done(routed_sid, ROOT)
+        cur_idx = int(s.get("current_meal_idx", 0))
 
-    last_p = _last_recs_path(routed_sid, ROOT)
-    if not last_p.exists():
-        raise HTTPException(404, "no last_recs.json; POST /recs first")
-    try:
-        last_recs = json.loads(last_p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        raise HTTPException(500, f"last_recs.json corrupt: {e}")
-
-    is_mock = bool(last_recs.get("is_mock")) or mock_recommend == 1
-
-    if is_mock:
-        current_recs = _mock_refine_recs_data(req.text)
-        candidates = current_recs
-        new_recommend_sid = f"mock_{_secrets.token_hex(4)}"
-        new_round = (last_recs.get("applied_refine") or {}).get("sinceRound", 1) + 1
-    else:
-        old_sid = last_recs.get("recommend_session_id", "")
+        last_p = _last_recs_path(routed_sid, ROOT)
+        if not last_p.exists():
+            raise HTTPException(404, "no last_recs.json; POST /recs first")
         try:
-            with _sandbox_ctx(routed_sid):
-                refine_req = RefineReq(
-                    session_id=old_sid,
-                    refine_text=req.text,
-                )
-                refine_out = _impl_refine(refine_req)
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(500, f"refine failed: {type(e).__name__}: {e}")
-        candidates = refine_out.get("candidates") or []
-        current_recs = [
-            format_v2_to_rec(
-                c,
-                refine_intent=refine_out.get("refine_intent"),
-                intent_override=req.text[:12],
-            )
-            for c in candidates
-        ]
-        new_recommend_sid = refine_out.get("session_id", old_sid)
-        new_round = int(refine_out.get("round", 2))
+            last_recs = json.loads(last_p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            raise HTTPException(500, f"last_recs.json corrupt: {e}")
 
-    applied_refine = {
-        "label": req.text[:20],
-        "sinceRound": new_round,
-        "sessionId": new_recommend_sid,
-    }
-    new_payload = {
-        "recommend_session_id": new_recommend_sid,
-        "candidates": candidates,
-        "currentRecs": current_recs,
-        "applied_refine": applied_refine,
-        "meal_idx": cur_idx,
-        "is_mock": is_mock,
-        "saved_at": _now_real_iso(),
-    }
-    _atomic_write_json(last_p, new_payload)
-    return {
-        "currentRecs": current_recs,
-        "recommend_session_id": new_recommend_sid,
-        "activeRules": {
-            "refine": [applied_refine],
-            "blacklist": [],
-        },
-    }
+        is_mock = bool(last_recs.get("is_mock")) or mock_recommend == 1
+
+        if is_mock:
+            current_recs = _mock_refine_recs_data(req.text)
+            candidates = current_recs
+            new_recommend_sid = f"mock_{_secrets.token_hex(4)}"
+            new_round = (last_recs.get("applied_refine") or {}).get("sinceRound", 1) + 1
+        else:
+            old_sid = last_recs.get("recommend_session_id", "")
+            try:
+                with _sandbox_ctx(routed_sid):
+                    refine_req = RefineReq(
+                        session_id=old_sid,
+                        refine_text=req.text,
+                    )
+                    refine_out = _impl_refine(refine_req)
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(500, f"refine failed: {type(e).__name__}: {e}")
+            candidates = refine_out.get("candidates") or []
+            current_recs = [
+                format_v2_to_rec(
+                    c,
+                    refine_intent=refine_out.get("refine_intent"),
+                    intent_override=req.text[:12],
+                )
+                for c in candidates
+            ]
+            new_recommend_sid = refine_out.get("session_id", old_sid)
+            new_round = int(refine_out.get("round", 2))
+
+        applied_refine = {
+            "label": req.text[:20],
+            "sinceRound": new_round,
+            "sessionId": new_recommend_sid,
+        }
+        new_payload = {
+            "recommend_session_id": new_recommend_sid,
+            "candidates": candidates,
+            "currentRecs": current_recs,
+            "applied_refine": applied_refine,
+            "meal_idx": cur_idx,
+            "is_mock": is_mock,
+            "saved_at": _now_real_iso(),
+        }
+        _atomic_write_json(last_p, new_payload)
+        return {
+            "currentRecs": current_recs,
+            "recommend_session_id": new_recommend_sid,
+            "activeRules": {
+                "refine": [applied_refine],
+                "blacklist": [],
+            },
+        }
 
 
 # ---------- GET /sandbox/sessions/{sid}/jobs/{job_id} ----------
@@ -1711,6 +1798,538 @@ def api_sandbox_job_status(
     if info is None:
         raise HTTPException(404, f"job_id={job_id!r} not found")
     return dict(info)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# S-07: rollback / branch + GET FullSnapshot
+# ════════════════════════════════════════════════════════════════════════════
+
+import shutil as _shutil
+
+
+class SessionMetaFull(BaseModel):
+    """S-07 §D: FullSnapshot 子 model. 与 S-06a 的 SandboxSessionMeta 区分:
+    后者是 list view 元数据 (size_bytes 等), 这里是前端 useSandbox 消费的完整
+    session meta (per design brief §SessionMeta).
+    """
+    sid: str
+    name: str = ""
+    days: int
+    seed: int = 0
+    profile: str = "profile@v2"
+    origin: str = "blank"
+    status: str  # "running" | "done"
+    lastUsed: str = ""
+    currentMealIdx: int
+    totalMeals: int
+    branchFrom: str | None = None
+
+
+class SandboxClock(BaseModel):
+    idx: int
+    day: int
+    slot: str   # "lunch" | "dinner"
+    total: int
+
+
+class FullSnapshotResp(BaseModel):
+    """S-07 §D: brief §FullSnapshot 完整 view-model. taste/keywords/recent/fatigue
+    暂留空 list (S-08 派生填). meta/clock/history/currentRecs/lastDecision/activeRules
+    本任务真填.
+    """
+    meta: SessionMetaFull
+    clock: SandboxClock
+    history: list[dict]
+    currentRecs: list[dict]
+    lastDecision: dict | None
+    activeRules: dict
+    taste: list[dict] = Field(default_factory=list)
+    keywords: list[dict] = Field(default_factory=list)
+    recent: list[str] = Field(default_factory=list)
+    fatigue: list[dict] = Field(default_factory=list)
+
+
+def _build_full_snapshot(routed_sid: str | None, root: Path) -> FullSnapshotResp:
+    """从 sessions/{sid}/state.json + history + last_recs + 最近 decision 派生."""
+    state_p = _sandbox._state_path_for_sid(routed_sid, root)
+    if not state_p.exists():
+        raise HTTPException(
+            404, f"sandbox session {routed_sid or '_default'!r} has no state.json",
+        )
+    try:
+        st = json.loads(state_p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise HTTPException(500, f"sandbox state corrupt: {e}")
+    if not isinstance(st, dict):
+        raise HTTPException(500, "sandbox state malformed")
+
+    cur_idx = int(st.get("current_meal_idx", 0))
+    total = int(st.get("total_meals", 14))
+    days_v = total // 2 or 7
+
+    # clock: idx == total 表示 done sentinel, slot 仍用 idx 派生但 idx>=total 退化为 dinner
+    if cur_idx < total:
+        slot, day = _sandbox.meal_idx_to_slot(cur_idx)
+    else:
+        slot = "dinner"
+        day = days_v
+    clock = SandboxClock(idx=cur_idx, day=day, slot=slot, total=total)
+
+    meta = SessionMetaFull(
+        sid=str(st.get("sid") or routed_sid or _DEFAULT_SID_C),
+        name=str(st.get("name") or ""),
+        days=days_v,
+        seed=int(st.get("seed") or 0),
+        profile=str(st.get("profile") or "profile@v2"),
+        origin=str(st.get("origin") or "blank"),
+        status="done" if cur_idx >= total else "running",
+        lastUsed=str(st.get("started_at_real") or ""),
+        currentMealIdx=cur_idx,
+        totalMeals=total,
+        branchFrom=st.get("branch_from"),
+    )
+
+    history = _load_history(routed_sid, root)
+
+    last_recs_data: dict = {}
+    last_p = _last_recs_path(routed_sid, root)
+    if last_p.exists():
+        try:
+            last_recs_data = json.loads(last_p.read_text(encoding="utf-8")) or {}
+        except (OSError, json.JSONDecodeError):
+            last_recs_data = {}
+    current_recs = list(last_recs_data.get("currentRecs") or [])
+    applied_refine = last_recs_data.get("applied_refine")
+    active_refine = [applied_refine] if applied_refine else []
+
+    last_decision: dict | None = None
+    if cur_idx > 0:
+        dec_p = _decision_path(routed_sid, cur_idx - 1, root)
+        if dec_p.exists():
+            try:
+                last_decision = json.loads(dec_p.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                last_decision = None
+
+    return FullSnapshotResp(
+        meta=meta,
+        clock=clock,
+        history=history,
+        currentRecs=current_recs,
+        lastDecision=last_decision,
+        activeRules={"refine": active_refine, "blacklist": []},
+        taste=[],
+        keywords=[],
+        recent=[],
+        fatigue=[],
+    )
+
+
+@router.get("/sandbox/sessions/{sid}", response_model=FullSnapshotResp)
+def api_sandbox_get_full_snapshot(request: Request, sid: str) -> FullSnapshotResp:
+    """S-07: 完整 FullSnapshot (前端 useSandbox 初始化 / rollback 后刷新).
+
+    Default sid 允许 (返 default 桶 snapshot). 非 default sid 走 _validate_and_route_sid.
+    GET 只读不加 op lock.
+    """
+    _require_localhost(request)
+    routed_sid = _validate_and_route_sid(sid)
+    return _build_full_snapshot(routed_sid, ROOT)
+
+
+class SandboxRollbackReq(BaseModel):
+    meal_idx: int = Field(ge=0)
+
+
+class SandboxBranchReq(BaseModel):
+    from_meal_idx: int = Field(ge=0)
+    name: str = Field(min_length=1, max_length=64)
+
+
+def _filter_jsonl_by_session_ids(
+    src: Path, trash_sids: set[str],
+) -> str:
+    """读 jsonl, 剔除 session_id ∈ trash_sids 的行, 返新 content (含尾 \\n)."""
+    # S-07 Phase 4 Codex iter 1 #3: 不再 swallow OSError; raise 让 rollback restore.
+    if not src.exists():
+        return ""
+    lines_kept: list[str] = []
+    for line in src.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            # 损坏行: 保留原文 (不丢用户数据)
+            lines_kept.append(line)
+            continue
+        sid_in_line = entry.get("session_id")
+        if sid_in_line and sid_in_line in trash_sids:
+            continue
+        lines_kept.append(line)
+    return ("\n".join(lines_kept) + "\n") if lines_kept else ""
+
+
+def _rollback_session_impl(
+    routed_sid: str | None,
+    meal_idx: int,
+    root: Path,
+    *,
+    _internal: bool = False,
+) -> FullSnapshotResp:
+    """S-07 §B: 全事务裁剪. 单一 commit 边界 = state.json os.replace 列尾.
+
+    _internal=True: caller (branch) 已持 per-sid op lock, 跳过 acquire.
+    _internal=False: 默认走 lock guard (rollback handler).
+    """
+    if routed_sid is None:
+        raise HTTPException(400, "rollback not supported on default sandbox bucket")
+
+    state_p = _sandbox._state_path_for_sid(routed_sid, root)
+    if not state_p.exists():
+        raise HTTPException(
+            404, f"sandbox session {routed_sid!r} has no state.json",
+        )
+    try:
+        state = json.loads(state_p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise HTTPException(500, f"sandbox state corrupt: {e}")
+    if not isinstance(state, dict):
+        raise HTTPException(500, "sandbox state malformed")
+
+    cur_idx = int(state.get("current_meal_idx", 0))
+    total = int(state.get("total_meals", 14))
+    if not (0 <= meal_idx < cur_idx):
+        raise HTTPException(
+            400, f"meal_idx={meal_idx} not in [0, {cur_idx}) — nothing to rollback",
+        )
+
+    # ─ Stage new content ─
+    bucket = _sb_bucket(routed_sid, root)
+    tmp_dir = bucket / ".rollback_tmp"
+    if tmp_dir.exists():
+        _shutil.rmtree(tmp_dir, ignore_errors=True)
+    new_dir = tmp_dir / "new"
+    backup_dir = tmp_dir / "backup"
+    new_dir.mkdir(parents=True)
+    backup_dir.mkdir()
+
+    # state.json: 派生新版本
+    day_index_new = meal_idx // 2 + 1
+    started_virtual = state.get("started_at_virtual")
+    if started_virtual:
+        try:
+            cur_date = (
+                dt.date.fromisoformat(started_virtual)
+                + dt.timedelta(days=day_index_new - 1)
+            ).isoformat()
+        except (TypeError, ValueError):
+            cur_date = state.get("current_date") or ""
+    else:
+        cur_date = state.get("current_date") or ""
+    new_state = dict(state)
+    new_state["current_meal_idx"] = meal_idx
+    new_state["day_index"] = day_index_new
+    new_state["current_date"] = cur_date
+    new_state["last_l1_extraction"] = None
+
+    # history slice
+    history_all = _load_history(routed_sid, root)
+    new_history = history_all[:meal_idx]
+
+    # meal_to_trace 截断 + 收集 trash_tsids
+    m2t = _load_meal_to_trace(routed_sid, root)
+    trash_tsids: set[str] = set()
+    new_m2t: dict[str, str] = {}
+    for k, v in m2t.items():
+        try:
+            ik = int(k)
+        except ValueError:
+            new_m2t[k] = v
+            continue
+        if ik >= meal_idx:
+            if isinstance(v, str) and v:
+                trash_tsids.add(v)
+        else:
+            new_m2t[k] = v
+
+    # S-07 Phase 4 Codex iter 1 #2: last_recs 含未 eaten 的 recommend_session_id, 该
+    # session 已落 D-039 session/{tsid}.json + recommend_log 行 + trace 文件, 必须
+    # 也算 trash (否则 branch 后未来 candidates 仍可被 refine.load_session 读到).
+    last_recs_p_pre = _last_recs_path(routed_sid, root)
+    if last_recs_p_pre.exists():
+        try:
+            last_recs_pre_data = json.loads(last_recs_p_pre.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            last_recs_pre_data = {}
+        lr_sid = last_recs_pre_data.get("recommend_session_id")
+        lr_idx_raw = last_recs_pre_data.get("meal_idx", -1)
+        try:
+            lr_idx = int(lr_idx_raw) if lr_idx_raw is not None else -1
+        except (ValueError, TypeError):
+            lr_idx = -1
+        if (
+            lr_sid and isinstance(lr_sid, str)
+            and not lr_sid.startswith("mock_")  # mock 没落实际 file, 跳
+            and lr_idx >= meal_idx
+        ):
+            trash_tsids.add(lr_sid)
+
+    # Stage new files
+    (new_dir / "state.json").write_text(
+        json.dumps(new_state, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    (new_dir / "history.json").write_text(
+        json.dumps(new_history, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    (new_dir / "meal_to_trace.json").write_text(
+        json.dumps(new_m2t, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    (new_dir / "long_term_prefs.json").write_text("{}", encoding="utf-8")
+
+    # sandbox-aware paths (ContextVar 内)
+    from chisha import data_root as _data_root
+    from chisha.sandbox_context import set_sandbox_session as _set_sb
+    with _set_sb(routed_sid):
+        ml_target = _data_root.meal_log_path(root)
+        rl_target = _data_root.recommend_log_path(root)
+        ltp_target = _data_root.long_term_prefs_path(root)
+        trace_dir = _data_root.recommend_trace_dir(root)
+        sessions_dir_target = _data_root.sessions_dir(root)  # D-039 recommend session files
+
+    # Filter jsonl — OSError 由 _filter_jsonl_by_session_ids 透传, 由下方 commit try
+    # 不接, 但 finally 兜 tmp_dir 清理. 兜底见下方 except OSError.
+    try:
+        new_ml_content = _filter_jsonl_by_session_ids(ml_target, trash_tsids)
+        new_rl_content = _filter_jsonl_by_session_ids(rl_target, trash_tsids)
+        (new_dir / "meal_log.jsonl").write_text(new_ml_content, encoding="utf-8")
+        (new_dir / "recommend_log.jsonl").write_text(new_rl_content, encoding="utf-8")
+    except OSError:
+        # staging IO 失败: 还没进 commit 阶段, target 文件 untouched. 清 tmp_dir + raise.
+        _shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
+
+    # Target paths
+    m2t_p = _meal_to_trace_path(routed_sid, root)
+    hist_p = _history_path(routed_sid, root)
+    last_recs_p = _last_recs_path(routed_sid, root)
+
+    # ─ actions list, state.json 列尾 ─
+    actions: list[tuple[Path, Path | None, str]] = []
+    actions.append((m2t_p, new_dir / "meal_to_trace.json", "replace"))
+    actions.append((hist_p, new_dir / "history.json", "replace"))
+    actions.append((ltp_target, new_dir / "long_term_prefs.json", "replace"))
+    actions.append((ml_target, new_dir / "meal_log.jsonl", "replace"))
+    actions.append((rl_target, new_dir / "recommend_log.jsonl", "replace"))
+    if last_recs_p.exists():
+        actions.append((last_recs_p, None, "delete"))
+    dec_dir = bucket / "decisions"
+    if dec_dir.exists():
+        try:
+            for f in sorted(dec_dir.iterdir()):
+                if not f.name.endswith(".json"):
+                    continue
+                try:
+                    idx = int(f.stem)
+                except ValueError:
+                    continue
+                if idx >= meal_idx:
+                    actions.append((f, None, "delete"))
+        except OSError:
+            pass
+    for tsid in sorted(trash_tsids):
+        v2 = trace_dir / f"{tsid}.json"
+        if v2.exists():
+            actions.append((v2, None, "delete"))
+        v3 = trace_dir / tsid
+        if v3.is_dir():
+            actions.append((v3, None, "delete_dir"))
+        # S-07 Phase 4 Codex iter 1 #4: D-039 recommend session JSON file
+        d039 = sessions_dir_target / f"{tsid}.json"
+        if d039.exists():
+            actions.append((d039, None, "delete"))
+    # state.json 列尾 (commit barrier)
+    actions.append((state_p, new_dir / "state.json", "replace"))
+
+    backed_up: list[tuple[Path, Path, str]] = []
+    committed: list[Path] = []
+    try:
+        for idx, (target, new_p, kind) in enumerate(actions):
+            if kind == "delete_dir":
+                if target.exists():
+                    bp = backup_dir / f"d_{idx}_{target.name}"
+                    _shutil.move(str(target), str(bp))
+                    backed_up.append((target, bp, "dir"))
+                continue
+            if target.exists():
+                bp = backup_dir / f"f_{idx}_{target.name}"
+                _os.replace(target, bp)
+                backed_up.append((target, bp, "file"))
+            if kind == "replace":
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if new_p is None:
+                    raise RuntimeError(f"replace kind needs new_p (action {idx})")
+                _os.replace(new_p, target)
+                committed.append(target)
+            # kind == "delete": already backed up, target gone
+    except Exception:
+        # Restore in reverse order
+        for target, bp, kind in reversed(backed_up):
+            try:
+                if target.exists():
+                    if kind == "dir":
+                        _shutil.rmtree(target, ignore_errors=True)
+                    else:
+                        try:
+                            target.unlink()
+                        except OSError:
+                            pass
+                if kind == "dir":
+                    _shutil.move(str(bp), str(target))
+                else:
+                    _os.replace(bp, target)
+            except OSError:
+                pass
+        _shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
+
+    # Cleanup tmp dir
+    _shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # 清 in-memory _JOB_TABLE entries for this sid (best-effort housekeeping)
+    with _JOB_LOCK:
+        stale_jids = [
+            jid for jid, info in _JOB_TABLE.items()
+            if info.get("sid") == routed_sid
+            and info.get("status") in ("pending", "running")
+        ]
+        for jid in stale_jids:
+            _JOB_TABLE[jid] = {
+                **_JOB_TABLE[jid],
+                "status": "cancelled_by_rollback",
+                "ended_at": _now_real_iso(),
+            }
+
+    return _build_full_snapshot(routed_sid, root)
+
+
+@router.post("/sandbox/sessions/{sid}/rollback", response_model=FullSnapshotResp)
+def api_sandbox_rollback(
+    request: Request, sid: str, req: SandboxRollbackReq,
+) -> FullSnapshotResp:
+    """S-07: 裁掉 meal_idx 及之后所有状态, state.json 是 commit barrier.
+
+    内部 IO 异常 (OSError 等) 被 backup-restore 兜底后向上抛 → 转 HTTPException 500.
+
+    Iter 4 Codex #4: 入口持 _L1_EXTRACTION_LOCK (与 BG 同 acquisition order: L1 → per-sid)
+    防 reset/disable lifecycle 中段 rmtree(sandbox_dir) 破坏 rollback 写入. Reset/disable
+    也持 L1 lock → 互斥串行化. eat/skip/swap/refine 等高频路径仍 sid-only (race surface
+    较小, 留 future 升级).
+    """
+    _require_localhost(request)
+    routed_sid = _validate_and_route_sid(sid)
+    with _l1_extraction_lock_or_409("rollback"):
+        with _session_op_lock(routed_sid, action="rollback"):
+            try:
+                return _rollback_session_impl(routed_sid, req.meal_idx, ROOT)
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(
+                    500, f"rollback failed (state restored): {type(e).__name__}: {e}",
+                )
+
+
+@router.post("/sandbox/sessions/{sid}/branch", response_model=SandboxSessionMeta)
+def api_sandbox_branch(
+    request: Request, sid: str, req: SandboxBranchReq,
+) -> SandboxSessionMeta:
+    """S-07: 拷贝 src bucket → 新 bucket + 裁到 from_meal_idx + branch_from 元数据.
+
+    Iter 4 Codex #4: 持 _L1_EXTRACTION_LOCK 防 reset/disable rmtree(sandbox_dir) 与
+    copytree 并发 (源被删 → copytree partial). Lock 顺序 L1 → src-sid → new-sid 与
+    BG / rollback 一致.
+    """
+    _require_localhost(request)
+    routed_sid = _validate_and_route_sid(sid)
+    if routed_sid is None:
+        raise HTTPException(400, "branch not supported on default sandbox bucket")
+
+    # validate from_meal_idx 范围 (在 lock 外 cheap)
+    state_p = _sandbox._state_path_for_sid(routed_sid, ROOT)
+    if not state_p.exists():
+        raise HTTPException(404, f"sandbox session {routed_sid!r} has no state.json")
+
+    with _l1_extraction_lock_or_409("branch"):
+        with _session_op_lock(routed_sid, action="branch"):
+            try:
+                src_state = json.loads(state_p.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as e:
+                raise HTTPException(500, f"sandbox state corrupt: {e}")
+            src_cur = int(src_state.get("current_meal_idx", 0))
+            if not (0 <= req.from_meal_idx < src_cur):
+                raise HTTPException(
+                    400,
+                    f"from_meal_idx={req.from_meal_idx} not in [0, {src_cur})",
+                )
+
+            # gen new_sid
+            import time as _time
+            ts = int(_time.time())
+            new_sid = f"sandbox_{ts}_{_secrets.token_hex(4)}"
+
+            src_bucket = _sb_bucket(routed_sid, ROOT)
+            new_bucket = _sb_bucket(new_sid, ROOT)
+            if new_bucket.exists():
+                raise HTTPException(409, f"new sid collision: {new_sid!r}")
+
+            try:
+                _shutil.copytree(
+                    src_bucket, new_bucket,
+                    ignore=_shutil.ignore_patterns(".rollback_tmp"),
+                )
+            except OSError as e:
+                raise HTTPException(500, f"copytree failed: {type(e).__name__}: {e}")
+
+            try:
+                with _session_op_lock(new_sid, action="branch-new"):
+                    # rollback new bucket to from_meal_idx (skip outer lock acquire)
+                    try:
+                        _rollback_session_impl(
+                            new_sid, req.from_meal_idx, ROOT, _internal=True,
+                        )
+                    except HTTPException:
+                        raise
+                    except Exception as e:
+                        raise HTTPException(
+                            500, f"branch rollback failed: {type(e).__name__}: {e}",
+                        )
+
+                    # patch new state.json with branch metadata
+                    new_state_p = _sandbox._state_path_for_sid(new_sid, ROOT)
+                    try:
+                        new_st = json.loads(new_state_p.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError) as e:
+                        raise HTTPException(500, f"new state corrupt: {e}")
+                    new_st["sid"] = new_sid
+                    new_st["name"] = req.name
+                    new_st["branch_from"] = routed_sid
+                    new_st["branch_from_meal_idx"] = req.from_meal_idx
+                    new_st["started_at_real"] = _now_real_iso()
+                    _atomic_write_json(new_state_p, new_st)
+            except Exception:
+                # 失败 → 清新桶, 不留半成品
+                _shutil.rmtree(new_bucket, ignore_errors=True)
+                raise
+
+            # 返 SandboxSessionMeta (list view) — 客户端再 GET FullSnapshot
+            return SandboxSessionMeta(
+                sid=new_sid,
+                is_default=False,
+                created_at=_sandbox._entry_ctime_iso(new_bucket),
+                size_bytes=_sandbox._dir_size_safe(new_bucket),
+                has_state=(new_bucket / "state.json").exists(),
+            )
 
 
 @router.post("/sandbox/init")
@@ -1734,19 +2353,38 @@ _L1_LOCK_WAIT_SECONDS = 30.0
 
 
 def _block_until_l1_idle_or_409(action_label: str) -> None:
-    """D-078 Codex S2 Q3-High: reset/disable 期间 L1 worker 仍在跑 → save_prefs
-    若 sandbox 已 disable 会走回 prod data_root, 污染 prod long_term_prefs.json.
-    在 reset/disable 入口拿 _L1_EXTRACTION_LOCK (worker 持锁直至 save 结束),
-    抢不到则 409 让用户重试.
+    """[已废弃 by S-07] D-078 Codex S2 Q3-High 的 probe-release 模式不闭环:
+    probe 通过 → release → mutation 之间, 排队的 BG worker 可以抢锁继续跑.
+
+    本函数保留签名以防外部 caller; 但实际语义已变 (现在仍是 probe-release).
+    新代码用 ``_l1_extraction_lock_or_409`` context manager: 持锁穿透 lifecycle
+    mutation, 保 CONTRACTS.md:98 不变式.
     """
     if _L1_EXTRACTION_LOCK.acquire(timeout=_L1_LOCK_WAIT_SECONDS):
-        # 立即释放; 我们只是确认 worker 已结束.
         _L1_EXTRACTION_LOCK.release()
         return
     raise HTTPException(
         409, f"{action_label} blocked: L1 extraction worker busy >"
               f" {_L1_LOCK_WAIT_SECONDS:.0f}s, retry shortly"
     )
+
+
+@_contextmanager
+def _l1_extraction_lock_or_409(action_label: str):
+    """S-07 Phase 4 Codex iter 3 #1 修订: 持 _L1_EXTRACTION_LOCK 穿透整个 reset/
+    disable lifecycle mutation. probe-release 模式 (旧 _block_until_l1_idle_or_409)
+    在 probe 通过到 mutation 之间有间隙, 让排队 BG worker 抢锁绕过保护.
+    """
+    if not _L1_EXTRACTION_LOCK.acquire(timeout=_L1_LOCK_WAIT_SECONDS):
+        raise HTTPException(
+            409,
+            f"{action_label} blocked: L1 extraction worker busy >"
+            f" {_L1_LOCK_WAIT_SECONDS:.0f}s, retry shortly",
+        )
+    try:
+        yield
+    finally:
+        _L1_EXTRACTION_LOCK.release()
 
 
 @router.post("/sandbox/advance")
@@ -1773,20 +2411,24 @@ def api_sandbox_advance(request: Request, req: SandboxAdvanceReq) -> dict:
 def api_sandbox_reset(request: Request) -> dict:
     """删干净 sandbox 目录, prod 零风险.
 
-    D-078 Codex S2 Q3-High: 阻塞直到 L1 worker 释放, 否则 worker 的 save_prefs
-    在 sandbox 已 disabled 状态下会走回 prod 路径污染 long_term_prefs.json.
+    D-078 Codex S2 Q3-High + S-07 Phase 4 iter 3 #1: 持 _L1_EXTRACTION_LOCK
+    穿透 _sandbox.reset() 整个 lifecycle. 防 probe-release 间隙让排队 BG worker
+    抢锁继续 save_prefs (sandbox 已 disable → 写回 prod long_term_prefs.json).
     """
     _require_localhost(request)
-    _block_until_l1_idle_or_409("reset")
-    return _sandbox.reset(root=ROOT)
+    with _l1_extraction_lock_or_409("reset"):
+        return _sandbox.reset(root=ROOT)
 
 
 @router.post("/sandbox/disable")
 def api_sandbox_disable(request: Request) -> dict:
-    """退出 sandbox 但保留数据 (下次 init 可复用)."""
+    """退出 sandbox 但保留数据 (下次 init 可复用).
+
+    S-07 Phase 4 iter 3 #1: 同 reset, 持锁穿透 disable() lifecycle.
+    """
     _require_localhost(request)
-    _block_until_l1_idle_or_409("disable")
-    return _sandbox.disable(root=ROOT)
+    with _l1_extraction_lock_or_409("disable"):
+        return _sandbox.disable(root=ROOT)
 
 
 @router.get("/sandbox/state")
