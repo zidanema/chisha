@@ -41,6 +41,7 @@ from typing import Any
 
 _STATE_REL = "logs/sandbox/state.json"
 _SANDBOX_DIR_REL = "logs/sandbox"
+_META_REL = "logs/sandbox/_meta.json"  # S-05: layout schema marker
 
 # 线程锁: 单进程内防 advance / reset 并发互写
 _STATE_LOCK = threading.Lock()
@@ -72,6 +73,15 @@ def _state_path(root: Path | None = None) -> Path:
 
 def _sandbox_dir(root: Path | None = None) -> Path:
     return (root or _project_root()) / _SANDBOX_DIR_REL
+
+
+def has_sandbox_meta(root: Path | None = None) -> bool:
+    """S-05: 检测 ``_meta.json`` 是否存在 (migration 已跑过).
+
+    本任务内仅给 test + future S-06a 用, **不进 path 决策链**.
+    ``is_enabled()`` 仍走 ``state.json`` (D-077 语义).
+    """
+    return ((root or _project_root()) / _META_REL).exists()
 
 
 def state(
