@@ -106,7 +106,8 @@
         "S-01",
         "S-02"
       ],
-      "status": "pending"
+      "status": "done",
+      "_notes": "useSandbox per-session state Map (~380 行) + useKeyboard Esc 单层关 (~22 行). 14 actions 全在 hook 内: eat/skip/swap/refine/selectCell/rollback/branch/openSummary/closeSummary/openConfirm/closeConfirm/openRefineModal/closeRefineModal/dismissTransient. 派生 banners (refine_conflict/review_mode/done) 全 dismissable=false 直接 derive, 不进 dismiss filter (修订 B 防 stale-id 死锁). 现有 components 全不改 (仅 App.tsx prop 接线). demo-* query 通过 hook initialState 保留 (修订 F). typecheck + build 全绿. Codex plan 3 iter (iter1 Codex 实例不可用走 opus-fallback-reviewer 标 5 BLOCKERs → v2 修订 A-J → v2 iter2 标 2 新 BLOCKERs §3.1/§3.4 文本残留 → v2.1 同步 → APPROVED), Codex diff 1 iter APPROVED. **chrome-devtools-mcp 视觉验证因 profile 锁 (其它 agent 占用) 不可用 → 推迟到 S-08 联调 (同 S-02 _notes 处理)**. 11 条验收清单功能层面 hook 覆盖 (#1-#9), 视觉层面 (#10-#11 mono 字体 / RecCard parity / 暗色) 走 S-08 视觉对比."
     },
     {
       "id": "S-04",
