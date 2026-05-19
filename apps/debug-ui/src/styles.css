@@ -2231,7 +2231,10 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
   z-index: 12;
   background: var(--bg-0);
 }
-/* condensed mode — triggered by scroll past 60px */
+/* IntersectionObserver 哨兵 — 在 sticky-stack 上方, 离开视口 → condense.
+   高度 1px 不参与视觉, 但要参与正常 scroll 流, 不能 position: fixed/sticky. */
+.sticky-sentinel { height: 1px; }
+/* condensed mode — toggled by sentinel IntersectionObserver (App.tsx) */
 .sticky-stack.condensed .rt-track,
 .sticky-stack.condensed .rt-legend { display: none; }
 .sticky-stack.condensed .rt { padding: 6px 16px; }

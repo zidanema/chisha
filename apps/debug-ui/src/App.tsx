@@ -2,7 +2,7 @@
 // 数据全部走 React state (mock fallback in waMocks.ts), 不走 window.MOCK swap.
 // Phase 2b 替换 mock 为 backend GET /api/traces + /api/trace/{id}/round/{rid}.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DagHeader } from "./components/DagHeader";
 import { IntentStrip } from "./components/IntentStrip";
 import { LookupDrawer } from "./components/LookupDrawer";
@@ -118,18 +118,22 @@ export function App() {
     }
   }, [diffMode, target, rounds]);
 
-  // 顶部 sticky-stack auto-condense (scrollTop > 60 → condensed)
+  // 顶部 sticky-stack auto-condense — 用 IntersectionObserver + 哨兵元素,
+  // 不再依赖 scrollTop 阈值. 旧实现 (scrollTop > 60 / < 20) 在 condense 后 sticky-stack
+  // 收缩 ~150px → 浏览器把 scrollTop clamp 回 < 20 → 再 expand → 又 > 60 → 无限振荡.
+  // 哨兵在 sticky-stack 正上方 1px, 一旦它离开视口顶端 → condense; 回到视口 → expand.
+  // sticky-stack 高度变化不影响哨兵 (哨兵在它之前), 反馈环断掉.
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    const content = document.querySelector(".content");
-    if (!content) return;
-    function onScroll() {
-      const top = (content as HTMLElement).scrollTop;
-      if (top > 60 && !condensed) setCondensed(true);
-      else if (top < 20 && condensed) setCondensed(false);
-    }
-    content.addEventListener("scroll", onScroll, { passive: true });
-    return () => content.removeEventListener("scroll", onScroll);
-  }, [condensed]);
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setCondensed(!entry.isIntersecting),
+      { threshold: 0, rootMargin: "0px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   // condense 时 IntentStrip auto-collapse (用户显式展开后这里就不再覆盖)
   useEffect(() => { if (condensed) setIntentCollapsed(true); }, [condensed]);
@@ -241,6 +245,9 @@ export function App() {
           activeRounds={rounds}
         />
         <div className="content wa">
+          {/* sentinel: IntersectionObserver 监控它进出视口 → 决定 sticky-stack 是否 condensed.
+              必须在 sticky-stack 之前, 不受 sticky-stack 高度变化影响, 防反馈环. */}
+          <div ref={sentinelRef} className="sticky-sentinel" aria-hidden="true" />
           <div className={`sticky-stack ${condensed ? "condensed" : ""}`}>
             <TraceContextBar
               trace={trace.meta}
