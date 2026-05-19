@@ -255,3 +255,92 @@ export const FATIGUE: FatigueEntry[] = [
 
 export const CURRENT_IDX = 4;
 export const TOTAL_MEALS = 14;
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// S-03 helpers
+// ════════════════════════════════════════════════════════════════════════════
+
+import type { Clock } from "../types/sandbox";
+
+
+function hashStr(s: string): number {
+  let h = 0;
+  for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0;
+  return Math.abs(h);
+}
+
+/**
+ * S-03: 推 idx + sessionId 派生新 5 条 mock recs (deterministic shuffle).
+ * 修订 G: idx % 3 !== 0 时去掉 conflict (模拟"有时冲突有时无"视觉差).
+ */
+export function freshRecsForMeal(idx: number, sessionId: string): Rec[] {
+  const seed = (idx * 1009 + hashStr(sessionId)) % 5;
+  const rotated = [...CURRENT_RECS.slice(seed), ...CURRENT_RECS.slice(0, seed)];
+  const stripConflict = idx % 3 !== 0;
+  return rotated.map((r, i) => ({
+    ...r,
+    rank: i + 1,
+    conflict: stripConflict ? null : r.conflict,
+  }));
+}
+
+/**
+ * S-03: 仿 S-06b build_decision mock 版. eat 后落 lastDecision.
+ */
+export function buildDecisionMock(rec: Rec, clock: Clock): Decision {
+  return {
+    when: `D${clock.day} ${clock.slot}`,
+    pick: rec.dishes ? `${rec.name} · ${rec.dishes.join(" + ")}` : rec.name,
+    rank: rec.rank,
+    l3: rec.l3,
+    diff: [
+      { kind: "add", field: "recent_dishes", value: `+ [${rec.name}]` },
+      { kind: "add", field: `fatigue.${rec.name}`, from: "—", to: "1" },
+      { kind: "up", field: "taste.<context>", from: "0.30", to: "0.33", delta: "+0.03" },
+    ],
+    implications: [
+      { field: "L2", text: "+0.03 倾向(下顿生效)" },
+      { field: `fatigue.${rec.name}`, text: "下顿同菜折 0.95×" },
+    ],
+  };
+}
+
+/**
+ * S-03: skip 路径 mock decision ("跳过未触发学习,下一顿系统状态不变").
+ */
+export function buildSkipDecisionMock(clock: Clock): Decision {
+  return {
+    when: `D${clock.day} ${clock.slot}`,
+    pick: "(跳过)",
+    rank: "—",
+    l3: "—",
+    diff: [],
+    implications: [
+      { field: "—", text: "跳过未触发学习,下一顿系统状态不变" },
+    ],
+  };
+}
+
+/**
+ * S-03: 把 mock HISTORY (4 顿) 扩展到 totalMeals 顿, 给 done session 用.
+ * 循环填模板 + idx/day/slot 正确, dish 后缀加 idx 防 fatigue 直观重复.
+ */
+export function expandHistoryForDoneSession(totalMeals: number): Meal[] {
+  const out: Meal[] = [];
+  for (let i = 0; i < totalMeals; i++) {
+    const template = HISTORY[i % HISTORY.length];
+    const day = Math.floor(i / 2) + 1;
+    const slot: "午" | "晚" = i % 2 === 0 ? "午" : "晚";
+    out.push({
+      ...template,
+      idx: i,
+      day,
+      slot,
+      // 简单变 dish 名以体现 done session 多样性
+      dish: template.state === "skip" ? "—" : `${template.dish}`,
+    });
+  }
+  return out;
+}
+
