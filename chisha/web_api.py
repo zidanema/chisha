@@ -183,16 +183,12 @@ def api_refine(req: RefineReq) -> dict:
     # D-087 v3: refine = append 新 round 到 v3 trace ({sid}/rounds/R{n}.json).
     # 上游 v2 单文件 trace 由 append_round 内部自动 migrate. 写盘失败 best-effort
     # logger.warning, 不阻断 refine response (与 D-079 风格一致).
+    # D-089-S4: 完整 L1/L2/L3 + refine_intent_llm trace 切片由 trace_helpers.
+    # build_refine_round_payload 1:1 透传 refine 返回值 (refine.py Stage 2/3 已注入).
     try:
         from chisha import trace_store
-        # 构造 round payload (debug-ui /api/trace/{id}/round/{rid} 完整 body)
-        # 注: l1/l2/l3/final 完整 trace 数据 refine_session 不直接产生; 需要重跑
-        # _build_l1_trace + score + rerank 拿. 但 refine_session 内部已经跑过完整
-        # 链路 — _build_l1_trace 再跑一遍只是为了 emit hard_filter_events,
-        # 真正 L1/L2/L3 trace 重建留给后续 task (本轮 Phase 2a 先存 stub: kpi +
-        # intent_v2 + narrative + diff, l1/l2/l3/final 标记 None 让前端兜底处理).
-        # FUTURE: 把 refine_session 返回值扩展含完整 trace 切片, 这里直接落.
-        new_round = _build_round_payload_from_refine(raw, req)
+        from chisha.trace_helpers import build_refine_round_payload
+        new_round = build_refine_round_payload(raw, req.refine_text or "")
         round_id = trace_store.append_round(
             req.session_id, new_round, root=ROOT,
         )
@@ -210,54 +206,6 @@ def api_refine(req: RefineReq) -> dict:
         )
 
     return out
-
-
-def _build_round_payload_from_refine(raw: dict, req: "RefineReq") -> dict:
-    """从 refine_session 返回 + req 构造 round payload (供 trace_store.append_round).
-
-    含: user_input, intent (V1), intent_v2, narrative, kpi, l1/l2/l3/final stub.
-    完整 l1/l2/l3 trace 暂用 stub (refine_session 没暴露完整切片), 后续 task
-    扩展 refine_session 返回值后这里 1:1 落.
-    """
-    cands = raw.get("candidates") or []
-    top1_name = ""
-    if cands:
-        top1_name = (cands[0].get("restaurant") or {}).get("name") or ""
-    stats = raw.get("stats") or {}
-    return {
-        "started_at": raw.get("generated_at"),
-        "label": (req.refine_text or "追问")[:20],
-        "user_input": req.refine_text or "",
-        "intent": raw.get("refine_intent"),
-        "intent_v2": raw.get("refine_intent_v2"),
-        "narrative": raw.get("narrative") or "",
-        "reference_resolved": raw.get("_reference_resolved"),
-        "subtype_diversified": bool(raw.get("_subtype_diversified")),
-        "refine_hard_filter_events": raw.get("_refine_hard_filter_events") or [],
-        "refine_recall_fallback_events": raw.get("_refine_recall_fallback_events") or [],
-        "kpi": {
-            "combos": stats.get("n_combos_recalled") or 0,
-            "l2_top": stats.get("n_combos_after_score") or 0,
-            "top1": top1_name,
-            "latency_ms": 0,   # refine_session 内部 latency 没暴露; 后续扩展
-        },
-        "diff": None,    # diff vs 上一轮: 留给前端按 round.final 集合算 (后端可后续填)
-        # l1/l2/l3/final stub — refine_session 当前不暴露完整 trace 切片;
-        # debug-ui 切到 R{n>=2} 时显示 "刷新 refine 暂未存完整链路, 等扩展" 兜底.
-        "l1": None,
-        "l2": None,
-        "l3": None,
-        "final": [
-            {
-                "rank": i + 1,
-                "restaurant": c.get("restaurant") or {},
-                "dishes": c.get("dishes") or [],
-                "score": c.get("score"),
-                "kind": c.get("kind") or ("exploit" if i < 3 else "explore"),
-            }
-            for i, c in enumerate(cands[:5])
-        ],
-    }
 
 
 # ---------- /api/accept ----------

@@ -399,31 +399,76 @@ def _clean_parsed_to_v2(parsed: dict, *, raw_text: str) -> RefineIntentV2:
 # ─────────────────────────── LLM 路径 (安全带核心) ────────────────────────
 
 def _llm_parse_v2(text: str,
-                   profile_llm: dict | None = None) -> dict | None:
+                   profile_llm: dict | None = None,
+                   trace_collector: dict | None = None) -> dict | None:
     """调 LLM 返回 dict, 失败返回 None.
 
     memory `chisha_llm_call_principles`: L1 抽取低频, 走 text+JSON 路径 (不引入 tool_use).
     memory `chisha_l3_model_refine_intent_sensitivity`: profile.yaml 用 sonnet/opus,
         避免 deepseek-flash 稀释 intent.
+
+    D-089-S3: trace_collector 注入时, 把 LLM call 完整 trace stash 进去
+    (system_prompt_full / user_message_full / raw_response / latency / usage /
+    model / resolved_provider / stop_reason / fallback_reason). 给
+    trace_helpers.serialize_llm_call_trace 消费, 落 R2 round.refine_intent_llm.
+    refine round trace 自包含的关键 — 让 debug-ui 能 replay 当次意图解析全过程.
     """
+    import time as _time
+    # parse_refine_intent_v2.md 不像 rerank 那样有 {INPUT_TEXT} 之外的动态部分,
+    # system_prompt 形态上等同 "整个 prompt 模板"; user_message 是 INPUT_TEXT 子串.
+    # 但当前实现是单消息: 整段 prompt = system + user 混合放在 user role.
+    # 落 trace 时分两段: prompt_template (== system_prompt_full),
+    # input_text (== user_message_full). 等迁移到 system/user 分离后这里语义自然.
+    prompt_template = ""
+    final_prompt = ""
     try:
-        from chisha.llm_client import call_text
-        prompt = PROMPT_PATH_V2.read_text(encoding="utf-8").replace(
-            "{INPUT_TEXT}", text
-        )
-        resp = call_text(prompt, max_tokens=1024, temperature=0.0,
+        from chisha.llm_client import call_text, _resolve_provider
+        prompt_template = PROMPT_PATH_V2.read_text(encoding="utf-8")
+        final_prompt = prompt_template.replace("{INPUT_TEXT}", text)
+        if trace_collector is not None:
+            # 当前 prompt 形式: 整段模板 (含 {INPUT_TEXT} 替换). 拆解:
+            # system_prompt_full = prompt 模板里 INPUT_TEXT 之前的固定部分 +
+            # user_message_full = INPUT_TEXT 本身 (用户追问原文).
+            # 用 split: 让 trace 体现"框架部分"和"用户输入部分"边界.
+            template_head, _sep, template_tail = prompt_template.partition("{INPUT_TEXT}")
+            trace_collector["system_prompt_full"] = template_head + template_tail
+            trace_collector["system_prompt_chars"] = len(template_head + template_tail)
+            trace_collector["user_message_full"] = text
+            trace_collector["user_message_chars"] = len(text)
+            try:
+                trace_collector["resolved_provider"] = _resolve_provider(profile_llm)
+            except Exception:
+                trace_collector["resolved_provider"] = None
+            trace_collector["max_tokens"] = 1024
+            trace_collector["temperature"] = 0.0
+        t0 = _time.time()
+        resp = call_text(final_prompt, max_tokens=1024, temperature=0.0,
                           json_mode=True, profile_llm=profile_llm)
+        latency_ms = int((_time.time() - t0) * 1000)
         out = resp.get("content", "") if isinstance(resp, dict) else ""
+        if trace_collector is not None:
+            trace_collector["latency_ms"] = latency_ms
+            trace_collector["raw_response"] = out
+            if isinstance(resp, dict):
+                trace_collector["usage"] = resp.get("usage")
+                trace_collector["model"] = resp.get("model")
+                trace_collector["stop_reason"] = resp.get("stop_reason")
         if not out:
+            if trace_collector is not None:
+                trace_collector["fallback_reason"] = "LLM 返回空 content"
             return None
         # 去 markdown 代码块, 提取最外层 {...}
         m = re.search(r"\{.*\}", out, re.DOTALL)
         if not m:
+            if trace_collector is not None:
+                trace_collector["fallback_reason"] = "raw_response 内无 JSON 对象"
             return None
         return json.loads(m.group(0))
     except Exception as e:
-        print(f"  [refine_intent_v2] LLM 失败 "
-              f"({type(e).__name__}: {str(e)[:80]}), 降级 V1 from_legacy")
+        fail_msg = f"{type(e).__name__}: {str(e)[:160]}"
+        if trace_collector is not None:
+            trace_collector["fallback_reason"] = fail_msg
+        print(f"  [refine_intent_v2] LLM 失败 ({fail_msg}), 降级 V1 from_legacy")
         return None
 
 
@@ -434,6 +479,7 @@ def extract_refine_intent_v2(
     *,
     use_llm: bool | None = None,
     profile_llm: dict | None = None,
+    trace_collector: dict | None = None,
 ) -> RefineIntentV2:
     """安全带 #1: LLM 多 slot 解析, 失败降级到 V1 from_legacy.
 
@@ -478,7 +524,8 @@ def extract_refine_intent_v2(
     if not use_llm:
         return _fallback_to_legacy("LLM 不可用, 走规则兜底")
 
-    parsed = _llm_parse_v2(text, profile_llm=profile_llm)
+    parsed = _llm_parse_v2(text, profile_llm=profile_llm,
+                             trace_collector=trace_collector)
     if parsed is None:
         return _fallback_to_legacy("LLM 解析失败, 走 V1 兜底")
 

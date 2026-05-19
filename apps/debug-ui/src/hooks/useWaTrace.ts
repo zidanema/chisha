@@ -78,8 +78,12 @@ function makeEmptyL2(): RoundRecord["l2"] {
   };
 }
 function makeEmptyL3(): RoundRecord["l3"] {
+  // D-089-S5b: status: "skipped" → "no_data" — 之前 "skipped" 容易让人误以为是
+  // 业务跳过 (LLM 关闭 / top_combos 为空), 实际是 round 根本没存 L3 切片.
+  // 现在 D-089-S2 之后 refine round 也存完整切片, 这个兜底几乎不会触发,
+  // 但保留兜底语义清晰 ("no_data" = 数据缺失, 跟业务的 "skipped" 区分).
   return {
-    status: "skipped", resolved_provider: "—", model: "—",
+    status: "no_data", resolved_provider: "—", model: "—",
     latency_ms: 0, input_tokens: 0, output_tokens: 0,
     cache_read_input_tokens: 0, cache_creation_input_tokens: 0,
     system_prompt_chars: 0, user_message_chars: 0,
@@ -116,13 +120,16 @@ function stubToRound(stub: BackendRoundStub, fallback?: WaTrace): RoundRecord {
 
 function fullToRound(full: BackendRoundFull, fallback?: WaTrace): RoundRecord {
   const base = stubToRound(full, fallback);
+  // D-089-S5a: refine_intent_llm 顶层字段直接透传 (BackendLlmCallTrace 已经是
+  // view-model 对齐 shape, 不需要 adapter 转换).
+  const refineIntentLlm = (full.refine_intent_llm ?? null) as RoundRecord["refine_intent_llm"];
   // 后端 full payload 的 l1/l2/l3/final 是原始 backend trace shape (api.py 产),
   // panel 期望前端 view-model shape (mocks/session.ts 的 L1Trace/L2Trace/...).
   // 走 traceToSession 复用既有 adapter (D-079 PR-3 的成果), 把 backend 形状映射
   // 成 Session, 再拆出 l1/l2/l3/final 灌进 RoundRecord.
-  // null body (Phase 2a R2+ refine 还没存完整切片) → 保留 fallback mock.
+  // D-089-S2 之后 refine round 也含完整切片; null body 兜底保留 (老 trace 兼容).
   if (!full.l1 || !full.l2 || !full.l3 || !full.final) {
-    return base;
+    return { ...base, refine_intent_llm: refineIntentLlm };
   }
   try {
     const synthBackendTrace: BackendDebugTrace = {
@@ -147,11 +154,16 @@ function fullToRound(full: BackendRoundFull, fallback?: WaTrace): RoundRecord {
       __config: {} as BackendDebugTrace["__config"],
     };
     const sess = traceToSession(synthBackendTrace);
-    return { ...base, l1: sess.l1, l2: sess.l2, l3: sess.l3, final: sess.final, __partial: false };
+    return {
+      ...base,
+      l1: sess.l1, l2: sess.l2, l3: sess.l3, final: sess.final,
+      refine_intent_llm: refineIntentLlm,
+      __partial: false,
+    };
   } catch (e) {
     // 后端 trace shape 异常时 fallback 到 stub (panel 仍能渲染 mock)
     console.warn("[useWaTrace] traceToSession adapter failed, using stub:", e);
-    return base;
+    return { ...base, refine_intent_llm: refineIntentLlm };
   }
 }
 
@@ -320,6 +332,17 @@ export function useWaTrace(): UseWaTrace {
         lruRef.current.set(cacheKey, stubRound);
         return stubRound;
       }
+      return null;
+    }
+    // D-088 (B6 fix): 两道 stale guard, 防 mock→backend 切换瞬间打错 round id.
+    // (a) activeTraceId 已切但 activeTrace state 还是上一条 (mock or 上一 trace) →
+    //     拿 mock 的 R4 去打新 trace 必 404.
+    // (b) activeTrace 已同步到新 trace, 但 target/activeRound 还停在旧值 (R4),
+    //     而新 trace.rounds 只有 [R1] → stubRound 找不到, 这种 roundId 也别打.
+    if (activeTrace.meta.id !== activeTraceId) {
+      return null;
+    }
+    if (!stubRound) {
       return null;
     }
     // backend 模式: async fetch + cache

@@ -391,9 +391,11 @@ function wrapTraceL3(l3: BackendTraceL3,
     used: l3.used,
     model: l3.model,
     system_prompt_chars: l3.system_prompt_chars ?? 0,
-    system_prompt_full: "",
+    // D-089-S5a: 之前硬编码 "" — 现在 backend 必填 system_prompt_full
+    // (trace self-contained 原则), 直接透传. 老 trace 缺字段时兜空串.
+    system_prompt_full: l3.system_prompt_full ?? "",
     user_message_chars: l3.user_message_chars ?? 0,
-    user_message_preview: "",
+    user_message_preview: l3.user_message_preview ?? "",
     user_message_full: l3.user_message_full ?? "",
     raw_response: l3.raw_response ?? "",
     raw_response_chars: l3.raw_response_chars ?? 0,

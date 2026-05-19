@@ -281,3 +281,12 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 根因 3 (B4): `web_api._attach_feedback_to_meta` 只派生 `type/rank`, TraceBrowser 显示 `+2` 神秘. 修法: 派生加 `restaurant_name`, 前端用 ASCII `★` + 餐厅名截断显示
 - 顺手修: RefineTimeline `<div>` 改 `<button>` + `aria-pressed` (B2); stubToRound mock R1 兜底改 zero-state skeleton (B3); useWaTrace 5s 轮询 `/api/traces` (B5)
 - 验证: 全 pytest 796 passed (基线 791 + 5 新增 backend test) + chrome-devtools-mcp golden path 全过. spec/plan: `specs/Debug.md` / `plans/Debug.plan.md`
+
+## D-089
+**trace 自包含化 + refine 全链路落盘 + R1 L3 fallback bug 修复。** (2026-05-19) · trace 第一原则
+- R1 L3 fallback 根因 (S6): `profile.yaml` 配 `openrouter: deepseek/deepseek-v4-flash` 经 Morph 路由不支持 D-047 tool_use 的 structural_tag grammar (Morph 502 "Failed to compile structural_tag grammar"), 整条 R1 L3 无声 fallback 到 L2 ordering. 改回 sonnet-4.6 + openrouter.py 加 None guard 让上游 error message 可读
+- 第一原则: trace 是 source of truth — 所有 LLM call 的 `system_prompt_full` / `user_message_full` / `raw_response` body 必须落 trace, 不能事后从 `prompts/*.md` 当前版本重建 (prompt 会迭代, 留 chars 丢 body 等于 trace 无法 replay)
+- 新建 `chisha/trace_helpers.py` 集中 4 helper (`normalize_usage_fields` / `serialize_llm_call_trace` / `build_l3_trace_from_collector` / `build_refine_round_payload`) 消灭 L3 / refine round 序列化三份漂移
+- refine round 落完整 L1/L2/L3 切片 (refine.py 实际就走完整链路, 不是简化路径) + 新顶层字段 `refine_intent_llm` (意图解析 LLM call 完整 trace)
+- 字段命名统一: backend `system_prompt_full` (不用 `system_prompt`), usage Anthropic-style. PanelRefineIntentLLM 新 panel + makeEmptyL3 `"skipped"` → `"no_data"` 区分数据缺失 vs 业务跳过
+- 老 trace 归档 `logs/recommend_trace.archived_2026-05-19/` (20 条 fallback 路径污染数据), 不做 backfill 迁移. 验证: pytest 826 全过 (含 16 新增 D-089 测试, baseline_l2 严格不漂) + 新 trace E2E R1+R2 字段完整

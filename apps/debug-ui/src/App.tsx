@@ -20,6 +20,7 @@ import { PanelL1 } from "./panels/PanelL1";
 import { PanelL2 } from "./panels/PanelL2";
 import { PanelL3 } from "./panels/PanelL3";
 import { PanelFinal } from "./panels/PanelFinal";
+import { PanelRefineIntentLLM } from "./panels/PanelRefineIntentLLM";
 import type { RoundRecord, Session, WaTrace } from "./types/trace";
 
 type DiffMode = "vs_r1" | "adjacent";
@@ -281,6 +282,15 @@ export function App() {
           </div>
 
           <RoundBanner targetRound={targetRoundFull} baseRound={baseRound} />
+
+          {/* D-089-S5b: R2+ refine round 含 refine_intent_llm 切片时, 在 L1 panel
+              之上挂"意图解析 LLM call" panel. R1 / 无 refine intent LLM 调用时
+              不挂载. 这是 Faithful Refine "执行用户表达" 的可证据视图. */}
+          {targetRoundFull.refine_intent_llm && (
+            <div className="panel-wrap" data-panel="refine_intent_llm">
+              <PanelRefineIntentLLM trace={targetRoundFull.refine_intent_llm} />
+            </div>
+          )}
 
           <PanelRoundStrip layer="l1" targetRound={targetRoundFull} baseRound={baseRound} />
           <div className="panel-wrap" data-panel="l1"><PanelL1 l1={targetRoundFull.l1} /></div>

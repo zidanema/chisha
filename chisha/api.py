@@ -441,36 +441,14 @@ def _build_trace(
         "top": _format_ranked_for_trace(ranked, top=L3_INPUT_TOP_K),
     }
 
-    # L3 trace
+    # L3 trace (D-089-S1: 统一走 trace_helpers.build_l3_trace_from_collector,
+    # 消灭 R1 主链路 / refine 路径双份 L3 序列化漂移. helper 含 system_prompt_full
+    # 等 D-089 新增字段, 自动跟前端 BackendL3Llm shape 对齐.)
+    from chisha.trace_helpers import build_l3_trace_from_collector
     payload = build_payload(top_k, profile, ctx, meal_log, n=5, n_explore=2)
-    l3_trace = {
-        "used": bool(l3_collector.get("llm_called")),
-        "status": l3_collector.get("status"),
-        "model": l3_collector.get("model"),
-        "resolved_provider": l3_collector.get("resolved_provider"),
-        "raw_response": l3_collector.get("raw_response", ""),
-        "raw_response_chars": l3_collector.get("raw_response_chars", 0),
-        "system_prompt_chars": l3_collector.get("system_prompt_chars"),
-        "user_message_chars": l3_collector.get("user_message_chars"),
-        "user_message_full": l3_collector.get("user_message_full"),
-        "tool_input": l3_collector.get("tool_input"),
-        "stop_reason": l3_collector.get("stop_reason"),
-        "fallback_reason": l3_collector.get("fallback_reason"),
-        "parsed_candidates": l3_collector.get("parsed_candidates"),
-        # Codex H2 修: narrative 必须落 trace, 否则 Faithful Refine 执行证据链断裂
-        # (response 顶层有 narrative, trace 缺会让 debug-ui Replay 找不到 narrative 来源).
-        "narrative": l3_collector.get("narrative", ""),
-        "payload_to_llm": payload,
-        "n_returned": len(reranked),
-        "used_fallback": bool(l3_collector.get("used_fallback")),
-        # D-079 followup: 写入 LLM 真实 latency / usage / sampling 让 DagHeader
-        # 能渲染 cache_hit% / token 概览 (BackendTraceL3 早已声明这些 optional
-        # 字段, 但之前的 _build_trace 漏拷). 旧 trace 这些字段不存在, adapter 兜底.
-        "latency_ms": l3_collector.get("latency_ms"),
-        "usage": l3_collector.get("usage"),
-        "max_tokens": l3_collector.get("max_tokens"),
-        "temperature": l3_collector.get("temperature"),
-    }
+    l3_trace = build_l3_trace_from_collector(
+        l3_collector, payload_to_llm=payload, n_returned=len(reranked)
+    )
 
     final_view = [_format_final_candidate(i + 1, c) for i, c in enumerate(reranked)]
 

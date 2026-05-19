@@ -116,19 +116,68 @@ def _to_openai_tool_choice(c: dict) -> dict:
 
 # ─────────────────────────── parser ───────────────────────────
 
+def _dump_or_error(resp) -> str:
+    """挖出 OR 异常返回里能解释根因的字段, 返回 JSON 字符串供 fallback_reason 引用.
+
+    OR 在上游报错时常见 shape:
+      {"error": {"message": "...", "code": "...", "metadata": {...}}}
+    OpenAI SDK 会把这些非 ChatCompletion schema 字段塞到 BaseModel.model_extra.
+    """
+    payload: dict = {}
+    for attr in ("error", "model_extra"):
+        v = getattr(resp, attr, None)
+        if v:
+            payload[attr] = v if isinstance(v, dict) else str(v)
+    try:
+        full = resp.model_dump(exclude_none=False)
+        # 只截前 400 字符以防 raw_text 过长撑爆 fallback_reason
+        payload["raw"] = full
+    except Exception:
+        payload["raw"] = str(resp)[:500]
+    return json.dumps(payload, ensure_ascii=False, default=str)[:400]
+
+
 def _parse_response(resp, *, model: str) -> dict:
-    """OpenAI SDK ChatCompletion (走 OR) -> 统一 dict."""
+    """OpenAI SDK ChatCompletion (走 OR) -> 统一 dict.
+
+    D-089-S6 fix: OR 在上游 provider 报错 / 限流 / 路由失败时, SDK 不抛异常,
+    而是返回一个 choices=None 的 ChatCompletion 对象 (top-level 带 error 字段).
+    必须显式检查并把 OR 真实错误暴露成 OpenRouterProviderError, 让上游
+    rerank fallback_reason 能看到 "OR returned no choices: <error>",
+    而不是吞成无意义的 "TypeError: NoneType subscript".
+    """
+    # D-089-S6 fix: OR 在上游 provider 报错 / 限流 / 路由失败时, SDK 不抛异常,
+    # 而是返回一个 choices=None (或 usage=None) 的 ChatCompletion 对象, top-level
+    # 带 error 字段. 必须显式 raise OpenRouterProviderError 让上游 fallback_reason
+    # 看到 "OR returned no choices: <error>", 而不是吞成无意义的 "TypeError".
+    if not getattr(resp, "choices", None):
+        raise OpenRouterProviderError(
+            f"OR returned no choices (model={model}): {_dump_or_error(resp)}"
+        )
     choice = resp.choices[0]
     msg = choice.message
     finish = choice.finish_reason
-    u = resp.usage.model_dump() if hasattr(resp.usage, "model_dump") else dict(resp.usage)
-    pdetails = u.get("prompt_tokens_details", {}) or {}
+    # usage 可能 None (某些 OR 异常返回路径会丢 usage). 不 raise — 这是 soft signal,
+    # 不影响业务结果, 落 0 兜底; 但通过 fallback_reason 链路也能感知.
+    u_obj = getattr(resp, "usage", None)
+    if u_obj is None:
+        u = {}
+    elif hasattr(u_obj, "model_dump"):
+        u = u_obj.model_dump()
+    else:
+        try:
+            u = dict(u_obj)
+        except Exception:
+            u = {}
+    pdetails = u.get("prompt_tokens_details") or {}
+    if not isinstance(pdetails, dict):
+        pdetails = {}
     usage = {
-        "prompt_tokens": u.get("prompt_tokens", 0),
-        "completion_tokens": u.get("completion_tokens", 0),
+        "prompt_tokens": u.get("prompt_tokens", 0) or 0,
+        "completion_tokens": u.get("completion_tokens", 0) or 0,
         "cached_tokens": pdetails.get("cached_tokens", 0) or 0,
         "cache_write_tokens": pdetails.get("cache_write_tokens", 0) or 0,
-        "cost": u.get("cost", 0),
+        "cost": u.get("cost", 0) or 0,
     }
     # tool_calls 优先
     if msg.tool_calls:
