@@ -143,7 +143,8 @@
       "depends_on": [
         "S-05"
       ],
-      "status": "pending"
+      "status": "done",
+      "_notes": "chisha/sandbox.py 加 meal_idx_to_slot + _state_path_for_sid + advance_meal (~95 行); chisha/sandbox_decision_diff.py 新建 build_decision 纯函数 (~135 行). advance_meal 走自有 sid-aware path helper (绕开 S-04 state() stub 的 `del session_id`), 默认桶扁平 / 非 default → sessions/{sid}/state.json. total_meals 语义: idx ∈ [0, total], idx=total 是 done sentinel. build_decision: history[-1]=本顿契约, prev/new long_term_prefs.boost epsilon=1e-3 落 taste up/dn. 17 单测 (9+8) + 888 全测试通过. Codex plan 3 iter (BLOCKED→BLOCKED→APPROVED): iter1 BLOCKER 1/2 (state()/_state_path 不 sid-aware) + FINDING-3 (total_meals 边界) → v2 修订 A (自有 path helper) / B (语义文档) / C (history 契约); iter2 BLOCKER-3 (§6 残留 ContextVar 描述) → v2.1 同步; iter3 APPROVED. Codex diff 1 iter APPROVED."
     },
     {
       "id": "S-06c",
