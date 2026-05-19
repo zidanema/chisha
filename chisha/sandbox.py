@@ -42,6 +42,7 @@ from typing import Any
 _STATE_REL = "logs/sandbox/state.json"
 _SANDBOX_DIR_REL = "logs/sandbox"
 _META_REL = "logs/sandbox/_meta.json"  # S-05: layout schema marker
+_SESSIONS_DIR_REL = "logs/sandbox/sessions"  # S-06a: sandbox 非 default 桶目录
 
 # 线程锁: 单进程内防 advance / reset 并发互写
 _STATE_LOCK = threading.Lock()
@@ -213,7 +214,196 @@ def init(
             json.dumps(new_state, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        # S-06a 修订 B: ensure layout-v2 _meta.json so post-init flows
+        # (POST /sessions, /sandbox/inspect 三态) 看到 coherent v2 layout.
+        # 幂等: 若 migration 已写 schema_version=2 则不覆盖.
+        from chisha import sandbox_migration as _sm
+        if not _sm.read_meta(root or _project_root()):
+            _sm._atomic_write_meta(
+                root or _project_root(),
+                {
+                    "schema_version": _sm.SCHEMA_VERSION,
+                    "created_at": _now_real_iso(),
+                    "default_layout": "flat",
+                    "relocated_legacy": False,
+                    "created_by": "sandbox.init",
+                },
+            )
         return new_state
+
+
+# ---------- S-06a: sessions CRUD (module-level helpers) ----------
+
+def _sessions_root(root: Path | None = None) -> Path:
+    return (root or _project_root()) / _SESSIONS_DIR_REL
+
+
+def list_sessions(root: Path | None = None) -> list[dict]:
+    """S-06a: 列出 sandbox 桶 (含 default, 不含 _legacy / D-039 .json 文件 /
+    非法 sid 目录名).
+
+    Default 桶永远首位; 非 default 桶按 sid 字典序.
+
+    返回 dict shape (web 层包装成 SandboxSessionMeta):
+      sid / is_default / created_at / size_bytes / has_state
+    """
+    from chisha.sandbox_context import _validate_sid as _vs, _RESERVED_SIDS
+    items: list[dict] = []
+
+    # default 桶
+    state_p = _state_path(root)
+    default_created: str | None = None
+    if state_p.exists():
+        try:
+            st = json.loads(state_p.read_text(encoding="utf-8"))
+            if isinstance(st, dict):
+                default_created = st.get("started_at_real")
+        except (OSError, json.JSONDecodeError):
+            default_created = None
+    if default_created is None:
+        # fall back to _meta.json created_at
+        from chisha import sandbox_migration as _sm
+        m = _sm.read_meta(root or _project_root())
+        if m:
+            default_created = m.get("created_at")
+    default_size = _dir_size_safe(_sandbox_dir(root), exclude_subdir="sessions")
+    items.append({
+        "sid": "_default",
+        "is_default": True,
+        "created_at": default_created,
+        "size_bytes": default_size,
+        "has_state": state_p.exists(),
+    })
+
+    # 非 default 桶
+    sroot = _sessions_root(root)
+    if sroot.exists():
+        try:
+            entries = sorted(sroot.iterdir(), key=lambda p: p.name)
+        except OSError:
+            entries = []
+        for entry in entries:
+            if not entry.is_dir():
+                continue  # 跳 .json (D-039 default 桶产物)
+            sid = entry.name
+            if sid in _RESERVED_SIDS:
+                continue  # _legacy
+            try:
+                _vs(sid)
+            except ValueError:
+                continue  # 非法 sid 目录名
+            items.append({
+                "sid": sid,
+                "is_default": False,
+                "created_at": _entry_ctime_iso(entry),
+                "size_bytes": _dir_size_safe(entry),
+                "has_state": False,  # S-06b 才真造 state.json
+            })
+    return items
+
+
+def _dir_size_safe(p: Path, *, exclude_subdir: str | None = None) -> int:
+    """递归算目录总大小, IO 错回 0. exclude_subdir 用于 default 桶 size 排除
+    sessions/ 子树 (避免把非 default 桶大小也算进 default)."""
+    if not p.exists():
+        return 0
+    total = 0
+    try:
+        for child in p.iterdir():
+            try:
+                if exclude_subdir is not None and child.name == exclude_subdir:
+                    continue
+                if child.is_dir():
+                    total += _dir_size_safe(child)
+                elif child.is_file():
+                    total += child.stat().st_size
+            except OSError:
+                continue
+    except OSError:
+        return total
+    return total
+
+
+def _entry_ctime_iso(p: Path) -> str | None:
+    try:
+        ts = p.stat().st_ctime
+        return dt.datetime.fromtimestamp(ts, dt.timezone.utc).isoformat()
+    except OSError:
+        return None
+
+
+def create_session(sid: str, *, root: Path | None = None) -> dict:
+    """S-06a: 创建非 default sandbox 桶. 失败: ValueError (reserved/无效) /
+    FileExistsError (已存在)."""
+    from chisha.sandbox_context import _validate_sid as _vs, _DEFAULT_SID
+    if sid == _DEFAULT_SID:
+        raise ValueError(f"sandbox session_id {sid!r} is reserved (default bucket)")
+    _vs(sid)
+    sroot = _sessions_root(root)
+    sroot.mkdir(parents=True, exist_ok=True)
+    bucket = sroot / sid
+    try:
+        bucket.mkdir(parents=False, exist_ok=False)
+    except FileExistsError:
+        raise FileExistsError(f"sandbox session_id={sid!r} already exists")
+    return {
+        "sid": sid,
+        "is_default": False,
+        "created_at": _entry_ctime_iso(bucket),
+        "size_bytes": 0,
+        "has_state": False,
+    }
+
+
+def delete_session(sid: str, *, root: Path | None = None) -> dict:
+    """S-06a: 删除非 default sandbox 桶. 失败: ValueError (default/无效) /
+    FileNotFoundError (不存在)."""
+    from chisha.sandbox_context import _validate_sid as _vs, _DEFAULT_SID
+    if sid == _DEFAULT_SID:
+        raise ValueError("default sandbox bucket cannot be deleted")
+    _vs(sid)
+    bucket = _sessions_root(root) / sid
+    if not bucket.is_dir():
+        raise FileNotFoundError(f"sandbox session_id={sid!r} not found")
+    import shutil
+    shutil.rmtree(bucket)
+    return {"ok": True, "deleted_sid": sid}
+
+
+def rename_session(
+    old_sid: str, new_sid: str, *, root: Path | None = None,
+) -> dict:
+    """S-06a: rename 非 default sandbox 桶 (同 fs 原子). 失败:
+    - ValueError: old/new 是 default / 不合法 / 同名
+    - FileNotFoundError: 老桶不存在
+    - FileExistsError: 新桶已存在
+    - OSError(EXDEV): 跨 fs (caller 应 500)
+    """
+    from chisha.sandbox_context import _validate_sid as _vs, _DEFAULT_SID
+    if old_sid == _DEFAULT_SID:
+        raise ValueError("default sandbox bucket cannot be renamed (old)")
+    if new_sid == _DEFAULT_SID:
+        raise ValueError("default sandbox bucket cannot be renamed (new)")
+    _vs(old_sid)
+    _vs(new_sid)
+    if old_sid == new_sid:
+        raise ValueError(f"rename no-op: old_sid == new_sid == {old_sid!r}")
+    sroot = _sessions_root(root)
+    old_dir = sroot / old_sid
+    new_dir = sroot / new_sid
+    if not old_dir.is_dir():
+        raise FileNotFoundError(f"sandbox session_id={old_sid!r} not found")
+    if new_dir.exists():
+        raise FileExistsError(f"sandbox session_id={new_sid!r} already exists")
+    import os as _os
+    _os.rename(old_dir, new_dir)  # 同 fs 原子; 跨 fs 抛 OSError(EXDEV)
+    return {
+        "sid": new_sid,
+        "is_default": False,
+        "created_at": _entry_ctime_iso(new_dir),
+        "size_bytes": _dir_size_safe(new_dir),
+        "has_state": False,
+    }
 
 
 def advance(

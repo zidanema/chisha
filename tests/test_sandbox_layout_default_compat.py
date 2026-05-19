@@ -51,20 +51,29 @@ def test_default_bucket_data_readable_after_migrate(tmp_root: Path) -> None:
 
 # ────────────────────────── _meta.json 行为
 def test_meta_written_with_schema_version_2(tmp_root: Path) -> None:
+    """S-06a 修订 B: sandbox.init() 已自带 ensure _meta.json (idempotent), 所以
+    migrate_to_v2 第一次跑就是 already_migrated. 关键 invariant: meta 存在 +
+    schema_version=2 + default_layout=flat."""
     sandbox.init(start_date="2026-05-20", root=tmp_root)
+    # S-06a 修订 B: init 已写 meta
+    meta_init = read_meta(tmp_root)
+    assert meta_init is not None
+    assert meta_init["schema_version"] == SCHEMA_VERSION
+    assert meta_init["default_layout"] == "flat"
+    # migrate_to_v2 是 no-op
     result = migrate_to_v2(tmp_root)
-    assert result["status"] == "migrated"
+    assert result["status"] == "already_migrated"
     meta = read_meta(tmp_root)
     assert meta is not None
     assert meta["schema_version"] == SCHEMA_VERSION
     assert meta["default_layout"] == "flat"
-    assert meta["migrated_at"]
 
 
 def test_idempotent_rerun_is_noop(tmp_root: Path) -> None:
+    """S-06a 修订 B 后, init 已写 meta → migrate_to_v2 两次都 already_migrated."""
     sandbox.init(start_date="2026-05-20", root=tmp_root)
     r1 = migrate_to_v2(tmp_root)
-    assert r1["status"] == "migrated"
+    assert r1["status"] == "already_migrated"
     r2 = migrate_to_v2(tmp_root)
     assert r2["status"] == "already_migrated"
     # 二次跑后 meta 不变
@@ -82,10 +91,15 @@ def test_no_sandbox_dir_returns_no_sandbox(tmp_root: Path) -> None:
 
 # ────────────────────────── dry-run
 def test_dry_run_no_disk_writes(tmp_root: Path) -> None:
+    """S-06a 修订 B 后, init 已写 meta. dry_run 不该改 meta 内容 (但 meta 已存在)."""
     sandbox.init(start_date="2026-05-20", root=tmp_root)
+    meta_before = read_meta(tmp_root)
+    assert meta_before is not None and meta_before["schema_version"] == SCHEMA_VERSION
     result = migrate_to_v2(tmp_root, dry_run=True)
-    assert result["status"] == "dry_run"
-    assert read_meta(tmp_root) is None
+    # 已 migrated (init 写过 meta) + 不要 relocate → already_migrated, 与 dry_run flag 无关
+    assert result["status"] in ("dry_run", "already_migrated")
+    meta_after = read_meta(tmp_root)
+    assert meta_after == meta_before  # dry_run 不动 meta
 
 
 # ────────────────────────── relocate-legacy opt-in
@@ -116,9 +130,11 @@ def test_relocate_idempotent_second_run_skips(tmp_root: Path) -> None:
 
 # ────────────────────────── has_sandbox_meta helper
 def test_has_sandbox_meta_helper(tmp_root: Path) -> None:
+    """S-06a 修订 B: sandbox.init() 已 ensure meta → 一步成立."""
+    assert not sandbox.has_sandbox_meta(tmp_root)  # init 前 false
     sandbox.init(start_date="2026-05-20", root=tmp_root)
-    assert not sandbox.has_sandbox_meta(tmp_root)
-    migrate_to_v2(tmp_root)
+    assert sandbox.has_sandbox_meta(tmp_root)  # init 后 true (S-06a)
+    migrate_to_v2(tmp_root)  # idempotent
     assert sandbox.has_sandbox_meta(tmp_root)
 
 
@@ -142,13 +158,17 @@ def test_sessions_dir_not_relocated(tmp_root: Path) -> None:
 
 
 def test_relocate_after_default_migrate_runs(tmp_root: Path) -> None:
-    """Codex fix #2: 默认 migrate 后, --relocate-legacy 仍可跑 (relocate_only 分支)."""
+    """Codex fix #2: 默认 migrate 后, --relocate-legacy 仍可跑 (relocate_only 分支).
+
+    S-06a 修订 B 后: sandbox.init() 已 ensure meta (relocated_legacy=False) →
+    第一次 migrate_to_v2() 直接 already_migrated (而非 migrated).
+    """
     sandbox.init(start_date="2026-05-20", root=tmp_root)
     sb = tmp_root / "logs" / "sandbox"
     (sb / "meal_log.jsonl").write_text("data\n", encoding="utf-8")
-    # 1. 默认 migrate (不 relocate)
+    # 1. 默认 migrate (不 relocate) — init 已写 meta, 直接 already_migrated
     r1 = migrate_to_v2(tmp_root)
-    assert r1["status"] == "migrated"
+    assert r1["status"] == "already_migrated"
     meta1 = read_meta(tmp_root)
     assert meta1 is not None
     assert meta1["relocated_legacy"] is False
@@ -168,12 +188,17 @@ def test_relocate_after_default_migrate_runs(tmp_root: Path) -> None:
 
 # ────────────────────────── v5.2 Codex iter 2 fix tests
 def test_relocate_twice_second_is_already_migrated(tmp_root: Path) -> None:
-    """v5.2 Codex fix #1: 第二次 relocate-only 必须 already_migrated, 不再 relocate_only."""
+    """v5.2 Codex fix #1: 第二次 relocate-only 必须 already_migrated, 不再 relocate_only.
+
+    S-06a 修订 B 后: init 已写 meta (relocated_legacy=False), 所以第一次带
+    relocate 是 relocate_only (走 already_v2 + relocate_legacy=True 分支), 不是
+    migrated. 状态机最终态 (已 relocate + 再次 relocate=already_migrated) 保持.
+    """
     sandbox.init(start_date="2026-05-20", root=tmp_root)
     sb = tmp_root / "logs" / "sandbox"
     (sb / "meal_log.jsonl").write_text("data\n", encoding="utf-8")
     r1 = migrate_to_v2(tmp_root, relocate_legacy=True)
-    assert r1["status"] == "migrated"
+    assert r1["status"] == "relocate_only"  # S-06a: init 已 meta → relocate_only
     meta1 = read_meta(tmp_root)
     assert meta1 is not None
     assert meta1["relocated_legacy"] is True
@@ -185,13 +210,17 @@ def test_relocate_twice_second_is_already_migrated(tmp_root: Path) -> None:
 
 
 def test_relocate_with_no_artifacts_marks_satisfied(tmp_root: Path) -> None:
-    """v5.2 Codex fix #1: sandbox 目录在但无任何 legacy artifact → satisfied=True."""
+    """v5.2 Codex fix #1: sandbox 目录在但无任何 legacy artifact → satisfied=True.
+
+    S-06a 修订 B 后: init 写了 meta, 所以即使 state.json 被删, meta 仍在 →
+    relocate_only 分支. 关键 invariant (relocated_legacy=True after run) 不变.
+    """
     sandbox.init(start_date="2026-05-20", root=tmp_root)
     sb = tmp_root / "logs" / "sandbox"
     # sandbox 目录在 (sandbox.init 建了 state.json), 删 state.json 模拟空目录
     (sb / "state.json").unlink()
     r1 = migrate_to_v2(tmp_root, relocate_legacy=True)
-    assert r1["status"] == "migrated"
+    assert r1["status"] == "relocate_only"  # S-06a: init 已 meta → relocate_only
     # 没东西可挪 → 仍 satisfied (relocated_legacy=True)
     meta = read_meta(tmp_root)
     assert meta is not None

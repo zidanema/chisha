@@ -18,7 +18,7 @@ from typing import Any
 import yaml
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, model_validator
 
 from chisha import feedback_store
@@ -29,6 +29,11 @@ from chisha.recall import (
     load_zone_data,
 )
 from chisha.refine import refine as refine_session
+from chisha.sandbox_context import (
+    _DEFAULT_SID,
+    _validate_sid,
+    set_sandbox_session,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 PROFILE_PATH = ROOT / "profile.yaml"  # prod default (legacy 兼容, refresh test 引用)
@@ -57,23 +62,87 @@ def _remember_session_safe(session_id: str, payload: dict) -> None:
         print(f"  [web_api] remember_session 失败 ({type(e).__name__}: {str(e)[:80]})")
 
 
+# ---------- S-06a: sandbox sid routing dependency ----------
+
+def _with_sandbox_sid(
+    request: Request,
+) -> str | None:
+    """S-06a 校验 dep: 解析 + 校验 sid, 返回合法非 default sid 或 None.
+
+    **不**直接 set ContextVar (FastAPI sync 端点跑在 anyio worker thread,
+    dep 在 main thread, ContextVar 不跨 thread propagate, 详见 chisha 文档
+    test_web_api_sid_routing.py). Caller (端点 handler) 拿到 sid 后用
+    `with set_sandbox_session(sid):` 包推荐链路.
+
+    sid 来源: header `X-Session-Id` (优先) 或 query `?session_id=`.
+
+    Failure modes:
+      - sid 格式不合法 → 400
+      - sid 非 default 但 sandbox.is_enabled(ROOT)=False (修订 G) → 409
+        防 data_root silent fall back 到 prod (桶目录存在但 sandbox 整体 disabled)
+      - sid 非 default 但桶目录不存在 → 404
+
+    sid=None / "_default" → 返 None. 行为同 S-04 默认 (走 flat / prod fallback).
+    """
+    raw = request.headers.get("X-Session-Id") or request.query_params.get("session_id")
+    if raw is None or raw == _DEFAULT_SID:
+        return None
+    # 1. sid 格式校验
+    try:
+        _validate_sid(raw)
+    except ValueError as e:
+        raise HTTPException(400, f"invalid X-Session-Id: {e}")
+    # 2. 修订 G: sandbox layout 必须 enabled 才能跑非 default sid
+    from chisha import sandbox as _sb  # lazy to avoid module-init cycle
+    if not _sb.is_enabled(ROOT):
+        raise HTTPException(
+            409,
+            f"sandbox layout disabled; cannot route session_id={raw!r}. "
+            "POST /api/sandbox/init or /api/sandbox/<advance|reset> first.",
+        )
+    # 3. 桶存在
+    bucket = ROOT / "logs" / "sandbox" / "sessions" / raw
+    if not bucket.is_dir():
+        raise HTTPException(404, f"unknown sandbox session_id={raw!r}")
+    # 4. 返合法 sid (handler 用 with set_sandbox_session(sid) 包)
+    return raw
+
+
+def _sandbox_ctx(sid: str | None):
+    """Helper: sid=None → no-op nullcontext; sid 非空 → set_sandbox_session(sid)."""
+    from contextlib import nullcontext
+    if sid is None:
+        return nullcontext()
+    return set_sandbox_session(sid)
+
+
 # ---------- /api/recommend ----------
 
 @router.get("/recommend")
 def api_recommend(
     meal_type: str = "lunch",
     mood: str = "neutral",
+    _sid: str | None = Depends(_with_sandbox_sid),
 ) -> dict:
-    """GET /api/recommend?meal_type=&mood= → RecommendResponse (5 候选)."""
+    """GET /api/recommend?meal_type=&mood= → RecommendResponse (5 候选).
+
+    S-06a: header `X-Session-Id` 或 query `session_id` 路由到非 default 桶
+    (走 ContextVar). 详见 `_with_sandbox_sid`.
+    """
     if meal_type not in ("lunch", "dinner"):
         raise HTTPException(400, f"meal_type must be lunch|dinner, got {meal_type!r}")
     daily_mood = mood if mood and mood != "neutral" else None
-    out = recommend_meal(
-        meal_type=meal_type,
-        daily_mood=daily_mood,
-        log_to_file=True,
-    )
-    _remember_session_safe(out["session_id"], out)
+    # S-06a 修订 D: 显式 root=ROOT 让 recommend chain 用 web_api ROOT
+    # (而非 chisha/api.py _default_root), 防止 monkeypatched-root 测试漂移 +
+    # 配合 sid routing 写到正确桶.
+    with _sandbox_ctx(_sid):
+        out = recommend_meal(
+            meal_type=meal_type,
+            daily_mood=daily_mood,
+            log_to_file=True,
+            root=ROOT,
+        )
+        _remember_session_safe(out["session_id"], out)
     return out
 
 
@@ -89,8 +158,16 @@ class RefineReq(BaseModel):
 
 
 @router.post("/refine")
-def api_refine(req: RefineReq) -> dict:
+def api_refine(
+    req: RefineReq,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """POST /api/refine → 同 session 二轮推荐 (round++)."""
+    with _sandbox_ctx(_sid):
+        return _impl_refine(req)
+
+
+def _impl_refine(req: RefineReq) -> dict:
     profile = load_profile(_profile_path(), root=ROOT)
     # session 决定 meal_type/zone, 客户端传的 meal_type/mood 仅作 fallback
     from chisha.session import load_session
@@ -269,8 +346,16 @@ class AcceptReq(BaseModel):
 
 
 @router.post("/accept")
-def api_accept(req: AcceptReq) -> dict:
+def api_accept(
+    req: AcceptReq,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """D-052: 记录 accept → 落 acceptedQueue → 返回 deeplink (best-effort)."""
+    with _sandbox_ctx(_sid):
+        return _impl_accept(req)
+
+
+def _impl_accept(req: AcceptReq) -> dict:
     rest = req.candidate.get("restaurant") or {}
     rest_id = rest.get("id") or ""
     name = rest.get("name") or ""
@@ -345,7 +430,10 @@ class SkipReq(BaseModel):
 
 
 @router.post("/skip")
-def api_skip(req: SkipReq) -> dict:
+def api_skip(
+    req: SkipReq,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """D-054: 这餐没吃 (食堂/带饭/外面/聚会/都没看上/不饿).
 
     reason ∈ {cafeteria, brought, outside, social, none_fit, not_hungry, null}.
@@ -353,20 +441,24 @@ def api_skip(req: SkipReq) -> dict:
     """
     if req.reason not in _VALID_SKIP_REASONS:
         raise HTTPException(400, f"invalid skip reason {req.reason!r}")
-    try:
-        feedback_store.record_skip(ROOT, req.session_id, req.reason)
-    except Exception as e:
-        raise HTTPException(
-            500, f"record_skip failed: {type(e).__name__}: {e}"
-        )
+    with _sandbox_ctx(_sid):
+        try:
+            feedback_store.record_skip(ROOT, req.session_id, req.reason)
+        except Exception as e:
+            raise HTTPException(
+                500, f"record_skip failed: {type(e).__name__}: {e}"
+            )
     return {"ok": True}
 
 
 # ---------- /api/profile (GET / PUT / POST) ----------
 
 @router.get("/profile")
-def api_get_profile() -> dict:
-    return yaml.safe_load(_profile_path().read_text(encoding="utf-8"))
+def api_get_profile(
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
+    with _sandbox_ctx(_sid):
+        return yaml.safe_load(_profile_path().read_text(encoding="utf-8"))
 
 
 def _write_profile_preserving_comments(new_profile: dict) -> None:
@@ -420,12 +512,16 @@ def _write_profile_preserving_comments(new_profile: dict) -> None:
 
 @router.put("/profile")
 @router.post("/profile")
-def api_put_profile(profile: dict) -> dict:
+def api_put_profile(
+    profile: dict,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """PUT (或 POST 兼容) /api/profile body=完整 Profile, ruamel.yaml 写入保留注释."""
     if not isinstance(profile, dict) or "basics" not in profile:
         raise HTTPException(400, "invalid profile body: missing 'basics'")
     try:
-        _write_profile_preserving_comments(profile)
+        with _sandbox_ctx(_sid):
+            _write_profile_preserving_comments(profile)
     except Exception as e:
         raise HTTPException(500, f"write profile.yaml failed: {type(e).__name__}: {e}")
     return {"ok": True}
@@ -434,7 +530,10 @@ def api_put_profile(profile: dict) -> dict:
 # ---------- /api/history ----------
 
 @router.get("/history")
-def api_history(days: int = 7) -> dict:
+def api_history(
+    days: int = 7,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """近 N 天的推荐 session, 关联 accepted_rank.
 
     数据源: logs/recommend_log.jsonl (每次 recommend 写一行) + feedback_store.accepted.
@@ -443,6 +542,11 @@ def api_history(days: int = 7) -> dict:
     """
     if days < 1 or days > 90:
         raise HTTPException(400, "days must be in [1, 90]")
+    with _sandbox_ctx(_sid):
+        return _impl_history(days)
+
+
+def _impl_history(days: int) -> dict:
     # D-077 Codex S3 修复: 走 data_root.recommend_log_path, sandbox 启用时
     # history 读 sandbox log 而非 prod log.
     from chisha import data_root
@@ -565,45 +669,63 @@ class CommentReq(BaseModel):
 
 
 @router.get("/feedback/inbox")
-def api_feedback_inbox(include_snoozed: int = 1) -> dict:
+def api_feedback_inbox(
+    include_snoozed: int = 1,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """D-058: 反馈中心 inbox. include_snoozed=0 时过滤掉 24h 软关闭项."""
-    data = feedback_store.load_store(ROOT)
-    items = feedback_store.inbox_items(
-        data, include_snoozed=bool(include_snoozed)
-    )
+    with _sandbox_ctx(_sid):
+        data = feedback_store.load_store(ROOT)
+        items = feedback_store.inbox_items(
+            data, include_snoozed=bool(include_snoozed)
+        )
     return {"items": items}
 
 
 @router.post("/feedback/snooze")
-def api_feedback_snooze(req: SnoozeReq) -> dict:
+def api_feedback_snooze(
+    req: SnoozeReq,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """D-060 软关闭: 24h 内 banner 不弹, inbox 仍在."""
-    feedback_store.set_snooze(ROOT, req.session_id, hours=24)
+    with _sandbox_ctx(_sid):
+        feedback_store.set_snooze(ROOT, req.session_id, hours=24)
     return {"ok": True}
 
 
 @router.post("/feedback/stop")
-def api_feedback_stop(req: StopReq) -> dict:
+def api_feedback_stop(
+    req: StopReq,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """D-060 硬关闭: 永久, banner+inbox 都隐藏, history 仍可点."""
-    feedback_store.set_stop(ROOT, req.session_id)
+    with _sandbox_ctx(_sid):
+        feedback_store.set_stop(ROOT, req.session_id)
     return {"ok": True}
 
 
 @router.get("/feedback/recent")
 def api_feedback_recent(
     limit: int = Query(default=6, ge=1, le=100),
+    _sid: str | None = Depends(_with_sandbox_sid),
 ) -> dict:
     """D-066: 最近已反馈, 供 inbox 第三段 + history 行 gut chip 渲染.
 
     Codex review LOW: limit ∈ [1, 100], 负值 / 0 / 巨大值都 422.
     """
-    data = feedback_store.load_store(ROOT)
-    return {"items": feedback_store.recent_feedback_items(data, limit=limit)}
+    with _sandbox_ctx(_sid):
+        data = feedback_store.load_store(ROOT)
+        return {"items": feedback_store.recent_feedback_items(data, limit=limit)}
 
 
 @router.post("/feedback")
-def api_feedback_submit(req: FeedbackPayloadReq) -> dict:
+def api_feedback_submit(
+    req: FeedbackPayloadReq,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """D-066: 提交反馈, comments[] 保留 (D-067)."""
-    feedback_store.record_feedback(ROOT, req.model_dump())
+    with _sandbox_ctx(_sid):
+        feedback_store.record_feedback(ROOT, req.model_dump())
     return {"ok": True}
 
 
@@ -630,9 +752,13 @@ def api_feedback_comment(session_id: str, req: CommentReq) -> dict:
 
 
 @router.get("/feedback/{session_id}")
-def api_feedback_session(session_id: str) -> dict:
+def api_feedback_session(
+    session_id: str,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """反馈页头部 5 候选回放. session 已过期/不存在 → 404."""
-    data = feedback_store.load_store(ROOT)
+    with _sandbox_ctx(_sid):
+        data = feedback_store.load_store(ROOT)
     accepted = feedback_store.get_accepted(data, session_id) or {}
     session_payload = data["sessions"].get(session_id)
     if not session_payload:
@@ -676,7 +802,11 @@ class RefreshPrefsReq(BaseModel):
 
 
 @router.post("/long_term_prefs/refresh")
-def api_long_term_prefs_refresh(request: Request, req: RefreshPrefsReq) -> dict:
+def api_long_term_prefs_refresh(
+    request: Request,
+    req: RefreshPrefsReq,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """D-076 PR-0.9: 手动触发 L1 LLM 抽取, 写入 data/long_term_prefs.json.
 
     鉴权:
@@ -694,38 +824,39 @@ def api_long_term_prefs_refresh(request: Request, req: RefreshPrefsReq) -> dict:
     if not _admin_token_ok(request):
         raise HTTPException(401, "invalid or missing X-Admin-Token")
 
-    if req.force_run_without_llm:
-        from scripts.bootstrap_l1_from_legacy import bootstrap
-        prefs = bootstrap(root=ROOT, force=True)
-        prefs.setdefault("path", "bootstrap_no_llm")
+    with _sandbox_ctx(_sid):
+        if req.force_run_without_llm:
+            from scripts.bootstrap_l1_from_legacy import bootstrap
+            prefs = bootstrap(root=ROOT, force=True)
+            prefs.setdefault("path", "bootstrap_no_llm")
+            return prefs
+
+        # 走完整 LLM 抽取
+        from chisha.l1_extractor import extract_and_save
+
+        try:
+            store = feedback_store.load_store(ROOT)
+        except feedback_store.StoreCorruptError as e:
+            raise HTTPException(500, f"feedback store corrupt: {e}")
+
+        try:
+            profile = yaml.safe_load(_profile_path().read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError) as e:
+            raise HTTPException(500, f"profile.yaml load failed: {type(e).__name__}: {e}")
+
+        window = req.window_days or 14
+        try:
+            prefs = extract_and_save(
+                store, profile,
+                root=ROOT,
+                window_days=window,
+                profile_llm=profile.get("llm"),
+            )
+        except RuntimeError as e:
+            # LLM 全 retry 失败 → 不写盘, 保留旧 prefs
+            raise HTTPException(503, f"L1 extract failed: {e}")
+        prefs.setdefault("path", "llm_extract")
         return prefs
-
-    # 走完整 LLM 抽取
-    from chisha.l1_extractor import extract_and_save
-
-    try:
-        store = feedback_store.load_store(ROOT)
-    except feedback_store.StoreCorruptError as e:
-        raise HTTPException(500, f"feedback store corrupt: {e}")
-
-    try:
-        profile = yaml.safe_load(_profile_path().read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError) as e:
-        raise HTTPException(500, f"profile.yaml load failed: {type(e).__name__}: {e}")
-
-    window = req.window_days or 14
-    try:
-        prefs = extract_and_save(
-            store, profile,
-            root=ROOT,
-            window_days=window,
-            profile_llm=profile.get("llm"),
-        )
-    except RuntimeError as e:
-        # LLM 全 retry 失败 → 不写盘, 保留旧 prefs
-        raise HTTPException(503, f"L1 extract failed: {e}")
-    prefs.setdefault("path", "llm_extract")
-    return prefs
 
 
 # ---------- /api/sandbox/* (D-077 PR-1c) ----------
@@ -835,6 +966,93 @@ def _trigger_l1_extraction_async(root: Path) -> None:
     t.start()
 
 
+# ---------- S-06a: sandbox sessions CRUD ----------
+
+
+class SandboxSessionMeta(BaseModel):
+    sid: str
+    is_default: bool
+    created_at: str | None = None
+    size_bytes: int = 0
+    has_state: bool = False
+
+
+class SessionsListResp(BaseModel):
+    sessions: list[SandboxSessionMeta]
+
+
+class CreateSessionReq(BaseModel):
+    sid: str = Field(min_length=1, max_length=64)
+
+
+class RenameSessionReq(BaseModel):
+    new_sid: str = Field(min_length=1, max_length=64)
+
+
+@router.get("/sandbox/sessions")
+def api_sandbox_list_sessions(request: Request) -> SessionsListResp:
+    """S-06a: 列出 sandbox 桶 (default 永远首位)."""
+    _require_localhost(request)
+    items = _sandbox.list_sessions(root=ROOT)
+    return SessionsListResp(sessions=[SandboxSessionMeta(**it) for it in items])
+
+
+@router.post("/sandbox/sessions", status_code=201)
+def api_sandbox_create_session(
+    request: Request, req: CreateSessionReq,
+) -> SandboxSessionMeta:
+    """S-06a: 创建非 default sandbox 桶."""
+    _require_localhost(request)
+    if not _sandbox.has_sandbox_meta(ROOT):
+        raise HTTPException(
+            400,
+            "sandbox layout not initialized; POST /api/sandbox/init or run "
+            "sandbox_migration.migrate_to_v2 first",
+        )
+    try:
+        meta = _sandbox.create_session(req.sid, root=ROOT)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileExistsError as e:
+        raise HTTPException(409, str(e))
+    return SandboxSessionMeta(**meta)
+
+
+@router.delete("/sandbox/sessions/{sid}")
+def api_sandbox_delete_session(request: Request, sid: str) -> dict:
+    """S-06a: 删除非 default sandbox 桶 (default 禁删, 不存在 404)."""
+    _require_localhost(request)
+    try:
+        return _sandbox.delete_session(sid, root=ROOT)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.post("/sandbox/sessions/{sid}/rename")
+def api_sandbox_rename_session(
+    request: Request, sid: str, req: RenameSessionReq,
+) -> SandboxSessionMeta:
+    """S-06a: 同 fs 原子 rename. 跨 fs 抛 OSError(EXDEV) → 500."""
+    _require_localhost(request)
+    try:
+        meta = _sandbox.rename_session(sid, req.new_sid, root=ROOT)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except FileExistsError as e:
+        raise HTTPException(409, str(e))
+    except OSError as e:
+        # 跨 fs (EXDEV) 等 — 不静默 fallback 到 copy+rm
+        raise HTTPException(
+            500,
+            f"rename failed (likely cross-fs, EXDEV); manual intervention needed: {e}",
+        )
+    return SandboxSessionMeta(**meta)
+
+
 @router.post("/sandbox/init")
 def api_sandbox_init(request: Request, req: SandboxInitReq) -> dict:
     """开启 sandbox 模式. 默认 start_date = 真实 today, 空数据."""
@@ -912,9 +1130,16 @@ def api_sandbox_disable(request: Request) -> dict:
 
 
 @router.get("/sandbox/state")
-def api_sandbox_state(request: Request) -> dict:
+def api_sandbox_state(
+    request: Request,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
+    """S-06a: sid inject 是 forward-compatible no-op (state.state(session_id=...)
+    在 S-04 仍 ignore sid; S-06b 真实现). 测试守门
+    ``test_state_endpoint_sid_inject_is_noop_until_s06b``."""
     _require_localhost(request)
-    return _sandbox.state(root=ROOT)
+    with _sandbox_ctx(_sid):
+        return _sandbox.state(root=ROOT)
 
 
 # ---------- /api/debug/* (D-079 PR-2: Replay + What-if) ----------
@@ -1054,14 +1279,34 @@ def api_debug_what_if(request: Request, req: WhatIfReq) -> dict:
 
 
 @router.get("/sandbox/inspect")
-def api_sandbox_inspect(request: Request) -> dict:
-    """沉淀状态 (志丹原则 #4): 当前 L1 prefs + 最近反馈 + 最近 meal_log.
+def api_sandbox_inspect(
+    request: Request,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
+    """S-06a: 三态 inspect.
 
-    仅 sandbox 启用时返回数据, 关闭时返回 {enabled: false}.
+    | state | 触发条件 | 返回 |
+    | no-layout | not has_sandbox_meta + not is_enabled | enabled=False, has_layout=False, sessions=[] |
+    | layout-disabled | has_sandbox_meta + not is_enabled | enabled=False, has_layout=True, sessions=[...] |
+    | layout-enabled | is_enabled | 原 snapshot + has_layout=True + sessions=[...] |
     """
     _require_localhost(request)
-    if not _sandbox.is_enabled(ROOT):
-        return {"enabled": False}
+    with _sandbox_ctx(_sid):
+        return _impl_inspect()
+
+
+def _impl_inspect() -> dict:
+    enabled = _sandbox.is_enabled(ROOT)
+    has_layout = _sandbox.has_sandbox_meta(ROOT)
+    if not enabled:
+        if not has_layout:
+            return {"enabled": False, "has_layout": False, "sessions": []}
+        # layout-disabled
+        return {
+            "enabled": False,
+            "has_layout": True,
+            "sessions": _sandbox.list_sessions(root=ROOT),
+        }
 
     state = _sandbox.state(root=ROOT)
 
@@ -1106,6 +1351,9 @@ def api_sandbox_inspect(request: Request) -> dict:
 
     return {
         "enabled": True,
+        # S-06a 三态新增字段
+        "has_layout": True,
+        "sessions": _sandbox.list_sessions(root=ROOT),
         "state": state,
         "long_term_prefs": prefs or None,
         # D-078.3: raw 磁盘内容. 即使 boost+penalty 都空, regularities_freetext /

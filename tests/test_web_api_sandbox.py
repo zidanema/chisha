@@ -171,7 +171,11 @@ def test_inspect_when_disabled(app_with_sandbox):
     with TestClient(app) as c:
         r = c.get("/api/sandbox/inspect")
         assert r.status_code == 200
-        assert r.json() == {"enabled": False}
+        # S-06a 三态: no-layout (no init, no migration) → enabled=False +
+        # has_layout=False + sessions=[]
+        assert r.json() == {
+            "enabled": False, "has_layout": False, "sessions": []
+        }
 
 
 def test_inspect_enabled_returns_data(app_with_sandbox, monkeypatch):
@@ -242,6 +246,11 @@ def test_web_api_recommend_under_sandbox_does_not_500_on_methodology(
 
     不真的跑 LLM (mock recommend_meal 在 load_profile 之后返回 stub), 但 load_profile
     必须先成功. 任何回归 (caller 漏传 root) → 此测试会在 load_profile 阶段 raise.
+
+    S-06a 修订 D 后: web_api.api_recommend 显式传 root=ROOT (而非 chisha/api.py
+    _default_root), 测试要在 tmp_path 下提供 *完整* profile (含 diversity), 否则
+    recall.diversity_filter 会触 KeyError. 历史上此测试漏 diversity 仍通过, 是
+    因为旧 caller 隐式 fallback 到真实 prod profile (现在被修复了).
     """
     import shutil
 
@@ -255,6 +264,14 @@ def test_web_api_recommend_under_sandbox_does_not_500_on_methodology(
     zone_dir.mkdir(parents=True, exist_ok=True)
     (zone_dir / "restaurants.json").write_text("[]", encoding="utf-8")
     (zone_dir / "dishes_tagged.json").write_text("[]", encoding="utf-8")
+    # S-06a 修订 D 配合: profile 加 diversity (recall.diversity_filter 必读).
+    (root / "profile.yaml").write_text(
+        "methodology: harvard_plate\n"
+        "basics: {office_zone: shenzhen-bay}\n"
+        "llm: {provider: auto}\n"
+        "diversity: {no_same_restaurant_within_days: 7}\n",
+        encoding="utf-8",
+    )
 
     with TestClient(app) as c:
         c.post("/api/sandbox/init",
