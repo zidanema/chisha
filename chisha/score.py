@@ -25,10 +25,8 @@ if TYPE_CHECKING:
 #         taste_match 从 0.6 调到 0.4 (Codex 共识: 先看实测 std 再升权).
 #         context_boost 从 0.4 调到 0.25 (低置信弱先验).
 V2_DEFAULT_WEIGHTS: dict[str, float] = {
-    # ── 死分 (D-043 砍 0, 保留 key 让 profile 兼容) ──
-    "vegetable_floor_pass": 0.0,     # L1 已强制
-    "protein_floor_pass": 0.0,       # L1 已强制
-    "distance": 0.0,                 # 外卖只看 ETA, 没数据
+    # ── D-092: 5 死维度 (vegetable_floor_pass / protein_floor_pass / distance / wetness / context_boost)
+    #          已从 V2_DEFAULT + parts dict 移除. 函数本身保留 (vegetable_floor_score 等), 别处可能 import.
     # ── 活权重 ──
     "low_oil": 0.5,
     "popularity": 0.4,
@@ -37,18 +35,19 @@ V2_DEFAULT_WEIGHTS: dict[str, float] = {
     "carb_quality": 0.6,
     "processed_meat": 1.0,           # 取负
     "sweet_sauce": 0.7,              # 取负
-    "wetness": 0.5,
     "dish_role_match": 0.3,
     "eta": 0.4,                      # 取负
     "price": 0.5,                    # 取负
     "taste_match": 0.4,              # D-043: 启用兜底 hints 后变活, 起始 0.4
-    "context_boost": 0.25,           # D-043: 默认 mood 低置信
     # ── D-073: refine 意图三档 (Codex §3 拆分; 2026-05-16 实测校准) ──
     # 初始 0.20 实测 intent 加分被 popularity 单维压过, 校准到 0.50 让用户意图 >
     # 长期偏好 (cuisine_preference 0.30). 健康 guardrail × 0.4 仍保留兜底.
-    "intent_cuisine": 0.50,
-    "intent_ingredient": 0.20,
-    "intent_flavor": 0.10,
+    # D-090 (2026-05-19): 实测 R2 trace「湘菜+重口+牛肉鸡肉」L2 top-5 仅 2 家湘菜, 主要靠
+    # L3 硬拉. intent 三维满分合计 0.8 vs 健康罚分维度 weight 合计 3.3, 信号被淹没.
+    # phase-1: 提权重 ×2~×4 + health_guardrail slot-aware 松绑 (heavy flavor → 油触发豁免).
+    "intent_cuisine": 1.00,      # D-090: 0.50 → 1.00 (×2)
+    "intent_ingredient": 0.50,   # D-090: 0.20 → 0.50 (×2.5)
+    "intent_flavor": 0.40,       # D-090: 0.10 → 0.40 (×4, 让 heavy/spicy/light 真正生效)
 }
 
 
@@ -580,7 +579,7 @@ def contains_ingredient(combo: dict, ingredient: str) -> bool:
 
 # ─────────────────────── D-073: intent_match_bonus + health_guardrail ─────
 
-def health_guardrail(combo: dict, profile: dict) -> float:
+def health_guardrail(combo: dict, profile: dict, intent=None) -> float:
     """触发健康风险时, intent 加分打折. 返回乘子 ∈ {0.4, 1.0}.
 
     触发条件 (任一):
@@ -588,14 +587,23 @@ def health_guardrail(combo: dict, profile: dict) -> float:
       - apply_unforgivable_penalty 也会触发 (sweet/processed_meat/wetness 组合)
 
     Codex review §3: 防止"全是麻辣火锅"——intent 服从健康约束.
+
+    D-090 (2026-05-19): slot-aware 松绑 — intent ≠ None 且明确表达对应 L0-C 放宽信号时,
+    对应触发不计. 兼容: intent=None 时行为与旧 API 完全一致 (R1 baseline 0-diff 守门).
+      - flavor_tags 含 "heavy" → oil 触发豁免 (用户明确要重口)
+    其他 (sweet/processed_meat/wetness) 当前无明确 explicit slot 信号, 仍照常压制.
     """
+    # slot-aware 信号 (R1 路径 intent=None 时全 False, 行为与旧 API 一致)
+    flavor_tags = set(getattr(intent, "flavor_tags", None) or []) if intent else set()
+    oil_exempt = "heavy" in flavor_tags
+
     prefer_oil = profile["plate_rule"].get("prefer_oil_level_at_most", 3)
     oils = [
         d.get("nutrition_profile", {}).get("oil_level", 3)
         for d in combo.get("dishes") or []
     ]
     oil_avg = sum(oils) / max(1, len(oils))
-    if oil_avg > prefer_oil + 1:
+    if oil_avg > prefer_oil + 1 and not oil_exempt:
         return 0.4
     # unforgivable penalty 共享触发条件
     dishes = combo.get("dishes") or []
@@ -616,6 +624,41 @@ def health_guardrail(combo: dict, profile: dict) -> float:
         or (sweet_hits >= 1 and wet_hits >= 1)):
         return 0.4
     return 1.0
+
+
+def _build_refine_weight_overlay(intent) -> dict[str, float]:
+    """D-091 phase-2: refine 模式下按 explicit slot 给 score weight 加 multiplier.
+
+    返回 dict[dim_name → multiplier]. 缺省 dim multiplier = 1.0 (不变).
+    intent=None 时返回空 dict → score_combo 走 baseline 权重 → R1 0-diff 守门.
+
+    设计 (D-091 S3, self-S2 修订):
+      - heavy flavor → low_oil ×0.3 (用户明确要重口, 保留 30% 健康 safety net)
+      - sweet flavor → sweet_sauce ×0.3
+      - staple want_rice/want_noodle → carb_quality ×0.0 (用户主动接受 carb 惩罚)
+      - price_band == cheap → price ×1.5 (放大对贵菜惩罚, 帮用户选便宜)
+      - price_band == premium → price ×0.0 (用户主动要贵, 不再扣)
+      - cuisine_want 非空 → cuisine_preference ×0.5 (refine 优先于画像)
+    """
+    if intent is None:
+        return {}
+    mult: dict[str, float] = {}
+    flavor_tags = set(getattr(intent, "flavor_tags", None) or [])
+    if "heavy" in flavor_tags:
+        mult["low_oil"] = 0.3
+    if "sweet" in flavor_tags:
+        mult["sweet_sauce"] = 0.3
+    staple = getattr(intent, "staple_preference", None)
+    if staple in {"want_rice", "want_noodle"}:
+        mult["carb_quality"] = 0.0
+    pb = getattr(intent, "price_band", None)
+    if pb == "cheap":
+        mult["price"] = 1.5
+    elif pb == "premium":
+        mult["price"] = 0.0
+    if getattr(intent, "cuisine_want", None):
+        mult["cuisine_preference"] = 0.5
+    return mult
 
 
 def intent_match_bonus(
@@ -765,18 +808,12 @@ def intent_match_bonus(
         if has_noodle:
             out["ingredient"] = min(1.0, out["ingredient"] + 0.3)
 
-    # 6. price_band: 进 cuisine 通道 (无更合适的, 且通常和菜系倾向并行)
-    pb = getattr(intent, "price_band", None)
-    if pb:
-        from chisha.recall import dish_price
-        total = sum(dish_price(d) for d in combo.get("dishes") or [])
-        if pb == "cheap" and total <= 40:
-            out["cuisine"] = min(1.0, out["cuisine"] + 0.2)
-        elif pb == "premium" and total >= 100:
-            out["cuisine"] = min(1.0, out["cuisine"] + 0.2)
+    # 6. price_band: D-091 删除——历史上把 price_band 加到 cuisine 通道是语义重载
+    # (cuisine 通道塞了非 cuisine 语义), price 维度本身已能表达价格意图.
+    # phase-2 改 _apply_refine_overlay 在 price weight 上 slot-gated 调整 (cheap ×1.5, premium ×0).
 
-    # 7. 健康 guardrail (Codex §3)
-    guard = health_guardrail(combo, profile)
+    # 7. 健康 guardrail (Codex §3) + slot-aware 松绑 (D-090)
+    guard = health_guardrail(combo, profile, intent=intent)
     if guard < 1.0:
         for k in out:
             out[k] *= guard
@@ -920,18 +957,19 @@ def score_combo(
     D-073: 传 intent (refine 二轮) 时, intent_match 三档加分生效.
     """
     w = profile.get("scoring_weights") or {}
+    # D-091 phase-2: refine 模式下按 explicit slot 动态调权重 (R1 intent=None 时 multiplier 全 1.0 → 0-diff)
+    overlay_mult = _build_refine_weight_overlay(intent)
 
     def _w(key: str) -> float:
-        return float(w.get(key, V2_DEFAULT_WEIGHTS.get(key, 0.0)))
+        base = float(w.get(key, V2_DEFAULT_WEIGHTS.get(key, 0.0)))
+        return base * overlay_mult.get(key, 1.0)
 
     intent_parts = intent_match_bonus(combo, intent, profile)
 
     parts = {
+        # D-092: 删 5 死维度 (vegetable_floor_pass / protein_floor_pass /
+        # distance / wetness / context_boost), 详见 D-092 决策.
         # V1 维度
-        "vegetable_floor_pass": vegetable_floor_score(combo, profile)
-            * _w("vegetable_floor_pass"),
-        "protein_floor_pass": protein_floor_score(combo, profile)
-            * _w("protein_floor_pass"),
         "low_oil": low_oil_score(combo, profile) * _w("low_oil"),
         "popularity": popularity_score(combo) * _w("popularity"),
         "cuisine_preference": cuisine_preference_score(combo, profile)
@@ -942,15 +980,12 @@ def score_combo(
         "carb_quality": carb_quality_score(combo) * _w("carb_quality"),
         "processed_meat": -processed_meat_penalty(combo) * _w("processed_meat"),
         "sweet_sauce": -sweet_sauce_penalty(combo) * _w("sweet_sauce"),
-        "wetness": wetness_bonus(combo) * _w("wetness"),
         "dish_role_match": dish_role_match_bonus(combo) * _w("dish_role_match"),
         # V2 履约
-        "distance": -distance_penalty(combo, profile) * _w("distance"),
         "eta": -eta_penalty(combo, profile) * _w("eta"),
         "price": -price_penalty(combo, profile, meal_type) * _w("price"),
         # V2 偏好/情境
         "taste_match": taste_match_bonus(combo, taste_hints) * _w("taste_match"),
-        "context_boost": context_boost(combo, context, today=today) * _w("context_boost"),
         # D-073 refine 意图 (intent=None 时全 0)
         "intent_cuisine": intent_parts["cuisine"] * _w("intent_cuisine"),
         "intent_ingredient": intent_parts["ingredient"] * _w("intent_ingredient"),

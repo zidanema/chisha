@@ -71,9 +71,7 @@ def _full_spec(name: str = "valid_test") -> dict:
             "hard_max_oil_level": 4,
         },
         "score_weights": {
-            "vegetable_floor_pass": 0.0,
-            "protein_floor_pass": 0.0,
-            "distance": 0.0,
+            # D-092: 11 活维度 (删 5 死维度)
             "low_oil": 0.5,
             "popularity": 0.4,
             "cuisine_preference": 0.3,
@@ -81,12 +79,10 @@ def _full_spec(name: str = "valid_test") -> dict:
             "carb_quality": 0.6,
             "processed_meat": 1.0,
             "sweet_sauce": 0.7,
-            "wetness": 0.5,
             "dish_role_match": 0.3,
             "eta": 0.4,
             "price": 0.5,
             "taste_match": 0.4,
-            "context_boost": 0.25,
         },
         "cap_rules": {
             "per_restaurant_top_k": 3,
@@ -122,7 +118,7 @@ def test_validate_unknown_top_key_typo(tmp_path: Path):
 def test_validate_score_weights_missing_key(tmp_path: Path):
     """score_weights 内部缺一个 key → hard fail (B-1)."""
     bad = _full_spec("bad_weights_missing")
-    del bad["score_weights"]["wetness"]
+    del bad["score_weights"]["low_oil"]  # D-092: wetness 已删, 改删 low_oil
     _write_spec(tmp_path, "bad_weights_missing", bad)
     _load_methodology_cached.cache_clear()
     with pytest.raises(MethodologyValidationError, match="score_weights keyset mismatch"):
@@ -217,18 +213,18 @@ def test_merge_profile_explicit_value_overrides_spec(caplog):
     spec = _full_spec("test")  # min_protein_g=25
     profile = {
         "plate_rule": {"min_protein_g": 40},
-        "scoring_weights": {"low_oil": 0.9, "wetness": 0.0},
+        "scoring_weights": {"low_oil": 0.9, "variety_bonus": 0.0},
     }
     merged = merge_into_profile(profile, spec)
     # 显式值保留
     assert merged["plate_rule"]["min_protein_g"] == 40
     assert merged["scoring_weights"]["low_oil"] == 0.9
-    assert merged["scoring_weights"]["wetness"] == 0.0
+    assert merged["scoring_weights"]["variety_bonus"] == 0.0
     # spec defaults 填充缺失字段
     assert merged["plate_rule"]["must_have_vegetable"] is True
     assert merged["plate_rule"]["hard_max_oil_level"] == 4
     assert merged["scoring_weights"]["popularity"] == 0.4  # spec 默认
-    assert merged["scoring_weights"]["context_boost"] == 0.25
+    assert merged["scoring_weights"]["taste_match"] == 0.4  # D-092: 替换原 context_boost 断言 (已删)
 
 
 def test_merge_unforgivable_discount_path_b2():

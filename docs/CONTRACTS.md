@@ -33,6 +33,9 @@
 - **`apply_caps()` 只返回 head 段，不带 tail。** brand cap=2 真正生效在 L2，**不能下放到 L3 prompt**（"输入里可能含多变体请择优"是错的方向，会让 cap 失效，参 D-049）。
 - **改 `score.py` / `methodology.py` / spec yaml 前后必跑回归：** `uv run python -m scripts.baseline_l2_snapshot --out-dir tmp/baseline_traces`（改前）+ 改后再跑 + `compare_traces`。top60 顺序 + 16 维 breakdown `|delta| < 1e-6` 才允许 commit（参 D-072.1）。
 - **methodology spec 只搬运不改逻辑。** 改打分逻辑 / 调权重 / 加新维度走 `score.py` + decisions 修订，**不走 spec**。spec 是 yaml 化的 `V2_DEFAULT_WEIGHTS`，不是新接口（参 D-072）。
+- **`health_guardrail(combo, profile, intent=None)` 是 slot-aware (D-090)。** intent=None 时行为与旧 API 一致（R1 baseline 0-diff 守门）；`intent.flavor_tags` 含 "heavy" 时 oil 触发豁免（用户明确表达可破 L0-C）。其他 (sweet/processed_meat/wetness) 无 explicit slot 仍照常压制。加新豁免类型必走 D-090.x + `tests/test_l2_refine_snapshot_d090.py` 更新断言。
+- **`score_combo` 在 refine 模式下按 explicit slot 动态调权重 (D-091 phase-2)。** intent ≠ None 时 `_build_refine_weight_overlay(intent)` 给 dim weight 加 multiplier — heavy → low_oil ×0.3 / sweet → sweet_sauce ×0.3 / want_rice|want_noodle → carb_quality ×0 / price_band cheap → price ×1.5 / premium → price ×0 / cuisine_want → cuisine_preference ×0.5。intent=None 时 overlay 空 dict → R1 0-diff。改 overlay mapping 必走 D-091.x + `test_r2_phase2_*` 断言更新。**注意**: `intent_match_bonus` 不再把 price_band 加到 cuisine 通道（D-091 P2-B 语义解耦），cuisine 通道现仅含 cuisine_want exact/soft match + price_band 走 overlay 在 price weight 上调权。
+- **`score_combo` breakdown 是 14 维 (D-092: 11 基础活维度 + 3 intent 维度)。** 已删 5 死维度：`vegetable_floor_pass` / `protein_floor_pass` (L1 已强制) / `distance` (外卖没数据) / `wetness` (D-044.1 砍 baseline) / `context_boost` (D-073 恒返 0)。函数本身保留以防别处 import，但不再进 V2_DEFAULT_WEIGHTS / parts dict / profile.scoring_weights / spec score_weights / adapter DIM_ORDER。加新维度走 D-092.x + 同步 7 处 keyset。`compare_traces` 允许"key 缺失且对侧=0"视为 0-diff（兼容老 baseline 含 5 死维度 key=0.0 + 新 trace 无 key）。
 
 ### L3 精排
 - **L3 输入 = top60。** 不是 40 / 100。如果输入大小要改，先看 D-046 的边界论证再动。

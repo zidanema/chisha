@@ -34,9 +34,9 @@
 
 ## 项目状态
 
-**Phase 0 工程侧已收尾**（2026-05-18，D-001~D-085）—— 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + L1 长期反馈层真兑现（LLM 抽取）+ Sandbox Time-Travel + 推荐链路 trace 持久化 + Debug 三模式（Replay / What-if / Live）+ FastAPI 23 端点 + **Refine v2 / Faithful Refine framework 重构**（D-080~D-085: L0 三分 + RefineIntentV2 多 slot + reference resolver + subtype diversify + 方法论状态条 + L3 narrative,见 [`docs/design_briefs/2026-05-18-refine-v2-faithful-refine.md`](docs/design_briefs/2026-05-18-refine-v2-faithful-refine.md)）。
+**Phase 0 工程侧已收尾**（2026-05-20，D-001~D-092）—— 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + L1 长期反馈层真兑现（LLM 抽取）+ Sandbox Time-Travel + 推荐链路 trace 持久化 + Debug 三模式（Replay / What-if / Live）+ FastAPI 23 端点 + **Refine v2 / Faithful Refine framework 重构**（D-080~D-085: L0 三分 + RefineIntentV2 多 slot + reference resolver + subtype diversify + 方法论状态条 + L3 narrative）+ **L2 refine 信号校准 + 死维度清理**（D-090/D-091/D-092: intent 三维权重 ×2~×4 + health_guardrail slot-aware 松绑 + 通用健康权重 slot-gated 让位 + price_band 语义解耦 + 5 死维度移除 → 14 维 breakdown）。
 
-历史背景（D-001~D-072）在 [docs/archive/DECISIONS_phase0.md](docs/archive/DECISIONS_phase0.md)；活决策（含 D-073~D-085）在 [docs/decisions.md](docs/decisions.md)；Agent 跨文件约束在 [docs/CONTRACTS.md](docs/CONTRACTS.md)。
+历史背景（D-001~D-072）在 [docs/archive/DECISIONS_phase0.md](docs/archive/DECISIONS_phase0.md)；活决策（含 D-073~D-092）在 [docs/decisions.md](docs/decisions.md)；Agent 跨文件约束在 [docs/CONTRACTS.md](docs/CONTRACTS.md)。
 
 **接下来**：5 步推进路线（debug trace 验收 → 摸清 L1 → 沙盒 e2e + D-080~D-085 framework 复测 → 接个人 agent + context 注入 → 同 query 随机性），详见 [docs/ROADMAP.md "Phase 0 收尾路线"](docs/ROADMAP.md)。终极路径：自用稳定 → 接个人 agent → 扩同事 / 数据源。
 

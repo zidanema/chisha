@@ -112,8 +112,7 @@ def basic_profile():
         "recall": {"top_n": 100, "per_restaurant_max": 3,
                    "min_monthly_sales": 10},
         "scoring_weights": {
-            "vegetable_floor_pass": 1.0,
-            "protein_floor_pass": 1.0,
+            # D-092: floor 死维度已移除, 此 fixture 同步
             "low_oil": 0.8,
             "popularity": 0.4,
             "cuisine_preference": 0.5,

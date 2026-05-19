@@ -231,14 +231,23 @@ def test_intent_match_avoid_staple():
     assert p1["ingredient"] > p2["ingredient"]
 
 
-def test_intent_match_price_cheap():
+def test_intent_match_price_band_no_longer_in_cuisine_channel():
+    """D-091 phase-2: price_band 从 cuisine 通道剥离 (语义解耦), 改由
+    _build_refine_weight_overlay 在 price weight 上动态调权 (cheap ×1.5, premium ×0).
+    """
+    from chisha.score import _build_refine_weight_overlay
     profile = {"plate_rule": {"prefer_oil_level_at_most": 3},
                "preferences": {"spicy_tolerance": 2}}
     combo = _combo([_dish(price=15.0), _dish(price=20.0, name="蔬菜")])
     intent = RefineIntent(price_band="cheap")
     parts = intent_match_bonus(combo, intent, profile)
-    # total=35, <=40 → 命中
-    assert parts["cuisine"] > 0  # price_band 经 cuisine 通道
+    # phase-2: cuisine 通道不再因 price_band 加分 (除非 cuisine_want 命中)
+    assert parts["cuisine"] == 0.0
+    # 改由 overlay 在 price weight 上 ×1.5
+    overlay = _build_refine_weight_overlay(intent)
+    assert overlay.get("price") == 1.5
+    intent_prem = RefineIntent(price_band="premium")
+    assert _build_refine_weight_overlay(intent_prem).get("price") == 0.0
 
 
 # ─────────────────────────── health_guardrail ───────────────────────────
