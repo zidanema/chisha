@@ -25,8 +25,13 @@ Vite proxy `/api → :8765` 已配。
 
 ## 当前状态
 
-S-01 scaffold 阶段:demo 区块验证 token / 字体 / 主题切换 / accent 4 套切换。
-完整视觉 (TopBar / Timeline / 5 推荐卡 / 4 panels) 见 S-02。
+S-02 完整视觉落地: TopBar + Timeline (14 格) + 5 RecCard + 4 panels (D/B/A/C) + Banners + Modals + TweaksPanel,全部 mock 数据静态渲染。交互骨架 (eat/skip/refine/timeline 选格/rollback/branch) 待 S-03 接入。
+
+dev / demo query 参数 (visual verification 用):
+- `?dev=1` — 显示 TweaksPanel 浮层
+- `?demo-review=1` — 左列渲 ReviewCard (eat 形态, mock D1 午)
+- `?demo-review=skip` — ReviewCard skip 极简形态
+- `?demo-modal=summary|confirm-rollback|confirm-branch|refine` — 强开对应 modal
 
 ## Claude Code 自测约定
 

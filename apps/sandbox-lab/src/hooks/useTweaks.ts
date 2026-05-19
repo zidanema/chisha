@@ -1,12 +1,11 @@
-// D-088 S-01: Tweaks 极简版 (theme + accent), 持久 localStorage.
-// 完整 5 字段 (timelineVariant / rightDensity / showDebugLayer / accent / theme) 是 S-02 的事.
+// D-088 S-02: 5-field Tweaks (timelineVariant / rightDensity / showDebugLayer / accent / theme).
+// 持久 localStorage chisha:sandboxTweaks; 含 S-01 → S-02 旧数据 migration (合并默认值).
 import { useEffect, useState } from "react";
+import type { Accent, Theme, Tweaks } from "../types/sandbox";
+import { ACCENT_VALUES } from "../types/sandbox";
 
-export type Theme = "light" | "dark";
-export const ACCENTS = ["#6366f1", "#059669", "#e11d48", "#d97706"] as const;
-export type Accent = (typeof ACCENTS)[number];
-
-export type Tweaks = { theme: Theme; accent: Accent };
+export type { Tweaks, Accent, Theme } from "../types/sandbox";
+export const ACCENTS = ACCENT_VALUES;
 
 const ACCENT_PALETTE: Record<Accent, Record<string, string>> = {
   "#6366f1": {
@@ -43,27 +42,46 @@ const ACCENT_PALETTE: Record<Accent, Record<string, string>> = {
   },
 };
 
-// 与 debug-ui 同前缀 (chisha:theme / chisha:tbCollapsed)
 const KEY = "chisha:sandboxTweaks";
 
-const DEFAULT_TWEAKS: Tweaks = { theme: "light", accent: "#6366f1" };
+const DEFAULT_TWEAKS: Tweaks = {
+  timelineVariant: "bars",
+  rightDensity: 1,
+  showDebugLayer: true,
+  accent: "#6366f1",
+  theme: "light",
+};
 
+function isValidAccent(v: unknown): v is Accent {
+  return typeof v === "string" && (ACCENT_VALUES as readonly string[]).includes(v);
+}
+
+function isValidTheme(v: unknown): v is Theme {
+  return v === "light" || v === "dark";
+}
+
+// S-01 → S-02 migration: 合并默认值, 保留旧有效 key, 丢弃无效 key
 function load(): Tweaks {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) {
-      const v = JSON.parse(raw) as Partial<Tweaks>;
-      const theme = v.theme === "dark" || v.theme === "light" ? v.theme : null;
-      const accent =
-        v.accent && (ACCENTS as readonly string[]).includes(v.accent)
-          ? (v.accent as Accent)
-          : null;
-      if (theme && accent) return { theme, accent };
+    if (!raw) return DEFAULT_TWEAKS;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Tweaks = { ...DEFAULT_TWEAKS };
+    if (parsed.timelineVariant === "bars" || parsed.timelineVariant === "calendar") {
+      out.timelineVariant = parsed.timelineVariant;
     }
+    if (parsed.rightDensity === 0 || parsed.rightDensity === 1) {
+      out.rightDensity = parsed.rightDensity;
+    }
+    if (typeof parsed.showDebugLayer === "boolean") {
+      out.showDebugLayer = parsed.showDebugLayer;
+    }
+    if (isValidAccent(parsed.accent)) out.accent = parsed.accent;
+    if (isValidTheme(parsed.theme)) out.theme = parsed.theme;
+    return out;
   } catch {
-    // 坏数据 / 私密模式 fallback
+    return DEFAULT_TWEAKS;
   }
-  return DEFAULT_TWEAKS;
 }
 
 export function useTweaks() {
@@ -80,10 +98,11 @@ export function useTweaks() {
     root.style.setProperty("--accent-ring", pal.ring);
     document.body.classList.toggle("theme-dark", tweaks.theme === "dark");
     document.body.classList.toggle("theme-light", tweaks.theme === "light");
+    document.body.classList.toggle("density-compact", tweaks.rightDensity === 0);
     try {
       localStorage.setItem(KEY, JSON.stringify(tweaks));
     } catch {
-      // 私密模式 fallback
+      // private mode fallback
     }
   }, [tweaks]);
 
