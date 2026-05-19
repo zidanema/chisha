@@ -66,8 +66,12 @@ interface SessionInternalState {
 }
 
 
+// S-08 P3 (S-08.1 followup): skip/swap/refine 是同步 fetch 不需要 polling job, 但
+// 也要 UI 可见 (真后端 LLM 秒级响应时, 不给反馈 = stale recs 看着不变). 复用 polling
+// state 的 action/sid/startedAt, jobId 仅 eat 有.
 type PollingState =
   | { action: "eat"; jobId: string; sid: string; startedAt: number }
+  | { action: "skip" | "swap" | "refine"; sid: string; startedAt: number }
   | null;
 
 
@@ -431,6 +435,8 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
   // polling effect for eat job
   useEffect(() => {
     if (!polling) return;
+    // P3 fix: skip/swap/refine 用 polling state 做 UI 标记, 但没有真 job 要追 — 早退.
+    if (polling.action !== "eat") return;
     let stopped = false;
     const tick = async () => {
       try {
@@ -534,7 +540,7 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
       setTransientBanners([]);
       setSelectedCellIdx(null);
     },
-    [isDone, activeSessionId, backendOnline, currentMealIdx, totalMeals, updateSessionState],
+    [isDone, activeSessionId, backendOnline, polling, currentMealIdx, totalMeals, updateSessionState],
   );
 
   const handleSkip = useCallback(() => {
@@ -542,8 +548,10 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
     const sid = activeSessionId;
 
     if (backendOnline) {
-      if (inFlightRef.current) return;   // P2 fix: 防重复 click
+      if (inFlightRef.current || polling) return;   // P2 fix: 防重复 click
       inFlightRef.current = true;
+      // P3 fix: 给 UI 可见反馈 (App.tsx 按 polling 渲染 skeleton/banner).
+      setPolling({ action: "skip", sid, startedAt: Date.now() });
       (async () => {
         try {
           await postSkip(sid);
@@ -555,6 +563,7 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
           setApiError(`skip failed: ${e instanceof Error ? e.message : String(e)}`);
         } finally {
           inFlightRef.current = false;
+          setPolling(null);
         }
       })();
       return;
@@ -588,15 +597,17 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
     }));
     setTransientBanners([]);
     setSelectedCellIdx(null);
-  }, [isDone, activeSessionId, backendOnline, currentMealIdx, totalMeals, updateSessionState, applySnapshot]);
+  }, [isDone, activeSessionId, backendOnline, polling, currentMealIdx, totalMeals, updateSessionState, applySnapshot]);
 
   const handleSwap = useCallback(() => {
     if (isDone) return;
     const sid = activeSessionId;
 
     if (backendOnline) {
-      if (inFlightRef.current) return;   // P2 fix: 防重复 click
+      if (inFlightRef.current || polling) return;   // P2 fix: 防重复 click
       inFlightRef.current = true;
+      // P3 fix: UI 可见反馈
+      setPolling({ action: "swap", sid, startedAt: Date.now() });
       // P2 fix: exclude 当前可见 5 条的 backend id (mock_recs 真按 id 过滤)
       const excludeIds = currentRecs
         .map((r) => (r as Rec & { _backendId?: string })._backendId)
@@ -625,6 +636,7 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
           setApiError(`swap failed: ${e instanceof Error ? e.message : String(e)}`);
         } finally {
           inFlightRef.current = false;
+          setPolling(null);
         }
       })();
       return;
@@ -644,7 +656,7 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
         dismissable: true,
       },
     ]);
-  }, [isDone, activeSessionId, backendOnline, currentRecs, updateSessionState]);
+  }, [isDone, activeSessionId, backendOnline, polling, currentRecs, updateSessionState]);
 
   const handleRefine = useCallback(
     (text: string) => {
@@ -654,8 +666,10 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
       const sid = activeSessionId;
 
       if (backendOnline) {
-        if (inFlightRef.current) return;   // P2 fix: 防重复 click
+        if (inFlightRef.current || polling) return;   // P2 fix: 防重复 click
         inFlightRef.current = true;
+        // P3 fix: UI 可见反馈
+        setPolling({ action: "refine", sid, startedAt: Date.now() });
         (async () => {
           try {
             const resp = await postRefine(sid, trimmed);
@@ -680,6 +694,7 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
             setApiError(`refine failed: ${e instanceof Error ? e.message : String(e)}`);
           } finally {
             inFlightRef.current = false;
+            setPolling(null);
           }
         })();
         return;
@@ -704,7 +719,7 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
         },
       ]);
     },
-    [isDone, activeSessionId, backendOnline, updateSessionState],
+    [isDone, activeSessionId, backendOnline, polling, updateSessionState],
   );
 
   const selectCell = useCallback(
