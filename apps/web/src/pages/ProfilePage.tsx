@@ -98,8 +98,6 @@ export function ProfilePage() {
           {LABELS.ui.profileLastMod}：2026-05-13 09:12
         </div>
 
-        <SandboxControlSection />
-
         <FooterBar />
       </PageShell>
     );
@@ -470,96 +468,9 @@ export function ProfilePage() {
             </Field>
           </div>
         </FieldGroup>
-
-        <SandboxControlSection />
       </div>
 
       <FooterBar />
     </PageShell>
-  );
-}
-
-
-// D-077 PR-1d: ProfilePage 沙盒入口 — 不在 navbar 加, 放 profile 最底 "调试/沙盒" 段
-// (志丹原则: user web 默认无沙盒, 入口含蓄, 启用后 SandboxBar 接管显示).
-// 修: sandboxState 走 ChishaCtx, onInit 后调 refreshSandbox 通知顶层 SandboxBar.
-import { sandboxApi } from "@/lib/sandbox";
-import { isMock } from "@/lib/api";
-
-function SandboxControlSection() {
-  const { sandboxState: state, refreshSandbox } = useChisha();
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [startDate, setStartDate] = useState("");
-  const [copyData, setCopyData] = useState(false);
-
-  if (isMock) return null; // mock 模式不展示
-
-  const onInit = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await sandboxApi.init({
-        start_date: startDate || undefined,
-        copy_real_data: copyData,
-      });
-      await refreshSandbox();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="mt-6 rounded-xl border-2 border-dashed border-amber-300
-      bg-amber-50/40 p-4">
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-[14px] font-semibold">🧪 沙盒模式 (调试)</span>
-        <span className="text-[11.5px] text-stone-500">
-          time-travel 验证反馈沉淀, 不污染 prod 数据
-        </span>
-      </div>
-
-      {state.enabled ? (
-        <div className="text-[13px] text-amber-800">
-          已启用 · Day {state.day_index} · 模拟 {state.current_date}
-          <div className="text-[11.5px] text-stone-500 mt-1">
-            (顶栏 SandboxBar 提供 advance/reset/inspect 操作)
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-2 text-[13px]">
-          <div className="flex items-center gap-2 flex-wrap">
-            <label className="text-stone-600">起始日期</label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="px-2 py-1 rounded border border-stone-300 bg-white"
-            />
-            <label className="text-stone-600 flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={copyData}
-                onChange={(e) => setCopyData(e.target.checked)}
-              />
-              复制 prod 数据
-            </label>
-            <button
-              className="px-3 py-1.5 rounded bg-amber-600 text-white
-                hover:bg-amber-700 disabled:opacity-50"
-              onClick={onInit}
-              disabled={busy}
-            >
-              {busy ? "启动中…" : "开启沙盒"}
-            </button>
-          </div>
-          {err && (
-            <div className="text-[11.5px] text-rose-700">⚠ {err}</div>
-          )}
-        </div>
-      )}
-    </div>
   );
 }

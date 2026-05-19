@@ -88,7 +88,7 @@ export const LABELS = {
     loadingHint: "正在为你挑选...",
     loadingHintLong: "15-60 秒不等",
 
-    homeSecTitle: "今天的三选一",
+    homeSecTitle: "今天的推荐",
     expandAlts: (n: number) => `${n} 个备选 ▽`,
     collapseAlts: "收起备选 △",
     pickThis: "就这个",

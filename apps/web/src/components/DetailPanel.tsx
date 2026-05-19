@@ -110,15 +110,17 @@ export function DetailPanel({
             />
           </div>
 
-          <div>
-            <div className="text-[11px] text-[color:var(--muted)] uppercase tracking-wider mb-2">
-              {LABELS.ui.detailMatch}
+          {c.fit_score != null && c.taste_match != null && (
+            <div>
+              <div className="text-[11px] text-[color:var(--muted)] uppercase tracking-wider mb-2">
+                {LABELS.ui.detailMatch}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <MiniProgress label="健康契合" value={c.fit_score} accent="var(--accent)" />
+                <MiniProgress label="口味契合" value={c.taste_match} accent="var(--accent)" />
+              </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <MiniProgress label="健康契合" value={c.fit_score} accent="var(--accent)" />
-              <MiniProgress label="口味契合" value={c.taste_match} accent="var(--accent)" />
-            </div>
-          </div>
+          )}
 
           {c.risk_flags && c.risk_flags.length > 0 && (
             <div>
