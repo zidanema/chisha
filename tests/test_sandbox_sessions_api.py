@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -126,7 +127,29 @@ def test_create_ok(app_with_sandbox):
         c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
         r = c.post("/api/sandbox/sessions", json={"sid": "s1"})
     assert r.status_code == 201
-    assert (root / "logs" / "sandbox" / "sessions" / "s1").is_dir()
+    body = r.json()
+    assert body["sid"] == "s1"
+    # S-06c 修订 A: create_session seed state.json → has_state=True
+    assert body["has_state"] is True
+    bucket = root / "logs" / "sandbox" / "sessions" / "s1"
+    assert bucket.is_dir()
+    # state.json seeded with default 7 days = 14 meals
+    state = json.loads((bucket / "state.json").read_text(encoding="utf-8"))
+    assert state["enabled"] is True
+    assert state["current_meal_idx"] == 0
+    assert state["total_meals"] == 14
+    assert state["sid"] == "s1"
+
+
+def test_create_with_explicit_days(app_with_sandbox):
+    """S-06c 修订 A: days 参数 → total_meals = days*2."""
+    app, root = app_with_sandbox
+    with TestClient(app) as c:
+        c.post("/api/sandbox/init", json={"start_date": "2026-05-20"})
+        r = c.post("/api/sandbox/sessions", json={"sid": "s1", "days": 14})
+    assert r.status_code == 201
+    state = json.loads((root / "logs" / "sandbox" / "sessions" / "s1" / "state.json").read_text(encoding="utf-8"))
+    assert state["total_meals"] == 28
 
 
 def test_create_reserved_default(app_with_sandbox):

@@ -18,7 +18,7 @@ from typing import Any
 import yaml
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, model_validator
 
 from chisha import feedback_store
@@ -801,6 +801,54 @@ class RefreshPrefsReq(BaseModel):
     force_run_without_llm: bool = False   # 强制走 bootstrap (deterministic, 无 LLM)
 
 
+def _impl_l1_refresh(
+    root: Path,
+    *,
+    force_no_llm: bool = False,
+    window_days: int | None = None,
+    acquire_lock: bool = False,
+) -> dict:
+    """S-06c 修订 C: 提抽 L1 抽取核心逻辑, 供 HTTP endpoint + BG task 共用.
+
+    acquire_lock=True 时持 `_L1_EXTRACTION_LOCK` 整个 extract 周期 (供 BG task,
+    保 CONTRACTS.md:98 reset/disable 互斥). HTTP `/api/long_term_prefs/refresh`
+    保持原行为 (acquire_lock=False, 不持锁, 让 trylock 路径自己管).
+
+    Returns:
+        prefs dict (含 boost/penalty/evidence/extracted_at/based_on_meals/path).
+
+    Raises:
+        RuntimeError: LLM 全 retry 失败 (caller 转 503)
+        feedback_store.StoreCorruptError: feedback 损坏 (caller 转 500)
+        OSError/yaml.YAMLError: profile.yaml 读失败 (caller 转 500)
+    """
+    def _do() -> dict:
+        if force_no_llm:
+            from scripts.bootstrap_l1_from_legacy import bootstrap
+            prefs = bootstrap(root=root, force=True)
+            prefs.setdefault("path", "bootstrap_no_llm")
+            return prefs
+
+        from chisha.l1_extractor import extract_and_save
+
+        store = feedback_store.load_store(root)
+        profile = yaml.safe_load(_profile_path().read_text(encoding="utf-8")) or {}
+        window = window_days or 14
+        prefs = extract_and_save(
+            store, profile,
+            root=root,
+            window_days=window,
+            profile_llm=profile.get("llm"),
+        )
+        prefs.setdefault("path", "llm_extract")
+        return prefs
+
+    if acquire_lock:
+        with _L1_EXTRACTION_LOCK:
+            return _do()
+    return _do()
+
+
 @router.post("/long_term_prefs/refresh")
 def api_long_term_prefs_refresh(
     request: Request,
@@ -813,11 +861,11 @@ def api_long_term_prefs_refresh(
     - localhost only (LAN/外网拒绝)
     - 可选 X-Admin-Token header (env CHISHA_ADMIN_TOKEN 设了才检)
 
-    Flow:
-    1. force_run_without_llm=True → 走 bootstrap_l1_from_legacy (旧 jsonl + 频次)
-    2. 否则跑 l1_extractor.extract_and_save (V1.1 反馈 + LLM)
+    S-06c 修订 C: 主体提抽到 `_impl_l1_refresh`, 此处仅做权限校验 + HTTPException
+    转换. HTTP 路径**不**持 `_L1_EXTRACTION_LOCK` (现状, 用户连按 refresh 由
+    `_trigger_l1_extraction_async` 的 trylock 自管).
 
-    返回: prefs dict (含 boost/penalty/evidence/extracted_at/based_on_meals).
+    返回: prefs dict.
     """
     if not _is_localhost(request):
         raise HTTPException(403, "refresh endpoint is localhost-only")
@@ -825,38 +873,19 @@ def api_long_term_prefs_refresh(
         raise HTTPException(401, "invalid or missing X-Admin-Token")
 
     with _sandbox_ctx(_sid):
-        if req.force_run_without_llm:
-            from scripts.bootstrap_l1_from_legacy import bootstrap
-            prefs = bootstrap(root=ROOT, force=True)
-            prefs.setdefault("path", "bootstrap_no_llm")
-            return prefs
-
-        # 走完整 LLM 抽取
-        from chisha.l1_extractor import extract_and_save
-
         try:
-            store = feedback_store.load_store(ROOT)
+            return _impl_l1_refresh(
+                ROOT,
+                force_no_llm=req.force_run_without_llm,
+                window_days=req.window_days,
+                acquire_lock=False,
+            )
         except feedback_store.StoreCorruptError as e:
             raise HTTPException(500, f"feedback store corrupt: {e}")
-
-        try:
-            profile = yaml.safe_load(_profile_path().read_text(encoding="utf-8")) or {}
         except (OSError, yaml.YAMLError) as e:
             raise HTTPException(500, f"profile.yaml load failed: {type(e).__name__}: {e}")
-
-        window = req.window_days or 14
-        try:
-            prefs = extract_and_save(
-                store, profile,
-                root=ROOT,
-                window_days=window,
-                profile_llm=profile.get("llm"),
-            )
         except RuntimeError as e:
-            # LLM 全 retry 失败 → 不写盘, 保留旧 prefs
             raise HTTPException(503, f"L1 extract failed: {e}")
-        prefs.setdefault("path", "llm_extract")
-        return prefs
 
 
 # ---------- /api/sandbox/* (D-077 PR-1c) ----------
@@ -983,6 +1012,7 @@ class SessionsListResp(BaseModel):
 
 class CreateSessionReq(BaseModel):
     sid: str = Field(min_length=1, max_length=64)
+    days: int = Field(default=7, ge=1, le=30)  # S-06c 修订 A: total_meals = days*2
 
 
 class RenameSessionReq(BaseModel):
@@ -1010,7 +1040,7 @@ def api_sandbox_create_session(
             "sandbox_migration.migrate_to_v2 first",
         )
     try:
-        meta = _sandbox.create_session(req.sid, root=ROOT)
+        meta = _sandbox.create_session(req.sid, root=ROOT, days=req.days)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except FileExistsError as e:
@@ -1051,6 +1081,636 @@ def api_sandbox_rename_session(
             f"rename failed (likely cross-fs, EXDEV); manual intervention needed: {e}",
         )
     return SandboxSessionMeta(**meta)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# S-06c: per-session interactive endpoints (recs / eat / skip / swap / refine / jobs)
+# ════════════════════════════════════════════════════════════════════════════
+
+import os as _os
+import secrets as _secrets
+from chisha.sandbox import _now_real_iso
+from chisha.sandbox_adapter import (
+    format_v2_to_rec,
+    mock_recs as _mock_recs_data,
+    mock_refine_recs as _mock_refine_recs_data,
+)
+from chisha.sandbox_decision_diff import build_decision
+
+# In-memory job 表 (S-06c BackgroundTask decision diff build)
+_JOB_TABLE: dict[str, dict] = {}
+_JOB_LOCK = _threading.Lock()
+
+_DEFAULT_SID_C = "_default"
+
+
+def _atomic_write_json(path: Path, data: Any) -> None:
+    """S-06c 修订 F: tmp + os.replace 原子写 JSON."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    _os.replace(tmp, path)
+
+
+def _sb_bucket(sid: str | None, root: Path) -> Path:
+    """sandbox 桶根目录: default → logs/sandbox/, 非 default → logs/sandbox/sessions/{sid}/."""
+    if sid is None or sid == _DEFAULT_SID_C:
+        return root / "logs" / "sandbox"
+    return root / "logs" / "sandbox" / "sessions" / sid
+
+
+def _last_recs_path(sid: str | None, root: Path) -> Path:
+    return _sb_bucket(sid, root) / "last_recs.json"
+
+
+def _history_path(sid: str | None, root: Path) -> Path:
+    return _sb_bucket(sid, root) / "history.json"
+
+
+def _meal_to_trace_path(sid: str | None, root: Path) -> Path:
+    return _sb_bucket(sid, root) / "meal_to_trace.json"
+
+
+def _decision_path(sid: str | None, meal_idx: int, root: Path) -> Path:
+    return _sb_bucket(sid, root) / "decisions" / f"{meal_idx}.json"
+
+
+def _load_history(sid: str | None, root: Path) -> list[dict]:
+    p = _history_path(sid, root)
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _append_history(sid: str | None, root: Path, entry: dict) -> list[dict]:
+    history = _load_history(sid, root)
+    history.append(entry)
+    _atomic_write_json(_history_path(sid, root), history)
+    return history
+
+
+def _load_meal_to_trace(sid: str | None, root: Path) -> dict:
+    p = _meal_to_trace_path(sid, root)
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _update_meal_to_trace(sid: str | None, root: Path, meal_idx: int, trace_session_id: str) -> None:
+    m = _load_meal_to_trace(sid, root)
+    m[str(meal_idx)] = trace_session_id
+    _atomic_write_json(_meal_to_trace_path(sid, root), m)
+
+
+def _load_prefs_safe(root: Path) -> dict:
+    """Load long_term_prefs.json from sandbox-aware path, empty dict on missing/error."""
+    from chisha import data_root
+    try:
+        p = data_root.long_term_prefs_path(root)
+        if not p.exists():
+            return {}
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return {}
+
+
+def _validate_and_route_sid(sid: str) -> str | None:
+    """S-06c: 校验 path sid + sandbox enabled + 桶存在; 返合法非 default sid 或 None.
+
+    sid="_default" → 返 None (走 flat default 桶). 其它走 sessions/{sid}/.
+
+    Raises HTTPException 400/404/409 同 `_with_sandbox_sid`.
+    """
+    if sid == _DEFAULT_SID_C:
+        return None
+    from chisha.sandbox_context import _validate_sid as _vs
+    try:
+        _vs(sid)
+    except ValueError as e:
+        raise HTTPException(400, f"invalid sandbox session_id: {e}")
+    if not _sandbox.is_enabled(ROOT):
+        raise HTTPException(
+            409,
+            f"sandbox layout disabled; cannot route session_id={sid!r}",
+        )
+    bucket = ROOT / "logs" / "sandbox" / "sessions" / sid
+    if not bucket.is_dir():
+        raise HTTPException(404, f"unknown sandbox session_id={sid!r}")
+    return sid
+
+
+def _ensure_not_done(routed_sid: str | None, root: Path) -> dict:
+    """S-06c 修订 E: 读 state, raise 409 if done sentinel; 返 state dict."""
+    state_p = _sandbox._state_path_for_sid(routed_sid, root)
+    if not state_p.exists():
+        raise HTTPException(
+            409,
+            f"sandbox session {routed_sid or '_default'!r} not initialized "
+            "(no state.json); POST /api/sandbox/init or /api/sandbox/sessions first",
+        )
+    try:
+        s = json.loads(state_p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise HTTPException(500, f"sandbox state corrupt: {e}")
+    if not isinstance(s, dict) or not s.get("enabled"):
+        raise HTTPException(409, "sandbox not enabled")
+    cur = int(s.get("current_meal_idx", 0))
+    total = int(s.get("total_meals", 14))
+    if cur >= total:
+        raise HTTPException(409, f"sandbox session done (meal_idx {cur}/{total})")
+    return s
+
+
+# ---------- POST /sandbox/sessions/{sid}/recs ----------
+
+
+class SandboxRecsReq(BaseModel):
+    meal_type: str | None = None   # 默认从 state.current_meal_idx 派生
+
+
+@router.post("/sandbox/sessions/{sid}/recs")
+def api_sandbox_recs(
+    request: Request,
+    sid: str,
+    req: SandboxRecsReq,
+    mock_recommend: int = 0,
+) -> dict:
+    """S-06c: 拉 5 条推荐, 落 sessions/{sid}/last_recs.json.
+
+    mock_recommend=1 → 5 条固定 Rec (复刻 sbxMocks.CURRENT_RECS), 不调 LLM.
+    """
+    _require_localhost(request)
+    routed_sid = _validate_and_route_sid(sid)
+    s = _ensure_not_done(routed_sid, ROOT)
+    cur_idx = int(s.get("current_meal_idx", 0))
+    meal_type = req.meal_type
+    if meal_type not in ("lunch", "dinner"):
+        meal_type, _day = _sandbox.meal_idx_to_slot(cur_idx)
+
+    is_mock = mock_recommend == 1
+    if is_mock:
+        current_recs = _mock_recs_data()
+        recommend_session_id = f"mock_{_secrets.token_hex(4)}"
+        # 构造 v2-shape candidates 用于后续 eat 端点 / adapter (mock 路径里 candidates = currentRecs)
+        candidates = current_recs
+    else:
+        with _sandbox_ctx(routed_sid):
+            try:
+                out = recommend_meal(
+                    meal_type=meal_type,
+                    daily_mood=None,
+                    log_to_file=True,
+                    root=ROOT,
+                )
+            except Exception as e:
+                raise HTTPException(500, f"recommend_meal failed: {type(e).__name__}: {e}")
+        candidates = out["candidates"]   # v2 dict
+        current_recs = [format_v2_to_rec(c) for c in candidates]
+        recommend_session_id = out["session_id"]
+
+    last_recs_payload = {
+        "recommend_session_id": recommend_session_id,
+        "candidates": candidates,
+        "currentRecs": current_recs,
+        "applied_refine": None,
+        "meal_idx": cur_idx,
+        "is_mock": is_mock,
+        "saved_at": _now_real_iso(),
+    }
+    _atomic_write_json(_last_recs_path(routed_sid, ROOT), last_recs_payload)
+
+    return {
+        "currentRecs": current_recs,
+        "recommend_session_id": recommend_session_id,
+        "applied_refine": None,
+        "meal_idx": cur_idx,
+    }
+
+
+# ---------- POST /sandbox/sessions/{sid}/eat ----------
+
+
+class SandboxEatReq(BaseModel):
+    rec_rank: int = Field(ge=1, le=5)
+
+
+def _build_decision_async(
+    *,
+    sid: str | None,
+    meal_idx: int,
+    picked_rec_view: dict,
+    history: list[dict],
+    job_id: str,
+    mock: bool,
+    root: Path,
+) -> None:
+    """BG task: 在 thread pool 跑. 必须显式重 set ContextVar (S-06c 修订 D)."""
+    started = _now_real_iso()
+    with _JOB_LOCK:
+        _JOB_TABLE[job_id] = {
+            "status": "running",
+            "started_at": started,
+            "sid": sid,
+            "meal_idx": meal_idx,
+        }
+    try:
+        with _sandbox_ctx(sid):
+            if mock:
+                prev_prefs: dict = {}
+                new_prefs: dict = {}
+            else:
+                prev_prefs = _load_prefs_safe(root)
+                _impl_l1_refresh(
+                    root,
+                    force_no_llm=False,
+                    window_days=None,
+                    acquire_lock=True,    # S-06c 修订 N2: 保 reset/disable 互斥
+                )
+                new_prefs = _load_prefs_safe(root)
+
+            decision = build_decision(
+                sid=sid or _DEFAULT_SID_C,
+                meal_idx=meal_idx,
+                picked_rec=picked_rec_view,
+                prev_long_term_prefs=prev_prefs,
+                new_long_term_prefs=new_prefs,
+                history=history,
+                root=root,
+            )
+            _atomic_write_json(_decision_path(sid, meal_idx, root), decision)
+        with _JOB_LOCK:
+            _JOB_TABLE[job_id] = {
+                "status": "done",
+                "sid": sid,
+                "meal_idx": meal_idx,
+                "started_at": started,
+                "ended_at": _now_real_iso(),
+                "result": {"decision": decision, "meal_idx": meal_idx},
+            }
+    except Exception as e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "build_decision_async failed: %s: %s", type(e).__name__, e,
+        )
+        with _JOB_LOCK:
+            _JOB_TABLE[job_id] = {
+                "status": "failed",
+                "sid": sid,
+                "meal_idx": meal_idx,
+                "started_at": started,
+                "ended_at": _now_real_iso(),
+                "error": f"{type(e).__name__}: {e}",
+            }
+
+
+@router.post("/sandbox/sessions/{sid}/eat")
+def api_sandbox_eat(
+    request: Request,
+    sid: str,
+    req: SandboxEatReq,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    """S-06c: 选择第 rec_rank 条吃掉; advance + 启 BackgroundTask 抽 L1 + 派生 decision."""
+    _require_localhost(request)
+    routed_sid = _validate_and_route_sid(sid)
+    s = _ensure_not_done(routed_sid, ROOT)
+    cur_idx = int(s.get("current_meal_idx", 0))
+
+    last_p = _last_recs_path(routed_sid, ROOT)
+    if not last_p.exists():
+        raise HTTPException(404, "no last_recs.json; POST /recs first")
+    try:
+        last_recs = json.loads(last_p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise HTTPException(500, f"last_recs.json corrupt: {e}")
+
+    candidates = last_recs.get("candidates") or []
+    if not (1 <= req.rec_rank <= len(candidates)):
+        raise HTTPException(400, f"rec_rank {req.rec_rank} out of range (have {len(candidates)} candidates)")
+
+    is_mock = bool(last_recs.get("is_mock"))
+    picked_raw = candidates[req.rec_rank - 1]
+    recommend_session_id = last_recs.get("recommend_session_id", "")
+
+    # mock 路径: candidates 本身就是 Rec 视图; 真实路径: 转换
+    if is_mock:
+        picked_rec_view = dict(picked_raw)
+    else:
+        picked_rec_view = format_v2_to_rec(picked_raw)
+
+    # meal_to_trace[idx] = recommend_session_id
+    _update_meal_to_trace(routed_sid, ROOT, cur_idx, recommend_session_id)
+
+    # 真实路径: 调 _impl_accept 写 feedback_store + meal_log (mock 跳过)
+    if not is_mock:
+        try:
+            with _sandbox_ctx(routed_sid):
+                accept_req = AcceptReq(
+                    session_id=recommend_session_id,
+                    candidate_rank=req.rec_rank,
+                    candidate=picked_raw,
+                )
+                _impl_accept(accept_req)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"accept failed: {type(e).__name__}: {e}")
+
+    # history append
+    history_entry = {
+        "idx": cur_idx,
+        "state": "eat",
+        "dish": picked_rec_view.get("name", ""),
+        "session_id": recommend_session_id,
+        "accepted_at": _now_real_iso(),
+        "rank": req.rec_rank,
+    }
+    history_after = _append_history(routed_sid, ROOT, history_entry)
+
+    # advance meal clock
+    try:
+        new_state = _sandbox.advance_meal(sid=routed_sid, root=ROOT)
+    except RuntimeError as e:
+        raise HTTPException(500, f"advance_meal failed: {e}")
+
+    # 清 last_recs (下顿要重 POST /recs)
+    try:
+        last_p.unlink()
+    except OSError:
+        pass
+
+    # 启 BackgroundTask: build decision diff
+    job_id = _secrets.token_hex(8)
+    with _JOB_LOCK:
+        _JOB_TABLE[job_id] = {
+            "status": "pending",
+            "sid": routed_sid,
+            "meal_idx": cur_idx,
+            "started_at": _now_real_iso(),
+        }
+    background_tasks.add_task(
+        _build_decision_async,
+        sid=routed_sid,
+        meal_idx=cur_idx,
+        picked_rec_view=picked_rec_view,
+        history=history_after,
+        job_id=job_id,
+        mock=is_mock,
+        root=ROOT,
+    )
+
+    return {
+        "job_id": job_id,
+        "status": "running",
+        "new_meal_idx": int(new_state.get("current_meal_idx", cur_idx + 1)),
+        "meal_idx_eaten": cur_idx,
+    }
+
+
+# ---------- POST /sandbox/sessions/{sid}/skip ----------
+
+
+class SandboxSkipReq(BaseModel):
+    reason: str | None = None
+
+
+@router.post("/sandbox/sessions/{sid}/skip")
+def api_sandbox_skip(
+    request: Request,
+    sid: str,
+    req: SandboxSkipReq,
+) -> dict:
+    """S-06c: 跳过本顿. 同步落 decision (skip 不触发 L1 抽取)."""
+    _require_localhost(request)
+    if req.reason is not None and req.reason not in _VALID_SKIP_REASONS:
+        raise HTTPException(422, f"invalid skip reason: {req.reason!r}")
+    routed_sid = _validate_and_route_sid(sid)
+    s = _ensure_not_done(routed_sid, ROOT)
+    cur_idx = int(s.get("current_meal_idx", 0))
+
+    history_entry = {
+        "idx": cur_idx,
+        "state": "skip",
+        "reason": req.reason,
+        "session_id": None,
+        "accepted_at": None,
+    }
+    history_after = _append_history(routed_sid, ROOT, history_entry)
+
+    try:
+        new_state = _sandbox.advance_meal(sid=routed_sid, root=ROOT)
+    except RuntimeError as e:
+        raise HTTPException(500, f"advance_meal failed: {e}")
+
+    # 清 last_recs best-effort
+    last_p = _last_recs_path(routed_sid, ROOT)
+    if last_p.exists():
+        try:
+            last_p.unlink()
+        except OSError:
+            pass
+
+    # 同步 decision (skip 路径 prefs 都空, build_decision 返"跳过未学习")
+    decision = build_decision(
+        sid=routed_sid or _DEFAULT_SID_C,
+        meal_idx=cur_idx,
+        picked_rec=None,
+        prev_long_term_prefs={},
+        new_long_term_prefs={},
+        history=history_after,
+        root=ROOT,
+    )
+    _atomic_write_json(_decision_path(routed_sid, cur_idx, ROOT), decision)
+
+    return {
+        "new_meal_idx": int(new_state.get("current_meal_idx", cur_idx + 1)),
+        "meal_idx_skipped": cur_idx,
+        "decision": decision,
+    }
+
+
+# ---------- POST /sandbox/sessions/{sid}/swap ----------
+
+
+class SandboxSwapReq(BaseModel):
+    exclude_ids: list[str] = Field(default_factory=list)
+
+
+@router.post("/sandbox/sessions/{sid}/swap")
+def api_sandbox_swap(
+    request: Request,
+    sid: str,
+    req: SandboxSwapReq,
+    mock_recommend: int = 0,
+) -> dict:
+    """S-06c 修订 B: swap = recommend_meal 重跑 + post-filter exclude_ids. 不调 refine."""
+    _require_localhost(request)
+    routed_sid = _validate_and_route_sid(sid)
+    s = _ensure_not_done(routed_sid, ROOT)
+    cur_idx = int(s.get("current_meal_idx", 0))
+
+    last_p = _last_recs_path(routed_sid, ROOT)
+    if not last_p.exists():
+        raise HTTPException(404, "no last_recs.json; POST /recs first")
+    try:
+        last_recs = json.loads(last_p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise HTTPException(500, f"last_recs.json corrupt: {e}")
+
+    is_mock = bool(last_recs.get("is_mock")) or mock_recommend == 1
+    exclude_ids = list(req.exclude_ids or [])
+
+    if is_mock:
+        current_recs = _mock_recs_data(exclude_ids=exclude_ids)
+        candidates = current_recs
+        recommend_session_id = f"mock_{_secrets.token_hex(4)}"
+    else:
+        meal_type, _day = _sandbox.meal_idx_to_slot(cur_idx)
+        with _sandbox_ctx(routed_sid):
+            try:
+                out = recommend_meal(
+                    meal_type=meal_type,
+                    daily_mood=None,
+                    log_to_file=True,
+                    root=ROOT,
+                )
+            except Exception as e:
+                raise HTTPException(500, f"recommend_meal failed: {type(e).__name__}: {e}")
+        excl = set(exclude_ids)
+        candidates = [c for c in out["candidates"] if (c.get("id") or "") not in excl]
+        current_recs = [format_v2_to_rec(c) for c in candidates]
+        recommend_session_id = out["session_id"]
+
+    new_payload = {
+        "recommend_session_id": recommend_session_id,
+        "candidates": candidates,
+        "currentRecs": current_recs,
+        "applied_refine": last_recs.get("applied_refine"),   # swap 不清 refine
+        "meal_idx": cur_idx,
+        "is_mock": is_mock,
+        "saved_at": _now_real_iso(),
+    }
+    _atomic_write_json(last_p, new_payload)
+    return {
+        "currentRecs": current_recs,
+        "recommend_session_id": recommend_session_id,
+    }
+
+
+# ---------- POST /sandbox/sessions/{sid}/refine ----------
+
+
+class SandboxRefineReq(BaseModel):
+    text: str = Field(min_length=1)
+
+
+@router.post("/sandbox/sessions/{sid}/refine")
+def api_sandbox_refine(
+    request: Request,
+    sid: str,
+    req: SandboxRefineReq,
+    mock_recommend: int = 0,
+) -> dict:
+    """S-06c: refine 同 round; 覆盖 last_recs + 写 applied_refine."""
+    _require_localhost(request)
+    routed_sid = _validate_and_route_sid(sid)
+    s = _ensure_not_done(routed_sid, ROOT)
+    cur_idx = int(s.get("current_meal_idx", 0))
+
+    last_p = _last_recs_path(routed_sid, ROOT)
+    if not last_p.exists():
+        raise HTTPException(404, "no last_recs.json; POST /recs first")
+    try:
+        last_recs = json.loads(last_p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise HTTPException(500, f"last_recs.json corrupt: {e}")
+
+    is_mock = bool(last_recs.get("is_mock")) or mock_recommend == 1
+
+    if is_mock:
+        current_recs = _mock_refine_recs_data(req.text)
+        candidates = current_recs
+        new_recommend_sid = f"mock_{_secrets.token_hex(4)}"
+        new_round = (last_recs.get("applied_refine") or {}).get("sinceRound", 1) + 1
+    else:
+        old_sid = last_recs.get("recommend_session_id", "")
+        try:
+            with _sandbox_ctx(routed_sid):
+                refine_req = RefineReq(
+                    session_id=old_sid,
+                    refine_text=req.text,
+                )
+                refine_out = _impl_refine(refine_req)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"refine failed: {type(e).__name__}: {e}")
+        candidates = refine_out.get("candidates") or []
+        current_recs = [
+            format_v2_to_rec(
+                c,
+                refine_intent=refine_out.get("refine_intent"),
+                intent_override=req.text[:12],
+            )
+            for c in candidates
+        ]
+        new_recommend_sid = refine_out.get("session_id", old_sid)
+        new_round = int(refine_out.get("round", 2))
+
+    applied_refine = {
+        "label": req.text[:20],
+        "sinceRound": new_round,
+        "sessionId": new_recommend_sid,
+    }
+    new_payload = {
+        "recommend_session_id": new_recommend_sid,
+        "candidates": candidates,
+        "currentRecs": current_recs,
+        "applied_refine": applied_refine,
+        "meal_idx": cur_idx,
+        "is_mock": is_mock,
+        "saved_at": _now_real_iso(),
+    }
+    _atomic_write_json(last_p, new_payload)
+    return {
+        "currentRecs": current_recs,
+        "recommend_session_id": new_recommend_sid,
+        "activeRules": {
+            "refine": [applied_refine],
+            "blacklist": [],
+        },
+    }
+
+
+# ---------- GET /sandbox/sessions/{sid}/jobs/{job_id} ----------
+
+
+@router.get("/sandbox/sessions/{sid}/jobs/{job_id}")
+def api_sandbox_job_status(
+    request: Request,
+    sid: str,
+    job_id: str,
+) -> dict:
+    """S-06c: 查 BackgroundTask 状态. in-memory, server restart 后丢."""
+    _require_localhost(request)
+    _ = _validate_and_route_sid(sid)   # 校验 sid 合法
+    with _JOB_LOCK:
+        info = _JOB_TABLE.get(job_id)
+    if info is None:
+        raise HTTPException(404, f"job_id={job_id!r} not found")
+    return dict(info)
 
 
 @router.post("/sandbox/init")

@@ -297,7 +297,7 @@ def list_sessions(root: Path | None = None) -> list[dict]:
                 "is_default": False,
                 "created_at": _entry_ctime_iso(entry),
                 "size_bytes": _dir_size_safe(entry),
-                "has_state": False,  # S-06b 才真造 state.json
+                "has_state": (entry / "state.json").exists(),  # S-06c 修订 A
             })
     return items
 
@@ -332,13 +332,31 @@ def _entry_ctime_iso(p: Path) -> str | None:
         return None
 
 
-def create_session(sid: str, *, root: Path | None = None) -> dict:
-    """S-06a: 创建非 default sandbox 桶. 失败: ValueError (reserved/无效) /
-    FileExistsError (已存在)."""
+def create_session(
+    sid: str,
+    *,
+    root: Path | None = None,
+    days: int = 7,
+    start_date: dt.date | str | None = None,
+    seed_state: bool = True,
+) -> dict:
+    """S-06a + S-06c 修订 A: 创建非 default sandbox 桶, 默认 seed state.json.
+
+    seed_state=True (默认) 时, mkdir 后写入 state.json (enabled=True,
+    current_meal_idx=0, total_meals=days*2, current_date, day_index=1,
+    started_at_real, started_at_virtual, sid). 这是 production 流程的默认行为
+    (POST /api/sandbox/sessions 创建桶后 /recs /eat 立即能用).
+
+    seed_state=False 仅供测试 caller 手工 mkdir + 写 state.json 验证 path 隔离.
+
+    失败: ValueError (reserved/无效) / FileExistsError (已存在).
+    """
     from chisha.sandbox_context import _validate_sid as _vs, _DEFAULT_SID
     if sid == _DEFAULT_SID:
         raise ValueError(f"sandbox session_id {sid!r} is reserved (default bucket)")
     _vs(sid)
+    if days < 1:
+        raise ValueError(f"days must be >= 1, got {days}")
     sroot = _sessions_root(root)
     sroot.mkdir(parents=True, exist_ok=True)
     bucket = sroot / sid
@@ -346,12 +364,33 @@ def create_session(sid: str, *, root: Path | None = None) -> dict:
         bucket.mkdir(parents=False, exist_ok=False)
     except FileExistsError:
         raise FileExistsError(f"sandbox session_id={sid!r} already exists")
+
+    if seed_state:
+        if isinstance(start_date, str):
+            start_date = dt.date.fromisoformat(start_date)
+        start_date = start_date or dt.date.today()
+        state_p = bucket / "state.json"
+        seeded = {
+            "enabled": True,
+            "current_date": start_date.isoformat(),
+            "day_index": 1,
+            "current_meal_idx": 0,
+            "total_meals": days * 2,
+            "started_at_real": _now_real_iso(),
+            "started_at_virtual": start_date.isoformat(),
+            "sid": sid,
+        }
+        state_p.write_text(
+            json.dumps(seeded, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
     return {
         "sid": sid,
         "is_default": False,
         "created_at": _entry_ctime_iso(bucket),
-        "size_bytes": 0,
-        "has_state": False,
+        "size_bytes": _dir_size_safe(bucket),
+        "has_state": seed_state,
     }
 
 
@@ -402,7 +441,7 @@ def rename_session(
         "is_default": False,
         "created_at": _entry_ctime_iso(new_dir),
         "size_bytes": _dir_size_safe(new_dir),
-        "has_state": False,
+        "has_state": (new_dir / "state.json").exists(),  # S-06c 修订 N4
     }
 
 
