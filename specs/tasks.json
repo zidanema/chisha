@@ -129,11 +129,12 @@
     {
       "id": "S-06a",
       "title": "sessions CRUD 端点",
-      "regression_risk": "medium",
+      "regression_risk": "high",
       "depends_on": [
         "S-05"
       ],
-      "status": "pending"
+      "status": "done",
+      "_notes": "scope 比原 spec 扩张: 不止 sessions CRUD (GET/POST/DELETE/POST rename), 还含 S-05 deferred (A) /sandbox/inspect 三态 + (C) 非 default sid runtime 路由门控 (web_api 11 端点挂 _with_sandbox_sid dep + 用 _sandbox_ctx(_sid) 包关键 IO). v4 plan §0.b/c 修订 D/F/G/H 全部落: api_recommend 显式 root=ROOT, recommend_meal 透 root 给 clock; _with_sandbox_sid dep 在非 default sid + sandbox disabled 时 409 fail-loud 防 data_root silent fall back; 桶不存在 → 404; sandbox.init() ensure _meta.json idempotent. dep 用 request.query_params 读避免与 /feedback/{session_id} path 冲突. risk 应是 high (chisha/{api,sandbox,web_api}.py 全在 high-risk 白名单, 非 medium). 3 新 test 文件 ~659 行 + 868 全测试通过 + baseline_l2_snapshot 0 diff. Codex review 3 iter: iter1 BLOCKED (3 endpoint 缺 dep) → iter2 BLOCKED (3 endpoint dep 加了但 body 没 with _sandbox_ctx wrap → ContextVar 没 set) → iter3 APPROVED."
     },
     {
       "id": "S-06b",
