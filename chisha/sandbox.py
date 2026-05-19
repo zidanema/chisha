@@ -406,6 +406,100 @@ def rename_session(
     }
 
 
+# ---------- S-06b: per-meal 时钟 helper ----------
+
+from typing import Literal as _Literal
+
+
+def meal_idx_to_slot(idx: int) -> tuple[_Literal["lunch", "dinner"], int]:
+    """S-06b: idx 0-based → (meal_type, day_index 1-based).
+
+    idx=0 → ("lunch", 1); idx=1 → ("dinner", 1); idx=2 → ("lunch", 2);
+    idx=13 → ("dinner", 7) (7 天 × 2 顿 = 14 餐位, 合法 idx ∈ [0, 13]).
+
+    注: total_meals=14 是 done sentinel (idx=14 表示全部消费完, 但
+    meal_idx_to_slot 仅对 [0, 13] 有效, 调用方须自行处理 done 终态).
+    """
+    if idx < 0:
+        raise ValueError(f"meal_idx must be >= 0, got {idx}")
+    day = idx // 2 + 1
+    meal_type: _Literal["lunch", "dinner"] = "lunch" if idx % 2 == 0 else "dinner"
+    return (meal_type, day)
+
+
+def _state_path_for_sid(sid: str | None, root: Path | None = None) -> Path:
+    """S-06b 修订 A: sid-aware state.json path. **不**依赖 ContextVar.
+
+    - sid is None / "_default" → ``logs/sandbox/state.json`` (default 扁平, D-077)
+    - 非 default sid → ``logs/sandbox/sessions/{sid}/state.json``
+
+    本 helper 仅供 ``advance_meal`` 用. 既有 ``state()`` / ``_state_path()`` 不动
+    (S-04 stub 沿用; S-06c 决定是否统一 sid-aware 化).
+    """
+    from chisha.sandbox_context import _DEFAULT_SID
+    if sid is None or sid == _DEFAULT_SID:
+        return _state_path(root)
+    return _sessions_root(root) / sid / "state.json"
+
+
+def advance_meal(
+    *,
+    sid: str | None = None,
+    root: Path | None = None,
+) -> dict:
+    """S-06b: 推进单顿 (current_meal_idx++). dinner→next-lunch 时 day+date+=1.
+
+    与既有 ``advance(days=N)`` 区别: advance 整天跳跃 (整 day_index += days),
+    advance_meal 单顿粒度. S-06c eat/skip 端点用本函数, reset 后新建仍用 init().
+
+    sid:
+    - None 或 "_default" → 操作 default 扁平桶 ``logs/sandbox/state.json``
+    - 非 default sid → 操作 ``logs/sandbox/sessions/{sid}/state.json``
+
+    路径派生用 ``_state_path_for_sid``, 不依赖 ContextVar.
+
+    Raises:
+        RuntimeError: sandbox 未 enabled / state 文件损坏 / new_idx > total_meals
+        ValueError: sid 不合法 (隐式 — 桶目录不存在时 state_p.exists()=False raise)
+
+    Note: total_meals 是 done sentinel, idx ∈ [0, total_meals]. 即
+    total_meals=14 时 idx 可达 14 (done 终态); idx=15 触发 raise.
+    meal_idx_to_slot 调用方须自行处理 idx == total_meals 的终态.
+    """
+    state_p = _state_path_for_sid(sid, root)
+    with _STATE_LOCK:
+        if not state_p.exists():
+            raise RuntimeError(
+                f"sandbox state not found at {state_p}; call init() first"
+            )
+        try:
+            s = json.loads(state_p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            raise RuntimeError(f"sandbox state corrupt at {state_p}: {e}")
+        if not isinstance(s, dict) or not s.get("enabled"):
+            raise RuntimeError("sandbox not enabled; call init() first")
+        cur_idx = int(s.get("current_meal_idx", 0))
+        total = int(s.get("total_meals", 14))
+        new_idx = cur_idx + 1
+        if new_idx > total:
+            raise RuntimeError(
+                f"meal_idx {new_idx} exceeds total {total}"
+            )
+        s["current_meal_idx"] = new_idx
+        if cur_idx % 2 == 1:  # was dinner → 跨天到下一个 lunch
+            cur_date = dt.date.fromisoformat(s["current_date"])
+            s["current_date"] = (cur_date + dt.timedelta(days=1)).isoformat()
+            s["day_index"] = int(s.get("day_index", 1)) + 1
+        state_p.write_text(
+            json.dumps(s, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return s
+
+
+# ---------- S-04: advance (整天跳跃, 保留 D-077 行为) ----------
+
+
 def advance(
     days: int = 1,
     *,
