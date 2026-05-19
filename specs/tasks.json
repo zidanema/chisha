@@ -123,7 +123,8 @@
       "depends_on": [
         "S-04"
       ],
-      "status": "pending"
+      "status": "done",
+      "_notes": "scope 故意收窄 (vs v4 929 行 archived plans/S-05.plan-v4-bigscope.md.bak, 3 轮 Codex BLOCKED): 只做 4 件事 — (1) 静态路径布局确认 default=flat (S-04 已就位, 不改路径代码), (2) chisha/sandbox_migration.py + scripts/migrate_sandbox_layout.py migration 脚本 (idempotent + --dry-run + --relocate-legacy opt-in + collision-safe .bak.<utc-ts>), (3) tests/test_sandbox_layout_default_compat.py 15 guard tests, (4) baseline_l2_snapshot 0 diff. chisha/sandbox.py 只加 has_sandbox_meta() helper + _META_REL 常量 (10 行). 829 pytest 全过 + baseline 0 diff (compare_traces ✓) + 4-scenario migration self-test (dry-run / default / relocate-legacy / 二次跑) 全过. Reviewer chain: Codex plan audit iter1 BLOCKED (4 issues: sessions/ self-copy, relocate after default no-op, .bak collision, baseline cmd) → iter2 BLOCKED (1 issue: relocate idempotency 无 work 时不 satisfied) → iter3 APPROVED; Codex adversarial diff review APPROVED. Defer to S-06a: (A) /sandbox/inspect listing 在 layout 已建但 enabled=False 时, (B) rollback API 持锁修订, (C) 非 default sid runtime 路由门控 (web_api wrap with set_sandbox_session), (D) 多 session 并发 lock 文件设计, (E) _meta.lock 重定位 / sandbox layout reset 时序."
     },
     {
       "id": "S-06a",
