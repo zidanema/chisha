@@ -113,7 +113,8 @@
       "title": "sandbox_context + data_root session_id 显式参",
       "regression_risk": "high",
       "depends_on": [],
-      "status": "pending"
+      "status": "done",
+      "_notes": "新建 chisha/sandbox_context.py (ContextVar + sid 校验: regex fullmatch + _legacy 黑名单 + _default 白名单). data_root.py 8 path helper 加 session_id kwarg, 行为矩阵: sandbox 关 + 显式非 default sid → RuntimeError (fail-loud 防串桶), sandbox 开 + _default → flat (D-077 兼容), sandbox 开 + 非 default → sessions/{sid}/ 子树. clock.py 3 helper 透 ctx sid. sandbox.py 10 API 加 sid kwarg, destructive (init/advance/reset/disable/record_l1_extraction) 非 default raise NotImplementedError 防 S-06a 误用. tests/test_sandbox_context.py 24 case (含 2 条 S-06a forward guards: copy_context propagate + 显式 sid kwarg override). 814 pytest 全过 + baseline_l2_snapshot 0 diff (EPSILON=1e-6). Reviewer chain: Codex plan audit 3 轮 (BLOCKED→BLOCKED→APPROVED via v3 plan), Codex adversarial diff 2 轮 (needs-attention 2 highs 修完 → approve)."
     },
     {
       "id": "S-05",
