@@ -1,5 +1,5 @@
-// D-088 S-02 BPanel: 活跃规则 (refine + blacklist).
-// D-088 决议: refine 单 round, 文案改 "当前 round 已应用 \"X\"", 不显示 TTL 倒计时.
+// D-093 S-02 BPanel: 活跃规则 (refine + blacklist).
+// D-093 决议: refine 单 round, 文案改 "当前 round 已应用 \"X\"", 不显示 TTL 倒计时.
 import { useState } from "react";
 import type { ActiveRule } from "../../types/sandbox";
 

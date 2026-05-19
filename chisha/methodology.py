@@ -46,12 +46,11 @@ _PLATE_RULE_KEYS = (
     "min_protein_g", "prefer_oil_level_at_most", "hard_max_oil_level",
 )
 
-# 与 chisha.score.V2_DEFAULT_WEIGHTS 一致 (16 维)
+# 与 chisha.score.V2_DEFAULT_WEIGHTS 一致 (D-092: 11 活维度, 删 5 死维度)
 _SCORE_WEIGHT_KEYS = (
-    "vegetable_floor_pass", "protein_floor_pass", "distance",
     "low_oil", "popularity", "cuisine_preference", "variety_bonus",
-    "carb_quality", "processed_meat", "sweet_sauce", "wetness",
-    "dish_role_match", "eta", "price", "taste_match", "context_boost",
+    "carb_quality", "processed_meat", "sweet_sauce",
+    "dish_role_match", "eta", "price", "taste_match",
 )
 
 _CAP_RULES_KEYS = (

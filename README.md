@@ -34,9 +34,9 @@
 
 ## 项目状态
 
-**Phase 0 工程侧已收尾**（2026-05-18，D-001~D-085）—— 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + L1 长期反馈层真兑现（LLM 抽取）+ Sandbox Time-Travel + 推荐链路 trace 持久化 + Debug 三模式（Replay / What-if / Live）+ FastAPI 23 端点 + **Refine v2 / Faithful Refine framework 重构**（D-080~D-085: L0 三分 + RefineIntentV2 多 slot + reference resolver + subtype diversify + 方法论状态条 + L3 narrative,见 [`docs/design_briefs/2026-05-18-refine-v2-faithful-refine.md`](docs/design_briefs/2026-05-18-refine-v2-faithful-refine.md)）。
+**Phase 0 工程侧已收尾**（2026-05-20，D-001~D-092）—— 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + L1 长期反馈层真兑现（LLM 抽取）+ Sandbox Time-Travel + 推荐链路 trace 持久化 + Debug 三模式（Replay / What-if / Live）+ FastAPI 23 端点 + **Refine v2 / Faithful Refine framework 重构**（D-080~D-085: L0 三分 + RefineIntentV2 多 slot + reference resolver + subtype diversify + 方法论状态条 + L3 narrative）+ **L2 refine 信号校准 + 死维度清理**（D-090/D-091/D-092: intent 三维权重 ×2~×4 + health_guardrail slot-aware 松绑 + 通用健康权重 slot-gated 让位 + price_band 语义解耦 + 5 死维度移除 → 14 维 breakdown）。
 
-历史背景（D-001~D-072）在 [docs/archive/DECISIONS_phase0.md](docs/archive/DECISIONS_phase0.md)；活决策（含 D-073~D-085）在 [docs/decisions.md](docs/decisions.md)；Agent 跨文件约束在 [docs/CONTRACTS.md](docs/CONTRACTS.md)。
+历史背景（D-001~D-072）在 [docs/archive/DECISIONS_phase0.md](docs/archive/DECISIONS_phase0.md)；活决策（含 D-073~D-092）在 [docs/decisions.md](docs/decisions.md)；Agent 跨文件约束在 [docs/CONTRACTS.md](docs/CONTRACTS.md)。
 
 **接下来**：5 步推进路线（debug trace 验收 → 摸清 L1 → 沙盒 e2e + D-080~D-085 framework 复测 → 接个人 agent + context 注入 → 同 query 随机性），详见 [docs/ROADMAP.md "Phase 0 收尾路线"](docs/ROADMAP.md)。终极路径：自用稳定 → 接个人 agent → 扩同事 / 数据源。
 
@@ -62,7 +62,7 @@
 | [docs/api.md](docs/api.md) | agent | 前后端 API 契约（V1 + V1.1） |
 | [docs/style-guide.md](docs/style-guide.md) | agent | `apps/web/` UI 文案 + 视觉系统 + 反模式（D-052~D-068 锁定） |
 | [apps/debug-ui/README.md](apps/debug-ui/README.md) | agent | `apps/debug-ui/` SPA 设计（D-075 独立 Vite SPA / V12 DAG / 5 主题） |
-| [apps/sandbox-lab/README.md](apps/sandbox-lab/README.md) | agent | `apps/sandbox-lab/` Sandbox Lab 白盒时光机 SPA（D-088 独立 Vite SPA / 端口 5175） |
+| [apps/sandbox-lab/README.md](apps/sandbox-lab/README.md) | agent | `apps/sandbox-lab/` Sandbox Lab 白盒时光机 SPA（D-093 独立 Vite SPA / 端口 5175） |
 | [docs/intro-for-colleagues.md](docs/intro-for-colleagues.md) | 同事 | 给同事的产品 sale 文档（750 字） |
 | [docs/agent-integration-approach.md](docs/agent-integration-approach.md) | 同行 | "CLI + Skill" 模式技术交流文档 |
 | [docs/design_briefs/](docs/design_briefs/) | 你 · 历史 | 设计草稿（如 D-074 AI-friendly 接入共识） |
@@ -120,7 +120,7 @@ chisha/
 ├── chisha/                    # L1~L3 推荐链路 Python 包 (api / recall / score / rerank / refine / l1_extractor / l1_prefs / sandbox / clock / data_root / trace_store / debug_what_if / web_api / ...)
 ├── apps/web/                  # V1 主交互 React 18 + Vite + TS SPA (D-051~D-068)
 ├── apps/debug-ui/             # V12 DAG 调试台 SPA (D-075, 端口 5174)
-├── apps/sandbox-lab/          # 白盒时光机 sandbox SPA (D-088, 端口 5175)
+├── apps/sandbox-lab/          # 白盒时光机 sandbox SPA (D-093, 端口 5175)
 ├── integrations/openclaw/     # 飞书推送通道骨架, V1.5 接入 (D-051 翻案)
 ├── scripts/                   # 数据维护 + 回归工具 (tag_via_api / dry_run / inspect_candidates / baseline_l2_snapshot / compare_traces / bootstrap_l1_from_legacy / ...)
 ├── prompts/                   # LLM prompt 模板 (rerank_system / l1_extract / parse_refine_intent 等)

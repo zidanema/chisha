@@ -1,4 +1,4 @@
-// D-088 S-02 CPanel: 近期窗口 (recent 4 顿 + fatigue 计数).
+// D-093 S-02 CPanel: 近期窗口 (recent 4 顿 + fatigue 计数).
 import { useState } from "react";
 import type { FatigueEntry } from "../../types/sandbox";
 

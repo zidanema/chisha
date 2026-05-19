@@ -1,4 +1,4 @@
-// D-088 S-02 Banners.
+// D-093 S-02 Banners.
 import type { BannerEntry } from "../types/sandbox";
 
 export interface BannersProps {

@@ -1,6 +1,6 @@
 # chisha · sandbox lab (apps/sandbox-lab)
 
-D-088 「白盒时光机」内部 debug SPA。7~14 天可回放、可分支、可改规则的推荐沙箱。
+D-093 「白盒时光机」内部 debug SPA。7~14 天可回放、可分支、可改规则的推荐沙箱。
 
 设计源: `chidiansha-sandbox/project/sandbox-lab/` (HTML 原型,Phase 1/2 字句搬过来不重设计)
 落地 brief: `docs/design_briefs/2026-05-19-sandbox-lab.md`
@@ -25,7 +25,7 @@ Vite proxy `/api → :8765` 已配。
 
 ## 当前状态
 
-D-088 落地完成 (2026-05-20): S-01 ~ S-09 全部 commit. 主区 + Timeline + 4 panels + Banners + Modals + TweaksPanel 接入真后端 (`/api/sandbox/*` 11 端点), backend offline 时 fallback 内置 mock, 顶栏 pill 显示 backend/mock 状态.
+D-093 落地完成 (2026-05-20): S-01 ~ S-09 全部 commit. 主区 + Timeline + 4 panels + Banners + Modals + TweaksPanel 接入真后端 (`/api/sandbox/*` 11 端点), backend offline 时 fallback 内置 mock, 顶栏 pill 显示 backend/mock 状态.
 
 dev / demo query 参数 (visual verification 用):
 - `?dev=1` — 显示 TweaksPanel 浮层

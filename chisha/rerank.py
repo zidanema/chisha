@@ -1043,8 +1043,15 @@ def _run_llm_rerank(
         "candidates": None,
         "llm_response": None,
         "system_prompt_chars": 0,
+        # D-089-S1: system_prompt body 必须落 trace (self-contained 原则).
+        # 仅 chars 让 trace 无法 replay (prompts/rerank_system.md 会迭代).
+        "system_prompt_full": "",
         "user_message_chars": 0,
         "user_message_full": "",
+        # D-089-S1: raw_response 是 provider 返回的 raw text — tool_use 路径用
+        # tool_input arguments JSON 字符串, text 路径用 content text. trace_helpers
+        # serialize_llm_call_trace 据此算 raw_response_chars.
+        "raw_response": "",
         "model": expected_trace_model,
         "latency_ms": None,
         # D-079 followup: 把 LLM 实际 usage/温度/上限 stash 到 out, 让 trace 能落
@@ -1053,6 +1060,8 @@ def _run_llm_rerank(
         "usage": None,
         "max_tokens": None,
         "temperature": None,
+        # D-089-S1: 业务校验失败时填 list[str], 否则 None
+        "validator_errors": None,
     }
     is_cli = (resolved_provider == "claude_code_cli")
     try:
@@ -1066,6 +1075,8 @@ def _run_llm_rerank(
                                        n=n, n_explore=n_explore, root=root,
                                        l1_prefs_override=l1_prefs_override)
         out["system_prompt_chars"] = len(system_prompt)
+        # D-089-S1: 落实际发给 LLM 的 system prompt body (patch 过的 CLI 版 / 主路径 raw 版).
+        out["system_prompt_full"] = system_prompt
         out["user_message_chars"] = len(user_msg)
         out["user_message_full"] = user_msg
         kwargs: dict[str, Any] = {
@@ -1094,6 +1105,15 @@ def _run_llm_rerank(
         # CLI 路径目前 resp 也带 usage (provider 透传), 没拿到就给 None.
         if isinstance(resp, dict):
             out["usage"] = resp.get("usage")
+            # D-089-S1: raw_response — tool_use 路径用 raw_text (tool_input
+            # arguments JSON 字符串), text 路径用 content. 让 trace 自包含,
+            # debug-ui PanelL3 raw_response_blocks 能从 adapter.ts:264 合成 block.
+            out["raw_response"] = (
+                resp.get("raw_text")
+                or resp.get("content")
+                or ""
+            )
+            out["stop_reason"] = resp.get("stop_reason")
         out["max_tokens"] = kwargs.get("max_tokens")
         out["temperature"] = kwargs.get("temperature")
         # D-048: trace.model 用 provider 真实报告值覆盖 (expected_trace_model
@@ -1232,7 +1252,11 @@ def _run_llm_rerank(
         out["candidates"] = validated
         return out
     except Exception as e:
-        out["fallback_reason"] = f"{type(e).__name__}: {str(e)[:120]}"
+        # D-089-S6: fallback_reason 截前 200 (vs 120) 让 OR 上游 error message 完整可读;
+        # 同步 stderr 打 traceback 让 debug_server 日志能定位 None subscript 之类问题.
+        out["fallback_reason"] = f"{type(e).__name__}: {str(e)[:200]}"
+        import traceback
+        print(f"[rerank fallback traceback]\n{traceback.format_exc()}", flush=True)
         return out
 
 
@@ -1342,20 +1366,25 @@ def rerank(
                 l1_prefs_override=l1_prefs_override,
             )
             llm_resp = res.get("llm_response") or {}
-            raw_text = (llm_resp.get("raw_text") or "") if isinstance(llm_resp, dict) else ""
+            # D-089-S1: raw_response 直接从 res (内部已统一: tool_use raw_text /
+            # text content), 不再单独从 llm_resp 派生. trace 自包含原则.
+            raw_response = res.get("raw_response", "")
             trace_collector["status"] = res.get("status")
             trace_collector["config_error"] = res.get("config_error", False)
             trace_collector["resolved_provider"] = res.get("resolved_provider")
             trace_collector["model"] = res.get("model")
             trace_collector["system_prompt_chars"] = res.get("system_prompt_chars")
+            # D-089-S1: system_prompt body 必须落 trace (self-contained, 不靠
+            # prompts/rerank_system.md 当前版本重建).
+            trace_collector["system_prompt_full"] = res.get("system_prompt_full", "")
             trace_collector["user_message_chars"] = res.get("user_message_chars")
             trace_collector["user_message_full"] = res.get("user_message_full")
-            trace_collector["raw_response"] = raw_text
-            trace_collector["raw_response_chars"] = len(raw_text)
+            trace_collector["raw_response"] = raw_response
+            trace_collector["raw_response_chars"] = len(raw_response)
             trace_collector["tool_input"] = (
                 llm_resp.get("tool_input") if isinstance(llm_resp, dict) else None
             )
-            trace_collector["stop_reason"] = (
+            trace_collector["stop_reason"] = res.get("stop_reason") or (
                 llm_resp.get("stop_reason") if isinstance(llm_resp, dict) else None
             )
             trace_collector["fallback_reason"] = res.get("fallback_reason")
@@ -1369,6 +1398,15 @@ def rerank(
             trace_collector["usage"] = res.get("usage")
             trace_collector["max_tokens"] = res.get("max_tokens")
             trace_collector["temperature"] = res.get("temperature")
+            # D-089-S1: 业务校验失败时的 validator_errors (CLI retry / 主路径
+            # tool_use 失败都会走 fallback_reason; validator_errors 是结构化版本,
+            # 当前主链路尚未填; 留 hook 给后续扩展).
+            trace_collector["validator_errors"] = res.get("validator_errors")
+            # D-089-S1: retry 字段 (D-049 CLI 路径独有)
+            trace_collector["retry_attempted"] = res.get("retry_attempted")
+            trace_collector["retry_succeeded"] = res.get("retry_succeeded")
+            trace_collector["retry_latency_ms"] = res.get("retry_latency_ms")
+            trace_collector["retry_first_failure_code"] = res.get("retry_first_failure_code")
             if res.get("status") == "ok":
                 llm_out = res.get("candidates")
                 llm_called = True

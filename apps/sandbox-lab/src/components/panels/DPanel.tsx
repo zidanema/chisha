@@ -1,4 +1,4 @@
-// D-088 S-02 DPanel: 上顿决策因果链 (沙箱独有 hero panel).
+// D-093 S-02 DPanel: 上顿决策因果链 (沙箱独有 hero panel).
 // 紧凑/标准/详细 3 档密度, 三段固定结构 (动作摘要 / 状态 diff / 下顿影响).
 // onDensityChange prop 驱动密度切换 (Codex hidden gotcha #6: 不用 window 全局).
 import type { Decision, DiffEntry, Implication } from "../../types/sandbox";

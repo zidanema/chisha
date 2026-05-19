@@ -33,6 +33,9 @@
 - **`apply_caps()` 只返回 head 段，不带 tail。** brand cap=2 真正生效在 L2，**不能下放到 L3 prompt**（"输入里可能含多变体请择优"是错的方向，会让 cap 失效，参 D-049）。
 - **改 `score.py` / `methodology.py` / spec yaml 前后必跑回归：** `uv run python -m scripts.baseline_l2_snapshot --out-dir tmp/baseline_traces`（改前）+ 改后再跑 + `compare_traces`。top60 顺序 + 16 维 breakdown `|delta| < 1e-6` 才允许 commit（参 D-072.1）。
 - **methodology spec 只搬运不改逻辑。** 改打分逻辑 / 调权重 / 加新维度走 `score.py` + decisions 修订，**不走 spec**。spec 是 yaml 化的 `V2_DEFAULT_WEIGHTS`，不是新接口（参 D-072）。
+- **`health_guardrail(combo, profile, intent=None)` 是 slot-aware (D-090)。** intent=None 时行为与旧 API 一致（R1 baseline 0-diff 守门）；`intent.flavor_tags` 含 "heavy" 时 oil 触发豁免（用户明确表达可破 L0-C）。其他 (sweet/processed_meat/wetness) 无 explicit slot 仍照常压制。加新豁免类型必走 D-090.x + `tests/test_l2_refine_snapshot_d090.py` 更新断言。
+- **`score_combo` 在 refine 模式下按 explicit slot 动态调权重 (D-091 phase-2)。** intent ≠ None 时 `_build_refine_weight_overlay(intent)` 给 dim weight 加 multiplier — heavy → low_oil ×0.3 / sweet → sweet_sauce ×0.3 / want_rice|want_noodle → carb_quality ×0 / price_band cheap → price ×1.5 / premium → price ×0 / cuisine_want → cuisine_preference ×0.5。intent=None 时 overlay 空 dict → R1 0-diff。改 overlay mapping 必走 D-091.x + `test_r2_phase2_*` 断言更新。**注意**: `intent_match_bonus` 不再把 price_band 加到 cuisine 通道（D-091 P2-B 语义解耦），cuisine 通道现仅含 cuisine_want exact/soft match + price_band 走 overlay 在 price weight 上调权。
+- **`score_combo` breakdown 是 14 维 (D-092: 11 基础活维度 + 3 intent 维度)。** 已删 5 死维度：`vegetable_floor_pass` / `protein_floor_pass` (L1 已强制) / `distance` (外卖没数据) / `wetness` (D-044.1 砍 baseline) / `context_boost` (D-073 恒返 0)。函数本身保留以防别处 import，但不再进 V2_DEFAULT_WEIGHTS / parts dict / profile.scoring_weights / spec score_weights / adapter DIM_ORDER。加新维度走 D-092.x + 同步 7 处 keyset。`compare_traces` 允许"key 缺失且对侧=0"视为 0-diff（兼容老 baseline 含 5 死维度 key=0.0 + 新 trace 无 key）。
 
 ### L3 精排
 - **L3 输入 = top60。** 不是 40 / 100。如果输入大小要改，先看 D-046 的边界论证再动。
@@ -115,13 +118,15 @@
 
 - **老调试台 = 独立 FastAPI on `:8765`，与主推荐链路解耦。** 调试逻辑不要混进生产代码 (`chisha/api.py`)。改打分链路时检查 `chisha/debug_recommend.py` instrumented 管道还能跑（参 D-039）。
 - **新 debug-ui SPA (`apps/debug-ui/`) 独立 Vite 项目，端口 5174，不并入 `apps/web/`。** 只通过 `/api/*` 联调，backend 只在 `chisha/debug_recommend.py` ADD 字段不动既有键（参 D-075）。改 backend trace shape 同步 `apps/debug-ui/src/api/backend-types.ts` + `traceToSession` adapter。
-- **Refine round 的 `l1/l2/l3` 切片当前为 None (backlog)。** `refine_session` 没暴露完整 trace, 所以 `append_round` 落盘的 R2+ round 只有 `final` + `intent_v2` + `kpi`. Frontend `useWaTrace.stubToRound` 给 RoundRecord 加 `__partial=true` flag, LookupDrawer 见此 flag 警告"反查跑在 mock 数据上不可信". 修法: 扩 `refine_session` 返回值含 l1/l2/l3 切片, 改 `_build_round_payload_from_refine`. 在改之前**不要**把 partial mock 数据当真实数据展示给用户.
+- **Refine round 落完整 `l1/l2/l3` + `refine_intent_llm` 切片 (D-089)。** `refine.py` 跑完 L1 recall + L2 score + L3 rerank 后, 通过 `trace_helpers.build_refine_round_payload` 1:1 落 round, shape 跟 R1 一致. 顶层 `refine_intent_llm` 字段含意图解析 LLM call 完整 trace (refine_intent_v2._llm_parse_v2 经 trace_collector 采集). R1 没有 refine intent 解析步骤, 故 R1 round 无此字段. 改 refine 链路时若新增 LLM call, 走 `trace_helpers.serialize_llm_call_trace` 统一 shape, 不要再造新 schema.
+
+- **trace 自包含原则 (D-089)。** 所有 LLM call 的 `system_prompt_full` / `user_message_full` / `raw_response` body 必须落 trace, 仅落 chars 不够 — `prompts/*.md` 会迭代, 留 chars 而丢 body 等于 trace 无法 replay. backend 字段命名统一: `system_prompt_full` (body) + `system_prompt_chars` (长度) 共存. `usage` 统一 Anthropic-style 命名 (`input_tokens` / `output_tokens` / `cache_read_input_tokens` / `cache_creation_input_tokens`), 由 `trace_helpers.normalize_usage_fields` 在落盘前转换 provider-level 命名 (prompt_tokens / completion_tokens / cached_tokens / cache_write_tokens).
 - **D-087 Workflow A 后 SPA 100% read-only。** Live / What-if / Refine submit 路径全删；4 个 endpoint (`/api/traces`, `/api/trace/{sid}`, `/api/trace/{sid}/round/{rid}`, `/api/intent_schema`) 都是 GET。反查走前端内存 LookupDrawer 不调后端。新加写入入口前先翻 D-087 brief 确认是否要破坏 read-only 约束。
 - **Trace v3 目录布局是 append_round / 多 round 持久化的唯一形式。** `read_trace_v3_view` 走 on-read migrate (v2 单文件 → 转 v3 目录); 任何工具 (scripts/baseline_l2_snapshot, inspect_candidates) 应用 v3 reader 而非直接 json.load。`TRACE_SCHEMA_VERSION = 3`, `ACCEPTED_TRACE_VERSIONS = {1, 2, 3}`。
 
 ---
 
-## Sandbox Lab (D-088)
+## Sandbox Lab (D-093)
 
 - **`sandbox_context` ContextVar 注入 sid, 不靠全局 active session。** 多 tab 并发 eat 不能串 session。
 - **`meal_to_trace.json` 是 sid → trace 唯一索引。** rollback / branch / trace 跳转都按此查, 不扫 recommend_trace 目录枚举。

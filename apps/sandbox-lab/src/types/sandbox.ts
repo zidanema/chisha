@@ -1,4 +1,4 @@
-// D-088 S-02 sandbox-lab 类型定义
+// D-093 S-02 sandbox-lab 类型定义
 // 严格对齐 chidiansha-sandbox/project/sandbox-lab/HANDOFF_PROMPT.md §数据契约 (88-140 行).
 // HandoffXxx 类型 = 后端契约严格版; Xxx (无前缀) = sandbox-lab 视图扩展版.
 
@@ -115,7 +115,7 @@ export interface ActiveRule {
   kind: "refine" | "blacklist";
   label: string;
   since: string;
-  // ttl 字段保留 optional (后端可能传, 但 S-02 D-088 决议: refine 单 round, 不显示倒计时)
+  // ttl 字段保留 optional (后端可能传, 但 S-02 D-093 决议: refine 单 round, 不显示倒计时)
   ttl?: number;
   conflict?: string;
   reason?: string;

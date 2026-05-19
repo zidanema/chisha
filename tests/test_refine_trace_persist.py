@@ -247,6 +247,142 @@ def test_refine_with_missing_base_trace_warns_not_persists(app_with_root, caplog
                 for rec in caplog.records)
 
 
+def test_refine_round_persists_full_l1_l2_l3_trace_slices(tmp_path, monkeypatch):
+    """D-089-S2/S4: refine round 必须落完整 L1/L2/L3 + refine_intent_llm 切片.
+
+    监督性测试 — fixture 用扩展的 _fake_refine_session 返回 l1_trace/l2_trace/
+    l3_trace/refine_intent_llm_trace, 验证 build_refine_round_payload 把它们
+    1:1 落到 R2.json (而不是写成 None stub).
+    """
+    from chisha import web_api, trace_store
+
+    monkeypatch.setattr(web_api, "ROOT", tmp_path)
+    monkeypatch.setattr(web_api, "_is_localhost", lambda req: True)
+
+    def _fake_refine_session_with_full_slices(**kwargs):
+        return {
+            "session_id": kwargs["session_id"],
+            "meal_type": "lunch",
+            "zone": "shenzhen-bay",
+            "round": 2,
+            "generated_at": "2026-05-19T12:34:56+00:00",
+            "refine_input": kwargs.get("user_input", ""),
+            "refine_intent": {"cuisine_want": "湘菜"},
+            "refine_intent_v2": {"redirect": {}, "constrain": {}},
+            "narrative": "test narrative",
+            "stats": {"n_dishes_total": 100, "n_combos_recalled": 60,
+                       "n_combos_after_score": 40, "n_returned": 5},
+            "candidates": [{"restaurant": {"name": "湘颂", "id": "r1"},
+                            "dishes": [{"name": "辣子鸡"}], "rank": 1, "score": 8.4}],
+            "_reference_resolved": None,
+            "_subtype_diversified": True,
+            "_refine_hard_filter_events": [],
+            "_refine_recall_fallback_events": [],
+            # D-089-S2: refine 暴露完整切片
+            "l1_trace": {"summary": {"n_combos": 60}, "hard_filter_events": []},
+            "l2_trace": {"summary": {"n_scored": 40, "score_min": 1.0,
+                                       "score_max": 9.0}, "top": []},
+            "l3_trace": {
+                "status": "ok", "used": True, "model": "anthropic/claude-sonnet-4.6",
+                "resolved_provider": "openrouter",
+                "system_prompt_full": "rerank system prompt body...",
+                "system_prompt_chars": 4757,
+                "user_message_full": "user message...",
+                "user_message_chars": 100,
+                "raw_response": '{"candidates":[]}',
+                "raw_response_chars": 17,
+                "latency_ms": 5000,
+                "usage": {"input_tokens": 100, "output_tokens": 50,
+                          "cache_read_input_tokens": 0,
+                          "cache_creation_input_tokens": 0},
+                "narrative": "test", "tool_input": {},
+                "parsed_candidates": [{"rank": 1}],
+                "n_returned": 5, "used_fallback": False,
+            },
+            "refine_intent_llm_trace": {
+                "system_prompt_full": "parse_refine_intent_v2.md...",
+                "system_prompt_chars": 9000,
+                "user_message_full": "想吃湖南菜",
+                "user_message_chars": 5,
+                "raw_response": '{"redirect":{}}',
+                "raw_response_chars": 14,
+                "latency_ms": 1500,
+                "usage": {"input_tokens": 4000, "output_tokens": 50,
+                          "cache_read_input_tokens": 0,
+                          "cache_creation_input_tokens": 0},
+                "model": "anthropic/claude-sonnet-4.6",
+                "resolved_provider": "openrouter",
+                "stop_reason": "end_turn", "fallback_reason": None,
+            },
+            "total_latency_ms": 6500,
+        }
+
+    monkeypatch.setattr(web_api, "refine_session",
+                        _fake_refine_session_with_full_slices)
+
+    class _Sess:
+        meal_type = "lunch"
+        zone = "shenzhen-bay"
+        daily_mood = None
+    import chisha.session as session_mod
+    monkeypatch.setattr(session_mod, "load_session", lambda *a, **kw: _Sess())
+    monkeypatch.setattr(web_api, "load_zone_data", lambda zone, root: ([], []))
+    monkeypatch.setattr(web_api, "load_meal_log", lambda root: [])
+    monkeypatch.setattr(web_api, "load_profile", lambda path, root: {"llm": {}})
+    monkeypatch.setattr(web_api, "_remember_session_safe", lambda sid, out: None)
+    monkeypatch.setattr(web_api, "_profile_path", lambda: tmp_path / "p.yaml")
+    monkeypatch.setattr(web_api, "format_v2_candidate", lambda i, c: c)
+    from chisha import context as ctx_mod
+
+    class _Ctx:
+        def to_llm_dict(self):
+            return {}
+    monkeypatch.setattr(ctx_mod, "build_context", lambda **kw: _Ctx())
+    from chisha import clock as clock_mod
+    import datetime as _dt
+    monkeypatch.setattr(clock_mod, "today",
+                        lambda *args, **kw: _dt.date(2026, 5, 19))
+
+    app = FastAPI()
+    app.include_router(web_api.router)
+
+    sid = "sess_d089_full_slices"
+    _write_base_trace(trace_store, tmp_path, sid)
+    client = TestClient(app)
+    r = client.post("/api/refine",
+                    json={"session_id": sid, "refine_text": "想吃湘菜"})
+    assert r.status_code == 200, r.text
+
+    d = trace_store.data_root.recommend_trace_dir(tmp_path)
+    r2 = json.loads((d / sid / "rounds" / "R2.json").read_text("utf-8"))
+
+    # D-089 核心断言: R2 round 必须含完整切片 (不是 None stub)
+    assert r2["l1"] is not None, "R2.l1 must be persisted (not None)"
+    assert r2["l2"] is not None, "R2.l2 must be persisted (not None)"
+    assert r2["l3"] is not None, "R2.l3 must be persisted (not None)"
+    assert r2["refine_intent_llm"] is not None, (
+        "R2.refine_intent_llm must be persisted"
+    )
+
+    # L3 关键字段:trace 自包含原则
+    assert r2["l3"]["system_prompt_full"] == "rerank system prompt body..."
+    assert r2["l3"]["system_prompt_chars"] == 4757
+    assert r2["l3"]["status"] == "ok"
+    assert r2["l3"]["latency_ms"] == 5000
+    assert r2["l3"]["usage"]["input_tokens"] == 100
+
+    # refine_intent_llm 完整 trace
+    ri = r2["refine_intent_llm"]
+    assert ri["system_prompt_chars"] == 9000
+    assert ri["user_message_full"] == "想吃湖南菜"
+    assert ri["raw_response"] == '{"redirect":{}}'
+    assert ri["latency_ms"] == 1500
+    assert ri["model"] == "anthropic/claude-sonnet-4.6"
+
+    # kpi.latency_ms 从 refine_raw.total_latency_ms 来 (不再硬编 0)
+    assert r2["kpi"]["latency_ms"] == 6500
+
+
 def test_refine_with_corrupt_base_trace_warns_not_persists(app_with_root, caplog):
     """D-087: 损坏 v2 base → migrate_v2_to_v3 失败, append_round 返 None.
 

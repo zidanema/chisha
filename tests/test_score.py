@@ -66,8 +66,9 @@ def test_score_combo_breakdown_keys(basic_profile):
                 make_dish(main_ingredient_type="红肉",
                            protein_grams_estimate=30, oil_level=2)])
     s, br = score_combo(c, basic_profile)
-    assert "vegetable_floor_pass" in br
-    assert "protein_floor_pass" in br
+    # D-092: floor 死维度已移除. 验剩 11 活维度入 breakdown.
+    assert "vegetable_floor_pass" not in br
+    assert "protein_floor_pass" not in br
     assert "low_oil" in br
     assert "popularity" in br
     assert "cuisine_preference" in br

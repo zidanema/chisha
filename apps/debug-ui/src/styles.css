@@ -1984,6 +1984,23 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
   font-size: 11px;
   letter-spacing: 2px;
 }
+/* D-088 (B4): 用户采纳标记 — ★ 用纯色突出, 餐厅名截断防溢出 */
+.tb-row .l3 .fb-star {
+  color: var(--ok);
+  font-weight: 700;
+  display: inline-block;
+  min-width: 10px;
+}
+.tb-row .l3 .fb-name {
+  color: var(--t-1);
+  max-width: 10em;
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  font-size: 10px;
+}
 
 .tb-row .chev {
   position: absolute; right: 8px; top: 8px;
@@ -2214,7 +2231,10 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
   z-index: 12;
   background: var(--bg-0);
 }
-/* condensed mode — triggered by scroll past 60px */
+/* IntersectionObserver 哨兵 — 在 sticky-stack 上方, 离开视口 → condense.
+   高度 1px 不参与视觉, 但要参与正常 scroll 流, 不能 position: fixed/sticky. */
+.sticky-sentinel { height: 1px; }
+/* condensed mode — toggled by sentinel IntersectionObserver (App.tsx) */
 .sticky-stack.condensed .rt-track,
 .sticky-stack.condensed .rt-legend { display: none; }
 .sticky-stack.condensed .rt { padding: 6px 16px; }
@@ -2466,6 +2486,17 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
   align-items: center;
   gap: 4px;
   cursor: pointer;
+  /* D-088 (B2): button 元素 reset, 视觉接近原 div */
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+}
+.rt-node:focus-visible {
+  outline: 2px solid var(--accent, var(--refine));
+  outline-offset: 4px;
+  border-radius: 4px;
 }
 .rt-node .lbl {
   font-family: var(--mono); font-size: 10px;

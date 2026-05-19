@@ -1,4 +1,4 @@
-// D-088 S-02 TweaksPanel: 简化版 dev-only 浮层 (5 控件).
+// D-093 S-02 TweaksPanel: 简化版 dev-only 浮层 (5 控件).
 // 不引入原型的 host protocol (parent postMessage).
 import type { Accent, Tweaks } from "../types/sandbox";
 import { ACCENTS } from "../hooks/useTweaks";

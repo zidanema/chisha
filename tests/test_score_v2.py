@@ -304,11 +304,15 @@ def test_score_combo_v2_breakdown_includes_new_keys(basic_profile):
                            protein_grams_estimate=30, oil_level=2,
                            dish_role="主菜")])
     s, br = score_combo(c, basic_profile)
-    # V2 新增维度都在 breakdown 里
+    # V2 新增活维度都在 breakdown 里. D-092: distance/wetness/context_boost 已删.
     for key in ["carb_quality", "processed_meat", "sweet_sauce",
-                "wetness", "dish_role_match", "distance",
-                "eta", "price", "taste_match", "context_boost"]:
+                "dish_role_match",
+                "eta", "price", "taste_match"]:
         assert key in br, f"V2 维度 {key!r} 应在 breakdown"
+    # 死维度已删
+    for key in ["vegetable_floor_pass", "protein_floor_pass",
+                "distance", "wetness", "context_boost"]:
+        assert key not in br, f"D-092 删除的死维度 {key!r} 不应在 breakdown"
 
 
 def test_score_combo_processed_meat_lowers_total(basic_profile):
@@ -347,16 +351,19 @@ def test_score_combo_soup_boost_via_refine_intent_d073(basic_profile):
 
 
 def test_v2_default_weights_complete():
-    """V2_DEFAULT_WEIGHTS 必须覆盖所有 V2 维度."""
+    """V2_DEFAULT_WEIGHTS 必须覆盖所有 V2 活维度 (D-092: 删 5 死维度, 留 11 活)."""
     expected_keys = {
-        "vegetable_floor_pass", "protein_floor_pass", "low_oil",
-        "popularity", "cuisine_preference", "variety_bonus",
+        "low_oil", "popularity", "cuisine_preference", "variety_bonus",
         "carb_quality", "processed_meat", "sweet_sauce",
-        "wetness", "dish_role_match",
-        "distance", "eta", "price",
-        "taste_match", "context_boost",
+        "dish_role_match", "eta", "price", "taste_match",
+        # refine intent 三档 (D-073)
+        "intent_cuisine", "intent_ingredient", "intent_flavor",
     }
     assert expected_keys.issubset(V2_DEFAULT_WEIGHTS.keys())
+    # D-092: 5 死维度已删
+    for k in ["vegetable_floor_pass", "protein_floor_pass",
+              "distance", "wetness", "context_boost"]:
+        assert k not in V2_DEFAULT_WEIGHTS, f"D-092 删除的死维度 {k!r} 不应在 V2_DEFAULT_WEIGHTS"
 
 
 # ─────────────────────── D-042: 粥已移出 GRAIN_GOOD
@@ -378,11 +385,11 @@ def test_cuisine_preference_default_weight_lowered():
     assert V2_DEFAULT_WEIGHTS["cuisine_preference"] == 0.3
 
 
-def test_d043_dead_dimensions_zeroed():
-    """D-043: vegetable/protein floor pass / distance 权重砍 0."""
-    assert V2_DEFAULT_WEIGHTS["vegetable_floor_pass"] == 0.0
-    assert V2_DEFAULT_WEIGHTS["protein_floor_pass"] == 0.0
-    assert V2_DEFAULT_WEIGHTS["distance"] == 0.0
+def test_d092_dead_dimensions_removed():
+    """D-092: vegetable/protein floor pass / distance / wetness / context_boost 已删除."""
+    for k in ["vegetable_floor_pass", "protein_floor_pass",
+              "distance", "wetness", "context_boost"]:
+        assert k not in V2_DEFAULT_WEIGHTS, f"D-092 删除的死维度 {k!r} 不应在 V2_DEFAULT_WEIGHTS"
 
 
 # ─────────────────────── D-042: cap_per_restaurant

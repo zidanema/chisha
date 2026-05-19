@@ -1,4 +1,4 @@
-// D-088 S-02 RecCard
+// D-093 S-02 RecCard
 // 骨架与 apps/web/src/components/RecCard.tsx 1:1 (rank chip + tags row + title +
 // summary + price + reasoning + meta + 双 action). 沙箱版只 *叠加* 调试层:
 //   - L3 chip (showDebug)

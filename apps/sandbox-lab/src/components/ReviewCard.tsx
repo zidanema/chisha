@@ -1,4 +1,4 @@
-// D-088 S-02 ReviewCard: 回顾模式 (只读) 替代 DecisionArea.
+// D-093 S-02 ReviewCard: 回顾模式 (只读) 替代 DecisionArea.
 // skip 模式: 极简卡 + "回到决策模式". eat 模式: header + callout + altScores + 跳 trace.
 import type { Meal } from "../types/sandbox";
 

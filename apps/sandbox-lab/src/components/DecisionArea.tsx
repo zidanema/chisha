@@ -1,4 +1,4 @@
-// D-088 S-02 DecisionArea: 决策模式左列.
+// D-093 S-02 DecisionArea: 决策模式左列.
 // 本任务 callbacks inert (S-03 接 useSandbox); input 内部 controlled state, 无 submit 逻辑.
 import { useState } from "react";
 import type { Clock, Rec } from "../types/sandbox";

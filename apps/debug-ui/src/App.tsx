@@ -2,7 +2,7 @@
 // 数据全部走 React state (mock fallback in waMocks.ts), 不走 window.MOCK swap.
 // Phase 2b 替换 mock 为 backend GET /api/traces + /api/trace/{id}/round/{rid}.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DagHeader } from "./components/DagHeader";
 import { IntentStrip } from "./components/IntentStrip";
 import { LookupDrawer } from "./components/LookupDrawer";
@@ -20,6 +20,7 @@ import { PanelL1 } from "./panels/PanelL1";
 import { PanelL2 } from "./panels/PanelL2";
 import { PanelL3 } from "./panels/PanelL3";
 import { PanelFinal } from "./panels/PanelFinal";
+import { PanelRefineIntentLLM } from "./panels/PanelRefineIntentLLM";
 import type { RoundRecord, Session, WaTrace } from "./types/trace";
 
 type DiffMode = "vs_r1" | "adjacent";
@@ -88,11 +89,22 @@ export function App() {
 
   // 当前 trace + 所有 round (来自 hook, backend / mock fallback 自动处理)
   const rounds = trace.rounds;
-
-  // 切 trace + rounds 实际变化时, 把 round selection 归到合法值 (latest).
-  // 用 round_ids 签名替代 ref 判定, 覆盖 "切 trace 后 hook async fetch detail
-  // 让 rounds 第二次到达" 的 race (此前 target 可能停在不存在的 R4).
   const roundsSignature = rounds.map((r) => r.id).join(",");
+
+  // D-088 (B1): trace 加载完成时 → 强制 reset 到 meta.latestRound. 不再 sticky 在
+  // 上一 trace 的 round. useWaTrace 的 stale guard 已保证 trace.meta.id === activeTrace,
+  // 所以这里直接 key on trace.meta.id 即可.
+  useEffect(() => {
+    if (rounds.length === 0) return;
+    const latest = trace.meta.latestRound || rounds[rounds.length - 1].id;
+    const first = rounds[0].id;
+    setActiveRound(latest);
+    setBase(first);
+    setTarget(latest);
+  }, [trace.meta.id, trace.meta.latestRound]);
+
+  // 兜底: rounds 签名变化但 trace.meta.id 没变 (同 trace 加 round 罕见 case) →
+  // 仅修无效值 (preserve 用户已主动切到的 round).
   useEffect(() => {
     if (rounds.length === 0) return;
     const latest = rounds[rounds.length - 1].id;
@@ -100,7 +112,7 @@ export function App() {
     setActiveRound((prev) => rounds.find((r) => r.id === prev) ? prev : latest);
     setBase((prev) => rounds.find((r) => r.id === prev) ? prev : first);
     setTarget((prev) => rounds.find((r) => r.id === prev) ? prev : latest);
-  }, [activeTrace, roundsSignature, rounds]);
+  }, [roundsSignature]);
 
   // activeRound 改变 → target 跟随
   useEffect(() => { setTarget(activeRound); }, [activeRound]);
@@ -116,18 +128,22 @@ export function App() {
     }
   }, [diffMode, target, rounds]);
 
-  // 顶部 sticky-stack auto-condense (scrollTop > 60 → condensed)
+  // 顶部 sticky-stack auto-condense — 用 IntersectionObserver + 哨兵元素,
+  // 不再依赖 scrollTop 阈值. 旧实现 (scrollTop > 60 / < 20) 在 condense 后 sticky-stack
+  // 收缩 ~150px → 浏览器把 scrollTop clamp 回 < 20 → 再 expand → 又 > 60 → 无限振荡.
+  // 哨兵在 sticky-stack 正上方 1px, 一旦它离开视口顶端 → condense; 回到视口 → expand.
+  // sticky-stack 高度变化不影响哨兵 (哨兵在它之前), 反馈环断掉.
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    const content = document.querySelector(".content");
-    if (!content) return;
-    function onScroll() {
-      const top = (content as HTMLElement).scrollTop;
-      if (top > 60 && !condensed) setCondensed(true);
-      else if (top < 20 && condensed) setCondensed(false);
-    }
-    content.addEventListener("scroll", onScroll, { passive: true });
-    return () => content.removeEventListener("scroll", onScroll);
-  }, [condensed]);
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setCondensed(!entry.isIntersecting),
+      { threshold: 0, rootMargin: "0px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   // condense 时 IntentStrip auto-collapse (用户显式展开后这里就不再覆盖)
   useEffect(() => { if (condensed) setIntentCollapsed(true); }, [condensed]);
@@ -239,6 +255,9 @@ export function App() {
           activeRounds={rounds}
         />
         <div className="content wa">
+          {/* sentinel: IntersectionObserver 监控它进出视口 → 决定 sticky-stack 是否 condensed.
+              必须在 sticky-stack 之前, 不受 sticky-stack 高度变化影响, 防反馈环. */}
+          <div ref={sentinelRef} className="sticky-sentinel" aria-hidden="true" />
           <div className={`sticky-stack ${condensed ? "condensed" : ""}`}>
             <TraceContextBar
               trace={trace.meta}
@@ -280,6 +299,15 @@ export function App() {
           </div>
 
           <RoundBanner targetRound={targetRoundFull} baseRound={baseRound} />
+
+          {/* D-089-S5b: R2+ refine round 含 refine_intent_llm 切片时, 在 L1 panel
+              之上挂"意图解析 LLM call" panel. R1 / 无 refine intent LLM 调用时
+              不挂载. 这是 Faithful Refine "执行用户表达" 的可证据视图. */}
+          {targetRoundFull.refine_intent_llm && (
+            <div className="panel-wrap" data-panel="refine_intent_llm">
+              <PanelRefineIntentLLM trace={targetRoundFull.refine_intent_llm} />
+            </div>
+          )}
 
           <PanelRoundStrip layer="l1" targetRound={targetRoundFull} baseRound={baseRound} />
           <div className="panel-wrap" data-panel="l1"><PanelL1 l1={targetRoundFull.l1} /></div>

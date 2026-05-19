@@ -27,7 +27,7 @@ export function RefineCrumb({
   const activeIdx = chain.findIndex((c) => c.round === currentRound);
 
   return (
-    <div className="mb-3 rounded-md border border-dashed border-[color:var(--border)] bg-[color:var(--surface)]/60 px-3 py-2">
+    <div className="mb-3 rounded border border-[color:var(--border)] bg-[color:var(--bg-soft,#f9f9f9)] px-3 py-2">
       <div className="flex items-baseline justify-between gap-3 mb-1.5">
         <span className="text-[11.5px] text-[color:var(--muted)]">
           已根据你的要求换了{" "}

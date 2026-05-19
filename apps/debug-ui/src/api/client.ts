@@ -121,6 +121,10 @@ export type BackendRoundFull = BackendRoundStub & {
   l3?: unknown;
   final?: unknown;
   __frozen?: unknown;
+  // D-089-S5a: R2+ refine round 含意图解析 LLM call 完整 trace
+  // (refine_intent_v2._llm_parse_v2 输出, serialize_llm_call_trace 序列化).
+  // R1 主链路无此字段 (R1 没有 refine intent 解析步骤).
+  refine_intent_llm?: import("./backend-types").BackendLlmCallTrace | null;
 };
 
 export function fetchTraces(params: {

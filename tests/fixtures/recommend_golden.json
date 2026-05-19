@@ -40,8 +40,8 @@
         "vegetable_dish_count": 1,
         "estimated_total_oil": 2.0,
         "estimated_total_protein_g": 38,
-        "score": 2.487,
-        "fit_score": 2.487,
+        "score": 1.988,
+        "fit_score": 1.988,
         "health_flags": {
           "veg_ok": true,
           "protein_ok": true,
@@ -120,7 +120,7 @@
       "n_avoid_rests": 0
     },
     "l2_summary_score_min": 1.038,
-    "l2_summary_score_max": 2.487,
+    "l2_summary_score_max": 1.988,
     "l2_n_scored": 2,
     "l3_status": "skipped",
     "l3_used_fallback": true,
@@ -130,26 +130,26 @@
     "frozen_zone": "test",
     "frozen_restaurants_sorted": [
       {
+        "delivery_eta_min": 20,
+        "brand": "潮汕汤店",
+        "name": "潮汕汤店",
         "monthly_orders": 500,
-        "office_zone": "test",
         "rating": 4.5,
         "id": "r1",
         "category": "潮汕",
-        "name": "潮汕汤店",
-        "distance_m": 500,
-        "delivery_eta_min": 20,
-        "brand": "潮汕汤店"
+        "office_zone": "test",
+        "distance_m": 500
       },
       {
+        "delivery_eta_min": 20,
+        "brand": "湘菜店",
+        "name": "湘菜店",
         "monthly_orders": 500,
-        "office_zone": "test",
         "rating": 4.5,
         "id": "r2",
         "category": "湘菜",
-        "name": "湘菜店",
-        "distance_m": 500,
-        "delivery_eta_min": 20,
-        "brand": "湘菜店"
+        "office_zone": "test",
+        "distance_m": 500
       }
     ],
     "frozen_dishes_sorted": [

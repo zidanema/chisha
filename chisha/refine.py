@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from chisha.context import build_context
+from chisha.debug_recommend import _build_l1_trace  # D-089-S2: 复用 L1 trace 构造
 from chisha.recall import recall
 from chisha.refine_intent import RefineIntent, parse_refine_intent
 from chisha.refine_intent_v2 import RefineIntentV2, extract_refine_intent_v2
@@ -120,6 +121,10 @@ def refine(
     from chisha import clock
     today = today or clock.today(root)
 
+    # D-089-S2: 总耗时埋点, 供 round trace kpi.latency_ms (跟 R1 一致).
+    import time as _time
+    _t_start = _time.time()
+
     # 1. parse_refine_intent: user_input → 结构化意图 (V1, 下游 recall/score 消费)
     intent: RefineIntent = parse_refine_intent(
         text=user_input,
@@ -130,6 +135,9 @@ def refine(
     # T-P1a-03 follow-up: V2 多 slot (Faithful Refine), trace 双存. 下游 recall/
     # score/L3 仍消费 V1 (T-P2-01/02 接入新 slot 时再切换). Codex H7 修: V2 多耗
     # ~6s LLM call, 仅 trace 用不该阻塞响应, 用 _v2_mode() 切 sync/async/off.
+    # D-089-S3: 收集 refine_intent_v2 LLM call 完整 trace, 落 R2 round.refine_intent_llm.
+    # async / off 路径不调 sync LLM, collector 保持 None (round trace 该字段为 None).
+    refine_intent_llm_collector: dict | None = None
     v2_mode = _v2_mode()
     if v2_mode == "off":
         intent_v2 = RefineIntentV2(raw_text=user_input,
@@ -146,10 +154,12 @@ def refine(
             daemon=True,
         ).start()
     else:  # "sync" (default)
+        refine_intent_llm_collector = {}
         intent_v2 = extract_refine_intent_v2(
             text=user_input,
             use_llm=use_llm,
             profile_llm=profile.get("llm"),
+            trace_collector=refine_intent_llm_collector,
         )
 
     # 2. 重建 ContextSnapshot, 注入 refine_input (原文) + refine_intent (结构化)
@@ -173,14 +183,16 @@ def refine(
                      recall_fallback_events=recall_fallback_events)
 
     # 4. L2 打分 (intent 进 intent_match_bonus 三档)
-    ranked = rank_combos(combos, profile, meal_log, today,
-                          context=ctx,
-                          meal_type=state.meal_type,
-                          root=root,
-                          intent=intent if not intent.is_empty() else None)
+    # D-089-S2: 保留 ranked_raw (cap 前) 供 trace_helpers.build_l2_trace_for_round
+    # 的 _build_l2_cap_stats 计算"cap 前后多样性对比" — 跟 R1 主链路 trace shape 一致.
+    ranked_raw = rank_combos(combos, profile, meal_log, today,
+                              context=ctx,
+                              meal_type=state.meal_type,
+                              root=root,
+                              intent=intent if not intent.is_empty() else None)
     # D-043: refine 也走三层 cap
     # D-073 followup: 传 intent, cuisine_want 命中的菜系免 cuisine cap (「换日料」bug)
-    ranked = apply_caps(ranked, profile,
+    ranked = apply_caps(ranked_raw, profile,
                         intent=intent if not intent.is_empty() else None)
     # T-P2-01: reference 块软重排. user_input 含"昨天/上次/更清淡/换一家"
     # → parse_reference_text → resolve_reference (读 trace_store) → apply_relation
@@ -271,6 +283,69 @@ def refine(
     reranked = rerank(top_k, profile, context=ctx, meal_log=meal_log,
                        n=n, n_explore=0, refine=True, use_llm=use_llm,
                        root=root, trace_collector=l3_collector)
+
+    # D-089-S2: refine round 必须落 L1/L2/L3 完整切片 (trace self-contained 原则).
+    # 之前 web_api 落盘时 l1/l2/l3=None stub, debug-ui R2 panel 全是空 — 现在 refine
+    # 跑完 reranked 后立即构造完整 trace, 跟 R1 主链路 shape 一致.
+    # try/except 兜底: 测试 fixture 用 minimal profile (缺 diversity / scoring_weights
+    # 等字段) 会让 trace 构造 KeyError, 但 refine 主流程不应被诊断 trace 中断 —
+    # trace 失败时降级到 None (web_api 落盘空 trace, debug-ui makeEmpty 兜 no_data).
+    from chisha.trace_helpers import (
+        build_l2_trace_for_round, build_l3_trace_from_collector,
+    )
+    from chisha.rerank import build_payload
+    refine_intent_for_l1 = intent if not intent.is_empty() else None
+    l1_trace: dict | None
+    l2_trace: dict | None
+    l3_trace: dict | None
+    try:
+        l1_trace, _l1_combos = _build_l1_trace(
+            profile, rests, tagged, meal_log, today,
+            meal_type=state.meal_type, intent=refine_intent_for_l1,
+        )
+    except Exception as _l1_e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "refine L1 trace build failed (non-fatal): %s: %s",
+            type(_l1_e).__name__, _l1_e,
+        )
+        l1_trace = None
+    try:
+        l2_trace = build_l2_trace_for_round(ranked_raw, ranked, profile)
+    except Exception as _l2_e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "refine L2 trace build failed (non-fatal): %s: %s",
+            type(_l2_e).__name__, _l2_e,
+        )
+        l2_trace = None
+    try:
+        refine_payload_to_llm = build_payload(
+            top_k, profile, ctx, meal_log, n=n, n_explore=0,
+        )
+        l3_trace = build_l3_trace_from_collector(
+            l3_collector, payload_to_llm=refine_payload_to_llm, n_returned=len(reranked),
+        )
+    except Exception as _l3_e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "refine L3 trace build failed (non-fatal): %s: %s",
+            type(_l3_e).__name__, _l3_e,
+        )
+        l3_trace = None
+    # D-089-S3: refine_intent LLM call trace → 走 serialize_llm_call_trace 统一 shape.
+    # collector 是 None (async / off / 空 refine) 时 trace 也是 None.
+    refine_intent_llm_trace: dict | None = None
+    if refine_intent_llm_collector is not None and refine_intent_llm_collector:
+        try:
+            from chisha.trace_helpers import serialize_llm_call_trace
+            refine_intent_llm_trace = serialize_llm_call_trace(refine_intent_llm_collector)
+        except Exception as _ri_e:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "refine_intent_llm trace serialize failed (non-fatal): %s: %s",
+                type(_ri_e).__name__, _ri_e,
+            )
 
     # 6. 更新 session
     state.round += 1
@@ -377,6 +452,17 @@ def refine(
         "_refine_hard_filter_events": refine_hard_filter_events,
         # T-P1a-02: 三级回落事件 (web_api 合并到 trace.l1.recall_fallback_events)
         "_refine_recall_fallback_events": recall_fallback_events,
+        # D-089-S2: refine round 完整 L1/L2/L3 trace 切片. web_api.py 通过
+        # trace_helpers.build_refine_round_payload 1:1 落到 R{n}.json,
+        # debug-ui R2 panel 不再显 "no_data" 兜底.
+        "l1_trace": l1_trace,
+        "l2_trace": l2_trace,
+        "l3_trace": l3_trace,
+        # D-089-S3: refine_intent_v2 LLM call 完整 trace (system_prompt_full /
+        # raw_response / latency / usage / model 等). 同 R1 L3 trace shape.
+        "refine_intent_llm_trace": refine_intent_llm_trace,
+        # D-089-S2: 总耗时 (kpi.latency_ms) — refine 跑完 L1+L2+L3 端到端.
+        "total_latency_ms": int((_time.time() - _t_start) * 1000),
     }
 
 

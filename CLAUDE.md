@@ -46,7 +46,7 @@ uv run python -m chisha.debug_server  # :8765 (老:/debug, SPA:/, swagger:/swagg
 # 新 debug 台 SPA (D-075, 端口 5174, proxy /api → :8765)
 cd apps/debug-ui && npm install && npm run dev  # http://127.0.0.1:5174
 
-# Sandbox Lab 白盒时光机 (D-088, 端口 5175, proxy /api → :8765)
+# Sandbox Lab 白盒时光机 (D-093, 端口 5175, proxy /api → :8765)
 cd apps/sandbox-lab && npm install && npm run dev  # http://127.0.0.1:5175
 
 # 推荐 dry_run
@@ -75,7 +75,7 @@ uv run python -m scripts.compare_traces                                         
 
 ## 前端自测(强制,改 apps/web 或 apps/debug-ui 或 apps/sandbox-lab 必走)
 
-本项目装了 `chrome-devtools-mcp` (user scope, 2026-05-16). 改 `apps/web/src/**` (用户视图 :5173) / `apps/debug-ui/src/**` (D-075 SPA :5174) / `apps/sandbox-lab/src/**` (D-088 SPA :5175) 任意 `.tsx` / `.css` / `vite.config.ts` / proxy 后, **必须用 `mcp__chrome-devtools__*` 工具自驱浏览器验证**,不许只跑 vitest/tsc 就宣告完成,也不许让志丹去当眼睛。
+本项目装了 `chrome-devtools-mcp` (user scope, 2026-05-16). 改 `apps/web/src/**` (用户视图 :5173) / `apps/debug-ui/src/**` (D-075 SPA :5174) / `apps/sandbox-lab/src/**` (D-093 SPA :5175) 任意 `.tsx` / `.css` / `vite.config.ts` / proxy 后, **必须用 `mcp__chrome-devtools__*` 工具自驱浏览器验证**,不许只跑 vitest/tsc 就宣告完成,也不许让志丹去当眼睛。
 
 最小流程:
 

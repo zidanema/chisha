@@ -89,7 +89,10 @@ export type L2Trace = {
   combos_before_l2: number;
 };
 
-export type L3Status = "ok" | "fallback" | "config_error" | "skipped";
+// D-089-S5b: "no_data" 替代 "skipped" 兜底 — 之前 makeEmptyL3 用 "skipped"
+// 容易让人误以为是业务跳过, 实际是 round 根本没存 L3 切片. "skipped" 保留给
+// backend 真业务跳过路径 (top_combos 为空 -> rerank 直接 skip).
+export type L3Status = "ok" | "fallback" | "config_error" | "skipped" | "no_data";
 
 export type FallbackChainStep = {
   step: number;
@@ -297,6 +300,32 @@ export type RoundIntentV2 = {
   [key: string]: unknown;
 };
 
+// D-089-S5a: 通用单次 LLM call view-model (跟 backend BackendLlmCallTrace 对齐).
+// 用于 R2+ round.refine_intent_llm; 未来扩展 L1 LLM 抽取 trace 也复用.
+export type LlmCallTrace = {
+  system_prompt_full: string;
+  system_prompt_chars: number;
+  user_message_full: string;
+  user_message_chars: number;
+  user_message_preview: string;
+  raw_response: string;
+  raw_response_chars: number;
+  latency_ms: number | null;
+  model: string | null;
+  resolved_provider: string | null;
+  stop_reason: string | null;
+  fallback_reason: string | null;
+  max_tokens: number | null;
+  temperature: number | null;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens: number;
+    cache_creation_input_tokens: number;
+  };
+  validator_errors?: string[] | null;
+};
+
 // 单 round 对应的完整 pipeline 数据 + intent + 与上一轮的 diff 摘要.
 export type RoundRecord = {
   id: string;                  // "R1" / "R2" / ...
@@ -321,8 +350,12 @@ export type RoundRecord = {
   l2: L2Trace;
   l3: L3Trace;
   final: FinalRow[];
+  // D-089-S5a: R2+ refine round 含意图解析 LLM call 完整 trace.
+  // R1 主链路 / R2 没启用 sync v2 / LLM 调用失败时为 null.
+  refine_intent_llm?: LlmCallTrace | null;
   // 后端 refine round (R2+) 暂未存 l1/l2/l3 切片 (refine_session 不暴露), 当前用 mock R1
   // 兜底让 panel 不崩 — 这种情况标 __partial=true, LookupDrawer 警告用户反查不可信.
+  // D-089-S2 之后此字段应该不再出现 (refine round 现在已经落完整切片).
   __partial?: boolean;
 };
 
@@ -330,6 +363,7 @@ export type RoundRecord = {
 export type TraceFeedback = {
   type: "accepted" | "rated" | "stopped";
   rank?: number;               // accepted 用
+  restaurant_name?: string;    // accepted 用, D-088 (B4)
   count?: number;              // rated 用 (heart count)
 };
 

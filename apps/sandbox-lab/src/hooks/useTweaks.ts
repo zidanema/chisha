@@ -1,4 +1,4 @@
-// D-088 S-02: 5-field Tweaks (timelineVariant / rightDensity / showDebugLayer / accent / theme).
+// D-093 S-02: 5-field Tweaks (timelineVariant / rightDensity / showDebugLayer / accent / theme).
 // 持久 localStorage chisha:sandboxTweaks; 含 S-01 → S-02 旧数据 migration (合并默认值).
 import { useEffect, useState } from "react";
 import type { Accent, Theme, Tweaks } from "../types/sandbox";

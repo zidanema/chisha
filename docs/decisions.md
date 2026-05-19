@@ -275,9 +275,54 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 详见 brief: docs/design_briefs/2026-05-18-debug-console-workflow-a.md
 
 ## D-088
+**Debug UI (D-085~D-087) 渲染层 6 bug 修复, refine 流程在调试台从"看不见"变"默认可见"。** (2026-05-19) · debug-ui follow-up
+- 根因 1 (B6): `adapter.ts:adaptL3` 把 backend `l3.status=config_error` 硬转 `"skipped"`, 违反 CONTRACTS §39 精神. 修法: `wrapTraceL3` 不再走 skipped 简壳, 始终建完整 BackendL3Llm + `used: l3.used` 真值; PanelL3 callout 直显 `fallback_reason`
+- 根因 2 (B1): `App.tsx:activeRound` 硬编码 `"R1"` 不读 `trace.meta.latestRound`, refine 完默认看不到 R2. 修法: useEffect key on `[trace.meta.id, trace.meta.latestRound]` + stale guard 下沉到 `useWaTrace`(success/catch 双路) 防快切 trace race
+- 根因 3 (B4): `web_api._attach_feedback_to_meta` 只派生 `type/rank`, TraceBrowser 显示 `+2` 神秘. 修法: 派生加 `restaurant_name`, 前端用 ASCII `★` + 餐厅名截断显示
+- 顺手修: RefineTimeline `<div>` 改 `<button>` + `aria-pressed` (B2); stubToRound mock R1 兜底改 zero-state skeleton (B3); useWaTrace 5s 轮询 `/api/traces` (B5)
+- 验证: 全 pytest 796 passed (基线 791 + 5 新增 backend test) + chrome-devtools-mcp golden path 全过. spec/plan: `specs/Debug.md` / `plans/Debug.plan.md`
+
+## D-089
+**trace 自包含化 + refine 全链路落盘 + R1 L3 fallback bug 修复。** (2026-05-19) · trace 第一原则
+- R1 L3 fallback 根因 (S6): `profile.yaml` 配 `openrouter: deepseek/deepseek-v4-flash` 经 Morph 路由不支持 D-047 tool_use 的 structural_tag grammar (Morph 502 "Failed to compile structural_tag grammar"), 整条 R1 L3 无声 fallback 到 L2 ordering. 改回 sonnet-4.6 + openrouter.py 加 None guard 让上游 error message 可读
+- 第一原则: trace 是 source of truth — 所有 LLM call 的 `system_prompt_full` / `user_message_full` / `raw_response` body 必须落 trace, 不能事后从 `prompts/*.md` 当前版本重建 (prompt 会迭代, 留 chars 丢 body 等于 trace 无法 replay)
+- 新建 `chisha/trace_helpers.py` 集中 4 helper (`normalize_usage_fields` / `serialize_llm_call_trace` / `build_l3_trace_from_collector` / `build_refine_round_payload`) 消灭 L3 / refine round 序列化三份漂移
+- refine round 落完整 L1/L2/L3 切片 (refine.py 实际就走完整链路, 不是简化路径) + 新顶层字段 `refine_intent_llm` (意图解析 LLM call 完整 trace)
+- 字段命名统一: backend `system_prompt_full` (不用 `system_prompt`), usage Anthropic-style. PanelRefineIntentLLM 新 panel + makeEmptyL3 `"skipped"` → `"no_data"` 区分数据缺失 vs 业务跳过
+- 老 trace 归档 `logs/recommend_trace.archived_2026-05-19/` (20 条 fallback 路径污染数据), 不做 backfill 迁移. 验证: pytest 826 全过 (含 16 新增 D-089 测试, baseline_l2 严格不漂) + 新 trace E2E R1+R2 字段完整
+
+## D-090
+**L2 refine 信号被淹没 — 提 intent 权重 ×2~×4 + health_guardrail slot-aware 松绑 (phase-1)。** (2026-05-19) · L2 校准
+- 根因: R2 trace「湘菜+重口+牛肉鸡肉」L2 top-5 仅 2 家湘菜, 主要靠 L3 硬拉. intent 三维满分合计 0.8 vs 健康罚分四维合计 3.3, 信号被 4 倍音量淹没
+- phase-1 改动 (双模型 S1+S2+S3 共创, Codex P0~P2 反馈全收): intent_cuisine 0.5→1.0 / intent_ingredient 0.2→0.5 / intent_flavor 0.1→0.4; health_guardrail(combo, profile, intent=None) 接 intent, heavy flavor_tag → 油触发豁免, 其他 (sweet/processed_meat/wetness) 无 explicit slot 仍照常压制
+- 验收 R2 frozen replay: top-5 湘菜数 2→5, top-1 score 3.073→3.683. R1 baseline `compare_traces` top60 + 16 维 |delta| < 1e-6 严格 0 diff
+- 守门 `tests/test_l2_refine_snapshot_d090.py` (3 test): 改 score.py 时若 break 必须 D-090.x 修订并更新断言
+- phase-2 留账 (不做): low_oil / sweet_sauce / carb_quality / cuisine_preference 通用权重 per-slot L0-C overlay; variety_bonus / context_boost / wetness / distance / 2 floor 死维度清理; intent_cuisine 通道语义重载 (塞了 portion/staple/price)
+
+## D-091
+**L2 refine phase-2 — slot-gated 通用健康权重让位 + price_band 语义解耦 + context_boost 清零。** (2026-05-20) · L2 校准 ②
+- 触发: D-090 phase-1 留账 3 项, 志丹直接推进 phase-2; 已自扮 self-S2 review (标 self-bias 风险, Codex 用量耗尽), 比 S1 更保守
+- 改动 1 (P2-A `_build_refine_weight_overlay`): intent ≠ None 时按 explicit slot 动态调 weight — heavy → low_oil ×0.3 (而非 ×0, 保留 30% safety net) / sweet → sweet_sauce ×0.3 / want_rice 或 want_noodle → carb_quality ×0 / cheap → price ×1.5 (放大对贵菜惩罚) / premium → price ×0 / cuisine_want → cuisine_preference ×0.5
+- 改动 2 (P2-B): 删 `intent_match_bonus` 把 price_band 加到 cuisine 通道的逻辑 (历史语义重载), price 维度独立兜底; 更新 `test_intent_match_price_band_no_longer_in_cuisine_channel`
+- 改动 3 (P2-C): profile.yaml + V2_DEFAULT_WEIGHTS `context_boost: 0.25→0` (函数 D-073 后恒返 0, cosmetic 死权重清零)
+- 验收 R2 frozen replay (前后均含 phase-1 D-090 提权): top-5 湘菜数 5 (保持), top-1 score 3.683→3.255, low_oil breakdown 0.396→0.119, cuisine_pref 0.300→0.150. R1 baseline `compare_traces` 0-diff 严格通过. pytest 830 passed
+- 守门测试新增 `tests/test_l2_refine_snapshot_d090.py::test_r2_phase2_heavy_low_oil_weight_reduced` + `test_r2_phase2_cuisine_want_preference_reduced`. 改 overlay mapping 必走 D-091.x + 更新断言
+- phase-3 留账 (不做): soup flavor → wetness weight 提升 (对称鼓励); variety_bonus / 2 floor / distance / wetness 死维度清理 (破 16 维 breakdown layout)
+
+## D-092
+**L2 死维度清理 — 删 vegetable_floor_pass / protein_floor_pass / distance / wetness / context_boost。** (2026-05-20) · L2 校准 ③
+- 触发: D-091 phase-2 留账; 实测 R1 baseline 5 个维度 max|v|=0 且 std=0, 函数行为已死 (L1 已强制 / 外卖没数据 / D-044.1 砍 / D-073 恒返 0)
+- 不删 variety_bonus (志丹原列表): 它是连续函数 (≥7 天没吃 → 1.0), 当前 trace std=0 仅因 meal_log 7 天内无命中, 函数本身有意义, 累积后会活跃
+- 改动 9 文件: score.py (V2_DEFAULT_WEIGHTS + score_combo parts dict 删 5 keys) / profile.yaml / methodology.py SCHEMA / harvard_plate.yaml spec / adapter.ts DIM_ORDER / compare_traces.py (允许缺失 key 当 0 视为 0-diff) / conftest.py / test_score.py / test_methodology.py / test_score_v2.py / recommend_golden.json (重生成)
+- breakdown layout: 19 维 → 14 维 (11 活基础 + 3 intent). 总 score 不变 (5 个删维度都是 0×x=0). 验收: R1 baseline `compare_traces` 0-diff 通过 / R2 frozen snapshot D-090+D-091 全过 / pytest 830 passed
+- 函数本身 (vegetable_floor_score / protein_floor_score / distance_penalty / wetness_bonus / context_boost) 保留 — 别处 import 不破坏. 仅从 V2_DEFAULT_WEIGHTS / score_combo parts dict / spec / profile / adapter / 测试断言中移除 keys
+- self-S2 review: Codex 用量耗尽时由 Opus 自扮 S2, 检查范围 / 兼容性 / 守门测试; 明早 Codex 恢复后建议补独立审查 (违 dual-model 原则)
+
+## D-093
 **Sandbox Lab 白盒时光机落地 — apps/sandbox-lab 独立 SPA :5175。** (2026-05-20) · debug 沙箱
 - 是什么: 7~14 天可回放/分支推荐沙箱; 多 session + branch/rollback 完整版
 - scope 拍板: Refine 单 round (B panel 文案 "当前 round 已应用"); 跨顿 TTL 留 v2
 - 为何不并入 apps/debug-ui: 后者 D-087 read-only invariant 必须保留, 加可写交互会污染契约
 - 共用后端: chisha.debug_server :8765 新增 sandbox/* 端点 (S-04~S-08)
 - 详见 brief: docs/design_briefs/2026-05-19-sandbox-lab.md
+- 编号备注: 原写 D-088, 因 worktree 双线并行与 main 上 D-088 (Debug UI bug 修复) 撞号, merge 时改 D-093 (违 D-086 worktree 同步坑教训实例)

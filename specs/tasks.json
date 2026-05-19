@@ -81,6 +81,17 @@
       "_notes": "subtype_diversity 模块 + 8 菜系子类词表 + 11 单测 + refine.py 真接入: intent.cuisine_want 非空时 ranked 走 diversify_by_subtype (round-robin 让 top N 覆盖 ≥ 3 subtype). 5 集成测试 + 773 全测试通过. trace.subtype_diversified 落 debug. baseline_l2_snapshot 0 diff (空 refine 不触发)."
     },
     {
+      "id": "Debug",
+      "title": "Debug UI (D-080~D-085) 验收 bug fix (B1-B6)",
+      "regression_risk": "medium",
+      "depends_on": [
+        "T-P2-02"
+      ],
+      "status": "done",
+      "_spec": "specs/Debug.md",
+      "_notes": "D-088 落地: 6 bug 全修 + chrome-devtools-mcp golden path 全过. pytest 796 (基线 791 + 5 新增). Codex 3 轮 plan 审 + 1 轮 diff review APPROVED. 主要修法: adapter.ts B6 (config_error 透传) + App.tsx B1 (activeRound 读 latestRound) + useWaTrace.ts B1/B3/B5 (stale guard + zero-state + 5s 轮询) + RefineTimeline B2 (button + a11y) + web_api.py B4 (restaurant_name 派生) + TraceBrowser B4 (★ + 餐厅名渲染) + PanelL3 B6 (fallback_reason 显示)."
+    },
+    {
       "id": "S-01",
       "title": "sandbox-lab scaffold + 主题切换",
       "regression_risk": "low",
@@ -195,7 +206,7 @@
         "S-09"
       ],
       "status": "done",
-      "_notes": "D-088 落 decisions.md (8 行) + CONTRACTS.md 加 5 条 sandbox 约束 (全文 134→144 ≤ 200) + CLAUDE.md 常用命令补 sandbox-lab :5175 (91→94 ≤ 100) + §前端自测 段同步 :5175 (in-place) + apps/sandbox-lab/README.md 'D-088 落地完成' + 数据流段 + README.md §项目结构 + §文档体系 表格双加索引 + brief status 转正 (落地 2026-05-20). HANDOFF_PROMPT.md 加 '## 落地状态' 节 (本地, chidiansha-sandbox/ 在 .git/info/exclude). memory: 新建 chisha_sandbox_lab_d088.md + MEMORY.md 加索引. 933 pytest 0 regression. Codex plan APPROVED iter 1 (4 LOW 全 changelog 接受), Codex diff APPROVED iter 1 (2 LOW 非阻断: HANDOFF exclude + S-04~S-08 vs S-04~S-09 段差描述, 无实质错). Phase 1 plan worker halt @ Phase 2 (deferred Agent tool 未发现), 主 agent 接手 Phase 2-5."
+      "_notes": "D-093 (原 D-088, 因与 main 撞号重编) 落 decisions.md (8 行) + CONTRACTS.md 加 5 条 sandbox 约束 (全文 134→144 ≤ 200) + CLAUDE.md 常用命令补 sandbox-lab :5175 (91→94 ≤ 100) + §前端自测 段同步 :5175 (in-place) + apps/sandbox-lab/README.md 'D-093 落地完成' + 数据流段 + README.md §项目结构 + §文档体系 表格双加索引 + brief status 转正 (落地 2026-05-20). HANDOFF_PROMPT.md 加 '## 落地状态' 节 (本地, chidiansha-sandbox/ 在 .git/info/exclude). memory: 新建 chisha_sandbox_lab_d093.md + MEMORY.md 加索引. 933 pytest 0 regression. Codex plan APPROVED iter 1 (4 LOW 全 changelog 接受), Codex diff APPROVED iter 1 (2 LOW 非阻断). Phase 1 plan worker halt @ Phase 2 (deferred Agent tool 未发现), 主 agent 接手 Phase 2-5."
     }
   ],
   "_sandbox_lab_brief": "docs/design_briefs/2026-05-19-sandbox-lab.md"

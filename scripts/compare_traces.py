@@ -40,22 +40,23 @@ def diff_combo(idx: int, before: dict, after: dict) -> list[str]:
             f"  combo[{idx}] score |delta|={score_delta:.9f} >= {EPSILON} "
             f"({before.get('score')} → {after.get('score')})"
         )
-    # breakdown 每维 |delta| < eps
+    # breakdown 每维 |delta| < eps.
+    # D-092: 允许"key 缺失 + 对侧 value 是 0" 视为 0-diff (死维度被清理后,
+    # 老 baseline 仍含 key=0.0, 新 trace 无 key, 等价).
     before_br = before.get("breakdown") or {}
     after_br = after.get("breakdown") or {}
     all_keys = set(before_br) | set(after_br)
     for k in sorted(all_keys):
-        if k not in before_br:
-            msgs.append(f"  combo[{idx}] breakdown 新增 key {k!r}")
-            continue
-        if k not in after_br:
-            msgs.append(f"  combo[{idx}] breakdown 缺失 key {k!r}")
-            continue
-        d = abs(float(before_br[k]) - float(after_br[k]))
+        bv = float(before_br.get(k, 0.0))
+        av = float(after_br.get(k, 0.0))
+        d = abs(bv - av)
         if d >= EPSILON:
+            present = []
+            if k in before_br: present.append("before")
+            if k in after_br: present.append("after")
             msgs.append(
                 f"  combo[{idx}] breakdown.{k} |delta|={d:.9f} >= {EPSILON} "
-                f"({before_br[k]} → {after_br[k]})"
+                f"({bv} → {av}, present in: {','.join(present)})"
             )
     return msgs
 

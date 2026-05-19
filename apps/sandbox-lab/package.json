@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "chisha Sandbox Lab 白盒时光机 (D-088, 内部 debug 沙箱)",
+  "description": "chisha Sandbox Lab 白盒时光机 (D-093, 内部 debug 沙箱)",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

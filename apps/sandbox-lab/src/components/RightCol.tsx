@@ -1,4 +1,4 @@
-// D-088 S-02 RightCol: 右栏容器, 4 panel D→B→A→C 顺序.
+// D-093 S-02 RightCol: 右栏容器, 4 panel D→B→A→C 顺序.
 import type { Decision } from "../types/sandbox";
 import * as MOCK from "../mocks/sbxMocks";
 import { APanel } from "./panels/APanel";

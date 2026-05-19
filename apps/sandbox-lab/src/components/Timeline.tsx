@@ -1,4 +1,4 @@
-// D-088 S-02 Timeline: 14 格横向条 / 日历卡 + OpBar (内部 helper).
+// D-093 S-02 Timeline: 14 格横向条 / 日历卡 + OpBar (内部 helper).
 // 本任务 onSelect 是 inert prop (App 喂 () => {}), 静态视觉演示.
 import type { Meal, Tweaks } from "../types/sandbox";
 

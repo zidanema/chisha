@@ -258,6 +258,33 @@ export type BackendSessionsResp = {
   corrupt_count: number;
 };
 
+// D-089-S5a: 通用单次 LLM call trace shape — serialize_llm_call_trace 产出.
+// rerank (R1+refine 路径 L3) / refine_intent_v2 都用同一 shape, 落 round.refine_intent_llm
+// 或 round.l3. usage 统一 Anthropic-style 命名 (normalize_usage_fields 转换).
+export type BackendLlmCallTrace = {
+  system_prompt_full: string;
+  system_prompt_chars: number;
+  user_message_full: string;
+  user_message_chars: number;
+  user_message_preview: string;
+  raw_response: string;
+  raw_response_chars: number;
+  latency_ms: number | null;
+  model: string | null;
+  resolved_provider: string | null;
+  stop_reason: string | null;
+  fallback_reason: string | null;
+  max_tokens: number | null;
+  temperature: number | null;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens: number;
+    cache_creation_input_tokens: number;
+  };
+  validator_errors?: string[] | null;
+};
+
 // trace.l3 in production trace is flat (different from BackendL3Llm shape).
 export type BackendTraceL3 = {
   used: boolean;
@@ -266,9 +293,13 @@ export type BackendTraceL3 = {
   resolved_provider: string | null;
   raw_response: string;
   raw_response_chars: number;
+  // D-089-S1: system_prompt body 必须落 trace (trace self-contained 原则).
+  // 改前只有 system_prompt_chars, 现在两个字段共存.
   system_prompt_chars?: number;
+  system_prompt_full?: string;
   user_message_chars?: number;
   user_message_full?: string;
+  user_message_preview?: string;
   tool_input: unknown;
   stop_reason: string | null;
   fallback_reason: string | null;
@@ -276,6 +307,14 @@ export type BackendTraceL3 = {
   payload_to_llm: unknown;
   n_returned: number;
   used_fallback: boolean;
+  // D-089-S1: validator_errors 业务校验失败时填. 当前主路径 fallback_reason
+  // 已经覆盖, 但留 hook 给未来 CLI retry 等结构化输出.
+  validator_errors?: string[] | null;
+  // D-089-S1: retry 字段 (D-049 CLI 路径独有)
+  retry_attempted?: boolean | null;
+  retry_succeeded?: boolean | null;
+  retry_latency_ms?: number | null;
+  retry_first_failure_code?: string | null;
   // optional new fields (not always present, but adapter tolerates).
   // D-079 followup: usage shape 是 provider 统一后的 OpenAI 风格
   // (prompt_tokens/completion_tokens/cached_tokens/cache_write_tokens, 见

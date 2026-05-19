@@ -31,14 +31,12 @@ plate_rule:
   prefer_oil_level_at_most: 3
   hard_max_oil_level: 4
 
-# L2 16 维打分权重默认 (与 chisha.score.V2_DEFAULT_WEIGHTS keyset 一致).
+# L2 11 活维度打分权重默认 (D-092: 删 5 死维度 vegetable_floor_pass / protein_floor_pass / distance / wetness / context_boost).
+# 与 chisha.score.V2_DEFAULT_WEIGHTS keyset 一致.
 # profile.scoring_weights 可 override.
 # 命名注意 (D-072 schema 表): spec 用 `score_weights`, profile 用 `scoring_weights`,
 # merge 时桥接. V1 不重命名 profile (向后兼容).
 score_weights:
-  vegetable_floor_pass: 0.0
-  protein_floor_pass: 0.0
-  distance: 0.0
   low_oil: 0.5
   popularity: 0.4
   cuisine_preference: 0.3
@@ -46,12 +44,10 @@ score_weights:
   carb_quality: 0.6
   processed_meat: 1.0
   sweet_sauce: 0.7
-  wetness: 0.5
   dish_role_match: 0.3
   eta: 0.4
   price: 0.5
   taste_match: 0.4
-  context_boost: 0.25
 
 # 4 层 cap 默认 (D-042 + D-045). profile.recall 可 override.
 cap_rules:

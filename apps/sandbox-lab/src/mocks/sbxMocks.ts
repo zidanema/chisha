@@ -1,6 +1,6 @@
-// D-088 S-02: 从 chidiansha-sandbox/project/sandbox-lab/data.js 1:1 改 TS.
+// D-093 S-02: 从 chidiansha-sandbox/project/sandbox-lab/data.js 1:1 改 TS.
 // 改动:
-//   - ACTIVE_RULES.ttl 字段删除 (D-088 决议: refine 单 round, 不显示倒计时)
+//   - ACTIVE_RULES.ttl 字段删除 (D-093 决议: refine 单 round, 不显示倒计时)
 //   - TASTE 删除 color 字段 (APanel 内 TS map 决定 className)
 // 其余字段与原型一致.
 
@@ -226,7 +226,7 @@ export const KEYWORDS: KeywordEntry[] = [
   { tag: "汤水", isNew: true },
 ];
 
-// D-088 决议: refine 单 round, ttl 字段省略
+// D-093 决议: refine 单 round, ttl 字段省略
 export const ACTIVE_RULES: ActiveRule[] = [
   {
     kind: "refine",
