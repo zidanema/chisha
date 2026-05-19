@@ -64,8 +64,8 @@ export interface Candidate {
   estimated_total_oil: number;
   estimated_total_protein_g: number;
   score: number;
-  fit_score: number;
-  taste_match: number;
+  fit_score: number | null;
+  taste_match: number | null;
   reason_one_line: string;
   health_flags: HealthFlags;
   risk_flags: string[];

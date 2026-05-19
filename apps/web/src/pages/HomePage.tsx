@@ -9,7 +9,6 @@ import { PageShell, FooterBar } from "@/components/PageShell";
 import { PendingFeedbackBanner } from "@/components/PendingFeedbackBanner";
 import { StatusBar } from "@/components/StatusBar";
 import { MethodologyBar } from "@/components/MethodologyBar";
-import { SectionHeader } from "@/components/atoms";
 import { RefineCrumb } from "@/components/RefineCrumb";
 import { RefineInput } from "@/components/RefineInput";
 import { RecCard, RecCardSkeleton } from "@/components/RecCard";
@@ -223,14 +222,19 @@ export function HomePage() {
       />
 
       <section>
-        <SectionHeader
-          title={LABELS.ui.homeSecTitle}
-          hint={
-            home.loading
-              ? `${LABELS.ui.loadingHint} · ${LABELS.ui.loadingHintLong}`
-              : null
-          }
-        />
+        <div className="flex items-baseline gap-3 mb-3 pb-1.5 border-b border-[color:var(--border)]">
+          <h2
+            data-testid="l3-narrative"
+            className="text-[15px] font-semibold tracking-tight leading-snug"
+          >
+            {home.narrative || LABELS.ui.homeSecTitle}
+          </h2>
+          {home.loading && (
+            <span className="text-[12px] text-[color:var(--muted)] whitespace-nowrap overflow-hidden text-ellipsis">
+              {LABELS.ui.loadingHint} · {LABELS.ui.loadingHintLong}
+            </span>
+          )}
+        </div>
 
         {home.skipped ? (
           <SkippedState reason={home.skipReason} onUndo={onUndoSkip} />
@@ -242,17 +246,6 @@ export function HomePage() {
               onJumpRound={onJumpRound}
               onReset={onResetRefine}
             />
-
-            {/* T-P1b-02: L3 narrative ("为什么推这 5 道" ≤ 50 字摘要) */}
-            {!home.loading && home.narrative && (
-              <div
-                data-testid="l3-narrative"
-                className="mb-3 px-3 py-2 rounded border border-[color:var(--border)] bg-[color:var(--bg-soft,#f9f9f9)] text-[12.5px] text-[color:var(--fg)] leading-snug"
-              >
-                <span className="text-[color:var(--muted)] mr-1.5">为什么</span>
-                {home.narrative}
-              </div>
-            )}
 
             <div className="space-y-3" ref={recsRef}>
               {home.loading
