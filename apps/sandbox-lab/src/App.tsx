@@ -101,8 +101,77 @@ export function App() {
     [],
   );
 
+  // S-08: backend status pill (顶层条件)
+  const pillLabel =
+    sb.backendOnline === null ? "pinging..."
+      : sb.backendOnline ? "backend · :8765"
+        : "mock · offline";
+  const pillColor =
+    sb.backendOnline === null ? "#9ca3af"
+      : sb.backendOnline ? "#059669"
+        : "#d97706";
+
   return (
     <div className="app">
+      <div
+        className="backend-pill"
+        style={{
+          position: "fixed",
+          top: 4,
+          right: 8,
+          zIndex: 100,
+          padding: "2px 8px",
+          fontSize: 11,
+          fontFamily: "var(--font-mono, monospace)",
+          background: pillColor,
+          color: "#fff",
+          borderRadius: 4,
+          opacity: 0.85,
+          pointerEvents: "none",
+        }}
+        data-backend-online={sb.backendOnline === null ? "pending" : String(sb.backendOnline)}
+      >
+        {pillLabel}
+      </div>
+
+      {sb.apiError && (
+        <div
+          className="toast-error"
+          style={{
+            position: "fixed",
+            top: 32,
+            right: 8,
+            zIndex: 100,
+            maxWidth: 340,
+            padding: "8px 12px",
+            background: "#e11d48",
+            color: "#fff",
+            borderRadius: 6,
+            fontSize: 12,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            display: "flex",
+            gap: 8,
+            alignItems: "flex-start",
+          }}
+        >
+          <span style={{ flex: 1 }}>{sb.apiError}</span>
+          <button
+            onClick={sb.dismissApiError}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#fff",
+              cursor: "pointer",
+              fontSize: 14,
+              lineHeight: 1,
+            }}
+            aria-label="关闭错误提示"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       <TopBar
         sessions={sb.sessions}
         activeSessionName={activeSession.name}
@@ -117,6 +186,23 @@ export function App() {
       />
 
       <Banners banners={sb.banners} onDismiss={sb.dismissTransient} />
+
+      {sb.polling && sb.polling.sid === sb.activeSessionId && (
+        <div
+          className="processing-banner"
+          style={{
+            padding: "6px 12px",
+            background: "#fef3c7",
+            color: "#92400e",
+            borderTop: "1px solid #fcd34d",
+            borderBottom: "1px solid #fcd34d",
+            fontSize: 12,
+          }}
+          data-polling-action={sb.polling.action}
+        >
+          处理中... ({sb.polling.action})
+        </div>
+      )}
 
       <div className="timeline-wrap">
         <Timeline
@@ -157,6 +243,28 @@ export function App() {
             <p style={{ color: "var(--muted)", marginTop: 24 }}>
               点 timeline 过去格回顾, 或顶栏新建 / 分支重跑
             </p>
+          </div>
+        ) : (sb.polling && sb.polling.sid === sb.activeSessionId) ? (
+          <div className="col col-left" style={{ padding: "12px 8px" }}>
+            <div className="col-head">
+              <div className="h-title">推荐 · 处理中</div>
+              <div className="h-sub">{sb.polling.action} job 进行中, 稍候</div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div
+                  key={i}
+                  className="rec-skeleton"
+                  style={{
+                    height: 64,
+                    background: "linear-gradient(90deg, #f1f5f9 0%, #e2e8f0 50%, #f1f5f9 100%)",
+                    backgroundSize: "200% 100%",
+                    animation: "skeleton-shimmer 1.4s linear infinite",
+                    borderRadius: 6,
+                  }}
+                />
+              ))}
+            </div>
           </div>
         ) : (
           <DecisionArea
