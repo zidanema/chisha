@@ -14,6 +14,18 @@ import type { IntentFieldDescriptor, RoundRecord, TraceMeta, WaTrace } from "../
 
 const LRU_MAX_BYTES = 50 * 1024 * 1024;
 
+// S-09: 从 URL ?trace= 取 (sandbox-lab "打开 trace" deep-link). 不存在返 null.
+function readTraceFromUrl(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const p = new URLSearchParams(window.location.search);
+    const t = p.get("trace");
+    return t && t.length > 0 ? t : null;
+  } catch {
+    return null;
+  }
+}
+
 class RoundLRU {
   private map = new Map<string, { data: RoundRecord; bytes: number }>();
   private totalBytes = 0;
@@ -166,7 +178,10 @@ export type UseWaTrace = {
 
 export function useWaTrace(): UseWaTrace {
   const [traces, setTraces] = useState<TraceMeta[]>(MOCK_TRACES);
-  const [activeTraceId, setActiveTraceIdState] = useState<string>(ACTIVE_WA_TRACE.meta.id);
+  // S-09: URL ?trace= 优先, 没有走 mock active
+  const [activeTraceId, setActiveTraceIdState] = useState<string>(
+    () => readTraceFromUrl() ?? ACTIVE_WA_TRACE.meta.id,
+  );
   const [activeTrace, setActiveTrace] = useState<WaTrace>(ACTIVE_WA_TRACE);
   const [intentSchema, setIntentSchema] = useState<IntentFieldDescriptor[] | null>(null);
   const [backendOnline, setBackendOnline] = useState<boolean>(false);
@@ -183,8 +198,14 @@ export function useWaTrace(): UseWaTrace {
         if (list.length > 0) {
           setTraces(list);
           setBackendOnline(true);
-          // 切到 backend 第一条 (mock active 通常不在 backend list 里, 404 没意义)
-          if (!list.find((t) => t.id === activeTraceId)) {
+          // S-09 Iter 2: URL ?trace= 指定 → 一律 pin 住, 不管它是否在 list 里 (list 分页
+          // limit=50, deep-link trace 可能不在首页). 让 fetchTraceDetail authoritative
+          // 决定 success/404 (404 走现有 mock fallback toast).
+          // 无 URL trace → 保留旧行为: list 不含 activeTraceId 时切 list[0].
+          const urlTrace = readTraceFromUrl();
+          if (urlTrace) {
+            // 不 override
+          } else if (!list.find((t) => t.id === activeTraceId)) {
             setActiveTraceIdState(list[0].id);
           }
         }

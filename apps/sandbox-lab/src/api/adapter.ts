@@ -141,6 +141,9 @@ export interface SnapshotStorePiece {
   history: Meal[];
   currentRecs: Rec[];
   lastDecision: Decision | null;
+  // S-09: trace 跳转所需
+  mealToTrace: Record<string, string>;
+  currentTraceId: string | null;
   // 注: activeRules 故意不导出 (RightCol 维持 MOCK, S-08 不接)
 }
 
@@ -156,6 +159,10 @@ export function backendFullSnapshotToStore(
     lastDecision: snap.lastDecision
       ? backendDecisionToFrontend(snap.lastDecision)
       : null,
+    // S-09: || null 防空串 (Iter 4 #2): backend `_` 兜底是 None 但若 last_recs 存空字符串
+    // 也要 falsy-collapse
+    mealToTrace: snap.mealToTrace || {},
+    currentTraceId: snap.currentTraceId || null,
   };
 }
 

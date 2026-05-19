@@ -359,6 +359,37 @@ def test_get_full_snapshot_basic(app_with_sandbox):
         # lastDecision 可能 None (BG task 异步, 测试不等)
 
 
+# ────────────────────────── 9b. S-09 FullSnapshot 含 mealToTrace + currentTraceId
+
+def test_full_snapshot_includes_meal_to_trace_and_current_trace(app_with_sandbox):
+    """S-09: FullSnapshot 返 mealToTrace (历史顿 idx→tsid) + currentTraceId (当前顿).
+
+    - 仅 /recs (不 eat): mealToTrace={} + currentTraceId=<recommend_session_id>
+    - /eat 后: mealToTrace["0"]=<just-eaten tsid> + currentTraceId=None (last_recs 已删)
+    """
+    app, _ = app_with_sandbox
+    with TestClient(app) as c:
+        _bootstrap(c)
+
+        # post /recs (不 eat) → currentTraceId 应非空, mealToTrace 空
+        r = c.post("/api/sandbox/sessions/s1/recs?mock_recommend=1", json={})
+        assert r.status_code == 200, r.text
+        recs_tsid = r.json()["recommend_session_id"]
+        assert recs_tsid
+
+        snap = c.get("/api/sandbox/sessions/s1").json()
+        assert snap["mealToTrace"] == {}
+        assert snap["currentTraceId"] == recs_tsid
+
+        # /eat → mealToTrace["0"]=recs_tsid + currentTraceId 应清空
+        r = c.post("/api/sandbox/sessions/s1/eat", json={"rec_rank": 1})
+        assert r.status_code == 200, r.text
+
+        snap = c.get("/api/sandbox/sessions/s1").json()
+        assert snap["mealToTrace"].get("0") == recs_tsid
+        assert snap["currentTraceId"] is None
+
+
 # ────────────────────────── 10. GET unknown sid
 
 def test_get_full_snapshot_unknown_sid_404(app_with_sandbox):

@@ -1847,6 +1847,10 @@ class FullSnapshotResp(BaseModel):
     keywords: list[dict] = Field(default_factory=list)
     recent: list[str] = Field(default_factory=list)
     fatigue: list[dict] = Field(default_factory=list)
+    # S-09: 历史顿 idx -> trace_session_id (eat 时落; meal_to_trace.json)
+    mealToTrace: dict = Field(default_factory=dict)
+    # S-09: 当前顿 (uneaten) recommend_session_id (last_recs.json); None 表示无 active recs
+    currentTraceId: str | None = None
 
 
 def _build_full_snapshot(routed_sid: str | None, root: Path) -> FullSnapshotResp:
@@ -1911,6 +1915,10 @@ def _build_full_snapshot(routed_sid: str | None, root: Path) -> FullSnapshotResp
             except (OSError, json.JSONDecodeError):
                 last_decision = None
 
+    # S-09: meal_to_trace + current recommend_session_id
+    m2t = _load_meal_to_trace(routed_sid, root)
+    current_tsid = last_recs_data.get("recommend_session_id") or None
+
     return FullSnapshotResp(
         meta=meta,
         clock=clock,
@@ -1922,6 +1930,8 @@ def _build_full_snapshot(routed_sid: str | None, root: Path) -> FullSnapshotResp
         keywords=[],
         recent=[],
         fatigue=[],
+        mealToTrace=m2t,
+        currentTraceId=current_tsid,
     )
 
 

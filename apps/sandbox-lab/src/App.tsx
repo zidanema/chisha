@@ -13,7 +13,7 @@ import { SummaryDrawer } from "./components/modals/SummaryDrawer";
 import { useKeyboard } from "./hooks/useKeyboard";
 import { useSandbox } from "./hooks/useSandbox";
 import { useTweaks } from "./hooks/useTweaks";
-import type { Decision } from "./types/sandbox";
+import type { Decision, Meal } from "./types/sandbox";
 
 
 // rollback / branch / new-session 后 lastDecision=null; D panel 期望非空 Decision,
@@ -96,9 +96,21 @@ export function App() {
     [sb],
   );
 
+  // S-09: 打开 trace → 跳 debug-ui :5174/?trace=<tsid>&round=R1.
+  // meal: 历史顿 (查 mealToTrace[idx]) / null = 当前顿 (查 currentTraceId).
   const openTrace = useCallback(
-    () => window.alert("打开 trace (S-09 接 debug-ui)"),
-    [],
+    (meal: Meal | null) => {
+      const tsid = meal !== null
+        ? sb.mealToTrace[String(meal.idx)]
+        : sb.currentTraceId;
+      if (!tsid) {
+        window.alert("该顿没有 trace (mock 模式 / skip 顿 / 未推荐)");
+        return;
+      }
+      const url = `http://127.0.0.1:5174/?trace=${encodeURIComponent(tsid)}&round=R1`;
+      window.open(url, "_blank", "noopener");
+    },
+    [sb.mealToTrace, sb.currentTraceId],
   );
 
   // S-08: backend status pill (顶层条件)
@@ -217,7 +229,11 @@ export function App() {
           <OpBar
             selected={sb.selectedCellIdx}
             history={sb.history}
-            onTrace={openTrace}
+            onTrace={() =>
+              openTrace(
+                sb.history.find((h) => h.idx === sb.selectedCellIdx) ?? null,
+              )
+            }
             onRollback={() => sb.openConfirm("rollback")}
             onBranch={() => sb.openConfirm("branch")}
             onDismiss={() => sb.selectCell(null)}
@@ -229,7 +245,7 @@ export function App() {
         {sb.isInReviewMode && sb.reviewMeal ? (
           <ReviewCard
             meal={sb.reviewMeal}
-            onOpenTrace={openTrace}
+            onOpenTrace={() => openTrace(sb.reviewMeal)}
             onExit={() => sb.selectCell(null)}
           />
         ) : sb.isDone ? (
@@ -283,7 +299,11 @@ export function App() {
           decision={sb.lastDecision ?? IDLE_DECISION}
           density={density}
           onDensityChange={setDensity}
-          onOpenTrace={openTrace}
+          onOpenTrace={() =>
+            openTrace(
+              sb.history.find((h) => h.idx === sb.currentMealIdx - 1) ?? null,
+            )
+          }
         />
       </div>
 
@@ -293,7 +313,7 @@ export function App() {
         total={sb.totalMeals}
         sessionName={activeSession.name}
         onClose={sb.closeSummary}
-        onOpenTrace={openTrace}
+        onOpenTrace={(h) => openTrace(h)}
       />
       <ConfirmModal
         open={sb.confirmKind !== null}

@@ -99,6 +99,10 @@ export interface BackendFullSnapshot {
   keywords: unknown[];
   recent: string[];
   fatigue: unknown[];
+  // S-09: 历史顿 idx -> trace_session_id
+  mealToTrace: Record<string, string>;
+  // S-09: 当前顿 (uneaten) recommend_session_id; null 表示无 active recs
+  currentTraceId: string | null;
 }
 
 // ── POST resps ──

@@ -60,6 +60,9 @@ interface SessionInternalState {
   currentRecs: Rec[];
   lastDecision: Decision | null;
   totalMeals?: number;  // S-08: backend snapshot 带 totalMeals, 覆盖 SESSIONS.days*2
+  // S-09: trace 跳转
+  mealToTrace?: Record<string, string>;
+  currentTraceId?: string | null;
 }
 
 
@@ -78,6 +81,9 @@ function initialSessionStates(): Map<string, SessionInternalState> {
         currentMealIdx: total,
         currentRecs: [],
         lastDecision: null,
+        // S-09: mock 无真 trace
+        mealToTrace: {},
+        currentTraceId: null,
       });
     } else {
       // running session — mock HISTORY (前 4) + CURRENT_RECS + LAST_DECISION
@@ -86,6 +92,9 @@ function initialSessionStates(): Map<string, SessionInternalState> {
         currentMealIdx: CURRENT_IDX,
         currentRecs: CURRENT_RECS,
         lastDecision: LAST_DECISION,
+        // S-09: mock 无真 trace
+        mealToTrace: {},
+        currentTraceId: null,
       });
     }
   }
@@ -137,6 +146,9 @@ export interface UseSandboxResult {
   backendOnline: boolean | null;  // null = pinging
   polling: PollingState;
   apiError: string | null;
+  // S-09: trace 跳转 (window.open → debug-ui :5174)
+  mealToTrace: Record<string, string>;
+  currentTraceId: string | null;
 
   // actions
   setActiveSessionId(id: string): void;
@@ -276,6 +288,10 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
   const applySnapshot = useCallback(
     async (sid: string, snapPiece: ReturnType<typeof backendFullSnapshotToStore>): Promise<void> => {
       let recs = snapPiece.currentRecs;
+      // S-09 Iter 4 #1: auto-postRecs 分支需要 capture recsResp.recommend_session_id
+      // 否则 post-eat 之后 currentTraceId 一直陈旧 (snapPiece.currentTraceId=null 因为
+      // backend 在 eat 时删了 last_recs.json, 但 applySnapshot 内 postRecs 又创了新的).
+      let currentTsid = snapPiece.currentTraceId;
       const cur = snapPiece.clock.idx;
       const total = snapPiece.clock.total;
       const sessIsDone = cur >= total;
@@ -283,6 +299,9 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
         try {
           const recsResp = await postRecs(sid);
           recs = (recsResp.currentRecs || []).map(backendRecToFrontend);
+          if (recsResp.recommend_session_id) {
+            currentTsid = recsResp.recommend_session_id;
+          }
         } catch (e) {
           // Soft fail: 让用户能看到空状态而不是 crash
           // eslint-disable-next-line no-console
@@ -304,6 +323,9 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
           currentRecs: recs,
           lastDecision: snapPiece.lastDecision,
           totalMeals: snapPiece.clock.total,
+          // S-09
+          mealToTrace: snapPiece.mealToTrace,
+          currentTraceId: currentTsid,
         });
         return next;
       });
@@ -376,6 +398,9 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
             currentRecs: piece.currentRecs,
             lastDecision: piece.lastDecision,
             totalMeals: piece.clock.total,
+            // S-09
+            mealToTrace: piece.mealToTrace,
+            currentTraceId: piece.currentTraceId,
           });
         }
         if (builtSessions.length > 0) {
@@ -583,6 +608,8 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
           updateSessionState(sid, (prev) => ({
             ...prev,
             currentRecs: recs,
+            // S-09 Iter 4 #1: swap 创了新 recommend session
+            currentTraceId: resp.recommend_session_id || prev.currentTraceId,
           }));
           setTransientBanners((prev) => [
             ...prev.filter((b) => !b.id.startsWith("swap_")),
@@ -636,6 +663,8 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
             updateSessionState(sid, (prev) => ({
               ...prev,
               currentRecs: recs,
+              // S-09 Iter 4 #1: refine 创了新 recommend session
+              currentTraceId: resp.recommend_session_id || prev.currentTraceId,
             }));
             setTransientBanners((prev) => [
               ...prev.filter((b) => !b.id.startsWith("refine_")),
@@ -873,7 +902,12 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
         try {
           const recsResp = await postRecs(id);
           const recs = (recsResp.currentRecs || []).map(backendRecToFrontend);
-          updateSessionState(id, (prev) => ({ ...prev, currentRecs: recs }));
+          updateSessionState(id, (prev) => ({
+            ...prev,
+            currentRecs: recs,
+            // S-09 Iter 4 #1
+            currentTraceId: recsResp.recommend_session_id || prev.currentTraceId,
+          }));
         } catch (e) {
           // soft fail
           // eslint-disable-next-line no-console
@@ -924,6 +958,9 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
     backendOnline,
     polling,
     apiError,
+    // S-09
+    mealToTrace: activeState.mealToTrace ?? {},
+    currentTraceId: activeState.currentTraceId ?? null,
     setActiveSessionId: setActiveSessionIdWithEnsure,
     handleEat,
     handleSkip,

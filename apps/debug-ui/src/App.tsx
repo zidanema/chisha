@@ -60,7 +60,17 @@ export function App() {
     intentSchema,
     backendOnline,
   } = useWaTrace();
-  const [activeRound, setActiveRound] = useState<string>("R1");
+  // S-09: 接 sandbox-lab "打开 trace" deep-link — `?round=` 优先, 没有默认 R1.
+  // trace 选中由 useWaTrace 内部读 URL ?trace= (避免 list bootstrap race).
+  const [activeRound, setActiveRound] = useState<string>(() => {
+    if (typeof window === "undefined") return "R1";
+    try {
+      const r = new URLSearchParams(window.location.search).get("round");
+      return r && r.length > 0 ? r : "R1";
+    } catch {
+      return "R1";
+    }
+  });
   const [expanded, setExpanded] = useState<Set<string>>(new Set([activeTrace]));
   const [tbCollapsed, setTbCollapsed] = useState<boolean>(() => {
     try { return localStorage.getItem("chisha:tbCollapsed") === "1"; } catch { return false; }

@@ -185,7 +185,7 @@
       "depends_on": [
         "S-08"
       ],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "S-10",
