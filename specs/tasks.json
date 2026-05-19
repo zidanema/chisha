@@ -194,7 +194,8 @@
       "depends_on": [
         "S-09"
       ],
-      "status": "pending"
+      "status": "done",
+      "_notes": "D-088 落 decisions.md (8 行) + CONTRACTS.md 加 5 条 sandbox 约束 (全文 134→144 ≤ 200) + CLAUDE.md 常用命令补 sandbox-lab :5175 (91→94 ≤ 100) + §前端自测 段同步 :5175 (in-place) + apps/sandbox-lab/README.md 'D-088 落地完成' + 数据流段 + README.md §项目结构 + §文档体系 表格双加索引 + brief status 转正 (落地 2026-05-20). HANDOFF_PROMPT.md 加 '## 落地状态' 节 (本地, chidiansha-sandbox/ 在 .git/info/exclude). memory: 新建 chisha_sandbox_lab_d088.md + MEMORY.md 加索引. 933 pytest 0 regression. Codex plan APPROVED iter 1 (4 LOW 全 changelog 接受), Codex diff APPROVED iter 1 (2 LOW 非阻断: HANDOFF exclude + S-04~S-08 vs S-04~S-09 段差描述, 无实质错). Phase 1 plan worker halt @ Phase 2 (deferred Agent tool 未发现), 主 agent 接手 Phase 2-5."
     }
   ],
   "_sandbox_lab_brief": "docs/design_briefs/2026-05-19-sandbox-lab.md"

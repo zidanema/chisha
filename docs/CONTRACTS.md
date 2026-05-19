@@ -121,6 +121,16 @@
 
 ---
 
+## Sandbox Lab (D-088)
+
+- **`sandbox_context` ContextVar 注入 sid, 不靠全局 active session。** 多 tab 并发 eat 不能串 session。
+- **`meal_to_trace.json` 是 sid → trace 唯一索引。** rollback / branch / trace 跳转都按此查, 不扫 recommend_trace 目录枚举。
+- **D-077 旧签名兼容: `sandbox.{init,advance,reset,state,...}` 接受 `sid=None` 走 "_default" session。** 改签名前先检查老调用方。
+- **`sessions/{sid}` 整目录拷贝/裁剪是 branch / rollback 的原子单位。** 必须同步重置 long_term_prefs / decisions / meal_to_trace / recommend_log / recommend_trace, 否则记忆跨分支泄漏。
+- **Refine 单 round (Phase 0): backend 不维护跨顿 refine。** advance_meal 后 `last_recs.applied_refine` 清空; 跨顿 TTL 留 v2 (待 D-XXX)。
+
+---
+
 ## 范围红线 (Phase 0 内不做)
 
 不要在 Phase 0 内启动以下工作（已被推迟到 Phase 1+，避免 scope creep）：

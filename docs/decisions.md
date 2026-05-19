@@ -273,3 +273,11 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - 4 个 GET endpoint: `/api/traces`, `/api/trace/{sid}`, `/api/trace/{sid}/round/{rid}`, `/api/intent_schema`; LookupDrawer 反查走前端内存 (零后端调用)
 - Intent UI schema-driven: backend `INTENT_SCHEMA` 单一可信源, 前端 fallback `constants/intentSchema.ts`, V2 RefineIntent 扩字段不动 UI 代码
 - 详见 brief: docs/design_briefs/2026-05-18-debug-console-workflow-a.md
+
+## D-088
+**Sandbox Lab 白盒时光机落地 — apps/sandbox-lab 独立 SPA :5175。** (2026-05-20) · debug 沙箱
+- 是什么: 7~14 天可回放/分支推荐沙箱; 多 session + branch/rollback 完整版
+- scope 拍板: Refine 单 round (B panel 文案 "当前 round 已应用"); 跨顿 TTL 留 v2
+- 为何不并入 apps/debug-ui: 后者 D-087 read-only invariant 必须保留, 加可写交互会污染契约
+- 共用后端: chisha.debug_server :8765 新增 sandbox/* 端点 (S-04~S-08)
+- 详见 brief: docs/design_briefs/2026-05-19-sandbox-lab.md

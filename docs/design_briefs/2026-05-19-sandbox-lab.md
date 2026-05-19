@@ -1,6 +1,6 @@
-# Sandbox Lab 落地 design brief (D-088 草稿)
+# Sandbox Lab 落地 design brief (D-088)
 
-> 状态:草稿 / 待 codex review · 创建 2026-05-19 · 志丹拍板 scope · 草稿期不进 docs/decisions.md
+> 状态:落地完成 / D-088 已落 docs/decisions.md · 创建 2026-05-19 · 落地 2026-05-20
 > 设计源:`chidiansha-sandbox/project/sandbox-lab/` (HTML 原型, inline Babel)
 > Handoff:`chidiansha-sandbox/project/sandbox-lab/HANDOFF_PROMPT.md`
 

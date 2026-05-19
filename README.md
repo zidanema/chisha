@@ -62,6 +62,7 @@
 | [docs/api.md](docs/api.md) | agent | 前后端 API 契约（V1 + V1.1） |
 | [docs/style-guide.md](docs/style-guide.md) | agent | `apps/web/` UI 文案 + 视觉系统 + 反模式（D-052~D-068 锁定） |
 | [apps/debug-ui/README.md](apps/debug-ui/README.md) | agent | `apps/debug-ui/` SPA 设计（D-075 独立 Vite SPA / V12 DAG / 5 主题） |
+| [apps/sandbox-lab/README.md](apps/sandbox-lab/README.md) | agent | `apps/sandbox-lab/` Sandbox Lab 白盒时光机 SPA（D-088 独立 Vite SPA / 端口 5175） |
 | [docs/intro-for-colleagues.md](docs/intro-for-colleagues.md) | 同事 | 给同事的产品 sale 文档（750 字） |
 | [docs/agent-integration-approach.md](docs/agent-integration-approach.md) | 同行 | "CLI + Skill" 模式技术交流文档 |
 | [docs/design_briefs/](docs/design_briefs/) | 你 · 历史 | 设计草稿（如 D-074 AI-friendly 接入共识） |
@@ -119,6 +120,7 @@ chisha/
 ├── chisha/                    # L1~L3 推荐链路 Python 包 (api / recall / score / rerank / refine / l1_extractor / l1_prefs / sandbox / clock / data_root / trace_store / debug_what_if / web_api / ...)
 ├── apps/web/                  # V1 主交互 React 18 + Vite + TS SPA (D-051~D-068)
 ├── apps/debug-ui/             # V12 DAG 调试台 SPA (D-075, 端口 5174)
+├── apps/sandbox-lab/          # 白盒时光机 sandbox SPA (D-088, 端口 5175)
 ├── integrations/openclaw/     # 飞书推送通道骨架, V1.5 接入 (D-051 翻案)
 ├── scripts/                   # 数据维护 + 回归工具 (tag_via_api / dry_run / inspect_candidates / baseline_l2_snapshot / compare_traces / bootstrap_l1_from_legacy / ...)
 ├── prompts/                   # LLM prompt 模板 (rerank_system / l1_extract / parse_refine_intent 等)

@@ -25,10 +25,11 @@ Vite proxy `/api → :8765` 已配。
 
 ## 当前状态
 
-S-02 完整视觉落地: TopBar + Timeline (14 格) + 5 RecCard + 4 panels (D/B/A/C) + Banners + Modals + TweaksPanel,全部 mock 数据静态渲染。交互骨架 (eat/skip/refine/timeline 选格/rollback/branch) 待 S-03 接入。
+D-088 落地完成 (2026-05-20): S-01 ~ S-09 全部 commit. 主区 + Timeline + 4 panels + Banners + Modals + TweaksPanel 接入真后端 (`/api/sandbox/*` 11 端点), backend offline 时 fallback 内置 mock, 顶栏 pill 显示 backend/mock 状态.
 
 dev / demo query 参数 (visual verification 用):
 - `?dev=1` — 显示 TweaksPanel 浮层
+- `?mock_recommend=1` — 后端 in-memory mock 兜底, 不烧 LLM
 - `?demo-review=1` — 左列渲 ReviewCard (eat 形态, mock D1 午)
 - `?demo-review=skip` — ReviewCard skip 极简形态
 - `?demo-modal=summary|confirm-rollback|confirm-branch|refine` — 强开对应 modal
@@ -36,3 +37,27 @@ dev / demo query 参数 (visual verification 用):
 ## Claude Code 自测约定
 
 改本目录任何 `.tsx` / `.css` / `vite.config.ts` 后,必须用 `mcp__chrome-devtools__*` 工具自驱浏览器验证 (golden path + edge case + console + network),不许只跑 lint/tsc 就宣告完成。详见根目录 [`CLAUDE.md`](../../CLAUDE.md) §前端自测。
+
+## 数据流
+
+```
+Backend chisha.web_api sandbox/* (chisha/web_api.py)
+  └── GET  /api/sandbox/sessions                              → 桶列表
+  └── POST /api/sandbox/sessions                              → 创建桶
+  └── GET  /api/sandbox/sessions/{sid}                        → FullSnapshot (meta/clock/history/recs/decision/...)
+  └── POST /api/sandbox/sessions/{sid}/recs                   → 拉本顿 5 推荐
+  └── POST /api/sandbox/sessions/{sid}/eat                    → job_id (async BG decision)
+  └── POST /api/sandbox/sessions/{sid}/skip                   → 推时钟不学习
+  └── POST /api/sandbox/sessions/{sid}/swap                   → 换一组
+  └── POST /api/sandbox/sessions/{sid}/refine                 → 单 round refine
+  └── GET  /api/sandbox/sessions/{sid}/jobs/{jid}             → 轮询 eat 完成
+  └── POST /api/sandbox/sessions/{sid}/rollback               → 裁剪 history
+  └── POST /api/sandbox/sessions/{sid}/branch                 → 派生新 sid
+
+Frontend useSandbox hook (apps/sandbox-lab/src/hooks/useSandbox.ts)
+  ├── pingBackend() 决定 backendOnline
+  ├── online: fetch + polling, 状态从 GET /sessions/{sid} 拉真 FullSnapshot
+  └── offline: fallback sbxMocks (S-03 时期的 mock 数据)
+```
+
+后端 snake_case → 前端 camelCase 全走 `src/api/adapter.ts` 边界, 后端 schema 改只动 adapter.
