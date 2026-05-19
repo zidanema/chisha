@@ -1,0 +1,86 @@
+# S-06a Plan Review
+
+Iter 3 audit pending below.
+
+---
+
+## Iter 1 (历史, 已响应 in plan v2)
+
+VERDICT: BLOCKED
+
+The narrowed scope is valid in principle. I treated lock-file relocation, rollback atomicity, and branch/rollback truncation as deferred S-07 notes, not blockers.
+
+### Numbered Issues
+
+1. **`logs/sandbox/sessions/{sid}` collides with the existing default-bucket recommendation-session directory.**
+
+The plan proposes sandbox session buckets at `logs/sandbox/sessions/{sid}/` and says `list_sessions(root)` should scan `logs/sandbox/sessions/*/`. But current `data_root.sessions_dir()` already defines `logs/sandbox/sessions/` as the D-039 recommendation-session directory for the default bucket (chisha/data_root.py:107). S-05 migration also deliberately does not relocate `sessions/` because it is the default recommendation-session directory (chisha/sandbox_migration.py:33), with regression coverage preserving it.
+
+Consequence: CRUD changes the meaning of a live default-bucket path. A naive session lister can confuse sandbox buckets with existing/default recommendation-session artifacts, and default-bucket flows become harder to reason about.
+
+Required fix: define a collision-proof discriminator before CRUD lands. For example: bucket metadata/state marker required for listing, a separate sandbox-session directory name, or explicit mixed-content handling for `*.json`, `_legacy`, and real sandbox buckets. Add mixed namespace tests.
+
+2. **The plan assumes layout-v2 `_meta.json` exists after `/sandbox/init`, but current init does not create it.**
+
+The plan rejects session creation when `not sandbox.has_sandbox_meta(ROOT)` and expects `init -> disable -> inspect` to return `has_layout: True`. Current `sandbox.init()` only writes `logs/sandbox/state.json`; it does not write `_meta.json` (chisha/sandbox.py:181). `_meta.json` is only produced by `migrate_to_v2()`, and `/api/sandbox/init` does not call migration (chisha/web_api.py:838).
+
+Consequence: the planned web flow `POST /api/sandbox/init` then `POST /api/sandbox/sessions` still fails with layout-not-built, and `init -> disable -> inspect` is not actually layout-disabled under the proposed predicate.
+
+Required fix: define when runtime web flows create `_meta.json`. Either S-06a updates `/api/sandbox/init`/`sandbox.init()` to ensure layout metadata exists, or the contract requires explicit migration and adjusts tests accordingly.
+
+### Non-Blocking Findings
+
+- The plan's sessions response shape is narrower than `specs/S-06a.md` and the design brief. I did not block because the prompt explicitly narrows scope.
+- `/api/recommend` currently calls `recommend_meal()` without `root=ROOT` (chisha/web_api.py:62), while `recommend_meal()` resolves its own default root and calls `clock.today()` without root (chisha/api.py:116). Production roots are likely identical, but monkeypatched-root and multi-worktree routing tests can miss the sandbox root. Prefer `root=ROOT` and root-aware clock calls.
+- `/sandbox/state` sid injection is forward-compatible but still a no-op because `sandbox.state(..., session_id=...)` ignores sid until S-06b. Tests should make that explicit.
+- Delete/rename in-flight request behavior can remain non-locking for S-06a; S-07 owns lock semantics.
+
+### Coverage Gaps
+
+- Mixed namespace test for `logs/sandbox/sessions/*.json`, `_legacy`, and sandbox bucket dirs.
+- Runtime layout test for `/api/sandbox/init` plus whatever migration step enables `POST /api/sandbox/sessions`.
+- Default-bucket regression after create/rename/delete: D-039 recommendation sessions still read/write `logs/sandbox/sessions/{recommend_session_id}.json`.
+- Unknown/invalid sid routing returns 4xx before any data-root write.
+
+### Deferred-Scope Notes
+
+Rollback lock semantics, multi-session lock design, `_meta.lock` relocation/reset ordering, branch truncation, and rollback file atomicity are correctly deferred to S-07.
+
+VERDICT: BLOCKED
+
+---
+
+## Iter 2
+
+VERDICT: BLOCKED
+
+The two iter-1 fixes are valid in direction:
+
+- The mixed namespace discriminator on `logs/sandbox/sessions/` is coherent for D-039: default-bucket recommendation sessions are flat `*.json` files, sandbox buckets are directories, `_legacy` is reserved and skipped, and invalid directory names are ignored.
+- The `sandbox.init()` choice to idempotently ensure `_meta.json` makes the layout check coherent for `init -> POST /sandbox/sessions` and `init -> disable -> inspect`.
+
+### Numbered Issues
+
+1. **Non-default sid routing for `/api/recommend` still does not use the API root, so the planned new-bucket routing test is not reliable.**
+
+Plan v2 adds `test_header_known_sid`: create `s1`, call `GET /api/recommend` with `X-Session-Id: s1`, and expect data under `logs/sandbox/sessions/s1/meal_log.jsonl`. But current `api_recommend()` calls `recommend_meal(..., log_to_file=True)` without `root=ROOT` (`chisha/web_api.py:71-75`). `recommend_meal()` then falls back to its own `_default_root()` (`chisha/api.py:116`), and it also calls `clock.today()` / `clock.now_utc()` without that root (`chisha/api.py:133-135`).
+
+Consequence: under the existing monkeypatched-root test pattern, the dependency can validate `s1` against `web_api.ROOT`, while the recommendation chain reads/writes against the package default root. If that default root has sandbox disabled, the ContextVar sid is effectively ignored by `data_root` and writes can land in the wrong/default tree instead of the newly created bucket.
+
+Required fix: pass `root=ROOT` to `recommend_meal()` from `api_recommend()`, and make `recommend_meal()` use the same root for clock calls (`clock.today(root)` and `clock.now_utc(root)`, or equivalent precomputed values). Keep the v2 test on a monkeypatched `web_api.ROOT`.
+
+VERDICT: BLOCKED
+
+---
+
+## Iter 3
+
+v3 修订 D direction is correct: `api_recommend(... root=ROOT)` plus `recommend_meal()` threading that same `root` into `clock.today(root)` / `clock.now_utc(root)` resolves the iter-2 monkeypatched-root reliability issue for enabled sandbox requests.
+
+VERDICT: BLOCKED
+
+1. v3 tests assert the wrong write artifact for `/api/recommend`. `recommend_meal()` reads `meal_log` but does not write `meal_log.jsonl`; it writes `recommend_log.jsonl`, D-039 session JSON, and trace. So `test_header_known_sid` / `test_recommend_uses_api_root` should assert `logs/sandbox/sessions/s1/recommend_log.jsonl` and/or nested `sessions/{recommend_session_id}.json` / `recommend_trace`, not `meal_log.jsonl`. As written, the new v3 guard will fail even if 修订 D is implemented correctly.
+
+2. Non-default sid routing must reject known sid requests while sandbox is disabled. Current planned dependency only checks that `logs/sandbox/sessions/{sid}/` exists. If layout is disabled but the bucket directory remains, dependency accepts `X-Session-Id: s1`, sets ctx sid, then `data_root._maybe_sandbox(ROOT, session_id=None)` sees sandbox disabled and silently falls back to prod because the sid is ctx-only. Add a `sandbox.is_enabled(ROOT)` check for non-default runtime sid and return 409/400 before entering the handler, with a test: init/create s1/disable, then `/api/recommend -H X-Session-Id:s1` must not write prod.
+
+(iter 3 cap reached per harness; HALT.)

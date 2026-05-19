@@ -130,9 +130,9 @@ def recommend_meal(
     meal_log = load_meal_log(root)
 
     from chisha import clock
-    today = today or clock.today()
+    today = today or clock.today(root)
     session_id = _gen_session_id(meal_type)
-    started_at = clock.now_utc()
+    started_at = clock.now_utc(root)
     import time as _time
     _t_start = _time.monotonic()
 
@@ -202,7 +202,7 @@ def recommend_meal(
         "zone": zone,
         "round": 1,
         "version": "v2",
-        "generated_at": clock.now_utc().isoformat(),
+        "generated_at": clock.now_utc(root).isoformat(),
         "context": ctx.to_llm_dict(),
         "stats": {
             "n_dishes_total": len(tagged),

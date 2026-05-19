@@ -317,3 +317,12 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - breakdown layout: 19 维 → 14 维 (11 活基础 + 3 intent). 总 score 不变 (5 个删维度都是 0×x=0). 验收: R1 baseline `compare_traces` 0-diff 通过 / R2 frozen snapshot D-090+D-091 全过 / pytest 830 passed
 - 函数本身 (vegetable_floor_score / protein_floor_score / distance_penalty / wetness_bonus / context_boost) 保留 — 别处 import 不破坏. 仅从 V2_DEFAULT_WEIGHTS / score_combo parts dict / spec / profile / adapter / 测试断言中移除 keys
 - self-S2 review: Codex 用量耗尽时由 Opus 自扮 S2, 检查范围 / 兼容性 / 守门测试; 明早 Codex 恢复后建议补独立审查 (违 dual-model 原则)
+
+## D-093
+**Sandbox Lab 白盒时光机落地 — apps/sandbox-lab 独立 SPA :5175。** (2026-05-20) · debug 沙箱
+- 是什么: 7~14 天可回放/分支推荐沙箱; 多 session + branch/rollback 完整版
+- scope 拍板: Refine 单 round (B panel 文案 "当前 round 已应用"); 跨顿 TTL 留 v2
+- 为何不并入 apps/debug-ui: 后者 D-087 read-only invariant 必须保留, 加可写交互会污染契约
+- 共用后端: chisha.debug_server :8765 新增 sandbox/* 端点 (S-04~S-08)
+- 详见 brief: docs/design_briefs/2026-05-19-sandbox-lab.md
+- 编号备注: 原写 D-088, 因 worktree 双线并行与 main 上 D-088 (Debug UI bug 修复) 撞号, merge 时改 D-093 (违 D-086 worktree 同步坑教训实例)

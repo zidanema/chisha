@@ -11,6 +11,10 @@
 - clock.now() — 业务 datetime (naive, 复刻 dt.datetime.now())
 - clock.now_utc() — 业务 UTC datetime (aware, tz=UTC)
 
+S-04: 透 ContextVar sandbox sid → sandbox.current_date/datetime/datetime_utc.
+S-04 阶段 sandbox.* 仍读单 state.json (忽略 sid), 行为完全等同 D-077.
+S-05 拆 sessions/{sid}/state.json 时 clock 调用点零修改.
+
 未来扩展: 沙盒按小时推进时, current_datetime() 实现可换成"date + 沙盒指定时间"
 而不是"date + 真机 wall-clock 时间".
 """
@@ -21,21 +25,25 @@ from pathlib import Path
 from typing import Optional
 
 from chisha import sandbox
+from chisha.sandbox_context import current_sandbox_session
 
 
 def today(root: Optional[Path] = None) -> dt.date:
     """业务"今天". sandbox 启用时返虚拟 date, 否则真实 today."""
-    virtual = sandbox.current_date(root)
+    sid = current_sandbox_session()
+    virtual = sandbox.current_date(root, session_id=sid)
     return virtual if virtual is not None else dt.date.today()
 
 
 def now(root: Optional[Path] = None) -> dt.datetime:
     """业务 datetime (naive). 与 dt.datetime.now() 兼容."""
-    virtual = sandbox.current_datetime(root)
+    sid = current_sandbox_session()
+    virtual = sandbox.current_datetime(root, session_id=sid)
     return virtual if virtual is not None else dt.datetime.now()
 
 
 def now_utc(root: Optional[Path] = None) -> dt.datetime:
     """业务 UTC datetime (aware, tz=UTC). 与 dt.datetime.now(tz=UTC) 兼容."""
-    virtual = sandbox.current_datetime_utc(root)
+    sid = current_sandbox_session()
+    virtual = sandbox.current_datetime_utc(root, session_id=sid)
     return virtual if virtual is not None else dt.datetime.now(dt.timezone.utc)

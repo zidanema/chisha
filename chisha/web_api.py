@@ -18,7 +18,7 @@ from typing import Any
 import yaml
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, model_validator
 
 from chisha import feedback_store
@@ -29,6 +29,11 @@ from chisha.recall import (
     load_zone_data,
 )
 from chisha.refine import refine as refine_session
+from chisha.sandbox_context import (
+    _DEFAULT_SID,
+    _validate_sid,
+    set_sandbox_session,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 PROFILE_PATH = ROOT / "profile.yaml"  # prod default (legacy 兼容, refresh test 引用)
@@ -57,23 +62,87 @@ def _remember_session_safe(session_id: str, payload: dict) -> None:
         print(f"  [web_api] remember_session 失败 ({type(e).__name__}: {str(e)[:80]})")
 
 
+# ---------- S-06a: sandbox sid routing dependency ----------
+
+def _with_sandbox_sid(
+    request: Request,
+) -> str | None:
+    """S-06a 校验 dep: 解析 + 校验 sid, 返回合法非 default sid 或 None.
+
+    **不**直接 set ContextVar (FastAPI sync 端点跑在 anyio worker thread,
+    dep 在 main thread, ContextVar 不跨 thread propagate, 详见 chisha 文档
+    test_web_api_sid_routing.py). Caller (端点 handler) 拿到 sid 后用
+    `with set_sandbox_session(sid):` 包推荐链路.
+
+    sid 来源: header `X-Session-Id` (优先) 或 query `?session_id=`.
+
+    Failure modes:
+      - sid 格式不合法 → 400
+      - sid 非 default 但 sandbox.is_enabled(ROOT)=False (修订 G) → 409
+        防 data_root silent fall back 到 prod (桶目录存在但 sandbox 整体 disabled)
+      - sid 非 default 但桶目录不存在 → 404
+
+    sid=None / "_default" → 返 None. 行为同 S-04 默认 (走 flat / prod fallback).
+    """
+    raw = request.headers.get("X-Session-Id") or request.query_params.get("session_id")
+    if raw is None or raw == _DEFAULT_SID:
+        return None
+    # 1. sid 格式校验
+    try:
+        _validate_sid(raw)
+    except ValueError as e:
+        raise HTTPException(400, f"invalid X-Session-Id: {e}")
+    # 2. 修订 G: sandbox layout 必须 enabled 才能跑非 default sid
+    from chisha import sandbox as _sb  # lazy to avoid module-init cycle
+    if not _sb.is_enabled(ROOT):
+        raise HTTPException(
+            409,
+            f"sandbox layout disabled; cannot route session_id={raw!r}. "
+            "POST /api/sandbox/init or /api/sandbox/<advance|reset> first.",
+        )
+    # 3. 桶存在
+    bucket = ROOT / "logs" / "sandbox" / "sessions" / raw
+    if not bucket.is_dir():
+        raise HTTPException(404, f"unknown sandbox session_id={raw!r}")
+    # 4. 返合法 sid (handler 用 with set_sandbox_session(sid) 包)
+    return raw
+
+
+def _sandbox_ctx(sid: str | None):
+    """Helper: sid=None → no-op nullcontext; sid 非空 → set_sandbox_session(sid)."""
+    from contextlib import nullcontext
+    if sid is None:
+        return nullcontext()
+    return set_sandbox_session(sid)
+
+
 # ---------- /api/recommend ----------
 
 @router.get("/recommend")
 def api_recommend(
     meal_type: str = "lunch",
     mood: str = "neutral",
+    _sid: str | None = Depends(_with_sandbox_sid),
 ) -> dict:
-    """GET /api/recommend?meal_type=&mood= → RecommendResponse (5 候选)."""
+    """GET /api/recommend?meal_type=&mood= → RecommendResponse (5 候选).
+
+    S-06a: header `X-Session-Id` 或 query `session_id` 路由到非 default 桶
+    (走 ContextVar). 详见 `_with_sandbox_sid`.
+    """
     if meal_type not in ("lunch", "dinner"):
         raise HTTPException(400, f"meal_type must be lunch|dinner, got {meal_type!r}")
     daily_mood = mood if mood and mood != "neutral" else None
-    out = recommend_meal(
-        meal_type=meal_type,
-        daily_mood=daily_mood,
-        log_to_file=True,
-    )
-    _remember_session_safe(out["session_id"], out)
+    # S-06a 修订 D: 显式 root=ROOT 让 recommend chain 用 web_api ROOT
+    # (而非 chisha/api.py _default_root), 防止 monkeypatched-root 测试漂移 +
+    # 配合 sid routing 写到正确桶.
+    with _sandbox_ctx(_sid):
+        out = recommend_meal(
+            meal_type=meal_type,
+            daily_mood=daily_mood,
+            log_to_file=True,
+            root=ROOT,
+        )
+        _remember_session_safe(out["session_id"], out)
     return out
 
 
@@ -89,8 +158,16 @@ class RefineReq(BaseModel):
 
 
 @router.post("/refine")
-def api_refine(req: RefineReq) -> dict:
+def api_refine(
+    req: RefineReq,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """POST /api/refine → 同 session 二轮推荐 (round++)."""
+    with _sandbox_ctx(_sid):
+        return _impl_refine(req)
+
+
+def _impl_refine(req: RefineReq) -> dict:
     profile = load_profile(_profile_path(), root=ROOT)
     # session 决定 meal_type/zone, 客户端传的 meal_type/mood 仅作 fallback
     from chisha.session import load_session
@@ -217,8 +294,16 @@ class AcceptReq(BaseModel):
 
 
 @router.post("/accept")
-def api_accept(req: AcceptReq) -> dict:
+def api_accept(
+    req: AcceptReq,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """D-052: 记录 accept → 落 acceptedQueue → 返回 deeplink (best-effort)."""
+    with _sandbox_ctx(_sid):
+        return _impl_accept(req)
+
+
+def _impl_accept(req: AcceptReq) -> dict:
     rest = req.candidate.get("restaurant") or {}
     rest_id = rest.get("id") or ""
     name = rest.get("name") or ""
@@ -293,7 +378,10 @@ class SkipReq(BaseModel):
 
 
 @router.post("/skip")
-def api_skip(req: SkipReq) -> dict:
+def api_skip(
+    req: SkipReq,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """D-054: 这餐没吃 (食堂/带饭/外面/聚会/都没看上/不饿).
 
     reason ∈ {cafeteria, brought, outside, social, none_fit, not_hungry, null}.
@@ -301,20 +389,24 @@ def api_skip(req: SkipReq) -> dict:
     """
     if req.reason not in _VALID_SKIP_REASONS:
         raise HTTPException(400, f"invalid skip reason {req.reason!r}")
-    try:
-        feedback_store.record_skip(ROOT, req.session_id, req.reason)
-    except Exception as e:
-        raise HTTPException(
-            500, f"record_skip failed: {type(e).__name__}: {e}"
-        )
+    with _sandbox_ctx(_sid):
+        try:
+            feedback_store.record_skip(ROOT, req.session_id, req.reason)
+        except Exception as e:
+            raise HTTPException(
+                500, f"record_skip failed: {type(e).__name__}: {e}"
+            )
     return {"ok": True}
 
 
 # ---------- /api/profile (GET / PUT / POST) ----------
 
 @router.get("/profile")
-def api_get_profile() -> dict:
-    return yaml.safe_load(_profile_path().read_text(encoding="utf-8"))
+def api_get_profile(
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
+    with _sandbox_ctx(_sid):
+        return yaml.safe_load(_profile_path().read_text(encoding="utf-8"))
 
 
 def _write_profile_preserving_comments(new_profile: dict) -> None:
@@ -368,12 +460,16 @@ def _write_profile_preserving_comments(new_profile: dict) -> None:
 
 @router.put("/profile")
 @router.post("/profile")
-def api_put_profile(profile: dict) -> dict:
+def api_put_profile(
+    profile: dict,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """PUT (或 POST 兼容) /api/profile body=完整 Profile, ruamel.yaml 写入保留注释."""
     if not isinstance(profile, dict) or "basics" not in profile:
         raise HTTPException(400, "invalid profile body: missing 'basics'")
     try:
-        _write_profile_preserving_comments(profile)
+        with _sandbox_ctx(_sid):
+            _write_profile_preserving_comments(profile)
     except Exception as e:
         raise HTTPException(500, f"write profile.yaml failed: {type(e).__name__}: {e}")
     return {"ok": True}
@@ -382,7 +478,10 @@ def api_put_profile(profile: dict) -> dict:
 # ---------- /api/history ----------
 
 @router.get("/history")
-def api_history(days: int = 7) -> dict:
+def api_history(
+    days: int = 7,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """近 N 天的推荐 session, 关联 accepted_rank.
 
     数据源: logs/recommend_log.jsonl (每次 recommend 写一行) + feedback_store.accepted.
@@ -391,6 +490,11 @@ def api_history(days: int = 7) -> dict:
     """
     if days < 1 or days > 90:
         raise HTTPException(400, "days must be in [1, 90]")
+    with _sandbox_ctx(_sid):
+        return _impl_history(days)
+
+
+def _impl_history(days: int) -> dict:
     # D-077 Codex S3 修复: 走 data_root.recommend_log_path, sandbox 启用时
     # history 读 sandbox log 而非 prod log.
     from chisha import data_root
@@ -513,45 +617,63 @@ class CommentReq(BaseModel):
 
 
 @router.get("/feedback/inbox")
-def api_feedback_inbox(include_snoozed: int = 1) -> dict:
+def api_feedback_inbox(
+    include_snoozed: int = 1,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """D-058: 反馈中心 inbox. include_snoozed=0 时过滤掉 24h 软关闭项."""
-    data = feedback_store.load_store(ROOT)
-    items = feedback_store.inbox_items(
-        data, include_snoozed=bool(include_snoozed)
-    )
+    with _sandbox_ctx(_sid):
+        data = feedback_store.load_store(ROOT)
+        items = feedback_store.inbox_items(
+            data, include_snoozed=bool(include_snoozed)
+        )
     return {"items": items}
 
 
 @router.post("/feedback/snooze")
-def api_feedback_snooze(req: SnoozeReq) -> dict:
+def api_feedback_snooze(
+    req: SnoozeReq,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """D-060 软关闭: 24h 内 banner 不弹, inbox 仍在."""
-    feedback_store.set_snooze(ROOT, req.session_id, hours=24)
+    with _sandbox_ctx(_sid):
+        feedback_store.set_snooze(ROOT, req.session_id, hours=24)
     return {"ok": True}
 
 
 @router.post("/feedback/stop")
-def api_feedback_stop(req: StopReq) -> dict:
+def api_feedback_stop(
+    req: StopReq,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """D-060 硬关闭: 永久, banner+inbox 都隐藏, history 仍可点."""
-    feedback_store.set_stop(ROOT, req.session_id)
+    with _sandbox_ctx(_sid):
+        feedback_store.set_stop(ROOT, req.session_id)
     return {"ok": True}
 
 
 @router.get("/feedback/recent")
 def api_feedback_recent(
     limit: int = Query(default=6, ge=1, le=100),
+    _sid: str | None = Depends(_with_sandbox_sid),
 ) -> dict:
     """D-066: 最近已反馈, 供 inbox 第三段 + history 行 gut chip 渲染.
 
     Codex review LOW: limit ∈ [1, 100], 负值 / 0 / 巨大值都 422.
     """
-    data = feedback_store.load_store(ROOT)
-    return {"items": feedback_store.recent_feedback_items(data, limit=limit)}
+    with _sandbox_ctx(_sid):
+        data = feedback_store.load_store(ROOT)
+        return {"items": feedback_store.recent_feedback_items(data, limit=limit)}
 
 
 @router.post("/feedback")
-def api_feedback_submit(req: FeedbackPayloadReq) -> dict:
+def api_feedback_submit(
+    req: FeedbackPayloadReq,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """D-066: 提交反馈, comments[] 保留 (D-067)."""
-    feedback_store.record_feedback(ROOT, req.model_dump())
+    with _sandbox_ctx(_sid):
+        feedback_store.record_feedback(ROOT, req.model_dump())
     return {"ok": True}
 
 
@@ -578,9 +700,13 @@ def api_feedback_comment(session_id: str, req: CommentReq) -> dict:
 
 
 @router.get("/feedback/{session_id}")
-def api_feedback_session(session_id: str) -> dict:
+def api_feedback_session(
+    session_id: str,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """反馈页头部 5 候选回放. session 已过期/不存在 → 404."""
-    data = feedback_store.load_store(ROOT)
+    with _sandbox_ctx(_sid):
+        data = feedback_store.load_store(ROOT)
     accepted = feedback_store.get_accepted(data, session_id) or {}
     session_payload = data["sessions"].get(session_id)
     if not session_payload:
@@ -623,57 +749,91 @@ class RefreshPrefsReq(BaseModel):
     force_run_without_llm: bool = False   # 强制走 bootstrap (deterministic, 无 LLM)
 
 
+def _impl_l1_refresh(
+    root: Path,
+    *,
+    force_no_llm: bool = False,
+    window_days: int | None = None,
+    acquire_lock: bool = False,
+) -> dict:
+    """S-06c 修订 C: 提抽 L1 抽取核心逻辑, 供 HTTP endpoint + BG task 共用.
+
+    acquire_lock=True 时持 `_L1_EXTRACTION_LOCK` 整个 extract 周期 (供 BG task,
+    保 CONTRACTS.md:98 reset/disable 互斥). HTTP `/api/long_term_prefs/refresh`
+    保持原行为 (acquire_lock=False, 不持锁, 让 trylock 路径自己管).
+
+    Returns:
+        prefs dict (含 boost/penalty/evidence/extracted_at/based_on_meals/path).
+
+    Raises:
+        RuntimeError: LLM 全 retry 失败 (caller 转 503)
+        feedback_store.StoreCorruptError: feedback 损坏 (caller 转 500)
+        OSError/yaml.YAMLError: profile.yaml 读失败 (caller 转 500)
+    """
+    def _do() -> dict:
+        if force_no_llm:
+            from scripts.bootstrap_l1_from_legacy import bootstrap
+            prefs = bootstrap(root=root, force=True)
+            prefs.setdefault("path", "bootstrap_no_llm")
+            return prefs
+
+        from chisha.l1_extractor import extract_and_save
+
+        store = feedback_store.load_store(root)
+        profile = yaml.safe_load(_profile_path().read_text(encoding="utf-8")) or {}
+        window = window_days or 14
+        prefs = extract_and_save(
+            store, profile,
+            root=root,
+            window_days=window,
+            profile_llm=profile.get("llm"),
+        )
+        prefs.setdefault("path", "llm_extract")
+        return prefs
+
+    if acquire_lock:
+        with _L1_EXTRACTION_LOCK:
+            return _do()
+    return _do()
+
+
 @router.post("/long_term_prefs/refresh")
-def api_long_term_prefs_refresh(request: Request, req: RefreshPrefsReq) -> dict:
+def api_long_term_prefs_refresh(
+    request: Request,
+    req: RefreshPrefsReq,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
     """D-076 PR-0.9: 手动触发 L1 LLM 抽取, 写入 data/long_term_prefs.json.
 
     鉴权:
     - localhost only (LAN/外网拒绝)
     - 可选 X-Admin-Token header (env CHISHA_ADMIN_TOKEN 设了才检)
 
-    Flow:
-    1. force_run_without_llm=True → 走 bootstrap_l1_from_legacy (旧 jsonl + 频次)
-    2. 否则跑 l1_extractor.extract_and_save (V1.1 反馈 + LLM)
+    S-06c 修订 C: 主体提抽到 `_impl_l1_refresh`, 此处仅做权限校验 + HTTPException
+    转换. HTTP 路径**不**持 `_L1_EXTRACTION_LOCK` (现状, 用户连按 refresh 由
+    `_trigger_l1_extraction_async` 的 trylock 自管).
 
-    返回: prefs dict (含 boost/penalty/evidence/extracted_at/based_on_meals).
+    返回: prefs dict.
     """
     if not _is_localhost(request):
         raise HTTPException(403, "refresh endpoint is localhost-only")
     if not _admin_token_ok(request):
         raise HTTPException(401, "invalid or missing X-Admin-Token")
 
-    if req.force_run_without_llm:
-        from scripts.bootstrap_l1_from_legacy import bootstrap
-        prefs = bootstrap(root=ROOT, force=True)
-        prefs.setdefault("path", "bootstrap_no_llm")
-        return prefs
-
-    # 走完整 LLM 抽取
-    from chisha.l1_extractor import extract_and_save
-
-    try:
-        store = feedback_store.load_store(ROOT)
-    except feedback_store.StoreCorruptError as e:
-        raise HTTPException(500, f"feedback store corrupt: {e}")
-
-    try:
-        profile = yaml.safe_load(_profile_path().read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError) as e:
-        raise HTTPException(500, f"profile.yaml load failed: {type(e).__name__}: {e}")
-
-    window = req.window_days or 14
-    try:
-        prefs = extract_and_save(
-            store, profile,
-            root=ROOT,
-            window_days=window,
-            profile_llm=profile.get("llm"),
-        )
-    except RuntimeError as e:
-        # LLM 全 retry 失败 → 不写盘, 保留旧 prefs
-        raise HTTPException(503, f"L1 extract failed: {e}")
-    prefs.setdefault("path", "llm_extract")
-    return prefs
+    with _sandbox_ctx(_sid):
+        try:
+            return _impl_l1_refresh(
+                ROOT,
+                force_no_llm=req.force_run_without_llm,
+                window_days=req.window_days,
+                acquire_lock=False,
+            )
+        except feedback_store.StoreCorruptError as e:
+            raise HTTPException(500, f"feedback store corrupt: {e}")
+        except (OSError, yaml.YAMLError) as e:
+            raise HTTPException(500, f"profile.yaml load failed: {type(e).__name__}: {e}")
+        except RuntimeError as e:
+            raise HTTPException(503, f"L1 extract failed: {e}")
 
 
 # ---------- /api/sandbox/* (D-077 PR-1c) ----------
@@ -783,6 +943,1353 @@ def _trigger_l1_extraction_async(root: Path) -> None:
     t.start()
 
 
+# ---------- S-06a: sandbox sessions CRUD ----------
+
+
+class SandboxSessionMeta(BaseModel):
+    sid: str
+    is_default: bool
+    created_at: str | None = None
+    size_bytes: int = 0
+    has_state: bool = False
+
+
+class SessionsListResp(BaseModel):
+    sessions: list[SandboxSessionMeta]
+
+
+class CreateSessionReq(BaseModel):
+    sid: str = Field(min_length=1, max_length=64)
+    days: int = Field(default=7, ge=1, le=30)  # S-06c 修订 A: total_meals = days*2
+
+
+class RenameSessionReq(BaseModel):
+    new_sid: str = Field(min_length=1, max_length=64)
+
+
+@router.get("/sandbox/sessions")
+def api_sandbox_list_sessions(request: Request) -> SessionsListResp:
+    """S-06a: 列出 sandbox 桶 (default 永远首位)."""
+    _require_localhost(request)
+    items = _sandbox.list_sessions(root=ROOT)
+    return SessionsListResp(sessions=[SandboxSessionMeta(**it) for it in items])
+
+
+@router.post("/sandbox/sessions", status_code=201)
+def api_sandbox_create_session(
+    request: Request, req: CreateSessionReq,
+) -> SandboxSessionMeta:
+    """S-06a: 创建非 default sandbox 桶."""
+    _require_localhost(request)
+    if not _sandbox.has_sandbox_meta(ROOT):
+        raise HTTPException(
+            400,
+            "sandbox layout not initialized; POST /api/sandbox/init or run "
+            "sandbox_migration.migrate_to_v2 first",
+        )
+    try:
+        meta = _sandbox.create_session(req.sid, root=ROOT, days=req.days)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileExistsError as e:
+        raise HTTPException(409, str(e))
+    return SandboxSessionMeta(**meta)
+
+
+@router.delete("/sandbox/sessions/{sid}")
+def api_sandbox_delete_session(request: Request, sid: str) -> dict:
+    """S-06a: 删除非 default sandbox 桶 (default 禁删, 不存在 404)."""
+    _require_localhost(request)
+    try:
+        return _sandbox.delete_session(sid, root=ROOT)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.post("/sandbox/sessions/{sid}/rename")
+def api_sandbox_rename_session(
+    request: Request, sid: str, req: RenameSessionReq,
+) -> SandboxSessionMeta:
+    """S-06a: 同 fs 原子 rename. 跨 fs 抛 OSError(EXDEV) → 500."""
+    _require_localhost(request)
+    try:
+        meta = _sandbox.rename_session(sid, req.new_sid, root=ROOT)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except FileExistsError as e:
+        raise HTTPException(409, str(e))
+    except OSError as e:
+        # 跨 fs (EXDEV) 等 — 不静默 fallback 到 copy+rm
+        raise HTTPException(
+            500,
+            f"rename failed (likely cross-fs, EXDEV); manual intervention needed: {e}",
+        )
+    return SandboxSessionMeta(**meta)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# S-06c: per-session interactive endpoints (recs / eat / skip / swap / refine / jobs)
+# ════════════════════════════════════════════════════════════════════════════
+
+import os as _os
+import secrets as _secrets
+from chisha.sandbox import _now_real_iso
+from chisha.sandbox_adapter import (
+    format_v2_to_rec,
+    mock_recs as _mock_recs_data,
+    mock_refine_recs as _mock_refine_recs_data,
+)
+from chisha.sandbox_decision_diff import build_decision
+
+# In-memory job 表 (S-06c BackgroundTask decision diff build)
+_JOB_TABLE: dict[str, dict] = {}
+_JOB_LOCK = _threading.Lock()
+
+_DEFAULT_SID_C = "_default"
+
+# S-07: per-sid op lock 防 eat/skip/swap/refine/rollback/branch 并发污染.
+# Handler 入口拿锁 timeout=30 → 409; BG task body 无 timeout 等. branch 持
+# src+new 两把 (src 外 new 内).
+_SESSION_OP_LOCK_REGISTRY: dict[str, _threading.Lock] = {}
+_REGISTRY_LOCK = _threading.Lock()
+
+
+def _get_session_op_lock(sid_key: str) -> _threading.Lock:
+    with _REGISTRY_LOCK:
+        return _SESSION_OP_LOCK_REGISTRY.setdefault(sid_key, _threading.Lock())
+
+
+from contextlib import contextmanager as _contextmanager
+
+
+@_contextmanager
+def _session_op_lock(routed_sid: str | None, *, timeout: float | None = 30.0,
+                     action: str = "operation"):
+    """S-07: 抢 per-sid op lock, timeout 抢不到 → 409. timeout=None 无限等 (BG)."""
+    sid_key = routed_sid or _DEFAULT_SID_C
+    lock = _get_session_op_lock(sid_key)
+    if timeout is None:
+        lock.acquire()
+        ok = True
+    else:
+        ok = lock.acquire(timeout=timeout)
+    if not ok:
+        raise HTTPException(
+            409, f"{action} blocked: sandbox sid={sid_key!r} busy >{timeout:.0f}s",
+        )
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+def _atomic_write_json(path: Path, data: Any) -> None:
+    """S-06c 修订 F: tmp + os.replace 原子写 JSON."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    _os.replace(tmp, path)
+
+
+def _sb_bucket(sid: str | None, root: Path) -> Path:
+    """sandbox 桶根目录: default → logs/sandbox/, 非 default → logs/sandbox/sessions/{sid}/."""
+    if sid is None or sid == _DEFAULT_SID_C:
+        return root / "logs" / "sandbox"
+    return root / "logs" / "sandbox" / "sessions" / sid
+
+
+def _last_recs_path(sid: str | None, root: Path) -> Path:
+    return _sb_bucket(sid, root) / "last_recs.json"
+
+
+def _history_path(sid: str | None, root: Path) -> Path:
+    return _sb_bucket(sid, root) / "history.json"
+
+
+def _meal_to_trace_path(sid: str | None, root: Path) -> Path:
+    return _sb_bucket(sid, root) / "meal_to_trace.json"
+
+
+def _decision_path(sid: str | None, meal_idx: int, root: Path) -> Path:
+    return _sb_bucket(sid, root) / "decisions" / f"{meal_idx}.json"
+
+
+def _load_history(sid: str | None, root: Path) -> list[dict]:
+    p = _history_path(sid, root)
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _append_history(sid: str | None, root: Path, entry: dict) -> list[dict]:
+    history = _load_history(sid, root)
+    history.append(entry)
+    _atomic_write_json(_history_path(sid, root), history)
+    return history
+
+
+def _load_meal_to_trace(sid: str | None, root: Path) -> dict:
+    p = _meal_to_trace_path(sid, root)
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _update_meal_to_trace(sid: str | None, root: Path, meal_idx: int, trace_session_id: str) -> None:
+    m = _load_meal_to_trace(sid, root)
+    m[str(meal_idx)] = trace_session_id
+    _atomic_write_json(_meal_to_trace_path(sid, root), m)
+
+
+def _load_prefs_safe(root: Path) -> dict:
+    """Load long_term_prefs.json from sandbox-aware path, empty dict on missing/error."""
+    from chisha import data_root
+    try:
+        p = data_root.long_term_prefs_path(root)
+        if not p.exists():
+            return {}
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return {}
+
+
+def _validate_and_route_sid(sid: str) -> str | None:
+    """S-06c: 校验 path sid + sandbox enabled + 桶存在; 返合法非 default sid 或 None.
+
+    sid="_default" → 返 None (走 flat default 桶). 其它走 sessions/{sid}/.
+
+    Raises HTTPException 400/404/409 同 `_with_sandbox_sid`.
+    """
+    if sid == _DEFAULT_SID_C:
+        return None
+    from chisha.sandbox_context import _validate_sid as _vs
+    try:
+        _vs(sid)
+    except ValueError as e:
+        raise HTTPException(400, f"invalid sandbox session_id: {e}")
+    if not _sandbox.is_enabled(ROOT):
+        raise HTTPException(
+            409,
+            f"sandbox layout disabled; cannot route session_id={sid!r}",
+        )
+    bucket = ROOT / "logs" / "sandbox" / "sessions" / sid
+    if not bucket.is_dir():
+        raise HTTPException(404, f"unknown sandbox session_id={sid!r}")
+    return sid
+
+
+def _ensure_not_done(routed_sid: str | None, root: Path) -> dict:
+    """S-06c 修订 E: 读 state, raise 409 if done sentinel; 返 state dict."""
+    state_p = _sandbox._state_path_for_sid(routed_sid, root)
+    if not state_p.exists():
+        raise HTTPException(
+            409,
+            f"sandbox session {routed_sid or '_default'!r} not initialized "
+            "(no state.json); POST /api/sandbox/init or /api/sandbox/sessions first",
+        )
+    try:
+        s = json.loads(state_p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise HTTPException(500, f"sandbox state corrupt: {e}")
+    if not isinstance(s, dict) or not s.get("enabled"):
+        raise HTTPException(409, "sandbox not enabled")
+    cur = int(s.get("current_meal_idx", 0))
+    total = int(s.get("total_meals", 14))
+    if cur >= total:
+        raise HTTPException(409, f"sandbox session done (meal_idx {cur}/{total})")
+    return s
+
+
+# ---------- POST /sandbox/sessions/{sid}/recs ----------
+
+
+class SandboxRecsReq(BaseModel):
+    meal_type: str | None = None   # 默认从 state.current_meal_idx 派生
+
+
+@router.post("/sandbox/sessions/{sid}/recs")
+def api_sandbox_recs(
+    request: Request,
+    sid: str,
+    req: SandboxRecsReq,
+    mock_recommend: int = 0,
+) -> dict:
+    """S-06c: 拉 5 条推荐, 落 sessions/{sid}/last_recs.json.
+
+    mock_recommend=1 → 5 条固定 Rec (复刻 sbxMocks.CURRENT_RECS), 不调 LLM.
+
+    S-07: 入口 per-sid op lock, 防 rollback 与 /recs 并发污染 last_recs.
+    """
+    _require_localhost(request)
+    routed_sid = _validate_and_route_sid(sid)
+    with _session_op_lock(routed_sid, action="recs"):
+        s = _ensure_not_done(routed_sid, ROOT)
+        cur_idx = int(s.get("current_meal_idx", 0))
+        meal_type = req.meal_type
+        if meal_type not in ("lunch", "dinner"):
+            meal_type, _day = _sandbox.meal_idx_to_slot(cur_idx)
+
+        is_mock = mock_recommend == 1
+        if is_mock:
+            current_recs = _mock_recs_data()
+            recommend_session_id = f"mock_{_secrets.token_hex(4)}"
+            # 构造 v2-shape candidates 用于后续 eat 端点 / adapter (mock 路径里 candidates = currentRecs)
+            candidates = current_recs
+        else:
+            with _sandbox_ctx(routed_sid):
+                try:
+                    out = recommend_meal(
+                        meal_type=meal_type,
+                        daily_mood=None,
+                        log_to_file=True,
+                        root=ROOT,
+                    )
+                except Exception as e:
+                    raise HTTPException(500, f"recommend_meal failed: {type(e).__name__}: {e}")
+            candidates = out["candidates"]   # v2 dict
+            current_recs = [format_v2_to_rec(c) for c in candidates]
+            recommend_session_id = out["session_id"]
+
+        last_recs_payload = {
+            "recommend_session_id": recommend_session_id,
+            "candidates": candidates,
+            "currentRecs": current_recs,
+            "applied_refine": None,
+            "meal_idx": cur_idx,
+            "is_mock": is_mock,
+            "saved_at": _now_real_iso(),
+        }
+        _atomic_write_json(_last_recs_path(routed_sid, ROOT), last_recs_payload)
+
+        return {
+            "currentRecs": current_recs,
+            "recommend_session_id": recommend_session_id,
+            "applied_refine": None,
+            "meal_idx": cur_idx,
+        }
+
+
+# ---------- POST /sandbox/sessions/{sid}/eat ----------
+
+
+class SandboxEatReq(BaseModel):
+    rec_rank: int = Field(ge=1, le=5)
+
+
+def _build_decision_async(
+    *,
+    sid: str | None,
+    meal_idx: int,
+    picked_rec_view: dict,
+    history: list[dict],
+    job_id: str,
+    mock: bool,
+    root: Path,
+) -> None:
+    """BG task: 在 thread pool 跑. 必须显式重 set ContextVar (S-06c 修订 D).
+
+    S-07: 入口 per-sid op lock (timeout=None 无限等, BG 不能返 409). 拿锁后
+    reload state; 若 ``state.current_meal_idx <= meal_idx`` 说明 rollback 把
+    我们的 meal_idx 已 truncate, 早退记 ``cancelled_by_rollback``.
+    """
+    started = _now_real_iso()
+    with _JOB_LOCK:
+        _JOB_TABLE[job_id] = {
+            "status": "running",
+            "started_at": started,
+            "sid": sid,
+            "meal_idx": meal_idx,
+        }
+    try:
+        # S-07 Phase 4 Codex iter 2 #1: 持 _L1_EXTRACTION_LOCK 包整个 BG 周期, 让
+        # reset/disable 的 _block_until_l1_idle_or_409 在 BG 跑期间 block. 与
+        # CONTRACTS.md:98 reset/disable 互斥不变式对齐. 必须 BEFORE per-sid lock
+        # 防 BG 进度被 reset 见缝插针 (status='running' 但 L1 lock 仍 free 的间隙).
+        # _impl_l1_refresh 内部 acquire_lock=False 防 re-entrant 死锁.
+        with _L1_EXTRACTION_LOCK:
+            with _session_op_lock(sid, timeout=None, action="bg-decision"):
+                # S-07 stale guard: 锁内 reload state; rollback 已截掉时早退
+                state_p = _sandbox._state_path_for_sid(sid, root)
+                if state_p.exists():
+                    try:
+                        cur_state = json.loads(state_p.read_text(encoding="utf-8"))
+                        cur_idx_now = int(cur_state.get("current_meal_idx", 0))
+                    except (OSError, json.JSONDecodeError):
+                        cur_idx_now = meal_idx + 1   # 视为 ok, 继续 (state 损坏后续兜底)
+                else:
+                    cur_idx_now = 0
+                if cur_idx_now <= meal_idx:
+                    with _JOB_LOCK:
+                        _JOB_TABLE[job_id] = {
+                            "status": "cancelled_by_rollback",
+                            "sid": sid,
+                            "meal_idx": meal_idx,
+                            "started_at": started,
+                            "ended_at": _now_real_iso(),
+                        }
+                    return
+
+                with _sandbox_ctx(sid):
+                    if mock:
+                        prev_prefs: dict = {}
+                        new_prefs: dict = {}
+                    else:
+                        prev_prefs = _load_prefs_safe(root)
+                        _impl_l1_refresh(
+                            root,
+                            force_no_llm=False,
+                            window_days=None,
+                            acquire_lock=False,   # outer with _L1_EXTRACTION_LOCK 已持
+                        )
+                        new_prefs = _load_prefs_safe(root)
+
+                decision = build_decision(
+                    sid=sid or _DEFAULT_SID_C,
+                    meal_idx=meal_idx,
+                    picked_rec=picked_rec_view,
+                    prev_long_term_prefs=prev_prefs,
+                    new_long_term_prefs=new_prefs,
+                    history=history,
+                    root=root,
+                )
+                _atomic_write_json(_decision_path(sid, meal_idx, root), decision)
+            with _JOB_LOCK:
+                _JOB_TABLE[job_id] = {
+                    "status": "done",
+                    "sid": sid,
+                    "meal_idx": meal_idx,
+                    "started_at": started,
+                    "ended_at": _now_real_iso(),
+                    "result": {"decision": decision, "meal_idx": meal_idx},
+                }
+    except Exception as e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "build_decision_async failed: %s: %s", type(e).__name__, e,
+        )
+        with _JOB_LOCK:
+            _JOB_TABLE[job_id] = {
+                "status": "failed",
+                "sid": sid,
+                "meal_idx": meal_idx,
+                "started_at": started,
+                "ended_at": _now_real_iso(),
+                "error": f"{type(e).__name__}: {e}",
+            }
+
+
+@router.post("/sandbox/sessions/{sid}/eat")
+def api_sandbox_eat(
+    request: Request,
+    sid: str,
+    req: SandboxEatReq,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    """S-06c: 选择第 rec_rank 条吃掉; advance + 启 BackgroundTask 抽 L1 + 派生 decision.
+
+    S-07: 入口加 per-sid op lock 防与 rollback/branch 并发污染.
+    """
+    _require_localhost(request)
+    routed_sid = _validate_and_route_sid(sid)
+    with _session_op_lock(routed_sid, action="eat"):
+        s = _ensure_not_done(routed_sid, ROOT)
+        cur_idx = int(s.get("current_meal_idx", 0))
+
+        last_p = _last_recs_path(routed_sid, ROOT)
+        if not last_p.exists():
+            raise HTTPException(404, "no last_recs.json; POST /recs first")
+        try:
+            last_recs = json.loads(last_p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            raise HTTPException(500, f"last_recs.json corrupt: {e}")
+
+        candidates = last_recs.get("candidates") or []
+        if not (1 <= req.rec_rank <= len(candidates)):
+            raise HTTPException(400, f"rec_rank {req.rec_rank} out of range (have {len(candidates)} candidates)")
+
+        is_mock = bool(last_recs.get("is_mock"))
+        picked_raw = candidates[req.rec_rank - 1]
+        recommend_session_id = last_recs.get("recommend_session_id", "")
+
+        # mock 路径: candidates 本身就是 Rec 视图; 真实路径: 转换
+        if is_mock:
+            picked_rec_view = dict(picked_raw)
+        else:
+            picked_rec_view = format_v2_to_rec(picked_raw)
+
+        # meal_to_trace[idx] = recommend_session_id
+        _update_meal_to_trace(routed_sid, ROOT, cur_idx, recommend_session_id)
+
+        # 真实路径: 调 _impl_accept 写 feedback_store + meal_log (mock 跳过)
+        if not is_mock:
+            try:
+                with _sandbox_ctx(routed_sid):
+                    accept_req = AcceptReq(
+                        session_id=recommend_session_id,
+                        candidate_rank=req.rec_rank,
+                        candidate=picked_raw,
+                    )
+                    _impl_accept(accept_req)
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(500, f"accept failed: {type(e).__name__}: {e}")
+
+        # history append
+        history_entry = {
+            "idx": cur_idx,
+            "state": "eat",
+            "dish": picked_rec_view.get("name", ""),
+            "session_id": recommend_session_id,
+            "accepted_at": _now_real_iso(),
+            "rank": req.rec_rank,
+        }
+        history_after = _append_history(routed_sid, ROOT, history_entry)
+
+        # advance meal clock
+        try:
+            new_state = _sandbox.advance_meal(sid=routed_sid, root=ROOT)
+        except RuntimeError as e:
+            raise HTTPException(500, f"advance_meal failed: {e}")
+
+        # 清 last_recs (下顿要重 POST /recs)
+        try:
+            last_p.unlink()
+        except OSError:
+            pass
+
+        # 启 BackgroundTask: build decision diff
+        job_id = _secrets.token_hex(8)
+        with _JOB_LOCK:
+            _JOB_TABLE[job_id] = {
+                "status": "pending",
+                "sid": routed_sid,
+                "meal_idx": cur_idx,
+                "started_at": _now_real_iso(),
+            }
+        background_tasks.add_task(
+            _build_decision_async,
+            sid=routed_sid,
+            meal_idx=cur_idx,
+            picked_rec_view=picked_rec_view,
+            history=history_after,
+            job_id=job_id,
+            mock=is_mock,
+            root=ROOT,
+        )
+
+        return {
+            "job_id": job_id,
+            "status": "running",
+            "new_meal_idx": int(new_state.get("current_meal_idx", cur_idx + 1)),
+            "meal_idx_eaten": cur_idx,
+        }
+
+
+# ---------- POST /sandbox/sessions/{sid}/skip ----------
+
+
+class SandboxSkipReq(BaseModel):
+    reason: str | None = None
+
+
+@router.post("/sandbox/sessions/{sid}/skip")
+def api_sandbox_skip(
+    request: Request,
+    sid: str,
+    req: SandboxSkipReq,
+) -> dict:
+    """S-06c: 跳过本顿. 同步落 decision (skip 不触发 L1 抽取).
+
+    S-07: 入口 per-sid op lock.
+    """
+    _require_localhost(request)
+    if req.reason is not None and req.reason not in _VALID_SKIP_REASONS:
+        raise HTTPException(422, f"invalid skip reason: {req.reason!r}")
+    routed_sid = _validate_and_route_sid(sid)
+    with _session_op_lock(routed_sid, action="skip"):
+        s = _ensure_not_done(routed_sid, ROOT)
+        cur_idx = int(s.get("current_meal_idx", 0))
+
+        history_entry = {
+            "idx": cur_idx,
+            "state": "skip",
+            "reason": req.reason,
+            "session_id": None,
+            "accepted_at": None,
+        }
+        history_after = _append_history(routed_sid, ROOT, history_entry)
+
+        try:
+            new_state = _sandbox.advance_meal(sid=routed_sid, root=ROOT)
+        except RuntimeError as e:
+            raise HTTPException(500, f"advance_meal failed: {e}")
+
+        # 清 last_recs best-effort
+        last_p = _last_recs_path(routed_sid, ROOT)
+        if last_p.exists():
+            try:
+                last_p.unlink()
+            except OSError:
+                pass
+
+        # 同步 decision (skip 路径 prefs 都空, build_decision 返"跳过未学习")
+        decision = build_decision(
+            sid=routed_sid or _DEFAULT_SID_C,
+            meal_idx=cur_idx,
+            picked_rec=None,
+            prev_long_term_prefs={},
+            new_long_term_prefs={},
+            history=history_after,
+            root=ROOT,
+        )
+        _atomic_write_json(_decision_path(routed_sid, cur_idx, ROOT), decision)
+
+        return {
+            "new_meal_idx": int(new_state.get("current_meal_idx", cur_idx + 1)),
+            "meal_idx_skipped": cur_idx,
+            "decision": decision,
+        }
+
+
+# ---------- POST /sandbox/sessions/{sid}/swap ----------
+
+
+class SandboxSwapReq(BaseModel):
+    exclude_ids: list[str] = Field(default_factory=list)
+
+
+@router.post("/sandbox/sessions/{sid}/swap")
+def api_sandbox_swap(
+    request: Request,
+    sid: str,
+    req: SandboxSwapReq,
+    mock_recommend: int = 0,
+) -> dict:
+    """S-06c 修订 B: swap = recommend_meal 重跑 + post-filter exclude_ids. 不调 refine.
+
+    S-07: 入口 per-sid op lock.
+    """
+    _require_localhost(request)
+    routed_sid = _validate_and_route_sid(sid)
+    with _session_op_lock(routed_sid, action="swap"):
+        s = _ensure_not_done(routed_sid, ROOT)
+        cur_idx = int(s.get("current_meal_idx", 0))
+
+        last_p = _last_recs_path(routed_sid, ROOT)
+        if not last_p.exists():
+            raise HTTPException(404, "no last_recs.json; POST /recs first")
+        try:
+            last_recs = json.loads(last_p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            raise HTTPException(500, f"last_recs.json corrupt: {e}")
+
+        is_mock = bool(last_recs.get("is_mock")) or mock_recommend == 1
+        exclude_ids = list(req.exclude_ids or [])
+
+        if is_mock:
+            current_recs = _mock_recs_data(exclude_ids=exclude_ids)
+            candidates = current_recs
+            recommend_session_id = f"mock_{_secrets.token_hex(4)}"
+        else:
+            meal_type, _day = _sandbox.meal_idx_to_slot(cur_idx)
+            with _sandbox_ctx(routed_sid):
+                try:
+                    out = recommend_meal(
+                        meal_type=meal_type,
+                        daily_mood=None,
+                        log_to_file=True,
+                        root=ROOT,
+                    )
+                except Exception as e:
+                    raise HTTPException(500, f"recommend_meal failed: {type(e).__name__}: {e}")
+            excl = set(exclude_ids)
+            candidates = [c for c in out["candidates"] if (c.get("id") or "") not in excl]
+            current_recs = [format_v2_to_rec(c) for c in candidates]
+            recommend_session_id = out["session_id"]
+
+        new_payload = {
+            "recommend_session_id": recommend_session_id,
+            "candidates": candidates,
+            "currentRecs": current_recs,
+            "applied_refine": last_recs.get("applied_refine"),   # swap 不清 refine
+            "meal_idx": cur_idx,
+            "is_mock": is_mock,
+            "saved_at": _now_real_iso(),
+        }
+        _atomic_write_json(last_p, new_payload)
+        return {
+            "currentRecs": current_recs,
+            "recommend_session_id": recommend_session_id,
+        }
+
+
+# ---------- POST /sandbox/sessions/{sid}/refine ----------
+
+
+class SandboxRefineReq(BaseModel):
+    text: str = Field(min_length=1)
+
+
+@router.post("/sandbox/sessions/{sid}/refine")
+def api_sandbox_refine(
+    request: Request,
+    sid: str,
+    req: SandboxRefineReq,
+    mock_recommend: int = 0,
+) -> dict:
+    """S-06c: refine 同 round; 覆盖 last_recs + 写 applied_refine.
+
+    S-07: 入口 per-sid op lock.
+    """
+    _require_localhost(request)
+    routed_sid = _validate_and_route_sid(sid)
+    with _session_op_lock(routed_sid, action="refine"):
+        s = _ensure_not_done(routed_sid, ROOT)
+        cur_idx = int(s.get("current_meal_idx", 0))
+
+        last_p = _last_recs_path(routed_sid, ROOT)
+        if not last_p.exists():
+            raise HTTPException(404, "no last_recs.json; POST /recs first")
+        try:
+            last_recs = json.loads(last_p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            raise HTTPException(500, f"last_recs.json corrupt: {e}")
+
+        is_mock = bool(last_recs.get("is_mock")) or mock_recommend == 1
+
+        if is_mock:
+            current_recs = _mock_refine_recs_data(req.text)
+            candidates = current_recs
+            new_recommend_sid = f"mock_{_secrets.token_hex(4)}"
+            new_round = (last_recs.get("applied_refine") or {}).get("sinceRound", 1) + 1
+        else:
+            old_sid = last_recs.get("recommend_session_id", "")
+            try:
+                with _sandbox_ctx(routed_sid):
+                    refine_req = RefineReq(
+                        session_id=old_sid,
+                        refine_text=req.text,
+                    )
+                    refine_out = _impl_refine(refine_req)
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(500, f"refine failed: {type(e).__name__}: {e}")
+            candidates = refine_out.get("candidates") or []
+            current_recs = [
+                format_v2_to_rec(
+                    c,
+                    refine_intent=refine_out.get("refine_intent"),
+                    intent_override=req.text[:12],
+                )
+                for c in candidates
+            ]
+            new_recommend_sid = refine_out.get("session_id", old_sid)
+            new_round = int(refine_out.get("round", 2))
+
+        applied_refine = {
+            "label": req.text[:20],
+            "sinceRound": new_round,
+            "sessionId": new_recommend_sid,
+        }
+        new_payload = {
+            "recommend_session_id": new_recommend_sid,
+            "candidates": candidates,
+            "currentRecs": current_recs,
+            "applied_refine": applied_refine,
+            "meal_idx": cur_idx,
+            "is_mock": is_mock,
+            "saved_at": _now_real_iso(),
+        }
+        _atomic_write_json(last_p, new_payload)
+        return {
+            "currentRecs": current_recs,
+            "recommend_session_id": new_recommend_sid,
+            "activeRules": {
+                "refine": [applied_refine],
+                "blacklist": [],
+            },
+        }
+
+
+# ---------- GET /sandbox/sessions/{sid}/jobs/{job_id} ----------
+
+
+@router.get("/sandbox/sessions/{sid}/jobs/{job_id}")
+def api_sandbox_job_status(
+    request: Request,
+    sid: str,
+    job_id: str,
+) -> dict:
+    """S-06c: 查 BackgroundTask 状态. in-memory, server restart 后丢."""
+    _require_localhost(request)
+    _ = _validate_and_route_sid(sid)   # 校验 sid 合法
+    with _JOB_LOCK:
+        info = _JOB_TABLE.get(job_id)
+    if info is None:
+        raise HTTPException(404, f"job_id={job_id!r} not found")
+    return dict(info)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# S-07: rollback / branch + GET FullSnapshot
+# ════════════════════════════════════════════════════════════════════════════
+
+import shutil as _shutil
+
+
+class SessionMetaFull(BaseModel):
+    """S-07 §D: FullSnapshot 子 model. 与 S-06a 的 SandboxSessionMeta 区分:
+    后者是 list view 元数据 (size_bytes 等), 这里是前端 useSandbox 消费的完整
+    session meta (per design brief §SessionMeta).
+    """
+    sid: str
+    name: str = ""
+    days: int
+    seed: int = 0
+    profile: str = "profile@v2"
+    origin: str = "blank"
+    status: str  # "running" | "done"
+    lastUsed: str = ""
+    currentMealIdx: int
+    totalMeals: int
+    branchFrom: str | None = None
+
+
+class SandboxClock(BaseModel):
+    idx: int
+    day: int
+    slot: str   # "lunch" | "dinner"
+    total: int
+
+
+class FullSnapshotResp(BaseModel):
+    """S-07 §D: brief §FullSnapshot 完整 view-model. taste/keywords/recent/fatigue
+    暂留空 list (S-08 派生填). meta/clock/history/currentRecs/lastDecision/activeRules
+    本任务真填.
+    """
+    meta: SessionMetaFull
+    clock: SandboxClock
+    history: list[dict]
+    currentRecs: list[dict]
+    lastDecision: dict | None
+    activeRules: dict
+    taste: list[dict] = Field(default_factory=list)
+    keywords: list[dict] = Field(default_factory=list)
+    recent: list[str] = Field(default_factory=list)
+    fatigue: list[dict] = Field(default_factory=list)
+    # S-09: 历史顿 idx -> trace_session_id (eat 时落; meal_to_trace.json)
+    mealToTrace: dict = Field(default_factory=dict)
+    # S-09: 当前顿 (uneaten) recommend_session_id (last_recs.json); None 表示无 active recs
+    currentTraceId: str | None = None
+
+
+def _build_full_snapshot(routed_sid: str | None, root: Path) -> FullSnapshotResp:
+    """从 sessions/{sid}/state.json + history + last_recs + 最近 decision 派生."""
+    state_p = _sandbox._state_path_for_sid(routed_sid, root)
+    if not state_p.exists():
+        raise HTTPException(
+            404, f"sandbox session {routed_sid or '_default'!r} has no state.json",
+        )
+    try:
+        st = json.loads(state_p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise HTTPException(500, f"sandbox state corrupt: {e}")
+    if not isinstance(st, dict):
+        raise HTTPException(500, "sandbox state malformed")
+
+    cur_idx = int(st.get("current_meal_idx", 0))
+    total = int(st.get("total_meals", 14))
+    days_v = total // 2 or 7
+
+    # clock: idx == total 表示 done sentinel, slot 仍用 idx 派生但 idx>=total 退化为 dinner
+    if cur_idx < total:
+        slot, day = _sandbox.meal_idx_to_slot(cur_idx)
+    else:
+        slot = "dinner"
+        day = days_v
+    clock = SandboxClock(idx=cur_idx, day=day, slot=slot, total=total)
+
+    meta = SessionMetaFull(
+        sid=str(st.get("sid") or routed_sid or _DEFAULT_SID_C),
+        name=str(st.get("name") or ""),
+        days=days_v,
+        seed=int(st.get("seed") or 0),
+        profile=str(st.get("profile") or "profile@v2"),
+        origin=str(st.get("origin") or "blank"),
+        status="done" if cur_idx >= total else "running",
+        lastUsed=str(st.get("started_at_real") or ""),
+        currentMealIdx=cur_idx,
+        totalMeals=total,
+        branchFrom=st.get("branch_from"),
+    )
+
+    history = _load_history(routed_sid, root)
+
+    last_recs_data: dict = {}
+    last_p = _last_recs_path(routed_sid, root)
+    if last_p.exists():
+        try:
+            last_recs_data = json.loads(last_p.read_text(encoding="utf-8")) or {}
+        except (OSError, json.JSONDecodeError):
+            last_recs_data = {}
+    current_recs = list(last_recs_data.get("currentRecs") or [])
+    applied_refine = last_recs_data.get("applied_refine")
+    active_refine = [applied_refine] if applied_refine else []
+
+    last_decision: dict | None = None
+    if cur_idx > 0:
+        dec_p = _decision_path(routed_sid, cur_idx - 1, root)
+        if dec_p.exists():
+            try:
+                last_decision = json.loads(dec_p.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                last_decision = None
+
+    # S-09: meal_to_trace + current recommend_session_id
+    m2t = _load_meal_to_trace(routed_sid, root)
+    current_tsid = last_recs_data.get("recommend_session_id") or None
+
+    return FullSnapshotResp(
+        meta=meta,
+        clock=clock,
+        history=history,
+        currentRecs=current_recs,
+        lastDecision=last_decision,
+        activeRules={"refine": active_refine, "blacklist": []},
+        taste=[],
+        keywords=[],
+        recent=[],
+        fatigue=[],
+        mealToTrace=m2t,
+        currentTraceId=current_tsid,
+    )
+
+
+@router.get("/sandbox/sessions/{sid}", response_model=FullSnapshotResp)
+def api_sandbox_get_full_snapshot(request: Request, sid: str) -> FullSnapshotResp:
+    """S-07: 完整 FullSnapshot (前端 useSandbox 初始化 / rollback 后刷新).
+
+    Default sid 允许 (返 default 桶 snapshot). 非 default sid 走 _validate_and_route_sid.
+    GET 只读不加 op lock.
+    """
+    _require_localhost(request)
+    routed_sid = _validate_and_route_sid(sid)
+    return _build_full_snapshot(routed_sid, ROOT)
+
+
+class SandboxRollbackReq(BaseModel):
+    meal_idx: int = Field(ge=0)
+
+
+class SandboxBranchReq(BaseModel):
+    from_meal_idx: int = Field(ge=0)
+    name: str = Field(min_length=1, max_length=64)
+
+
+def _filter_jsonl_by_session_ids(
+    src: Path, trash_sids: set[str],
+) -> str:
+    """读 jsonl, 剔除 session_id ∈ trash_sids 的行, 返新 content (含尾 \\n)."""
+    # S-07 Phase 4 Codex iter 1 #3: 不再 swallow OSError; raise 让 rollback restore.
+    if not src.exists():
+        return ""
+    lines_kept: list[str] = []
+    for line in src.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            # 损坏行: 保留原文 (不丢用户数据)
+            lines_kept.append(line)
+            continue
+        sid_in_line = entry.get("session_id")
+        if sid_in_line and sid_in_line in trash_sids:
+            continue
+        lines_kept.append(line)
+    return ("\n".join(lines_kept) + "\n") if lines_kept else ""
+
+
+def _rollback_session_impl(
+    routed_sid: str | None,
+    meal_idx: int,
+    root: Path,
+    *,
+    _internal: bool = False,
+) -> FullSnapshotResp:
+    """S-07 §B: 全事务裁剪. 单一 commit 边界 = state.json os.replace 列尾.
+
+    _internal=True: caller (branch) 已持 per-sid op lock, 跳过 acquire.
+    _internal=False: 默认走 lock guard (rollback handler).
+    """
+    if routed_sid is None:
+        raise HTTPException(400, "rollback not supported on default sandbox bucket")
+
+    state_p = _sandbox._state_path_for_sid(routed_sid, root)
+    if not state_p.exists():
+        raise HTTPException(
+            404, f"sandbox session {routed_sid!r} has no state.json",
+        )
+    try:
+        state = json.loads(state_p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise HTTPException(500, f"sandbox state corrupt: {e}")
+    if not isinstance(state, dict):
+        raise HTTPException(500, "sandbox state malformed")
+
+    cur_idx = int(state.get("current_meal_idx", 0))
+    total = int(state.get("total_meals", 14))
+    if not (0 <= meal_idx < cur_idx):
+        raise HTTPException(
+            400, f"meal_idx={meal_idx} not in [0, {cur_idx}) — nothing to rollback",
+        )
+
+    # ─ Stage new content ─
+    bucket = _sb_bucket(routed_sid, root)
+    tmp_dir = bucket / ".rollback_tmp"
+    if tmp_dir.exists():
+        _shutil.rmtree(tmp_dir, ignore_errors=True)
+    new_dir = tmp_dir / "new"
+    backup_dir = tmp_dir / "backup"
+    new_dir.mkdir(parents=True)
+    backup_dir.mkdir()
+
+    # state.json: 派生新版本
+    day_index_new = meal_idx // 2 + 1
+    started_virtual = state.get("started_at_virtual")
+    if started_virtual:
+        try:
+            cur_date = (
+                dt.date.fromisoformat(started_virtual)
+                + dt.timedelta(days=day_index_new - 1)
+            ).isoformat()
+        except (TypeError, ValueError):
+            cur_date = state.get("current_date") or ""
+    else:
+        cur_date = state.get("current_date") or ""
+    new_state = dict(state)
+    new_state["current_meal_idx"] = meal_idx
+    new_state["day_index"] = day_index_new
+    new_state["current_date"] = cur_date
+    new_state["last_l1_extraction"] = None
+
+    # history slice
+    history_all = _load_history(routed_sid, root)
+    new_history = history_all[:meal_idx]
+
+    # meal_to_trace 截断 + 收集 trash_tsids
+    m2t = _load_meal_to_trace(routed_sid, root)
+    trash_tsids: set[str] = set()
+    new_m2t: dict[str, str] = {}
+    for k, v in m2t.items():
+        try:
+            ik = int(k)
+        except ValueError:
+            new_m2t[k] = v
+            continue
+        if ik >= meal_idx:
+            if isinstance(v, str) and v:
+                trash_tsids.add(v)
+        else:
+            new_m2t[k] = v
+
+    # S-07 Phase 4 Codex iter 1 #2: last_recs 含未 eaten 的 recommend_session_id, 该
+    # session 已落 D-039 session/{tsid}.json + recommend_log 行 + trace 文件, 必须
+    # 也算 trash (否则 branch 后未来 candidates 仍可被 refine.load_session 读到).
+    last_recs_p_pre = _last_recs_path(routed_sid, root)
+    if last_recs_p_pre.exists():
+        try:
+            last_recs_pre_data = json.loads(last_recs_p_pre.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            last_recs_pre_data = {}
+        lr_sid = last_recs_pre_data.get("recommend_session_id")
+        lr_idx_raw = last_recs_pre_data.get("meal_idx", -1)
+        try:
+            lr_idx = int(lr_idx_raw) if lr_idx_raw is not None else -1
+        except (ValueError, TypeError):
+            lr_idx = -1
+        if (
+            lr_sid and isinstance(lr_sid, str)
+            and not lr_sid.startswith("mock_")  # mock 没落实际 file, 跳
+            and lr_idx >= meal_idx
+        ):
+            trash_tsids.add(lr_sid)
+
+    # Stage new files
+    (new_dir / "state.json").write_text(
+        json.dumps(new_state, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    (new_dir / "history.json").write_text(
+        json.dumps(new_history, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    (new_dir / "meal_to_trace.json").write_text(
+        json.dumps(new_m2t, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    (new_dir / "long_term_prefs.json").write_text("{}", encoding="utf-8")
+
+    # sandbox-aware paths (ContextVar 内)
+    from chisha import data_root as _data_root
+    from chisha.sandbox_context import set_sandbox_session as _set_sb
+    with _set_sb(routed_sid):
+        ml_target = _data_root.meal_log_path(root)
+        rl_target = _data_root.recommend_log_path(root)
+        ltp_target = _data_root.long_term_prefs_path(root)
+        trace_dir = _data_root.recommend_trace_dir(root)
+        sessions_dir_target = _data_root.sessions_dir(root)  # D-039 recommend session files
+
+    # Filter jsonl — OSError 由 _filter_jsonl_by_session_ids 透传, 由下方 commit try
+    # 不接, 但 finally 兜 tmp_dir 清理. 兜底见下方 except OSError.
+    try:
+        new_ml_content = _filter_jsonl_by_session_ids(ml_target, trash_tsids)
+        new_rl_content = _filter_jsonl_by_session_ids(rl_target, trash_tsids)
+        (new_dir / "meal_log.jsonl").write_text(new_ml_content, encoding="utf-8")
+        (new_dir / "recommend_log.jsonl").write_text(new_rl_content, encoding="utf-8")
+    except OSError:
+        # staging IO 失败: 还没进 commit 阶段, target 文件 untouched. 清 tmp_dir + raise.
+        _shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
+
+    # Target paths
+    m2t_p = _meal_to_trace_path(routed_sid, root)
+    hist_p = _history_path(routed_sid, root)
+    last_recs_p = _last_recs_path(routed_sid, root)
+
+    # ─ actions list, state.json 列尾 ─
+    actions: list[tuple[Path, Path | None, str]] = []
+    actions.append((m2t_p, new_dir / "meal_to_trace.json", "replace"))
+    actions.append((hist_p, new_dir / "history.json", "replace"))
+    actions.append((ltp_target, new_dir / "long_term_prefs.json", "replace"))
+    actions.append((ml_target, new_dir / "meal_log.jsonl", "replace"))
+    actions.append((rl_target, new_dir / "recommend_log.jsonl", "replace"))
+    if last_recs_p.exists():
+        actions.append((last_recs_p, None, "delete"))
+    dec_dir = bucket / "decisions"
+    if dec_dir.exists():
+        try:
+            for f in sorted(dec_dir.iterdir()):
+                if not f.name.endswith(".json"):
+                    continue
+                try:
+                    idx = int(f.stem)
+                except ValueError:
+                    continue
+                if idx >= meal_idx:
+                    actions.append((f, None, "delete"))
+        except OSError:
+            pass
+    for tsid in sorted(trash_tsids):
+        v2 = trace_dir / f"{tsid}.json"
+        if v2.exists():
+            actions.append((v2, None, "delete"))
+        v3 = trace_dir / tsid
+        if v3.is_dir():
+            actions.append((v3, None, "delete_dir"))
+        # S-07 Phase 4 Codex iter 1 #4: D-039 recommend session JSON file
+        d039 = sessions_dir_target / f"{tsid}.json"
+        if d039.exists():
+            actions.append((d039, None, "delete"))
+    # state.json 列尾 (commit barrier)
+    actions.append((state_p, new_dir / "state.json", "replace"))
+
+    backed_up: list[tuple[Path, Path, str]] = []
+    committed: list[Path] = []
+    try:
+        for idx, (target, new_p, kind) in enumerate(actions):
+            if kind == "delete_dir":
+                if target.exists():
+                    bp = backup_dir / f"d_{idx}_{target.name}"
+                    _shutil.move(str(target), str(bp))
+                    backed_up.append((target, bp, "dir"))
+                continue
+            if target.exists():
+                bp = backup_dir / f"f_{idx}_{target.name}"
+                _os.replace(target, bp)
+                backed_up.append((target, bp, "file"))
+            if kind == "replace":
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if new_p is None:
+                    raise RuntimeError(f"replace kind needs new_p (action {idx})")
+                _os.replace(new_p, target)
+                committed.append(target)
+            # kind == "delete": already backed up, target gone
+    except Exception:
+        # Restore in reverse order
+        for target, bp, kind in reversed(backed_up):
+            try:
+                if target.exists():
+                    if kind == "dir":
+                        _shutil.rmtree(target, ignore_errors=True)
+                    else:
+                        try:
+                            target.unlink()
+                        except OSError:
+                            pass
+                if kind == "dir":
+                    _shutil.move(str(bp), str(target))
+                else:
+                    _os.replace(bp, target)
+            except OSError:
+                pass
+        _shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
+
+    # Cleanup tmp dir
+    _shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # 清 in-memory _JOB_TABLE entries for this sid (best-effort housekeeping)
+    with _JOB_LOCK:
+        stale_jids = [
+            jid for jid, info in _JOB_TABLE.items()
+            if info.get("sid") == routed_sid
+            and info.get("status") in ("pending", "running")
+        ]
+        for jid in stale_jids:
+            _JOB_TABLE[jid] = {
+                **_JOB_TABLE[jid],
+                "status": "cancelled_by_rollback",
+                "ended_at": _now_real_iso(),
+            }
+
+    return _build_full_snapshot(routed_sid, root)
+
+
+@router.post("/sandbox/sessions/{sid}/rollback", response_model=FullSnapshotResp)
+def api_sandbox_rollback(
+    request: Request, sid: str, req: SandboxRollbackReq,
+) -> FullSnapshotResp:
+    """S-07: 裁掉 meal_idx 及之后所有状态, state.json 是 commit barrier.
+
+    内部 IO 异常 (OSError 等) 被 backup-restore 兜底后向上抛 → 转 HTTPException 500.
+
+    Iter 4 Codex #4: 入口持 _L1_EXTRACTION_LOCK (与 BG 同 acquisition order: L1 → per-sid)
+    防 reset/disable lifecycle 中段 rmtree(sandbox_dir) 破坏 rollback 写入. Reset/disable
+    也持 L1 lock → 互斥串行化. eat/skip/swap/refine 等高频路径仍 sid-only (race surface
+    较小, 留 future 升级).
+    """
+    _require_localhost(request)
+    routed_sid = _validate_and_route_sid(sid)
+    with _l1_extraction_lock_or_409("rollback"):
+        with _session_op_lock(routed_sid, action="rollback"):
+            try:
+                return _rollback_session_impl(routed_sid, req.meal_idx, ROOT)
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(
+                    500, f"rollback failed (state restored): {type(e).__name__}: {e}",
+                )
+
+
+@router.post("/sandbox/sessions/{sid}/branch", response_model=SandboxSessionMeta)
+def api_sandbox_branch(
+    request: Request, sid: str, req: SandboxBranchReq,
+) -> SandboxSessionMeta:
+    """S-07: 拷贝 src bucket → 新 bucket + 裁到 from_meal_idx + branch_from 元数据.
+
+    Iter 4 Codex #4: 持 _L1_EXTRACTION_LOCK 防 reset/disable rmtree(sandbox_dir) 与
+    copytree 并发 (源被删 → copytree partial). Lock 顺序 L1 → src-sid → new-sid 与
+    BG / rollback 一致.
+    """
+    _require_localhost(request)
+    routed_sid = _validate_and_route_sid(sid)
+    if routed_sid is None:
+        raise HTTPException(400, "branch not supported on default sandbox bucket")
+
+    # validate from_meal_idx 范围 (在 lock 外 cheap)
+    state_p = _sandbox._state_path_for_sid(routed_sid, ROOT)
+    if not state_p.exists():
+        raise HTTPException(404, f"sandbox session {routed_sid!r} has no state.json")
+
+    with _l1_extraction_lock_or_409("branch"):
+        with _session_op_lock(routed_sid, action="branch"):
+            try:
+                src_state = json.loads(state_p.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as e:
+                raise HTTPException(500, f"sandbox state corrupt: {e}")
+            src_cur = int(src_state.get("current_meal_idx", 0))
+            if not (0 <= req.from_meal_idx < src_cur):
+                raise HTTPException(
+                    400,
+                    f"from_meal_idx={req.from_meal_idx} not in [0, {src_cur})",
+                )
+
+            # gen new_sid
+            import time as _time
+            ts = int(_time.time())
+            new_sid = f"sandbox_{ts}_{_secrets.token_hex(4)}"
+
+            src_bucket = _sb_bucket(routed_sid, ROOT)
+            new_bucket = _sb_bucket(new_sid, ROOT)
+            if new_bucket.exists():
+                raise HTTPException(409, f"new sid collision: {new_sid!r}")
+
+            try:
+                _shutil.copytree(
+                    src_bucket, new_bucket,
+                    ignore=_shutil.ignore_patterns(".rollback_tmp"),
+                )
+            except OSError as e:
+                raise HTTPException(500, f"copytree failed: {type(e).__name__}: {e}")
+
+            try:
+                with _session_op_lock(new_sid, action="branch-new"):
+                    # rollback new bucket to from_meal_idx (skip outer lock acquire)
+                    try:
+                        _rollback_session_impl(
+                            new_sid, req.from_meal_idx, ROOT, _internal=True,
+                        )
+                    except HTTPException:
+                        raise
+                    except Exception as e:
+                        raise HTTPException(
+                            500, f"branch rollback failed: {type(e).__name__}: {e}",
+                        )
+
+                    # patch new state.json with branch metadata
+                    new_state_p = _sandbox._state_path_for_sid(new_sid, ROOT)
+                    try:
+                        new_st = json.loads(new_state_p.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError) as e:
+                        raise HTTPException(500, f"new state corrupt: {e}")
+                    new_st["sid"] = new_sid
+                    new_st["name"] = req.name
+                    new_st["branch_from"] = routed_sid
+                    new_st["branch_from_meal_idx"] = req.from_meal_idx
+                    new_st["started_at_real"] = _now_real_iso()
+                    _atomic_write_json(new_state_p, new_st)
+            except Exception:
+                # 失败 → 清新桶, 不留半成品
+                _shutil.rmtree(new_bucket, ignore_errors=True)
+                raise
+
+            # 返 SandboxSessionMeta (list view) — 客户端再 GET FullSnapshot
+            return SandboxSessionMeta(
+                sid=new_sid,
+                is_default=False,
+                created_at=_sandbox._entry_ctime_iso(new_bucket),
+                size_bytes=_sandbox._dir_size_safe(new_bucket),
+                has_state=(new_bucket / "state.json").exists(),
+            )
+
+
 @router.post("/sandbox/init")
 def api_sandbox_init(request: Request, req: SandboxInitReq) -> dict:
     """开启 sandbox 模式. 默认 start_date = 真实 today, 空数据."""
@@ -804,19 +2311,38 @@ _L1_LOCK_WAIT_SECONDS = 30.0
 
 
 def _block_until_l1_idle_or_409(action_label: str) -> None:
-    """D-078 Codex S2 Q3-High: reset/disable 期间 L1 worker 仍在跑 → save_prefs
-    若 sandbox 已 disable 会走回 prod data_root, 污染 prod long_term_prefs.json.
-    在 reset/disable 入口拿 _L1_EXTRACTION_LOCK (worker 持锁直至 save 结束),
-    抢不到则 409 让用户重试.
+    """[已废弃 by S-07] D-078 Codex S2 Q3-High 的 probe-release 模式不闭环:
+    probe 通过 → release → mutation 之间, 排队的 BG worker 可以抢锁继续跑.
+
+    本函数保留签名以防外部 caller; 但实际语义已变 (现在仍是 probe-release).
+    新代码用 ``_l1_extraction_lock_or_409`` context manager: 持锁穿透 lifecycle
+    mutation, 保 CONTRACTS.md:98 不变式.
     """
     if _L1_EXTRACTION_LOCK.acquire(timeout=_L1_LOCK_WAIT_SECONDS):
-        # 立即释放; 我们只是确认 worker 已结束.
         _L1_EXTRACTION_LOCK.release()
         return
     raise HTTPException(
         409, f"{action_label} blocked: L1 extraction worker busy >"
               f" {_L1_LOCK_WAIT_SECONDS:.0f}s, retry shortly"
     )
+
+
+@_contextmanager
+def _l1_extraction_lock_or_409(action_label: str):
+    """S-07 Phase 4 Codex iter 3 #1 修订: 持 _L1_EXTRACTION_LOCK 穿透整个 reset/
+    disable lifecycle mutation. probe-release 模式 (旧 _block_until_l1_idle_or_409)
+    在 probe 通过到 mutation 之间有间隙, 让排队 BG worker 抢锁绕过保护.
+    """
+    if not _L1_EXTRACTION_LOCK.acquire(timeout=_L1_LOCK_WAIT_SECONDS):
+        raise HTTPException(
+            409,
+            f"{action_label} blocked: L1 extraction worker busy >"
+            f" {_L1_LOCK_WAIT_SECONDS:.0f}s, retry shortly",
+        )
+    try:
+        yield
+    finally:
+        _L1_EXTRACTION_LOCK.release()
 
 
 @router.post("/sandbox/advance")
@@ -843,26 +2369,37 @@ def api_sandbox_advance(request: Request, req: SandboxAdvanceReq) -> dict:
 def api_sandbox_reset(request: Request) -> dict:
     """删干净 sandbox 目录, prod 零风险.
 
-    D-078 Codex S2 Q3-High: 阻塞直到 L1 worker 释放, 否则 worker 的 save_prefs
-    在 sandbox 已 disabled 状态下会走回 prod 路径污染 long_term_prefs.json.
+    D-078 Codex S2 Q3-High + S-07 Phase 4 iter 3 #1: 持 _L1_EXTRACTION_LOCK
+    穿透 _sandbox.reset() 整个 lifecycle. 防 probe-release 间隙让排队 BG worker
+    抢锁继续 save_prefs (sandbox 已 disable → 写回 prod long_term_prefs.json).
     """
     _require_localhost(request)
-    _block_until_l1_idle_or_409("reset")
-    return _sandbox.reset(root=ROOT)
+    with _l1_extraction_lock_or_409("reset"):
+        return _sandbox.reset(root=ROOT)
 
 
 @router.post("/sandbox/disable")
 def api_sandbox_disable(request: Request) -> dict:
-    """退出 sandbox 但保留数据 (下次 init 可复用)."""
+    """退出 sandbox 但保留数据 (下次 init 可复用).
+
+    S-07 Phase 4 iter 3 #1: 同 reset, 持锁穿透 disable() lifecycle.
+    """
     _require_localhost(request)
-    _block_until_l1_idle_or_409("disable")
-    return _sandbox.disable(root=ROOT)
+    with _l1_extraction_lock_or_409("disable"):
+        return _sandbox.disable(root=ROOT)
 
 
 @router.get("/sandbox/state")
-def api_sandbox_state(request: Request) -> dict:
+def api_sandbox_state(
+    request: Request,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
+    """S-06a: sid inject 是 forward-compatible no-op (state.state(session_id=...)
+    在 S-04 仍 ignore sid; S-06b 真实现). 测试守门
+    ``test_state_endpoint_sid_inject_is_noop_until_s06b``."""
     _require_localhost(request)
-    return _sandbox.state(root=ROOT)
+    with _sandbox_ctx(_sid):
+        return _sandbox.state(root=ROOT)
 
 
 # ---------- /api/debug/* (D-079 PR-2: Replay + What-if) ----------
@@ -1002,14 +2539,34 @@ def api_debug_what_if(request: Request, req: WhatIfReq) -> dict:
 
 
 @router.get("/sandbox/inspect")
-def api_sandbox_inspect(request: Request) -> dict:
-    """沉淀状态 (志丹原则 #4): 当前 L1 prefs + 最近反馈 + 最近 meal_log.
+def api_sandbox_inspect(
+    request: Request,
+    _sid: str | None = Depends(_with_sandbox_sid),
+) -> dict:
+    """S-06a: 三态 inspect.
 
-    仅 sandbox 启用时返回数据, 关闭时返回 {enabled: false}.
+    | state | 触发条件 | 返回 |
+    | no-layout | not has_sandbox_meta + not is_enabled | enabled=False, has_layout=False, sessions=[] |
+    | layout-disabled | has_sandbox_meta + not is_enabled | enabled=False, has_layout=True, sessions=[...] |
+    | layout-enabled | is_enabled | 原 snapshot + has_layout=True + sessions=[...] |
     """
     _require_localhost(request)
-    if not _sandbox.is_enabled(ROOT):
-        return {"enabled": False}
+    with _sandbox_ctx(_sid):
+        return _impl_inspect()
+
+
+def _impl_inspect() -> dict:
+    enabled = _sandbox.is_enabled(ROOT)
+    has_layout = _sandbox.has_sandbox_meta(ROOT)
+    if not enabled:
+        if not has_layout:
+            return {"enabled": False, "has_layout": False, "sessions": []}
+        # layout-disabled
+        return {
+            "enabled": False,
+            "has_layout": True,
+            "sessions": _sandbox.list_sessions(root=ROOT),
+        }
 
     state = _sandbox.state(root=ROOT)
 
@@ -1054,6 +2611,9 @@ def api_sandbox_inspect(request: Request) -> dict:
 
     return {
         "enabled": True,
+        # S-06a 三态新增字段
+        "has_layout": True,
+        "sessions": _sandbox.list_sessions(root=ROOT),
         "state": state,
         "long_term_prefs": prefs or None,
         # D-078.3: raw 磁盘内容. 即使 boost+penalty 都空, regularities_freetext /

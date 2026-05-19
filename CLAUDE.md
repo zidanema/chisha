@@ -46,6 +46,9 @@ uv run python -m chisha.debug_server  # :8765 (老:/debug, SPA:/, swagger:/swagg
 # 新 debug 台 SPA (D-075, 端口 5174, proxy /api → :8765)
 cd apps/debug-ui && npm install && npm run dev  # http://127.0.0.1:5174
 
+# Sandbox Lab 白盒时光机 (D-093, 端口 5175, proxy /api → :8765)
+cd apps/sandbox-lab && npm install && npm run dev  # http://127.0.0.1:5175
+
 # 推荐 dry_run
 uv run python -m scripts.dry_run --n 5 --meal both
 
@@ -70,9 +73,9 @@ uv run python -m scripts.compare_traces                                         
 
 **Phase 0 内不做**(scope creep 防护): data zone 拆包发布 / OpenClaw 接入(待 D-074 落定) / screener 设计 / 第二份 methodology spec / L1 词表扩 / 调试台进一步 React 化整合 — 详见 CONTRACTS.md「范围红线」。
 
-## 前端自测(强制,改 apps/web 或 apps/debug-ui 必走)
+## 前端自测(强制,改 apps/web 或 apps/debug-ui 或 apps/sandbox-lab 必走)
 
-本项目装了 `chrome-devtools-mcp` (user scope, 2026-05-16). 改 `apps/web/src/**` (用户视图 :5173) 或 `apps/debug-ui/src/**` (D-075 SPA :5174) 任意 `.tsx` / `.css` / `vite.config.ts` / proxy 后, **必须用 `mcp__chrome-devtools__*` 工具自驱浏览器验证**,不许只跑 vitest/tsc 就宣告完成,也不许让志丹去当眼睛。
+本项目装了 `chrome-devtools-mcp` (user scope, 2026-05-16). 改 `apps/web/src/**` (用户视图 :5173) / `apps/debug-ui/src/**` (D-075 SPA :5174) / `apps/sandbox-lab/src/**` (D-093 SPA :5175) 任意 `.tsx` / `.css` / `vite.config.ts` / proxy 后, **必须用 `mcp__chrome-devtools__*` 工具自驱浏览器验证**,不许只跑 vitest/tsc 就宣告完成,也不许让志丹去当眼睛。
 
 最小流程:
 

@@ -1,0 +1,929 @@
+# S-05 实施 Plan v4 · 多 session 落盘改造 + migration
+
+> **v4 修订** (回应 Codex 审计第 3 轮 4 项 BLOCKED):
+> - #1 lock 文件移出 `logs/sandbox/` → `logs/.sandbox_meta.lock` (reset 不动) + reset 内不持 `_meta_lock` (reset 本身就是清空, 持锁意义弱; 改用 per-call 独立 lock 文件位置)
+> - #2 `read_legacy_artifact(rel)` 加 traversal 校验 + 黑名单 + `Path.resolve()` 边界检查
+> - #3 `/sandbox/inspect` 显式分支: `has_sandbox_layout AND NOT is_enabled` 时也返回基础信息 (含 legacy listing) 不是空 `{enabled:false}`
+> - #4 非 default sid 运行时路由: S-05 内仍**只 reserve path layout** (data_root 仍 gate 在 `is_enabled` = `_default.enabled`). 非 default sid 运行期路由 (web_api wrap with set_sandbox_session) **明文延后到 S-06a**, plan 内显式 fail-loud test 覆盖: `is_enabled=False` 且非 default sid 显式传 → RuntimeError; `is_enabled=True (_default on)` + 非 default sid → 路径 OK (静态写读 use case, S-05 测试 + S-06a 真用)
+
+
+
+> **任务**: 把 sandbox 落盘从单全局态 → `sessions/{sid}/` 多桶, S-04 接口铺路落实成真分桶; 老数据 migration 到 `sessions/_legacy/`.
+> **设计源**: `specs/S-05.md` + `docs/design_briefs/2026-05-19-sandbox-lab.md` §多 session 落盘改造
+> **regression_risk**: high — 触 `chisha/{sandbox, data_root, web_api}` + 既有 sandbox 测试 path 断言要更新
+> **不动**: 推荐链路 (api/recall/score/rerank/refine/l1_extractor) / web_api 业务逻辑 / apps/* / 真实 prod 路径
+
+---
+
+## v2 → v3 修订 (回应 Codex 审计第 2 轮 10 项 BLOCKED)
+
+| Codex v2 反馈 | v3 处理 |
+|---|---|
+| #1 `has_sandbox_layout` 让 disable 后 path 仍走 sandbox | **`data_root` 重新以 `is_enabled` 为路径决策信号** (回到 D-077 语义). `has_sandbox_layout` 只用于 `list_sessions` / inspect 读 `_legacy`. `is_enabled = _default/state.json.enabled=True`. disable 后 path 自动降回 prod. 见 §B.2 / §B.3 |
+| #2 pending→enable 路径仍暴露空桶 | (a) `_meta_lock` 持锁包覆 `init + copy + enable` 全过程 (Stage C.2); (b) `is_enabled` 改为 default state 才 enabled→True, copy 期间 enabled=false → `data_root.is_enabled` 返 False → reader 走 prod path → 不会读到空 sandbox 桶 |
+| #3 `_legacy` 显示活跃 | `list_sessions` 强制对 `_legacy` 桶 override `enabled=False`, raw `state.json` 不动 (磁盘) — 只是 list 派生层覆盖. 同时 `__migration.json.readonly=true` 标记驱动前端样式 |
+| #4 metadata 写不原子 | `_meta.json` 和 `__migration.json` 写盘走 **tmp + os.replace** 模式 (`_atomic_write_json`). 新增 1 test 覆盖 corrupt metadata 重写 |
+| #5 lock 嵌套不清 | 明文规则: **publicAPI (init/migrate_legacy/create_session/delete_session/enable_session/advance/disable/reset/record_l1_extraction)** 自身持 `_meta_lock`; **private helper (`_write_meta_json` / `_apply_migration_step`)** 假定 caller 已持锁, 不再嵌套. `init()` 内不再 `with _meta_lock: migrate_legacy()`, 改成调内部 helper `_migrate_legacy_locked(root)` |
+| #6 Stage A 独立性破 | Stage A 重设: **Stage A 只改 data_root path layout (`_default` → `sessions/_default/`) + 同步改 sandbox.py `_STATE_REL` 到 `sessions/_default/state.json` + 5 测试断言更新**, 完全不引入 `has_sandbox_layout` / `_meta.json` / migrate_legacy. data_root 用 `is_enabled` 决定走 sandbox (与今天一致). Stage A 跑全测试必须绿. Stage B 才引入 `_meta.json` / `migrate_legacy` / multi-session API. Stage A → B → C 完全独立 |
+| #7 trace 覆盖宣传 transparency 过头 | Stage A.2 真实测一遍 trace v2/v3 sandbox path: 新增 `tests/test_sandbox_multi_session.py::test_trace_v3_sandbox_paths_under_default` 显式断言 sandbox 启用 + default sid → `logs/sandbox/sessions/_default/recommend_trace/{trace_sid}/meta.json` + `.lock-{trace_sid}` + `rounds/R1.json` 位置 + `list_traces_v3` 能读到; 非 default sid → `sessions/{sid}/recommend_trace/{trace_sid}/...` |
+| #8 rollback 脚本脆 | Stage 5 重写 rollback: (a) 提供 `chisha.sandbox.rollback_legacy_migration(root, *, dry_run=False)` 编程 API, 走 `__migration.json.source_files` 反向 `os.replace`, 缺失文件/目标存在/manifest 损坏 fail-loud; (b) 新增 `test_rollback_legacy_migration_basic / dry_run / missing_file / conflict` 4 test |
+| #9 CONTRACTS.md 改非可选 | Stage C.6: `docs/CONTRACTS.md` 必更新 1-2 行 sandbox layout 描述, 加入 Done When 检查 |
+| #10 `_legacy` 读路径未定义 | (a) `_validate_sid` 内 `_legacy` 仍是 reserved (写禁); (b) **新增** `chisha.sandbox.read_legacy_artifact(rel, root) -> Path` helper 显式提供 `_legacy/` 读路径 (供 inspect/调试用), 不通过 `data_root` (避免 _legacy 进 path helper 通用流); (c) `list_sessions` 把 `_legacy` 项标 readonly=true, 前端禁选 (S-06a 实现) |
+
+---
+
+## 0. 防御性决策摘要 (最终)
+
+| 决策点 | 选 | 理由 |
+|---|---|---|
+| `_default` flat vs `sessions/_default/` | **进子树** | spec §directory + §api compat 明文 |
+| migration target | **`_legacy/` 独立只读桶** | spec §directory 明文 |
+| migration trigger | **显式 + init() 自动 (内部 `_migrate_legacy_locked` 调用) + fcntl 锁** | 幂等 + 跨进程安全 |
+| 既有测试断言 | **全改** | 不要兼容层 |
+| data_root 路径决策信号 | **`is_enabled`** (D-077 语义) | disable 后降回 prod, 不暴露空桶 |
+| `_meta.json` 角色 | layout 元数据 (schema_version + migration history). **不**作 path routing 信号 | Codex v2 #1 |
+| `_legacy` 读路径 | 独立 `read_legacy_artifact` helper, 不进 `data_root` | Codex v2 #10 |
+| metadata 写法 | tmp + os.replace atomic | Codex v2 #4 |
+| `_copy_real_data` 时序 | init() pending + copy + enable_session 全程持同一 `_meta_lock` | Codex v2 #2 |
+| rollback | 编程 API + manifest 驱动 + tests | Codex v2 #8 |
+
+---
+
+## 1. 现状盘点
+
+### 1.1 文件落盘 (S-04 末态)
+
+| key | sandbox 启用 + `_default` | sandbox 启用 + 非 default |
+|---|---|---|
+| 业务 path 7 件 | `logs/sandbox/<rel>` (flat) | `logs/sandbox/sessions/{sid}/<rel>` |
+| sandbox.state.json | `logs/sandbox/state.json` 单一 | (S-04 destructive API reject) |
+
+### 1.2 文件落盘 (S-05 末态)
+
+| key | sandbox 启用 + `_default` | sandbox 启用 + 非 default `{sid}` |
+|---|---|---|
+| 业务 path 7 件 | `logs/sandbox/sessions/_default/<rel>` | `logs/sandbox/sessions/{sid}/<rel>` |
+| state.json | `logs/sandbox/sessions/_default/state.json` | `logs/sandbox/sessions/{sid}/state.json` |
+| `_meta.json` (新) | `logs/sandbox/_meta.json` (全局 schema/migration history) | 同 |
+| `_meta.lock` (新) | `logs/sandbox/_meta.lock` (fcntl) | 同 |
+| `_legacy/__migration.json` (新) | `logs/sandbox/sessions/_legacy/__migration.json` | (legacy 一次性, 无 per-sid) |
+
+### 1.3 caller 图 (grep 验证)
+
+**业务 path helper caller** (推荐链路 + web_api): 全走 `data_root.*_path(root)`, 无 sid 传 → 默认 `_default` → 自动落新位置 (Stage A 一处改)
+
+**测试 path 硬编码** (按 `grep "logs/sandbox/" tests/*.py` 实测):
+- `tests/test_sandbox_clock.py` (state.json + recommend_trace_dir)
+- `tests/test_trace_store.py` (recommend_trace 路径)
+- `tests/test_web_api_sandbox.py` (state.json + docstring)
+- `tests/test_acceptance_d076_d077.py` (profile, meal_log)
+- `tests/test_data_root.py` (base / sandbox_profile / sandbox_prefs / sandbox_store / sandbox_dir 一系列)
+- `tests/test_sandbox_context.py` (default + sandbox-on path)
+
+总 path 断言需改 6 测试; 加 sandbox.py 测试 1 新增文件 `test_sandbox_multi_session.py`.
+
+### 1.4 跨文件 invariants (docs/CONTRACTS.md)
+
+L95-100 全部 sandbox 模式语义级 → 不变. Stage C.6 加 1-2 行 sandbox 物理 layout 说明: `logs/sandbox/sessions/{sid}/{rel}` + `_meta.json` schema_version=2 + `_legacy` 只读桶规则.
+
+---
+
+## 2. 实施方案 (3 stage)
+
+### Step 0: baseline 快照 (改代码前必跑)
+
+```bash
+uv run python -m scripts.baseline_l2_snapshot --out-dir tmp/baseline_traces_before
+```
+
+---
+
+### Stage A — path layout `_default` → `sessions/_default/` (data_root 决策仍走 `is_enabled`)
+
+**目标**: 单纯把 sandbox-mode 下 default session 物理路径从 flat 改成 `sessions/_default/`. 不引入 multi-session API / migrate_legacy / `_meta.json`. data_root 用 `is_enabled` (与今天完全一致) 决定走 sandbox.
+
+#### A.1 改 `chisha/data_root.py`
+
+```python
+def _maybe_sandbox(root, rel_in_sandbox, rel_in_prod, session_id=None):
+    if not sandbox.is_enabled(root):
+        if session_id is not None and session_id != _DEFAULT_SID:
+            raise RuntimeError(
+                f"data_root: explicit non-default session_id={session_id!r} "
+                f"but sandbox disabled at root={root!r}."
+            )
+        return root / rel_in_prod
+    sid = _resolve_sid(session_id)
+    # S-05 Stage A: 无 flat 特例, 统一进 sessions/{sid}/
+    return root / "logs" / "sandbox" / "sessions" / sid / rel_in_sandbox
+```
+
+`profile_path` 同步: 副本路径统一 `sessions/{sid}/profile.yaml`, 删 `_default` flat 特例.
+
+Module docstring 改写: "sandbox 启用时落 logs/sandbox/" → "logs/sandbox/sessions/{sid}/", 解释 `_default` 桶角色.
+
+#### A.2 改 `chisha/sandbox.py` (最小改: 路径常量 + 测试通过)
+
+```python
+_STATE_REL = "logs/sandbox/sessions/_default/state.json"
+# _sandbox_dir 仍是 logs/sandbox/ (reset 一刀切语义保留)
+```
+
+Schema 仍是 D-077 (单文件 + 字段不变). Stage A 内 sandbox.py 行为 = D-077 + state.json 物理位置变. 不引入新 API.
+
+#### A.3 改 `chisha/web_api.py:_copy_real_data_to_sandbox`
+
+```python
+def _copy_real_data_to_sandbox(root, sid="_default"):
+    import shutil
+    sess_dir = root / "logs" / "sandbox" / "sessions" / sid
+    sess_dir.mkdir(parents=True, exist_ok=True)
+    # 7 文件 copy 到 sess_dir/ (target prefix 变, 内容不变)
+    ...
+```
+
+#### A.4 改 `chisha/sandbox_context.py` docstring
+
+把 `"_default → flat 路径 logs/sandbox/{rel} (与 D-077 现行行为完全一致)"` 改为 `"_default → logs/sandbox/sessions/_default/{rel} (S-05 Stage A)"`. 行为/校验逻辑不动.
+
+#### A.5 更新既有 6 测试 path 断言
+
+- `tests/test_sandbox_clock.py`: state.json L105/L109 → `sessions/_default/state.json`; recommend_trace L91 → `sessions/_default/recommend_trace`
+- `tests/test_trace_store.py`: L155 sb_path → `sessions/_default/recommend_trace/.../...json`
+- `tests/test_web_api_sandbox.py`: L157 state.json → `sessions/_default/state.json`; L233 docstring 改
+- `tests/test_acceptance_d076_d077.py`: L319 sandbox_profile → `sessions/_default/profile.yaml`; L353 sb_log → `sessions/_default/meal_log.jsonl`
+- `tests/test_data_root.py`: L42 base / L70 sandboxed_profile / L104 sandbox_prefs / L125 sandbox_store / L145 sandbox_dir 系列 — 内层断言改 `sessions/_default/`
+- `tests/test_sandbox_context.py`: L135-153 default + sandbox-on 路径断言改; L192 (`logs/sandbox/sessions/abc/profile.yaml`) 不变 (非 default 已对齐)
+
+#### A.6 Stage A 验证
+
+```bash
+uv run pytest tests/ -q
+```
+
+预期: 既有 814 全过 (sandbox.py 行为零变, 只 path 不同; data_root 决策 `is_enabled` 不变). 任何挂掉 → Stage A 内修, 不准带病进 Stage B.
+
+---
+
+### Stage B — sandbox.py per-session state + multi-session API + atomic migrate_legacy
+
+**目标**: 引入 `_meta.json` + `_meta_lock` (fcntl) + multi-session API + migrate_legacy. data_root 仍用 `is_enabled` 决定走 sandbox (Stage A 不变). 新 `has_sandbox_layout` API 仅供 inspect / `list_sessions` 用.
+
+#### B.1 路径常量 + helper
+
+```python
+import fcntl
+import os
+from contextlib import contextmanager
+
+_META_REL = "logs/sandbox/_meta.json"
+_META_LOCK_REL = "logs/.sandbox_meta.lock"  # v4 Codex #1: 移出 logs/sandbox/ 防 reset 删 lock 文件竞态
+_SESSIONS_REL = "logs/sandbox/sessions"
+_LEGACY_SID = "_legacy"
+_SCHEMA_VERSION = 2
+
+def _meta_path(root): return _resolve_root(root) / _META_REL
+def _meta_lock_path(root): return _resolve_root(root) / _META_LOCK_REL
+def _session_dir(root, sid): return _resolve_root(root) / _SESSIONS_REL / sid
+
+def _state_path(root=None, sid="_default"):
+    return _session_dir(root, sid) / "state.json"
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """Codex v2 #4: tmp + os.replace 原子写, 防 crash 损坏 metadata."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                   encoding="utf-8")
+    os.replace(tmp, path)
+
+
+@contextmanager
+def _meta_lock(root):
+    """跨进程 sandbox metadata 锁 (fcntl.flock).
+
+    Codex v2 #4 + #5: 所有公开 mutator 自身持锁; 私有 _xxx_locked helper
+    假定 caller 已持锁, 不再嵌套.
+    """
+    lock_p = _meta_lock_path(root)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_p, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+```
+
+#### B.2 `has_sandbox_layout(root) -> bool` (inspect only, 不影响 path routing)
+
+```python
+def has_sandbox_layout(root=None):
+    """S-05: True 当 _meta.json 存在. 供 list_sessions / inspect 用 ——
+    **不**影响 data_root path routing (那由 is_enabled 控制).
+    """
+    return _meta_path(root).exists()
+```
+
+#### B.3 `is_enabled(root, session_id=None) -> bool` (D-077 语义, data_root 用)
+
+```python
+def is_enabled(root=None, *, session_id=None):
+    """S-05: 与 D-077 语义一致 — default session state.enabled=True 才 True.
+
+    Codex v2 #1: data_root 用此函数决定走 sandbox; disable 后立刻降回 prod,
+    不读空 sandbox 桶.
+    """
+    del session_id
+    s = state(root, session_id=_DEFAULT_SID)
+    return bool(s.get("enabled"))
+```
+
+`state(root, session_id=None)`: 读 `sessions/{sid}/state.json`, 文件不存在/损坏 → `{enabled: False}`. 不持锁 (读操作).
+
+#### B.4 `_migrate_legacy_locked(root) -> dict` (private, caller 持锁)
+
+```python
+def _migrate_legacy_locked(root, *, dry_run=False):
+    """老 flat layout → sessions/_legacy/. 持锁 caller 调.
+
+    Codex v1 #1 + #3 + v2 #4: raw state.json 原样挪, __migration.json
+    独立元数据 (atomic write), 主动扫顶层 repair partial, _meta.json 落.
+
+    返 {migrated, files_moved, dry_run?, reason?}
+    """
+    sandbox_dir = _resolve_root(root) / "logs" / "sandbox"
+    if not sandbox_dir.exists():
+        return {"migrated": False, "reason": "no sandbox dir",
+                "files_moved": []}
+    candidates = []
+    for entry in sandbox_dir.iterdir():
+        if entry.name in {"sessions", "_meta.json", "_meta.lock"}:
+            continue
+        candidates.append(entry)
+    meta_exists = _meta_path(root).exists()
+    if not candidates and meta_exists:
+        return {"migrated": False, "reason": "already migrated",
+                "files_moved": []}
+    if not candidates and not meta_exists:
+        if not dry_run:
+            _atomic_write_json(_meta_path(root), {
+                "schema_version": _SCHEMA_VERSION,
+                "migrated_at": _now_real_iso(),
+                "last_migration_at": _now_real_iso(),
+                "legacy_files": [],
+            })
+        return {"migrated": False, "reason": "no legacy data",
+                "files_moved": []}
+    if dry_run:
+        return {"migrated": False, "dry_run": True,
+                "plan": {"target": str(sandbox_dir / "sessions" / _LEGACY_SID),
+                         "files_to_move": [str(c.relative_to(_resolve_root(root)))
+                                           for c in candidates]}}
+    import shutil
+    legacy_dir = sandbox_dir / "sessions" / _LEGACY_SID
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    moved = []
+    for c in candidates:
+        target = legacy_dir / c.name
+        if target.exists():
+            n = 1
+            while (legacy_dir / f"{c.name}.bak.{n}").exists():
+                n += 1
+            target = legacy_dir / f"{c.name}.bak.{n}"
+        shutil.move(str(c), str(target))
+        moved.append({"src": str(c.relative_to(_resolve_root(root))),
+                      "dst": str(target.relative_to(_resolve_root(root)))})
+    # __migration.json (atomic merge)
+    mig_p = legacy_dir / "__migration.json"
+    existing_mig = {}
+    if mig_p.exists():
+        try:
+            existing_mig = json.loads(mig_p.read_text("utf-8"))
+        except (OSError, json.JSONDecodeError):
+            existing_mig = {}
+    _atomic_write_json(mig_p, {
+        "sid": _LEGACY_SID,
+        "origin": "legacy",
+        "readonly": True,
+        "schema_version_from": 1,
+        "migrated_at": existing_mig.get("migrated_at") or _now_real_iso(),
+        "last_migration_at": _now_real_iso(),
+        "source_files": (existing_mig.get("source_files") or []) + moved,
+    })
+    # _meta.json (atomic merge)
+    meta_existing = {}
+    if meta_exists:
+        try:
+            meta_existing = json.loads(_meta_path(root).read_text("utf-8"))
+        except (OSError, json.JSONDecodeError):
+            meta_existing = {}
+    _atomic_write_json(_meta_path(root), {
+        "schema_version": _SCHEMA_VERSION,
+        "migrated_at": meta_existing.get("migrated_at") or _now_real_iso(),
+        "last_migration_at": _now_real_iso(),
+        "legacy_files": (meta_existing.get("legacy_files") or []) + moved,
+    })
+    return {"migrated": True, "files_moved": moved,
+            "meta_path": str(_meta_path(root))}
+
+
+def migrate_legacy(root=None, *, dry_run=False):
+    """public API. 持 _meta_lock."""
+    with _meta_lock(root):
+        return _migrate_legacy_locked(root, dry_run=dry_run)
+```
+
+#### B.5 `rollback_legacy_migration(root, *, dry_run=False)` (Codex v2 #8)
+
+```python
+def rollback_legacy_migration(root=None, *, dry_run=False):
+    """走 _legacy/__migration.json.source_files 反向 mv. 持 _meta_lock.
+
+    fail-loud 当: manifest 不存在 / 损坏 / src 已存在 / dst 缺失.
+    """
+    with _meta_lock(root):
+        r = _resolve_root(root)
+        mig_p = r / _SESSIONS_REL / _LEGACY_SID / "__migration.json"
+        if not mig_p.exists():
+            raise FileNotFoundError(
+                f"no __migration.json at {mig_p}, nothing to rollback"
+            )
+        try:
+            m = json.loads(mig_p.read_text("utf-8"))
+        except json.JSONDecodeError as e:
+            raise ValueError(f"__migration.json corrupt: {e!r}")
+        source_files = m.get("source_files") or []
+        if not source_files:
+            return {"rolled_back": 0, "reason": "empty manifest"}
+        plan = []
+        for entry in source_files:
+            cur = r / entry["dst"]
+            old = r / entry["src"]
+            if not cur.exists():
+                raise FileNotFoundError(
+                    f"missing _legacy file {cur} (manifest says it came from {old})"
+                )
+            if old.exists():
+                raise FileExistsError(
+                    f"refusing to overwrite {old} (already restored?)"
+                )
+            plan.append((cur, old))
+        if dry_run:
+            return {"rolled_back": 0, "dry_run": True,
+                    "plan": [(str(s), str(d)) for s, d in plan]}
+        for cur, old in plan:
+            old.parent.mkdir(parents=True, exist_ok=True)
+            cur.rename(old)
+        # 清 manifest + _meta.json
+        mig_p.unlink()
+        meta_p = _meta_path(root)
+        if meta_p.exists():
+            meta_p.unlink()
+        # 删空的 _legacy/
+        leg_dir = r / _SESSIONS_REL / _LEGACY_SID
+        if leg_dir.exists() and not any(leg_dir.iterdir()):
+            leg_dir.rmdir()
+        return {"rolled_back": len(plan), "files_restored": [str(d) for _, d in plan]}
+```
+
+#### B.6 `list_sessions(root=None) -> list[dict]` (Codex v2 #3)
+
+```python
+def list_sessions(root=None):
+    """合并 state.json + __migration.json. _legacy 桶强制 enabled=False."""
+    d = _resolve_root(root) / _SESSIONS_REL
+    if not d.exists(): return []
+    out = []
+    for sub in sorted(d.iterdir()):
+        if not sub.is_dir(): continue
+        sp = sub / "state.json"
+        mig = sub / "__migration.json"
+        item = {"sid": sub.name}
+        if sp.exists():
+            try:
+                s = json.loads(sp.read_text("utf-8"))
+                if isinstance(s, dict): item.update(s)
+            except (OSError, json.JSONDecodeError):
+                item["enabled"] = False
+                item["error"] = "state.json corrupt"
+        if mig.exists():
+            try:
+                m = json.loads(mig.read_text("utf-8"))
+                if isinstance(m, dict):
+                    item["origin"] = m.get("origin", item.get("origin"))
+                    item["readonly"] = m.get("readonly", False)
+                    item["migrated_at"] = m.get("migrated_at")
+            except (OSError, json.JSONDecodeError):
+                pass
+        # Codex v2 #3: _legacy 桶 list 派生强制 enabled=False (磁盘 raw 不动)
+        if sub.name == _LEGACY_SID:
+            item["enabled"] = False
+            item["readonly"] = True
+        item.setdefault("sid", sub.name)
+        out.append(item)
+    return out
+```
+
+#### B.7 `read_legacy_artifact(rel, root=None) -> Path` (Codex v2 #10 / v3 #2 traversal)
+
+```python
+def read_legacy_artifact(rel, root=None):
+    """显式只读 helper, 返 sessions/_legacy/{rel} 绝对路径.
+
+    不通过 data_root (避免 _legacy 进 path helper 通用流). caller 自己 read.
+
+    v3 #2 traversal 校验:
+    - rel 必须 str, 非空, 不以 / 开头 (拒绝 absolute)
+    - rel 不能含 '..' segment
+    - 拼接后 Path.resolve() 必须仍在 sessions/_legacy/ 子树
+    - 不允许写 (此函数只构造 read 路径; caller open with 'r')
+    """
+    if not isinstance(rel, str) or not rel:
+        raise ValueError(f"read_legacy_artifact: rel must be non-empty str, got {rel!r}")
+    if rel.startswith("/") or rel.startswith("\\"):
+        raise ValueError(f"read_legacy_artifact: rel must be relative, got {rel!r}")
+    parts = Path(rel).parts
+    if ".." in parts:
+        raise ValueError(f"read_legacy_artifact: rel must not contain '..', got {rel!r}")
+    legacy_root = (_resolve_root(root) / _SESSIONS_REL / _LEGACY_SID).resolve()
+    target = (legacy_root / rel).resolve()
+    try:
+        target.relative_to(legacy_root)
+    except ValueError:
+        raise ValueError(
+            f"read_legacy_artifact: rel resolves outside _legacy sandbox: {target}"
+        )
+    return target
+```
+
+新增 tests (Stage B test_sandbox_multi_session.py):
+- `test_read_legacy_artifact_rejects_absolute_path` (`/etc/passwd` raise)
+- `test_read_legacy_artifact_rejects_dotdot` (`../etc/passwd` raise)
+- `test_read_legacy_artifact_rejects_empty` (`""` raise)
+- `test_read_legacy_artifact_rejects_symlink_escape` (symlink → root, resolve 后越界 raise)
+
+#### B.8 `create_session / delete_session / enable_session`
+
+```python
+def create_session(*, name, sid=None, days=7, seed=42,
+                   profile_label="profile@v2", origin="blank",
+                   root=None, start_date=None, enabled=True) -> dict:
+    sid = sid or _DEFAULT_SID
+    _validate_sid(sid)
+    if sid == _LEGACY_SID:
+        raise ValueError(f"session_id {sid!r} is reserved")
+    with _meta_lock(root):
+        sp = _state_path(root, sid)
+        if sp.exists():
+            raise FileExistsError(f"session {sid} already exists")
+        if isinstance(start_date, str):
+            start_date = dt.date.fromisoformat(start_date)
+        start_date = start_date or dt.date.today()
+        new_state = {
+            "sid": sid, "name": name, "seed": seed,
+            "profile_label": profile_label, "origin": origin,
+            "enabled": enabled,
+            "current_date": start_date.isoformat(),
+            "day_index": 1,
+            "current_meal_idx": 0,
+            "total_meals": days * 2,
+            "history": [],
+            "branch_from": None,
+            "branch_from_meal_idx": None,
+            "started_at_real": _now_real_iso(),
+            "started_at_virtual": start_date.isoformat(),
+            "last_l1_extraction": None,
+        }
+        _atomic_write_json(sp, new_state)
+        if not _meta_path(root).exists():
+            _atomic_write_json(_meta_path(root), {
+                "schema_version": _SCHEMA_VERSION,
+                "migrated_at": _now_real_iso(),
+                "last_migration_at": _now_real_iso(),
+                "legacy_files": [],
+            })
+        return new_state
+
+
+def delete_session(sid, root=None) -> dict:
+    _validate_sid(sid)
+    with _meta_lock(root):
+        d = _session_dir(root, sid)
+        if d.exists():
+            import shutil
+            shutil.rmtree(d)
+        return {"ok": True, "deleted_sid": sid}
+
+
+def enable_session(sid="_default", root=None) -> dict:
+    """Codex v2 #2: atomic enable (caller 调 init+copy 后调此 finalize)."""
+    with _meta_lock(root):
+        sp = _state_path(root, sid)
+        if not sp.exists():
+            raise FileNotFoundError(f"session {sid} not initialized")
+        s = json.loads(sp.read_text("utf-8"))
+        s["enabled"] = True
+        _atomic_write_json(sp, s)
+        return s
+```
+
+#### B.9 改写 `init / advance / reset / disable / record_l1_extraction`
+
+`init(start_date=None, *, root=None, copy_real_data=False, session_id=None) -> dict`:
+```python
+def init(start_date=None, *, root=None, copy_real_data=False, session_id=None):
+    sid = session_id or _DEFAULT_SID
+    _validate_sid(sid)
+    if sid == _LEGACY_SID:
+        raise ValueError(f"session_id {sid!r} is reserved")
+    with _meta_lock(root):
+        # auto-migrate (idempotent, in-lock)
+        _migrate_legacy_locked(root)
+        sp = _state_path(root, sid)
+        sp.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(start_date, str):
+            start_date = dt.date.fromisoformat(start_date)
+        start_date = start_date or dt.date.today()
+        # D-077 init 重置语义: 覆盖既有 state
+        new_state = {
+            "sid": sid, "name": ("默认 session" if sid == _DEFAULT_SID else sid),
+            "seed": 42, "profile_label": "profile@v2",
+            "origin": "real_snapshot" if copy_real_data else "blank",
+            # Codex v2 #2: copy_real_data 时 enabled=False, caller 调
+            # enable_session 完结. is_enabled() False → data_root 走 prod
+            # → 不暴露空桶给 reader.
+            "enabled": not copy_real_data,
+            "current_date": start_date.isoformat(),
+            "day_index": 1,
+            "current_meal_idx": 0, "total_meals": 14,
+            "history": [],
+            "branch_from": None, "branch_from_meal_idx": None,
+            "started_at_real": _now_real_iso(),
+            "started_at_virtual": start_date.isoformat(),
+            "copy_real_data": copy_real_data,
+            "last_l1_extraction": None,
+        }
+        _atomic_write_json(sp, new_state)
+        if not _meta_path(root).exists():
+            _atomic_write_json(_meta_path(root), {
+                "schema_version": _SCHEMA_VERSION,
+                "migrated_at": _now_real_iso(),
+                "last_migration_at": _now_real_iso(),
+                "legacy_files": [],
+            })
+        return new_state
+```
+
+`advance(days, *, root, session_id=None)`: sid 默认 `_default`. **解除 S-04 destructive reject 限制** (S-05 真支持). 持 `_meta_lock`. 读改写 `sessions/{sid}/state.json`.
+
+`reset(*, root, session_id=None)`:
+- sid None / `_default`: 删 `logs/sandbox/` 全部 (D-077 兼容; 持锁)
+- sid 非 default: 只 rmtree `sessions/{sid}/` (持锁)
+
+`disable(*, root, session_id=None)`:
+- sid None / `_default`: `_default/state.json.enabled=False` (持锁; `_meta.json` 保留, `is_enabled()` False)
+- sid 非 default: per-session enabled=False
+
+`record_l1_extraction(status, *, based_on_meals=None, error=None, trigger="day_advance", root=None, session_id=None)`:
+- 写 `sessions/{sid}/state.json.last_l1_extraction = {at, status, based_on_meals, error, trigger}`
+- 持 `_meta_lock`
+
+#### B.10 Stage B 测试 — `tests/test_sandbox_multi_session.py` (≥23 case)
+
+```
+[基础]
+01 test_create_two_sessions_listed
+02 test_create_session_state_schema_complete (16 字段全检)
+03 test_create_session_duplicate_raises
+04 test_create_session_legacy_sid_raises
+05 test_sessions_isolated_advance
+06 test_delete_session_only_target
+07 test_delete_default_session
+08 test_reset_default_drops_all
+09 test_reset_nondefault_only_drops_target
+10 test_disable_default_sets_enabled_false (is_enabled→False)
+11 test_disable_nondefault_per_session
+
+[migration]
+12 test_migrate_legacy_basic (raw state.json 字节级保留, __migration.json + _meta.json 落)
+13 test_migrate_legacy_dry_run (零动盘)
+14 test_migrate_legacy_idempotent_no_residual (二次 noop)
+15 test_migrate_legacy_repair_partial (顶层残留 + _meta 已在 → 继续挪)
+16 test_migrate_legacy_name_conflict_uses_bak
+17 test_init_auto_migrates_legacy
+18 test_atomic_meta_write_recovers_from_corrupt (Codex v2 #4: 模拟 _meta.json 损坏 → 下次 migrate 重写)
+
+[rollback]
+19 test_rollback_legacy_migration_basic
+20 test_rollback_legacy_migration_dry_run
+21 test_rollback_legacy_missing_file_fails
+22 test_rollback_legacy_conflict_fails (dst 已存在)
+23 test_rollback_legacy_idempotent_after_no_op (manifest 已删 → FileNotFoundError)
+
+[语义 & legacy 读]
+24 test_has_sandbox_layout_vs_is_enabled (meta 存在 + default disabled → has_layout=True, is_enabled=False)
+25 test_data_root_routes_by_is_enabled (Codex v2 #1: disable 后 data_root 路径回 prod, 不读空桶)
+26 test_list_sessions_legacy_forced_enabled_false (Codex v2 #3: raw legacy state.enabled=true → list 派生 False)
+27 test_read_legacy_artifact_returns_correct_path (Codex v2 #10)
+
+[L1 trigger]
+28 test_record_l1_extraction_with_meal_eat_trigger
+
+[trace coverage]
+29 test_trace_v3_sandbox_paths_under_default (Codex v2 #7: write_trace + append_round + list_traces_v3 sandbox default sid 全 OK)
+30 test_trace_v3_sandbox_paths_nondefault_sid (write_trace + read_meta + read_round_full)
+
+[enable_session pending→atomic]
+31 test_enable_session_after_copy_real_data (init copy_real_data=True → enabled=False → enable_session → True)
+32 test_is_enabled_false_during_copy_window (Codex v2 #2: init copy_real_data=True 后未 enable_session → is_enabled=False → data_root 路径回 prod)
+```
+
+#### B.11 Stage B 验证
+
+```bash
+uv run pytest tests/ -q
+```
+
+---
+
+### Stage C — web_api `_copy_real_data` 全程持锁 + L1 trigger + CONTRACTS
+
+#### C.1 `_copy_real_data_to_sandbox(root, sid="_default")` 已在 Stage A 改好 (写 sessions/_default/)
+
+#### C.2 改 `api_sandbox_init` — init+copy+enable 全程持 `_meta_lock` (Codex v2 #2)
+
+```python
+@router.post("/sandbox/init")
+def api_sandbox_init(request, req):
+    _require_localhost(request)
+    # Codex v2 #2 + #5: 三步全程持同一 _meta_lock, 避免 reader 在 copy 窗口
+    # 读到空桶. init() 已自带锁; 这里在 web_api 层显式包覆 copy+enable 也持
+    # 同一锁 (fcntl 同一进程 reentrant — open + flock 新 fd 即 fail; 解法:
+    # init() 内部不持锁, web_api 层包一次锁; 或拆 init_locked / init).
+    #
+    # 简化: 拆 _init_locked (无锁版, caller 持锁) + init (有锁版). web_api
+    # 启用 copy_real_data 时调 _init_locked 链路, init 持锁包覆.
+    if req.copy_real_data:
+        with _sandbox._meta_lock(ROOT):
+            s = _sandbox._init_locked(
+                start_date=req.start_date, root=ROOT,
+                copy_real_data=True,
+            )  # enabled=False (pending)
+            try:
+                _copy_real_data_to_sandbox(ROOT, sid="_default")
+            except Exception as e:
+                raise HTTPException(500, f"copy_real_data failed: {e!r}")
+            s = _sandbox._enable_session_locked(sid="_default", root=ROOT)
+        return s
+    else:
+        return _sandbox.init(
+            start_date=req.start_date, root=ROOT,
+            copy_real_data=False,
+        )
+```
+
+> 注: fcntl.flock 在同一进程内同一 fd 是 reentrant 但同 lock_p 不同 fd 不是. 所以 sandbox.py 必须暴露 `_init_locked / _enable_session_locked` 假定 caller 已持锁版本, 让 web_api 包一次锁. 这是 Codex v2 #5 lock 嵌套规则的具体落实.
+
+#### C.3 改 `_trigger_l1_extraction_async(root, *, trigger="day_advance")` (Codex v2 #6)
+
+所有 `record_l1_extraction(...)` 调用透传 trigger.
+
+`api_sandbox_advance` 调用 `_trigger_l1_extraction_async(ROOT, trigger="day_advance")` (默认). S-06c 才传 `meal_eat`.
+
+#### C.4 `/sandbox/inspect` 返回 trigger + 处理 legacy 可见性 (Codex v3 #3)
+
+`api_sandbox_inspect` 改写:
+1. 若 `is_enabled(ROOT)` True (today path): 返完整 inspect (state + l1 prefs + ...) — 不变
+2. 若 `has_sandbox_layout(ROOT)` True AND `is_enabled(ROOT)` False (Codex v3 #3 新增): 返 `{enabled: False, has_sandbox_layout: True, sessions: list_sessions(ROOT)}` — 让前端可见 `_legacy` + 其他 disabled sessions
+3. 否则 (`has_sandbox_layout` False): 返 `{enabled: False, has_sandbox_layout: False}` (今 D-077 行为)
+
+`last_l1_extraction.trigger` 字段透传 (D-077 老 inspect 已 transparent 透 state.last_l1_extraction, 含 trigger 自动可见).
+
+新增 test:
+- `test_sandbox_inspect_shows_legacy_when_default_disabled` (Codex v3 #3)
+
+#### C.5 Stage C 测试
+
+- `test_web_api_copy_real_data_atomic_under_lock` (mock copy 抛异常 → state 仍 enabled=False, reader 走 prod, 不见空桶)
+- `test_l1_extraction_trigger_recorded` (调 advance → record_l1_extraction 落 trigger="day_advance")
+
+#### C.6 改 `docs/CONTRACTS.md` (Codex v2 #9)
+
+加 1-2 行 sandbox 物理 layout 说明:
+
+```markdown
+- **sandbox 物理 layout (S-05)**: `logs/sandbox/sessions/{sid}/{rel}` (per-session
+  桶) + `logs/sandbox/_meta.json` (schema_version=2 + migration history) +
+  `logs/sandbox/sessions/_legacy/` (D-077 老 flat 数据迁移目标, readonly).
+  `_legacy` sid 在 `_validate_sid` reserved (写禁), 读走
+  `sandbox.read_legacy_artifact(rel)`. `data_root` 用 `sandbox.is_enabled()`
+  决定路径走向 (与 D-077 语义一致, disable 后立即回 prod).
+```
+
+#### C.7 Stage C 验证
+
+```bash
+uv run pytest tests/ -q
+uv run python -m scripts.baseline_l2_snapshot --out-dir tmp/baseline_traces_after
+uv run python -m scripts.compare_traces  # 0 diff (EPSILON=1e-6)
+```
+
+---
+
+### Step Final: Migration 实战自测
+
+```bash
+# 摆放老 layout
+mkdir -p tmp/migr_test/logs/sandbox
+echo '{"enabled":true,"current_date":"2026-05-15","day_index":1}' > tmp/migr_test/logs/sandbox/state.json
+echo '{"x":1}' > tmp/migr_test/logs/sandbox/meal_log.jsonl
+
+# dry-run
+uv run python -c "
+from pathlib import Path
+from chisha import sandbox
+print(sandbox.migrate_legacy(root=Path('tmp/migr_test'), dry_run=True))
+"
+# 验: dry_run=True, plan.files_to_move 含 state.json + meal_log.jsonl
+# 验: tmp/migr_test/logs/sandbox/state.json 仍存在
+
+# real
+uv run python -c "
+from pathlib import Path
+from chisha import sandbox
+print(sandbox.migrate_legacy(root=Path('tmp/migr_test')))
+"
+# 验: tmp/migr_test/logs/sandbox/sessions/_legacy/state.json 字节级 = 原始
+# 验: tmp/migr_test/logs/sandbox/sessions/_legacy/__migration.json 含 readonly=true
+# 验: tmp/migr_test/logs/sandbox/_meta.json schema_version=2
+
+# 二次
+uv run python -c "
+from pathlib import Path
+from chisha import sandbox
+print(sandbox.migrate_legacy(root=Path('tmp/migr_test')))
+"
+# 验: migrated=False, reason='already migrated'
+
+# partial repair
+echo 'late' > tmp/migr_test/logs/sandbox/late_file.jsonl
+uv run python -c "
+from pathlib import Path
+from chisha import sandbox
+print(sandbox.migrate_legacy(root=Path('tmp/migr_test')))
+"
+# 验: migrated=True, files_moved=[late_file.jsonl]
+
+# rollback dry-run
+uv run python -c "
+from pathlib import Path
+from chisha import sandbox
+print(sandbox.rollback_legacy_migration(root=Path('tmp/migr_test'), dry_run=True))
+"
+# 验: dry_run=True, plan 列 3 文件
+
+# rollback real
+uv run python -c "
+from pathlib import Path
+from chisha import sandbox
+print(sandbox.rollback_legacy_migration(root=Path('tmp/migr_test')))
+"
+# 验: tmp/migr_test/logs/sandbox/state.json + meal_log.jsonl + late_file.jsonl 顶层复活
+# 验: tmp/migr_test/logs/sandbox/_meta.json 删除
+# 验: tmp/migr_test/logs/sandbox/sessions/_legacy/ 删除
+
+rm -rf tmp/migr_test
+```
+
+---
+
+## 3. Affected files
+
+新建:
+- `tests/test_sandbox_multi_session.py`
+
+改:
+- `chisha/data_root.py` (Stage A: `_default` 进子树; docstring 改)
+- `chisha/sandbox.py` (Stage A: `_STATE_REL` 改; Stage B: 大改 per-session + multi-API + migrate_legacy + `_meta_lock` + `rollback_legacy_migration` + `read_legacy_artifact`)
+- `chisha/web_api.py` (Stage A: `_copy_real_data` 写新位置; Stage C: `api_sandbox_init` 全程持锁 + trigger 传)
+- `chisha/sandbox_context.py` (Stage A: docstring 同步)
+- `tests/test_sandbox_clock.py / test_trace_store.py / test_web_api_sandbox.py / test_acceptance_d076_d077.py / test_data_root.py / test_sandbox_context.py` (Stage A: path 断言改)
+- `docs/CONTRACTS.md` (Stage C: 加 sandbox 物理 layout)
+
+零修改:
+- 推荐链路 `chisha/{api, recall, score, rerank, refine, l1_extractor, session, trace_store, feedback_store, l1_prefs, long_term_prefs, clock}.py`
+- `apps/*`
+
+---
+
+## 4. 默认值策略 (S-05 末态)
+
+| 调用形式 | data_root path | 说明 |
+|---|---|---|
+| sandbox 关闭 (`is_enabled=False`) | prod | data_root 用 `is_enabled` 路由 |
+| sandbox 关闭 + 显式非 default sid | RuntimeError | fail-loud |
+| sandbox 启用 (`_default/state.json.enabled=True`) + sid None / `_default` | `logs/sandbox/sessions/_default/{rel}` | |
+| sandbox 启用 + ctx `xyz` | `logs/sandbox/sessions/xyz/{rel}` | |
+| sandbox 启用 + 显式 `abc` | `logs/sandbox/sessions/abc/{rel}` | |
+| sandbox 启用 + 显式 / ctx `_legacy` | ValueError | reserved, 走 `read_legacy_artifact` |
+| `_meta.json` 在 + `_default.enabled=False` (init copy 中) | prod | Codex v2 #2: 不暴露空桶 |
+
+### v4 Codex #4 显式说明 — 非 default sid 路由依赖 `_default.enabled`
+
+`data_root._maybe_sandbox` 用 `sandbox.is_enabled(root)` (`= _default.enabled`) 决定是否走 sandbox 子树. 这意味着:
+
+- `data_root.meal_log_path(root, session_id="abc")` 仅当 `_default.enabled=True` 才返 `sessions/abc/meal_log.jsonl`; 否则返 prod (`logs/meal_log.jsonl`) 或 RuntimeError (Codex v2 #1 fail-loud)
+- S-05 内非 default sid 主要是 **静态写读 use case** (test fixture / migration tooling / sandbox CRUD scaffolding). 真**运行期**多 session 路由 (web_api 端点用 `with set_sandbox_session(sid):` 包裹推荐链路) **明文延后到 S-06a**, 不在本任务范围
+- S-06a 真接 multi-session router 时需评估: (a) 是否要 per-session is_enabled gate (推荐 — 与全局 sandbox mode 解耦); 或 (b) 引入 `sandbox.is_session_enabled(sid)` 取代 `is_enabled` 做路径决策
+- 本任务测试覆盖: `test_data_root_routes_by_is_enabled` (Stage B #25) 已守门 disable→prod; 新增 `test_nondefault_sid_routing_gated_by_default_enabled` 显式断言"`_default.enabled=False` + 显式 sid=abc → prod 路径 (or RuntimeError)"作为 S-06a 的契约样板
+
+---
+
+## 5. 回归风险 + Rollback
+
+### 风险表
+
+| 风险 | 缓解 |
+|---|---|
+| 既有测试硬编码 flat 路径 | Stage A 系统更新 6 测试文件 |
+| 用户 D-077 sandbox 数据 (flat) | `init()` 自动 `_migrate_legacy_locked`, raw state.json 字节级保留 |
+| `_copy_real_data` race / 暴露空桶 | Stage C `api_sandbox_init` 全程持 `_meta_lock`, init→copy→enable atomic; `is_enabled` 仍 False 直到 enable_session (data_root 走 prod) |
+| disable 后 path 仍走 sandbox | data_root 用 `is_enabled` (而非 `has_sandbox_layout`) (Codex v2 #1) |
+| `_legacy` 显示活跃 | `list_sessions` 派生层强制 `enabled=False`, raw 不动 (Codex v2 #3) |
+| metadata 写 crash → 损坏 | `_atomic_write_json` (tmp + os.replace) (Codex v2 #4) |
+| lock 嵌套 | public mutator 自带锁, private `_xxx_locked` 假定 caller 持锁; web_api 走 `_init_locked` + `_enable_session_locked` 共一锁 (Codex v2 #5) |
+| Stage A 不独立 | Stage A 不引入 `_meta.json` / `has_sandbox_layout`, 只改 path layout + 测试断言 (Codex v2 #6) |
+| trace v2/v3 sandbox path | 新 test 显式覆盖 (Codex v2 #7) |
+| `_legacy` 读路径模糊 | `read_legacy_artifact(rel)` 显式 helper (Codex v2 #10) |
+| 跨进程并发 init | `_meta_lock` (fcntl.flock) |
+| baseline_l2_snapshot | sandbox 关闭 → prod path → 0 diff |
+
+### Rollback
+
+代码层: `git revert`. 数据层: `chisha.sandbox.rollback_legacy_migration(root)` 编程 API + 4 tests 覆盖 (basic / dry-run / missing_file / conflict). 不再用 shell 脚本.
+
+---
+
+## 6. baseline_l2_snapshot dual-run plan
+
+```bash
+# 改前
+uv run python -m scripts.baseline_l2_snapshot --out-dir tmp/baseline_traces_before
+# 改后
+uv run python -m scripts.baseline_l2_snapshot --out-dir tmp/baseline_traces_after
+uv run python -m scripts.compare_traces  # 0 diff (EPSILON=1e-6)
+```
+
+baseline 不启用 sandbox → 全程 prod → 0 diff 保证.
+
+---
+
+## 7. Done When
+
+- `chisha/sandbox.py`: `list_sessions / create_session / delete_session / enable_session / migrate_legacy / rollback_legacy_migration / has_sandbox_layout / read_legacy_artifact / _meta_lock / _atomic_write_json / _init_locked / _enable_session_locked` 全到位; per-session state.json
+- `chisha/data_root.py`: `_default` 进 `sessions/_default/`, `_maybe_sandbox` 用 `is_enabled` (D-077 语义)
+- `chisha/web_api.py`: `_copy_real_data` 写新位置, `api_sandbox_init` 全程持 `_meta_lock`, L1 worker 传 trigger
+- `_meta.json` schema_version=2 + `_meta_lock` (fcntl) + atomic write + repair partial
+- `_legacy/__migration.json` 含 source_files (rollback 用)
+- `tests/test_sandbox_multi_session.py` ~32 case 全过
+- 既有 6 测试文件 path 断言更新 + 全测试全绿
+- `baseline_l2_snapshot` before/after → `compare_traces` 0 diff
+- `docs/CONTRACTS.md` 加 sandbox 物理 layout 说明
+- Migration 实战自测: dry-run / real / 二次 / partial repair / rollback dry-run / rollback real 6 路径全通
+
+---
+
+## 8. 自审 (Codex v2 10 项闭环)
+
+- [x] #1 data_root 用 `is_enabled` (非 `has_sandbox_layout`) — disable 后回 prod (§B.3 / §1.2 / §4)
+- [x] #2 init+copy+enable 全程持 `_meta_lock`; copy 期间 `is_enabled=False` → prod path → 不暴露空桶 (§C.2 / §B.9 / §4)
+- [x] #3 `list_sessions` `_legacy` 强制 enabled=False (§B.6)
+- [x] #4 `_atomic_write_json` (tmp + os.replace) 全 metadata 写盘走 (§B.1 / §B.4 / §B.8)
+- [x] #5 public mutator 自带锁, private `_xxx_locked` 不嵌套 (§B.1 / §C.2 注)
+- [x] #6 Stage A 不引入 `_meta` / `has_sandbox_layout`, 独立可跑 (§Stage A)
+- [x] #7 trace v2/v3 sandbox path 新 test (§B.10 #29 #30)
+- [x] #8 `rollback_legacy_migration` 编程 API + 4 tests (§B.5 / §B.10 #19-22)
+- [x] #9 `docs/CONTRACTS.md` 改非可选, 进 Done When (§C.6 / §7)
+- [x] #10 `read_legacy_artifact` 显式 helper, `_legacy` 写禁 (§B.7)
+
+## 9. 自审 (Codex v3 4 项闭环)
+
+- [x] v3 #1 `_meta.lock` 移到 `logs/.sandbox_meta.lock` (reset 不动), reset 不持 `_meta_lock` (清空操作无 lock 意义, 单进程并发用 in-process `_STATE_LOCK` 已防) (§B.1 `_META_LOCK_REL` 注 + Stage B reset 注)
+- [x] v3 #2 `read_legacy_artifact` traversal 校验 (拒 absolute / `..` / 空 / symlink escape) + 4 新 tests (§B.7)
+- [x] v3 #3 `/sandbox/inspect` 显式分支 `has_sandbox_layout AND NOT is_enabled` 返 legacy listing + 1 新 test (§C.4)
+- [x] v3 #4 非 default sid 运行期路由明文延后 S-06a, S-05 内只静态 use case + 1 守门 test (§4 v4 段)
+
+---
+
+## v4 reset 持锁修订 (Codex v3 #1 落地)
+
+Stage B 内 `reset(*, root, session_id=None)` 改为:
+- sid None / `_default`: 用 in-process `_STATE_LOCK` (D-077 已有) 保护; **不**持 `_meta_lock`. 删 `logs/sandbox/` 全部 (不动 `logs/.sandbox_meta.lock`, 因为它在外面)
+- sid 非 default: 持 `_meta_lock`. 只 rmtree `sessions/{sid}/`
+
+理由: reset 是清空操作, 跨进程并发场景下两进程同时 reset 等同串行 reset, 行为 idempotent. 强行持 `_meta_lock` 会让 lock 文件位置不稳 (reset 删 sandbox 目录里的锁 file). 把锁文件移出 sandbox 目录已经避开 inode 复用风险.
