@@ -498,3 +498,85 @@ def test_d094_brand_avoid_empty_intent_no_effect():
     # brand_avoid 空 → r1 仍正常召回
     assert len(out) >= 1
     assert all(c["restaurant"]["id"] == "r1" for c in out)
+
+
+def test_d094_brand_avoid_substring_match_composite_brand():
+    """codex review block: brand 子串匹配, 用户 '麦当劳' 命中复合品牌 '麦当劳＆麦咖啡'.
+    实数据有 '麦当劳＆麦咖啡' / '肯德基宅急送' 这种复合 brand, exact 集合命中会漏过滤.
+    """
+    dishes = [
+        _make_dish("d_mc_1", "巨无霸", restaurant_id="r_mc"),
+        _make_veg_dish("d_mc_v", "沙拉", restaurant_id="r_mc"),
+        _make_dish("d_ok_1", "红烧肉", restaurant_id="r_ok"),
+        _make_veg_dish("d_ok_v", "炒青菜", restaurant_id="r_ok"),
+    ]
+    rests = [
+        _make_rest("r_mc", "麦当劳南山", brand="麦当劳＆麦咖啡"),
+        _make_rest("r_ok", "湘菜馆", brand="湘菜馆"),
+    ]
+    p = _make_profile()
+    # 用户文本抽出的是裸名 "麦当劳", 子串匹配命中 "麦当劳＆麦咖啡"
+    intent = RefineIntent(brand_avoid=["麦当劳"], raw_text="别给我麦当劳")
+    out = recall(p, rests, dishes, intent=intent)
+    venues = {c["restaurant"]["id"] for c in out}
+    assert "r_mc" not in venues, "麦当劳＆麦咖啡 应被 '麦当劳' 子串过滤"
+
+
+def test_d094_avoid_filter_dropped_recorded_in_event():
+    """codex Q2 nit: recall_fallback_event 加 avoid_filter_dropped 字段, 区分
+    "L1 命中本来就少" vs "硬过滤后剩余少". 测 cooking_method_avoid 弃 N 个 combo
+    后, event["avoid_filter_dropped"] == N.
+    """
+    from chisha.recall import _apply_intent_buckets
+    # 3 个 combo, 2 个含 油炸, 1 个含 炒
+    combos = [
+        {"restaurant": {"id": f"r{i}", "name": f"店{i}", "brand": f"b{i}"},
+         "dishes": [{"dish_id": f"d{i}", "canonical_name": f"炸鸡{i}",
+                      "raw_name": f"炸鸡{i}", "cuisine": "湘菜",
+                      "nutrition_profile": {"cooking_method": "油炸",
+                                             "main_ingredient_type": "白肉"}}]}
+        for i in range(2)
+    ] + [
+        {"restaurant": {"id": "r_ok", "name": "店ok", "brand": "b_ok"},
+         "dishes": [{"dish_id": "d_ok", "canonical_name": "炒青菜",
+                      "raw_name": "炒青菜", "cuisine": "湘菜",
+                      "nutrition_profile": {"cooking_method": "炒",
+                                             "main_ingredient_type": "蔬菜"}}]}
+    ]
+    intent = RefineIntent(cuisine_want=["湘菜"],
+                            cooking_method_avoid=["油炸"],
+                            raw_text="湘菜不要油炸")
+    events: list[dict] = []
+    out = _apply_intent_buckets(combos, intent, n=5,
+                                  recall_fallback_events=events)
+    # 2 个油炸应被弃, 1 个炒留下
+    assert len(out) == 1
+    # event 记下了 2 个被 avoid 过滤
+    assert events[0]["avoid_filter_dropped"] == 2
+
+
+def test_d094_cuisine_want_expanded_no_double_score():
+    """codex review block: cuisine_want=['川菜'] + expanded=['川菜','湘菜']
+    时, 川菜 dish 不应被双重加分 (cuisine_want 已给 2.0, expanded 不能再 +1.0).
+    """
+    from chisha.recall import _intent_dish_score
+    chuan_dish = {
+        "canonical_name": "麻婆豆腐", "raw_name": "麻婆豆腐",
+        "cuisine": "川菜",
+        "nutrition_profile": {"main_ingredient_type": "蔬菜"},
+        "monthly_sales": 100,
+    }
+    # only want — expect 2.0
+    intent_want_only = RefineIntent(cuisine_want=["川菜"], raw_text="想吃川菜")
+    s_want = _intent_dish_score(chuan_dish, intent_want_only)
+    # both want + expanded covering same cuisine — expect still 2.0 (no double)
+    intent_overlap = RefineIntent(cuisine_want=["川菜"],
+                                    cuisine_candidates_expanded=["川菜", "湘菜"],
+                                    raw_text="想吃川菜或辣的")
+    s_overlap = _intent_dish_score(chuan_dish, intent_overlap)
+    assert s_want == s_overlap == 2.0
+    # only expanded (want 空) — expect 1.0
+    intent_exp_only = RefineIntent(cuisine_candidates_expanded=["川菜"],
+                                      raw_text="想吃辣")
+    s_exp = _intent_dish_score(chuan_dish, intent_exp_only)
+    assert s_exp == 1.0

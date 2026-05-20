@@ -216,6 +216,8 @@ def test_extract_v2_cooking_method_avoid_enum_filter():
 
     LLM 偶尔输出"烧烤"/"煎炸"/"油腻" 等非枚举值, 框架在 _clean_parsed_to_v2 丢掉,
     防止 recall.py 拿到无意义字符串做硬过滤.
+
+    codex Q5 nit: 越界值拼到 raw_understanding 末尾 (诚实痕迹).
     """
     parsed = {
         "redirect": {
@@ -234,6 +236,31 @@ def test_extract_v2_cooking_method_avoid_enum_filter():
     with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed):
         v2 = extract_refine_intent_v2("不要油炸/烧烤/煎/油腻", use_llm=True)
     assert v2.redirect["cooking_method_avoid"] == ["油炸", "煎"]
+    # codex Q5 nit: 越界值拼到 raw_understanding (诚实留痕)
+    assert "烧烤" in v2.raw_understanding
+    assert "油腻" in v2.raw_understanding
+    assert "丢弃越界" in v2.raw_understanding
+
+
+def test_extract_v2_cooking_method_avoid_all_enum_no_tail():
+    """全部命中枚举时 raw_understanding 不应被加诚实尾巴."""
+    parsed = {
+        "redirect": {
+            "cuisine_want": [], "cuisine_avoid": [],
+            "cuisine_candidates_expanded": [],
+            "ingredient_want": [], "ingredient_avoid": [],
+            "brand_avoid": [],
+            "cooking_method_avoid": ["油炸", "煎"],
+        },
+        "constrain": {"oil": None, "price_max": None},
+        "reference": None, "reject_previous": False,
+        "raw_understanding": "不要油炸+煎",
+        "schema_version": "2.0",
+    }
+    with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed):
+        v2 = extract_refine_intent_v2("不要油炸+煎", use_llm=True)
+    assert v2.raw_understanding == "不要油炸+煎"
+    assert "丢弃越界" not in v2.raw_understanding
 
 
 def test_cooking_method_enum_constants():

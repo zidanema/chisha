@@ -479,17 +479,20 @@ def _intent_dish_score(d: dict, intent) -> float:
     # cuisine 命中: 用 score.normalize_cuisine 复用归一表
     cuisine_want = getattr(intent, "cuisine_want", None) or []
     cuisine_expanded = getattr(intent, "cuisine_candidates_expanded", None) or []
+    cuisine_want_hit = False  # codex block: 防 want + expanded 双重加分
     if cuisine_want:
         from chisha.score import normalize_cuisine
         targets = {normalize_cuisine(c) for c in cuisine_want}
         targets.discard(None)
         if d.get("cuisine") in targets:
             score += 2.0
+            cuisine_want_hit = True
         # 软命中: 菜名子串
         elif any(c in full_name for c in cuisine_want if c):
             score += 1.0
-    # D-094: cuisine_candidates_expanded 给 1.0 加分 (比显式 want 弱一级, 不破坏 want 优先).
-    if cuisine_expanded:
+            cuisine_want_hit = True
+    # D-094: expanded 1.0 加分, 仅在 cuisine_want 未命中时给 (避免双重加分).
+    if cuisine_expanded and not cuisine_want_hit:
         from chisha.score import normalize_cuisine
         exp_targets = {normalize_cuisine(c) for c in cuisine_expanded}
         exp_targets.discard(None)
@@ -670,13 +673,15 @@ def recall(
     avoid_rests = diversity_avoid | extra_banned
 
     # 1c. D-094 (T-FR-03): brand_avoid venue 整店硬过滤.
-    # 用户 "别再给我萨莉亚" → restaurants.json[].brand == "萨莉亚" 的 venue 整店剔除.
-    # 数据 audit: 277 venue 100% 单 brand (最多 4 venue 共享 1 brand, 0 多 brand venue) → 实现无歧义.
+    # 用户 "别再给我萨莉亚" → 命中 restaurants.json[].brand 的 venue 整店剔除.
+    # 子串匹配 (codex review block): venue.brand 有复合品牌 (如 "麦当劳＆麦咖啡"),
+    # 用户文本抽出的 brand 是裸名 ("麦当劳"), exact 集合命中会漏过滤.
     if has_intent:
-        brand_avoid = set(getattr(intent, "brand_avoid", None) or [])
+        brand_avoid = [b for b in (getattr(intent, "brand_avoid", None) or []) if b]
         if brand_avoid:
             for r in restaurants:
-                if r.get("brand") in brand_avoid:
+                r_brand = r.get("brand") or ""
+                if r_brand and any(b in r_brand for b in brand_avoid):
                     avoid_rests.add(r["id"])
 
     # 2. 硬过滤 dishes (含 P1 三个黑名单 + L0-A/B 永不可破)
@@ -835,7 +840,12 @@ def _apply_intent_buckets(
                     return False
         return True
 
+    # codex review Q2 nit: 记 _not_avoided 弃了多少 combo (cuisine_avoid + ingredient_avoid
+    # + cooking_method_avoid 三者合计), 让 trace 能区分"L1 命中本身少" vs "硬过滤后剩余少",
+    # 防 intent_hit 虚低误判 level=2/3.
+    _pre_filter_count = len(combos)
     combos = [c for c in combos if _not_avoided(c)]
+    _avoid_dropped = _pre_filter_count - len(combos)
 
     cuisine_want = getattr(intent, "cuisine_want", None) or []
     ingredient_want = getattr(intent, "ingredient_want", None) or []
@@ -892,6 +902,10 @@ def _apply_intent_buckets(
             "total_returned": min(len(out), target),
             "target_top_k": target,
             "floor": floor,
+            # D-094 codex Q2 nit: _not_avoided 弃了多少 combo (cuisine_avoid +
+            # ingredient_avoid + cooking_method_avoid 合计). 用来分辨"intent_hit
+            # 低是因数据本来就少"还是"硬过滤后剩余少".
+            "avoid_filter_dropped": _avoid_dropped,
             "timestamp": _clock.now_utc().isoformat(),
         })
 

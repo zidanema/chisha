@@ -337,9 +337,12 @@ def _clean_parsed_to_v2(parsed: dict, *, raw_text: str) -> RefineIntentV2:
     for k in redirect.keys():
         redirect[k] = _clean_str_list(redirect_raw.get(k))
     # D-094: cooking_method_avoid 必须命中 9 类枚举, 越界值丢弃
+    _cm_raw = list(redirect["cooking_method_avoid"])
     redirect["cooking_method_avoid"] = [
-        x for x in redirect["cooking_method_avoid"] if x in COOKING_METHOD_ENUM
+        x for x in _cm_raw if x in COOKING_METHOD_ENUM
     ]
+    # codex review Q5 nit: 越界值 stash 一份, 给 raw_understanding 拼诚实尾巴
+    _cm_dropped = [x for x in _cm_raw if x not in COOKING_METHOD_ENUM]
 
     constrain_raw = parsed.get("constrain") or {}
     constrain = _empty_constrain()
@@ -363,6 +366,11 @@ def _clean_parsed_to_v2(parsed: dict, *, raw_text: str) -> RefineIntentV2:
 
     reject_previous = _coerce_bool_or_null(parsed.get("reject_previous")) or False
     raw_understanding = str(parsed.get("raw_understanding") or "").strip()
+    # D-094 codex Q5 nit: 越界 cooking_method 值拼到 raw_understanding 末尾, 给 L3 narrative
+    # + debug-ui 留可见痕迹 (prompt 已教 LLM 映射, 这是 belt-and-suspenders).
+    if _cm_dropped:
+        tail = f"[丢弃越界 cooking_method_avoid={','.join(_cm_dropped)}]"
+        raw_understanding = f"{raw_understanding} {tail}".strip()
 
     return RefineIntentV2(
         redirect=redirect,
