@@ -274,6 +274,7 @@
       "depends_on": [],
       "status": "done",
       "_notes": "Scope 扩展: Codex Phase 4 iter 1 5 BLOCKER (description 硬编码 / rank-position 没强制 / trace 不持久化 schema / 缺测试 / OpenRouter 转译没验证) 全部接受, plan 经 Phase 2 4 轮迭代 + Phase 4 2 轮迭代. 修订: 1 description 移硬编码 / 6 validator 加 RANK_POSITION_MISMATCH + frozenset literal 重写 / 7 system_prompt_full 末尾拼 tool schema reference (不 bump TRACE_SCHEMA_VERSION) / 8 加 6 新 test. baseline_l2_snapshot before/after 0 diff. Phase 4 Codex adversarial APPROVED iter 2."
+    },
     {
       "id": "T-PR-06",
       "title": "rerank prompt 三项 P1 文案补丁 (taste_match rubric + one_line_reason + explore escape)",
