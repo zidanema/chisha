@@ -21,6 +21,7 @@ refine=True 时 n_explore=0 (D-015).
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -52,8 +53,13 @@ L3_INPUT_TOP_K = 60
 _RERANK_TOOL = {
     "name": "select_top_candidates",
     "description": (
-        "Select 5 candidates (3 exploit + 2 explore) from the input candidate "
-        "list, in rank order. exploit 段在前, explore 段在后."
+        "Select N candidates from the input candidate list, in rank order. "
+        "exploit 段在前, explore 段在后. "
+        "candidates must be emitted in final display order; "
+        "rank must equal array position + 1 (1-indexed); "
+        "first n - n_explore items have is_explore=false (exploit segment), "
+        "last n_explore items have is_explore=true (explore segment), no interleaving. "
+        "In refine mode n_explore=0, all candidates have is_explore=false."
     ),
     "input_schema": {
         "type": "object",
@@ -64,8 +70,14 @@ _RERANK_TOOL = {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "rank": {"type": "integer", "minimum": 1, "maximum": 5},
-                        "is_explore": {"type": "boolean"},
+                        "rank": {
+                            "type": "integer", "minimum": 1, "maximum": 5,
+                            "description": "1-indexed, strictly ascending, equals array position + 1.",
+                        },
+                        "is_explore": {
+                            "type": "boolean",
+                            "description": "First n - n_explore items are false (exploit segment), last n_explore items are true (explore segment); never interleave.",
+                        },
                         "combo_index": {"type": "integer", "minimum": 0},
                         "fit_score": {"type": "number", "minimum": 0, "maximum": 1},
                         "taste_match": {"type": "number", "minimum": 0, "maximum": 1},
@@ -121,8 +133,9 @@ _CLI_OUTPUT_SECTION = """# 输出方式 (claude_code_cli no-tool 路径)
 字段约束:
 - narrative (T-P1b-02 新增): ≤ 50 字摘要, 解释为什么推荐这 5 道. 必须有执行证据支撑
   (引用 refine_intent / context / 健康约束等). 禁止空泛形容. 缺省时回填 "" 不抛.
-- rank: 1..n 连续整数
-- is_explore: bool. 前 (n - n_explore) 个 false (exploit), 后 n_explore 个 true (explore). refine 模式 n_explore=0 时全部 false.
+- rank: 1..n 连续整数, 严格升序, 等于 array position + 1 (1-indexed).
+- is_explore: bool. 前 (n - n_explore) 个 false (exploit segment, 不许穿插), 后 n_explore 个 true (explore segment). refine 模式 n_explore=0 时全部 false.
+- candidates 输出顺序 = 最终展示顺序 (exploit 段在前, explore 段在后, 不许穿插).
 - combo_index: 必须是输入 [idx] 段里出现过的整数, 不能凭空生成, 不能超出输入候选数, 不能重复.
 - fit_score: 0.0-1.0, 综合匹配度
 - taste_match: 0.0-1.0, 与 taste_description 命中度
@@ -297,6 +310,7 @@ class RerankValidationCode:
     RANK_NOT_SEQUENTIAL = "RANK_NOT_SEQUENTIAL"
     EXPLORE_COUNT_MISMATCH = "EXPLORE_COUNT_MISMATCH"
     EXPLORE_POSITION_WRONG = "EXPLORE_POSITION_WRONG"
+    RANK_POSITION_MISMATCH = "RANK_POSITION_MISMATCH"  # T-PR-05: rank value != array position + 1
     UNKNOWN = "UNKNOWN"
 
 
@@ -306,6 +320,7 @@ _RETRY_TRIGGER_CODES = frozenset({
     RerankValidationCode.OVER_N_MAX,
     RerankValidationCode.EXPLORE_COUNT_MISMATCH,
     RerankValidationCode.EXPLORE_POSITION_WRONG,
+    RerankValidationCode.RANK_POSITION_MISMATCH,  # T-PR-05
 })
 
 
@@ -810,6 +825,15 @@ def _validate_llm_candidates_v(
         # 简易方案: 记录 stdout 的 print, 但太复杂; 直接重做关键检查的字符串描述.
         code, detail = _diagnose_candidates(cands, n_max, input_size, n_explore_expected)
         return None, code, detail
+    # T-PR-05: 加 rank == array position + 1 invariant (low-level _validate_llm_candidates
+    # 仅校验 set 完整, 不校验 position 关系; permuted [2,1,3,4,5] 会通过低层校验).
+    for idx, c in enumerate(res):
+        if c.get("rank") != idx + 1:
+            return (
+                None,
+                RerankValidationCode.RANK_POSITION_MISMATCH,
+                f"candidates[{idx}].rank={c.get('rank')}, expected {idx+1}",
+            )
     return res, RerankValidationCode.OK, None
 
 
@@ -1074,9 +1098,20 @@ def _run_llm_rerank(
         user_msg = build_user_message(top_combos, profile, context,
                                        n=n, n_explore=n_explore, root=root,
                                        l1_prefs_override=l1_prefs_override)
-        out["system_prompt_chars"] = len(system_prompt)
         # D-089-S1: 落实际发给 LLM 的 system prompt body (patch 过的 CLI 版 / 主路径 raw 版).
-        out["system_prompt_full"] = system_prompt
+        # T-PR-05: 主路径 tool_use 把 ordering 等行为关键指令搬进 _RERANK_TOOL.description,
+        # 为 D-079 trace 自包含原则 (CONTRACTS.md:115), 把 outgoing tool schema 拼到
+        # system_prompt_full value 末尾作为 reference 块. 不引入新 schema 字段, 不 bump
+        # TRACE_SCHEMA_VERSION (字符串值扩展不算 schema 改). CLI 路径不走 tool_use, 不拼.
+        if is_cli:
+            out["system_prompt_full"] = system_prompt
+        else:
+            out["system_prompt_full"] = system_prompt + (
+                "\n\n# === [TRACE REFERENCE] outgoing tool schema (T-PR-05) ===\n"
+                + json.dumps(_RERANK_TOOL, ensure_ascii=False, indent=2)
+            )
+        # T-PR-05: chars 必须跟 full 同步 (test_rerank_trace_fields 守门: chars == len(full))
+        out["system_prompt_chars"] = len(out["system_prompt_full"])
         out["user_message_chars"] = len(user_msg)
         out["user_message_full"] = user_msg
         kwargs: dict[str, Any] = {

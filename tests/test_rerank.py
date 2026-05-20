@@ -729,3 +729,115 @@ def test_cli_output_section_mentions_narrative():
     from chisha.rerank import _CLI_OUTPUT_SECTION
     assert "narrative" in _CLI_OUTPUT_SECTION
     assert "≤ 50" in _CLI_OUTPUT_SECTION or "50 字" in _CLI_OUTPUT_SECTION
+
+
+# ────────────────────────── T-PR-05 schema description + invariant
+
+
+def test_rerank_tool_description_contains_ordering():
+    """T-PR-05 修订 1: _RERANK_TOOL.description 含 ordering 关键短语 + refine 模式说明."""
+    from chisha.rerank import _RERANK_TOOL
+    desc = _RERANK_TOOL["description"]
+    assert "Select N candidates" in desc  # 修订 1: 移除硬编码 "3 exploit + 2 explore"
+    assert "candidates must be emitted in final display order" in desc
+    assert "rank must equal array position + 1" in desc
+    assert "exploit segment" in desc
+    assert "explore segment" in desc
+    assert "no interleaving" in desc
+    assert "In refine mode n_explore=0" in desc
+
+
+def test_rerank_rank_field_description():
+    """T-PR-05 修订 2: rank field 加 description 含 strictly ascending + equals array position + 1."""
+    from chisha.rerank import _RERANK_TOOL
+    items_props = _RERANK_TOOL["input_schema"]["properties"]["candidates"]["items"]["properties"]
+    rank_schema = items_props["rank"]
+    assert "description" in rank_schema
+    assert "strictly ascending" in rank_schema["description"]
+    assert "equals array position + 1" in rank_schema["description"]
+
+
+def test_rerank_is_explore_field_description():
+    """T-PR-05 修订 3: is_explore field 加 description 含 never interleave + 双 segment."""
+    from chisha.rerank import _RERANK_TOOL
+    items_props = _RERANK_TOOL["input_schema"]["properties"]["candidates"]["items"]["properties"]
+    is_explore_schema = items_props["is_explore"]
+    assert "description" in is_explore_schema
+    assert "never interleave" in is_explore_schema["description"]
+    assert "exploit segment" in is_explore_schema["description"]
+    assert "explore segment" in is_explore_schema["description"]
+
+
+def test_rerank_validator_rejects_permuted_rank():
+    """T-PR-05 修订 6: _validate_llm_candidates_v 拒 ranks=[2,1,3,4,5] (set 完整 position 错)."""
+    from chisha.rerank import _validate_llm_candidates_v, RerankValidationCode
+    bad_candidates = [
+        {"rank": 2, "is_explore": False, "combo_index": 0, "fit_score": 0.5, "taste_match": 0.5, "risk_flags": [], "one_line_reason": "x"},
+        {"rank": 1, "is_explore": False, "combo_index": 1, "fit_score": 0.5, "taste_match": 0.5, "risk_flags": [], "one_line_reason": "x"},
+        {"rank": 3, "is_explore": False, "combo_index": 2, "fit_score": 0.5, "taste_match": 0.5, "risk_flags": [], "one_line_reason": "x"},
+        {"rank": 4, "is_explore": True, "combo_index": 3, "fit_score": 0.5, "taste_match": 0.5, "risk_flags": [], "one_line_reason": "x"},
+        {"rank": 5, "is_explore": True, "combo_index": 4, "fit_score": 0.5, "taste_match": 0.5, "risk_flags": [], "one_line_reason": "x"},
+    ]
+    validated, code, detail = _validate_llm_candidates_v(
+        bad_candidates, n_max=5, input_size=10, n_explore_expected=2,
+    )
+    assert validated is None
+    assert code == RerankValidationCode.RANK_POSITION_MISMATCH
+    assert "candidates[0].rank=2" in detail
+
+
+def test_rerank_openrouter_tool_translation_preserves_descriptions():
+    """T-PR-05 修订 8 (Codex iter 1 BLOCKER 5): _to_openai_tool 转 _RERANK_TOOL 保留 nested description."""
+    from chisha.rerank import _RERANK_TOOL
+    from chisha.llm_providers.openrouter import _to_openai_tool
+    converted = _to_openai_tool(_RERANK_TOOL)
+    # OpenAI 格式: {"type": "function", "function": {"name": ..., "description": ..., "parameters": {...}}}
+    params = converted["function"]["parameters"]
+    items_props = params["properties"]["candidates"]["items"]["properties"]
+    assert "description" in items_props["rank"], "rank.description dropped by _to_openai_tool"
+    assert "description" in items_props["is_explore"], "is_explore.description dropped by _to_openai_tool"
+    assert "strictly ascending" in items_props["rank"]["description"]
+    assert "never interleave" in items_props["is_explore"]["description"]
+
+
+def test_rerank_trace_includes_tool_schema_reference(monkeypatch):
+    """T-PR-05 修订 7: 主路径 trace_collector['system_prompt_full'] 末尾含 tool schema reference,
+    CLI 路径不含."""
+    from chisha.rerank import _run_llm_rerank
+
+    def fake_call_text(prompt, **kwargs):
+        return {
+            "type": "tool_use",
+            "tool_name": "select_top_candidates",
+            "tool_input": {
+                "candidates": [
+                    {"rank": i + 1, "is_explore": i >= 3, "combo_index": i,
+                     "fit_score": 0.5, "taste_match": 0.5, "risk_flags": [],
+                     "one_line_reason": "test"}
+                    for i in range(5)
+                ],
+                "narrative": "test",
+            },
+            "model": "test-model", "usage": {}, "stop_reason": "tool_use", "raw_text": "",
+        }
+    monkeypatch.setattr("chisha.llm_client.call_text", fake_call_text)
+
+    top_combos = [_combo([{"raw_name": f"dish{i}"}], rest_id=f"r{i}") for i in range(60)]
+    ctx = ContextSnapshot(
+        meal_type="lunch", zone="shenzhen-bay",
+        now=dt.datetime(2026, 5, 20, 12, 0), weekday=2,
+        last_meal=None, recent_3d_cuisines={}, recent_3d_ingredients={},
+        last_feedback=None, daily_mood=None, refine_input=None,
+    )
+    profile = {"taste_description": "x", "preferences": {}, "plate_rule": {}}
+
+    # 主路径 (anthropic/openrouter): system_prompt_full 末尾含 reference
+    out = _run_llm_rerank(top_combos, profile, ctx, n=5, n_explore=2,
+                          profile_llm={"provider": "openrouter"})
+    assert "[TRACE REFERENCE] outgoing tool schema (T-PR-05)" in out["system_prompt_full"]
+    assert '"name": "select_top_candidates"' in out["system_prompt_full"]
+
+    # CLI 路径: system_prompt_full 不含 reference (CLI 不走 tool_use)
+    out_cli = _run_llm_rerank(top_combos, profile, ctx, n=5, n_explore=2,
+                               profile_llm={"provider": "claude_code_cli"})
+    assert "[TRACE REFERENCE]" not in out_cli["system_prompt_full"]

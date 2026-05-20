@@ -272,9 +272,8 @@
       "spec": "specs/T-PR-05.md",
       "regression_risk": "high",
       "depends_on": [],
-      "status": "pending",
-      "_notes": "同 prompts/rerank_system.md 文件: 串行执行 T-PR-03 → T-PR-04 → T-PR-05 → T-PR-06, 由 tasks.json 数组顺序保证. 本任务命中 chisha/rerank.py 高风险白名单, Codex 对抗审 + baseline_l2_snapshot 必跑."
-    },
+      "status": "done",
+      "_notes": "Scope 扩展: Codex Phase 4 iter 1 5 BLOCKER (description 硬编码 / rank-position 没强制 / trace 不持久化 schema / 缺测试 / OpenRouter 转译没验证) 全部接受, plan 经 Phase 2 4 轮迭代 + Phase 4 2 轮迭代. 修订: 1 description 移硬编码 / 6 validator 加 RANK_POSITION_MISMATCH + frozenset literal 重写 / 7 system_prompt_full 末尾拼 tool schema reference (不 bump TRACE_SCHEMA_VERSION) / 8 加 6 新 test. baseline_l2_snapshot before/after 0 diff. Phase 4 Codex adversarial APPROVED iter 2."
     {
       "id": "T-PR-06",
       "title": "rerank prompt 三项 P1 文案补丁 (taste_match rubric + one_line_reason + explore escape)",
