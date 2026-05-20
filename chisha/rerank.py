@@ -1209,7 +1209,7 @@ def _run_llm_rerank(
                 "idx>=10 挑, 找不到漂亮中段就挑次优中段填满槽位, **不许减少 "
                 "explore 数量**).\n"
                 "**重要: 系统 prompt 里所有其余规则 (硬过滤 avoid/spicy/processed, "
-                "口味命中, 健康结构, 同品牌择优, refine_input/mood 优先级等) "
+                "口味命中, 健康风险披露 (不参与排序但要标 risk_flags), 同品牌择优, refine_input/mood 优先级等) "
                 "全部仍然生效. 请基于原 [CANDIDATES] 重新挑 5 条, 不是改标签.**\n"
                 "直接重新输出 JSON 对象, 不要任何前后说明文字.\n"
             )

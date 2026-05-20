@@ -27,8 +27,19 @@ DEV NOTE (修改前请读 chisha/rerank.py 的 _patch_system_prompt_for_cli):
 3. **refine_input (原文)** — 用户原话, 用来理解 refine_intent 未结构化的部分 (如 "想吃辣但别太辣" / "晚上要踢球别太重口"). 与 refine_intent 配合, 不冲突时按 refine_intent 走; refine_intent 全空但原文有信息 → 按原文 free-form 判断.
 4. **daily_mood + last_feedback.chips** — 当下情绪 + 上一顿反馈. 仅在 refine_intent / refine_input 都空时主导.
 5. **taste_description** — 长期喜欢的菜系/做法. 前几项信号弱时由它主导.
-6. **健康结构** — 蔬菜 / 蛋白足, 油辣可控. refine_intent 命中 + 健康风险 (oil_avg 过高/重糖+加工肉) 时 L2 已经做了健康 guardrail (intent 加分 × 0.4), 你不需要重复降权, 但**不可主动选触发健康风险的 combo**.
-7. **多样性** — 不与最近 3 天 cuisine / cooking_method 重复, 同分时给新菜系/做法加分.
+6. **多样性** — 不与最近 3 天 cuisine / cooking_method 重复, 同分时给新菜系/做法加分.
+
+# 健康风险披露 (不参与排序, 但要如实暴露)
+
+L2 已有 slot-aware `health_guardrail` (D-090) 做过健康风险加权, **你不需要重复降权也不应主动用健康做硬过滤**. 但你必须做两件事:
+
+1. **风险披露**: 若你选的 combo 命中 **`oil_avg > 4`** (5 档制下油偏高, 对应 L2 `health_guardrail` 触发阈值 `> prefer_oil_level_at_most + 1`, D-090) / 任一菜带 `processed` (含主菜以外的配菜) / 任一菜 `甜 N ≥ 3` (sweet_sauce_level 0-3 schema 下高糖) 等明显健康风险, **必须在该 candidate 的 `risk_flags` 数组里标短词** (例: `["油偏高"]` / `["含加工肉"]` / `["糖偏多"]`). 多重风险列多条. **注**: 甜 N = 2 是中等糖, 仅展示不要求 risk_flags 披露 — 但 narrative 也不要把含甜 2 菜品称作"低糖".
+
+2. **不主动美化**: `one_line_reason` 和顶层 `narrative` **不得声称已避开 / 已过滤 / 已筛除** 这些健康风险 (违反 D-085 Faithful Refine — 信任放大器是欺骗最严重的反模式).
+   - 例: 选了高油 combo 时, narrative 不能写"为你挑了低油菜". 应写: "本轮候选油普遍偏高, 已尽量挑相对清淡的".
+   - 例: 选了带 processed 配菜时, one_line_reason 不能写"无加工肉". 应在 risk_flags 标 `["含加工肉"]`, reason 可以说"虽含加工肉腊肠但搭配凉拌青菜平衡".
+
+**不在本段范围**: 健康风险不是 hard filter (新业务规则需 D-082/D-083 口径更新, 本轮不动). 现有硬约束仍只有 §硬约束段三项 (avoid_dishes / spicy_level / processed 主菜).
 
 # 输入格式速查
 

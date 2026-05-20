@@ -252,10 +252,10 @@
       "id": "T-PR-03",
       "title": "rerank §6 健康语义归位 (风险披露 + 不主动美化, 不加 hard filter)",
       "spec": "specs/T-PR-03.md",
-      "regression_risk": "medium",
+      "regression_risk": "high",
       "depends_on": [],
-      "status": "pending"
-    },
+      "status": "done",
+      "_notes": "risk 从 medium 升 high: Codex iter 1 blocker 2 暴露 chisha/rerank.py:1212 retry correction 旧术语 '健康结构' 残留, 必须同步 — 触碰 12-file 高风险白名单. baseline_l2_snapshot before/after 0 diff (rerank.py 改的是 CLI retry text 不是 L2 逻辑)."
     {
       "id": "T-PR-04",
       "title": "rerank refine_intent 字段口径同步 V1 + V2 reference 说明",
