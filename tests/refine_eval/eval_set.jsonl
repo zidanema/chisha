@@ -41,3 +41,7 @@
 {"id": "edge-02", "text": "随便, 你看着来", "category": "edge", "expected": {"is_empty_strict": true, "raw_understanding_nonempty": true}}
 {"id": "edge-03", "text": "今天加班好累", "category": "edge_no_associate", "expected": {"is_empty_strict": true, "raw_understanding_nonempty": true}}
 {"id": "edge-04", "text": "周末来个大餐", "category": "edge_no_associate", "expected": {"is_empty_strict": true, "raw_understanding_nonempty": true}}
+{"id": "flavor-conflict-01", "text": "想吃辣但别太辣", "category": "flavor_conflict", "expected": {"raw_understanding_contains": "冲突", "redirect.cuisine_candidates_expanded": []}}
+{"id": "func-03", "text": "下午要睡觉", "category": "functional", "expected": {"constrain.functional.low_caffeine": null, "raw_understanding_nonempty": true}}
+{"id": "subset-reject-01", "text": "这些广东菜都不想吃, 换湖南菜吧", "category": "subset_reject", "expected": {"redirect.cuisine_avoid_has_exact": "广东菜", "redirect.cuisine_want": ["湖南菜"], "reject_previous": false}}
+{"id": "delivery-02", "text": "今天加班好累", "category": "delivery_implicit", "expected": {"constrain.delivery_only": null, "raw_understanding_nonempty": true}}
