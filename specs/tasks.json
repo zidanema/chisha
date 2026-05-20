@@ -297,8 +297,8 @@
         "T-PR-05",
         "T-PR-06"
       ],
-      "status": "pending"
-    }
+      "status": "done",
+      "_notes": "Step 1 整体验收 gate 通过: 测试 979 passed / _patch_system_prompt_for_cli 3 锚点守门通过 / baseline_l2_snapshot before(d660b90) vs after(855404f) 0 diff / 3 refine + 50 dry_run case 全部反映 T-PR-01/03/04/06 修订意图. 实施发现 git worktree 不含 untracked mutable state (logs/meal_log.jsonl + data/feedback_history.jsonl), 必须 cp -p 复制到 worktree 才能跑出可比 baseline. 详见 plans/T-PR-07.review.md."
   ],
   "_sandbox_lab_brief": "docs/design_briefs/archive/2026-05-19-sandbox-lab.md",
   "_prompt_review_brief": "docs/proposals/2026-05-20-prompt-effect-optimization.md"
