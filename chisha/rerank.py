@@ -138,9 +138,9 @@ _CLI_OUTPUT_SECTION = """# 输出方式 (claude_code_cli no-tool 路径)
 - candidates 输出顺序 = 最终展示顺序 (exploit 段在前, explore 段在后, 不许穿插).
 - combo_index: 必须是输入 [idx] 段里出现过的整数, 不能凭空生成, 不能超出输入候选数, 不能重复.
 - fit_score: 0.0-1.0, 综合匹配度
-- taste_match: 0.0-1.0, 与 taste_description 命中度
+- taste_match: 0.0-1.0, 与 taste_description 命中度. 锚点: 0.9-1.0 强命中 / 0.7-0.9 部分命中方向一致 / 0.5-0.7 同品类替代 / 0.3-0.5 仅大类命中 / 0.0-0.3 方向冲突或接近 disliked.
 - risk_flags: 短词字符串数组, 无风险给 []
-- one_line_reason: ≤ 30 字, 必须具体 + 对比 + 不堆形容词.
+- one_line_reason: ≤ 30 字, 必须具体 + 不堆形容词. 比较条件化: 同品牌多变体必比 / 相邻 rank 可比 / 无可比对象不强行比较.
 
 严格要求:
 - 输出仅 JSON 对象本体, 以 { 开头 } 结尾

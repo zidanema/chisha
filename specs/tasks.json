@@ -279,10 +279,10 @@
       "id": "T-PR-06",
       "title": "rerank prompt 三项 P1 文案补丁 (taste_match rubric + one_line_reason + explore escape)",
       "spec": "specs/T-PR-06.md",
-      "regression_risk": "medium",
+      "regression_risk": "high",
       "depends_on": [],
-      "status": "pending",
-      "_notes": "同 prompts/rerank_system.md 文件: 串行执行 T-PR-03 → T-PR-04 → T-PR-05 → T-PR-06, 由 tasks.json 数组顺序保证. 实施前 git diff 看最新版."
+      "status": "done",
+      "_notes": "risk 从 medium 升 high: Codex iter 1 BLOCKER 1 暴露 _CLI_OUTPUT_SECTION (chisha/rerank.py:121-150) 漏改, CLI 路径会与主路径 prompt 漂移 — 必须双路径同步, 触碰 12-file 高风险白名单. baseline_l2_snapshot before/after 0 diff. Phase 4 Codex adversarial APPROVED iter 1 (2 non-blocking advisory: 补测试守门 / rubric 保范围非枚举)."
     },
     {
       "id": "T-PR-07",
