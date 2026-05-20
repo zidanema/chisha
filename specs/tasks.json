@@ -263,9 +263,8 @@
       "spec": "specs/T-PR-04.md",
       "regression_risk": "medium",
       "depends_on": [],
-      "status": "pending",
-      "_notes": "同 prompts/rerank_system.md 文件: 串行执行 T-PR-03 → T-PR-04 → T-PR-05 → T-PR-06, 由 tasks.json 数组顺序保证. 实施前 git diff 看最新版."
-    },
+      "status": "done_with_disagreement",
+      "_notes": "Phase 2 stuck override at iter 4 — Codex iter 3 2 BLOCKER 均为文件混淆/过度谨慎 (plan 文档元引用 vs prompt 文本暴露, plan 文件行号 vs prompt 文件行号), 主 agent 二分类为 medium-risk 过度谨慎. Phase 4 Codex APPROVED iter 1. 详见 plans/T-PR-04.plan-review.md iter 4 + plans/T-PR-04.diff-review.md."
     {
       "id": "T-PR-05",
       "title": "rerank tool_use schema description 微调 + CLI no-tool 段同步",
