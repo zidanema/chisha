@@ -46,7 +46,7 @@
 
 至于"刚好 1/2 比例"——靠人脑在饭桌上调，不靠算法在召回时凑。客单价 60-100 元、偶尔剩饭，都是可接受代价。
 
-详见 [DESIGN.md §5.3 plate_rule](../archive/DESIGN_phase0.md)、决策 [D-023](archive/DECISIONS_phase0.md#d-023)。
+详见决策 [D-023](archive/DECISIONS_phase0.md#d-023)。
 
 ### 2.3 为什么不直接用 Keep / 薄荷健康 / 美团的 AI 助手
 
@@ -54,7 +54,7 @@
 
 1. **数据是死的，不懂我**：它们不知道我"喜欢带汤水的炖煮，不爱重酱汁的红烧"这种细节
 2. **没有反馈闭环**：吃完了好不好？分量够不够？太油了？没人接住，下次还推同款
-3. **绑死在自家生态**：我希望它跟我的 Agent（OpenClaw / Claude Code / HappyClaw）打通，能在我的飞书里推卡片，而不是又装一个 APP
+3. **绑死在自家生态**：我希望它跟通用 Agent (Claude Code / 任何能跑 CLI 的 Agent) 打通，能在我已经在用的 IM/终端里出现，而不是又装一个 APP
 
 所以我决定**自己做一个**，做成 Agent 友好的开源工件，能进我的工作流。
 
@@ -68,7 +68,7 @@
 - 中午晚上都点外卖为主
 - 已经在用 OpenClaw / HappyClaw 这种长程 Agent
 - 体重控制 + 力量训练期，认弱餐盘方法论（控油 + 有蔬菜 + 有蛋白），
-  额外约束：当顿饱腹感必须够（朋友A失败教训, 见 [D-044](archive/DECISIONS_phase0.md#d-044)）
+  额外约束：当顿饱腹感必须够（轻食/小份子餐失败后补的硬约束，见 [D-044](archive/DECISIONS_phase0.md#d-044)）
 - 写代码出身，不怕命令行，喜欢可控的工具
 
 ### 3.2 扩展用户：公司同事（Phase 2）
@@ -162,9 +162,9 @@
 
 > 同事 B 在北京中关村办公区。看我用得不错，问要怎么用。
 >
-> 我告诉他：
-> 1. `pip install chisha-data-beijing-zgc`（按工区拆包，他不需要装深圳数据）
-> 2. 把 `chisha` 加进自己的 OpenClaw（推荐层）
+> 我告诉他 (Phase 2 终态接入流程, 当前规划中):
+> 1. `pip install chisha-data-beijing-zgc`（按工区拆包，他不需要装深圳数据 · 规划中, V2.4）
+> 2. 把 `chisha` 加进自己的 Agent (推荐层)
 > 3. 写自己的 profile.yaml
 >
 > 半小时后他也在用了，但他用的是 GPT-4 不是 Claude，数据存在他自己的服务器，反馈也只他自己看得到。
@@ -247,7 +247,7 @@ V1 跑通后看两件事：
 
 - 采集源、清洗、打标、保鲜（暂定 15 天周期）由 collector 负责
 - 本仓 `chisha` 只消费 collector 输出的 `restaurants.json` + `dishes_tagged.json`
-- 数据格式由两边约定 schema（见 [DESIGN.md §5.2](../archive/DESIGN_phase0.md)）
+- 数据 schema 看代码 `chisha/loader.py` + `data/{zone}/restaurants.json` 实际结构 (不在文档里维护一份)
 - Collector 与 chisha 各自独立演进、独立发版
 
 详见决策 [D-027](archive/DECISIONS_phase0.md#d-027)。
@@ -256,12 +256,13 @@ V1 跑通后看两件事：
 
 ## 10. 配套文档
 
-这个 PRD 只讲"为什么和做什么"。具体实现见：
+这个 PRD 只讲"为什么和做什么"。具体实现见:
 
-- **[decisions.md](decisions.md)** — 活决策日志（≤ 15 行/条，提炼中）
-- **[CONTRACTS.md](CONTRACTS.md)** — Agent 跨文件隐含约束
+- **[decisions.md](decisions.md)** — 活决策日志 (≤ 15 行/条)
+- **[CONTRACTS.md](CONTRACTS.md)** — Agent 跨文件隐含约束 + 跨模块 invariant
 - **[ROADMAP.md](ROADMAP.md)** — V1/V2/V3 + Phase 路线图
-- **archive/** — Phase 0 旧 DESIGN / DECISIONS / IMPL_LOG（已归档，不再维护）
+- **[BACKLOG.md](BACKLOG.md)** — 已知但暂不做的 bug / feature / idea
+- **archive/** — Phase 0 旧 DESIGN / DECISIONS / IMPL_LOG (frozen, 不维护; 冲突时以 decisions + CONTRACTS 为准)
 
-如果你是来贡献代码的：先读 PRD 理解定位，再读 DESIGN 理解实现。
-如果你是来评审或挑战决策的：DECISIONS 里有所有"为什么不那样做"。
+来贡献代码的: 先读 PRD 理解定位, 再读 CONTRACTS + 代码理解实现。
+来评审决策的: 近期决策在 [decisions.md](decisions.md), Phase 0 历史在 [archive/DECISIONS_phase0.md](archive/DECISIONS_phase0.md)。

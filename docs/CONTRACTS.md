@@ -111,21 +111,21 @@
 - **trace 落盘走 `trace_store.write_trace`, 失败仅 `logger.warning` 不阻断 recommend.** `read_trace` fail-closed: 损坏抛 `TraceCorrupt` + 备份 `.corrupt.{ts}.bak`. 改 trace schema 必 bump `TRACE_SCHEMA_VERSION`.
 - **What-if 零 runtime read.** `chisha/debug_what_if.py:what_if_rerun` 必须 100% 用 `__frozen.{ctx, today, l1_combos, l1_prefs_snapshot, l2_meal_log_view, profile_snapshot}`, **严禁** `clock.today()` / `dt.date.today()` / `load_prefs(root)` 任何 runtime state read.
 - **Live 模式永不写盘.** `/api/debug_recommend` + `chisha/api.py:recommend_meal(persist_trace=False)` 是 Live 入口, 永不调 `trace_store.write_trace`.
-- **refine 二轮写 trace 走 `trace_store.append_round` (D-087 v3).** 同 sid 多轮持久化到 `{sid}/meta.json` + `{sid}/rounds/R{n}.json`, 文件锁 `{recommend_trace_dir}/.lock-{sid}` 序列化. **绝不**创 refine-only 孤儿 trace.
-- **trace 自包含原则** (D-089): 所有 LLM call 的 `system_prompt_full` / `user_message_full` / `raw_response` body 必须落 trace, 不能事后从 `prompts/*.md` 重建 (prompt 会迭代, 留 chars 丢 body 等于 trace 无法 replay). `usage` 统一 Anthropic-style 命名, 由 `trace_helpers.normalize_usage_fields` 在落盘前转换.
+- **refine 二轮写 trace 走 `trace_store.append_round`.** 同 sid 多轮持久化到 `{sid}/meta.json` + `{sid}/rounds/R{n}.json`, 文件锁 `{recommend_trace_dir}/.lock-{sid}` 序列化. **绝不**创 refine-only 孤儿 trace.
+- **trace 自包含原则**: 所有 LLM call 的 `system_prompt_full` / `user_message_full` / `raw_response` body 必须落 trace, 不能事后从 `prompts/*.md` 重建 (prompt 会迭代, 留 chars 丢 body 等于 trace 无法 replay). `usage` 统一 Anthropic-style 命名, 由 `trace_helpers.normalize_usage_fields` 在落盘前转换.
 
 ---
 
-## 调试台 (D-039 + D-075 + D-087)
+## 调试台
 
 - **老调试台 = 独立 FastAPI on `:8765`, 与主推荐链路解耦.** 调试逻辑不要混进 `chisha/api.py`.
 - **新 debug-ui SPA (`apps/debug-ui/`) 独立 Vite 项目, 端口 5174, 不并入 `apps/web/`** (D-075). 只通过 `/api/*` 联调.
-- **D-087 Workflow A 后 SPA 100% read-only.** Live / What-if / Refine submit 路径全删; 4 个 endpoint 都是 GET. 新加写入入口前必先翻 D-087 brief.
+- **debug-ui SPA 100% read-only.** Live / What-if / Refine submit 路径全删; 4 个 endpoint 都是 GET. 加写入入口前先在 decisions 加新条目, 不要复活已删的写入路径.
 - **Trace v3 目录布局是 append_round / 多 round 持久化的唯一形式.** `read_trace_v3_view` 走 on-read migrate (v2 单文件 → 转 v3 目录). `TRACE_SCHEMA_VERSION = 3`, `ACCEPTED_TRACE_VERSIONS = {1, 2, 3}`.
 
 ---
 
-## Sandbox Lab (D-093)
+## Sandbox Lab
 
 - **`sandbox_context` ContextVar 注入 sid, 不靠全局 active session.** 多 tab 并发 eat 不能串 session.
 - **`meal_to_trace.json` 是 sid → trace 唯一索引.** rollback / branch / trace 跳转都按此查.

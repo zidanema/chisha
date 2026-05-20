@@ -53,7 +53,8 @@ cd apps/sandbox-lab && npm install && npm run dev   # :5175
 
 | 文档 | 内容 |
 |---|---|
-| [docs/PRD.md](docs/PRD.md) | 产品需求 · 为什么做、做给谁 |
+| [docs/INTRODUCTION.md](docs/INTRODUCTION.md) | 5 分钟引子 · 它解决什么问题、为什么用 Agent 形态 |
+| [docs/PRD.md](docs/PRD.md) | 产品需求 · 为什么做、做给谁、不做什么 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Phase 路线 + 已砍清单 |
 | [docs/decisions.md](docs/decisions.md) | 活决策日志 (产品/架构, 每条 ≤ 15 行) |
 | [docs/BACKLOG.md](docs/BACKLOG.md) | 待办 bug / feature / idea |

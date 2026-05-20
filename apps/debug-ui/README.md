@@ -5,7 +5,7 @@ Workflow A · **分析 trace** 单页面 SPA。单用户自用,5-20 次/天。
 Phase 0 收尾后只剩一个工作流: 浏览历史 trace + 比较 refine 轮次。所有写入路径
 (Live / What-if / 反查时重跑) 全部已删, 100% read-only。
 
-视觉系统来自 `chisha-debug/project/wa-*.jsx` 设计稿,Phase 1/2 一字一句搬过来,不允许重设计。
+视觉系统来自 `docs/archive/design-handoff-d075/project/wa-*.jsx` 设计稿 (claude.ai/design 原始 handoff),Phase 1/2 一字一句搬过来,不允许重设计。
 
 ## 本地拉起
 
@@ -152,4 +152,4 @@ src/
 
 ## 设计稿源
 
-设计稿在 `chisha-debug/project/wa-*.jsx` (非 git 跟踪, 仅本机有), 改 UI 前先看一遍。
+设计稿在 `docs/archive/design-handoff-d075/project/wa-*.jsx` (frozen handoff bundle), 改 UI 前先看一遍。
