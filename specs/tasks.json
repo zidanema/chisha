@@ -236,7 +236,7 @@
       "spec": "specs/T-PR-01.md",
       "regression_risk": "medium",
       "depends_on": [],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "T-PR-02",
