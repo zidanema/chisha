@@ -80,6 +80,11 @@ class RefineIntent:
     price_band: str | None = None                               # ∈ PRICE_BANDS
     freeform_note: str = ""                                     # 原文兜底, L3 看
     raw_text: str = ""                                          # 调试/trace 用
+    # D-094: V2 真消费字段桥接到 V1 (refine.py 从 V2 intent_v2.redirect 拷贝).
+    # 旧 rule_parse 路径不填这些 (默认空), 仅当 V2 LLM 成功抽到时由 refine.py 注入.
+    cuisine_candidates_expanded: list[str] = field(default_factory=list)
+    brand_avoid: list[str] = field(default_factory=list)
+    cooking_method_avoid: list[str] = field(default_factory=list)
     # T-00: schema 版本号. P1a-03 多 slot 升级时 bump "2.0", What-if/trace 据此识别 shape.
     # 不属于语义维度, is_empty() 不检查.
     schema_version: str = "1.0"
@@ -95,6 +100,9 @@ class RefineIntent:
             self.cooking_method, self.flavor_tags, self.raw_flavor,
             self.portion,
             self.staple_preference, self.price_band,
+            # D-094: V2 bridged slots 也算语义维度
+            self.cuisine_candidates_expanded,
+            self.brand_avoid, self.cooking_method_avoid,
         ])
 
     def allows_methodology_break(self) -> bool:

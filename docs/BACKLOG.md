@@ -101,25 +101,21 @@
 - **与 B-001 关系**: 同属反馈改造范畴, 应在反馈优化 session 中一起做
 - **优先级**: P2 (反馈优化专题里做)
 
-### F-009 · Faithful Refine 真兑现 (L1/L2 真听 quality_floor / delivery_only / max_distance_km / reference)
+### F-009 · Faithful Refine 真兑现 [superseded by D-094, 2026-05-21]
 
-- **来源**: 2026-05-20 prompt 优化 Step 1 Opus+Codex 共识 brief §5 D1
-- **状态**: open, Phase 1 推广启动时再决定
-- **What**: 当前 V2 refine schema 抽出 `constrain.quality_floor / delivery_only / max_distance_km / reference` 等字段, 但 L1/L2 召回链路按 D-085 "务实降级"只透传 L3 + trace 标 `unsupported_in_recall`. **真做的话**: L1 召回阶段加 `quality_floor=non_fast_food` → 过滤 fast_food 餐厅; `delivery_only=true` → 过滤堂食; `max_distance_km` → 过滤 distance; `reference.avoid_pattern` → 接 resolver
-- **影响**: 让 D-080~D-085 Faithful Refine 第一原则真正兑现 (而非"听见但不办"). 但触碰 `chisha/recall.py + score.py` 高风险白名单, 需要独立 D-XXX + baseline_l2_snapshot 守门
-- **不修原因**: 跨 Step 1 范围 (prompt 文案) → Step 2-4 (基建) 也都不动召回链路. 等 Phase 1 推广启动时 review 是否提前
-- **关联**: D-080~D-085, brief `docs/proposals/archive/2026-05-20-prompt-effect-optimization.md` §5 D1
-- **优先级**: P2 (Phase 1 推广启动时 review)
+- **状态**: **superseded** — scope 翻盘. `reference` 已在 T-P2-01 真消费; `quality_floor / delivery_only / max_distance_km / functional.*` 砍 schema (志丹单用户实际不用); 见 D-094 草稿 + `docs/proposals/2026-05-21-faithful-refine-true-fulfillment.md`
 
-### F-010 · expanded / synonyms 词典化 (移出 LLM)
+### F-010 · expanded / synonyms 词典化 [superseded by D-094, 2026-05-21]
 
-- **来源**: 2026-05-20 prompt 优化 Step 1 Opus+Codex 共识 brief §5 D2
-- **状态**: open, Phase 1 推广启动时再决定
-- **What**: 当前 refine v2 schema 让 LLM 推断 `cuisine_candidates_expanded` ("辣"→["川菜","湘菜",...]) 和 `ingredient_synonyms` ("肉"→["排骨","牛肉",...]). 这违反第一原则 "不联想" + LLM 一致性差. **真做的话**: 建 `chisha/data/cuisine_synonyms.yaml` + `chisha/data/ingredient_synonyms.yaml`, L1/L2 召回时查表展开, LLM 只负责"识别"
-- **本轮处理 (T-PR-01)**: prompt 文案闭集化收紧, 词典不迁
-- **影响**: 解决一致性 + 词典可 PR review, 但需 L1/L2 召回逻辑改造 (跨 Step 1 范围)
-- **关联**: D-080~D-085, brief §5 D2, T-PR-01 P1-1 已闭集化但未迁词典
-- **优先级**: P2 (Phase 1 推广启动时 review)
+- **状态**: **superseded** — scope 翻盘. 不迁词典: `cuisine_candidates_expanded` 真消费 (L1 召回 `cuisine_want ∪ expanded`), `ingredient_synonyms` 砍 (代码 `_INGREDIENT_BROAD` 已替代). 见 D-094 草稿 + `docs/proposals/2026-05-21-faithful-refine-true-fulfillment.md`
+
+### F-011 · food_form_avoid 数据打标 + L1 硬过滤
+
+- **来源**: 2026-05-21 D-094 scope audit 拆出
+- **状态**: open, 等下个数据轮次启动
+- **What**: dish 数据层当前**无 `food_form` 字段** (audit 0/11123). 志丹会说"不要面条 / 不要米粉" 等形态排除, 但本轮 D-094 把 `food_form_avoid` 砍 schema (避免抽出来但没字段过滤的 ghost field). 数据轮次到时: (1) dish 打标 `food_form` (面条/米饭/粥/汤/饼/...) (2) refine v2 schema 重新加回 `food_form_avoid` (3) L1 硬过滤命中
+- **依赖**: data 打标工作流 (LLM 批量打标 dishes_tagged.json + 人工抽检)
+- **优先级**: P2 (下次数据轮次)
 
 ---
 
@@ -140,3 +136,5 @@ _(待填)_
 - 2026-05-20 · 文档治理: F-005 (OpenClaw 接入) 与 D-074 草稿重复, 删 F-005 统一到 D-074; B-001 顶部加 "Phase 1 推广前必修" 强提示
 - 2026-05-20 · V1.0 代码治理跑 integration 测试: 修 4 个 cc.call 返 dict 后未同步的 `.strip()` fail (D-050 遗留); 删 test_real_rerank_end_to_end (D-047 设计期 acceptance, CLI 是 fallback 不是 tool_use 主路径, smoke 已被另 4 个测试覆盖)
 - 2026-05-20 · prompt 优化 Step 1 拆 7 task (T-PR-01~07) 共识审完成, brief §5 D1+D2 入 F-009 / F-010 (Phase 1 推广启动时 review)
+- 2026-05-21 · F-009 / F-010 scope 翻盘 superseded by D-094 (草, 待 codex 共商 + plan-brief): D1 quality_floor/delivery_only/max_distance_km/functional 砍 (志丹不用), D2 expanded 真消费 + synonyms 砍. food_form_avoid 拆出新立 F-011 等数据打标
+- 2026-05-21 · D-094 落地实施完成 (T-FR-01~07, 7 task closed): refine_intent_v2.py 砍 5 字段 + 9 类枚举闭包; recall.py 加 brand_avoid (venue 整店) + cooking_method_avoid (dish-级) 硬过滤 + cuisine_candidates_expanded 进 bucket_soft; refine.py V2→V1 桥接; rerank prompt 删 unsupported 段; eval set + 18 个 recall branch 测试同步; baseline_l2_snapshot 0 diff 守门通过

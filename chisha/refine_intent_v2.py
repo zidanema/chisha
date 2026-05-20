@@ -1,22 +1,26 @@
-"""T-P1a-03 (follow-up): Faithful Refine 多 slot schema + LLM 解析层 + 安全带.
+"""Faithful Refine 多 slot schema + LLM 解析层 + 安全带 (D-094 真兑现版).
 
-边界 (重要):
-  - LLM 解析直出 brief §4 多 slot 结构; 解析失败时**降级到 V1 from_legacy**, 永不崩.
-  - V1 (`refine_intent.RefineIntent`) 共存, 生产 refine 链路目前仍走 V1 (T-P1a-02
-    L1 召回参数改写已消费 V1; 把 V2 真接入生产是 T-P2-01 / T-P2-02 follow-up 的事).
-  - 下游 (recall/score/rerank) 当前不消费新 slot (cuisine_candidates_expanded /
-    ingredient_synonyms / brand_avoid / cooking_method_avoid / food_form_avoid /
-    constrain.* / reference / reject_previous). 本任务只确保 LLM 抽得出来 + trace 双存.
+边界 (D-094 后):
+  - LLM 解析直出多 slot 结构; 解析失败时**降级到 V1 from_legacy**, 永不崩.
+  - 下游 L1/L2/L3 真消费的 slot:
+    - redirect.cuisine_want / cuisine_avoid / ingredient_want / ingredient_avoid (V1 兼容)
+    - redirect.cuisine_candidates_expanded (D-094: L1 bucket_soft 真召回)
+    - redirect.brand_avoid (D-094: L1 venue 整店硬过滤)
+    - redirect.cooking_method_avoid (D-094: L1 dish 硬过滤, 9 类枚举)
+    - constrain.oil / price_max (L2 消费)
+    - reference (T-P2-01 L3 软重排消费)
+    - reject_previous (V2 全盘重推)
+  - 已砍字段 (D-094: 字段要么真消费要么砍, 不留 trace-only 装饰):
+    - redirect.ingredient_synonyms (score.py _INGREDIENT_BROAD 硬词典已替代)
+    - redirect.food_form_avoid (dish.food_form 0 覆盖, F-011 数据打标后再加回)
+    - constrain.quality_floor / delivery_only / max_distance_km
+    - constrain.functional.{low_caffeine, low_satiety_drowsy}
+  - D-085 第二句 "字段空洞务实降级" 已废弃 (by D-094): 没 trace-only 字段了, 没 unsupported_in_recall.
 
-trace 双存 (brief §4 安全带 #2):
+trace 双存 (安全带):
   - raw_text: 用户原文
   - 结构化结果 (V2 dataclass.to_log_dict)
-  - raw_understanding: LLM 自述理解 (LLM 失败/降级时回填 raw_text 兜底)
-
-字段空洞 (brief §5):
-  - LLM 仍输出 constrain.quality_floor / delivery_only / max_distance_km / reference
-  - L1/L2 不消费, 只透传 L3 prompt
-  - unsupported_in_recall 列出"被填了但下游不读"的字段名
+  - raw_understanding: LLM 自述理解 (LLM 失败/降级时回填占位)
 """
 from __future__ import annotations
 
@@ -30,50 +34,42 @@ ROOT = Path(__file__).resolve().parent.parent
 PROMPT_PATH_V2 = ROOT / "prompts" / "parse_refine_intent_v2.md"
 
 
-# brief §5: 数据层暂不支持的字段名 (即使 LLM 解析出, L1/L2 也不消费)
-DATA_LAYER_UNSUPPORTED_FIELDS: tuple[str, ...] = (
-    "constrain.quality_floor",
-    "constrain.delivery_only",
-    "constrain.max_distance_km",
-    "reference",
-)
+# D-094: cooking_method_avoid 闭包枚举 (codex audit 实读 dishes_tagged.json, 共 9 类).
+# LLM 输出越界值 → _clean_parsed_to_v2 丢弃 (枚举外值不进 list).
+COOKING_METHOD_ENUM: frozenset[str] = frozenset({
+    "油炸", "凉拌", "生", "炖", "炒", "煮", "蒸", "烤", "煎",
+})
 
 
 def _empty_redirect() -> dict:
-    """brief §4 redirect 块: 全部 list 字段空数组."""
+    """redirect 块: 全部 list 字段空数组 (D-094 砍 ingredient_synonyms + food_form_avoid)."""
     return {
         "cuisine_want": [],
         "cuisine_avoid": [],
         "cuisine_candidates_expanded": [],
         "ingredient_want": [],
         "ingredient_avoid": [],
-        "ingredient_synonyms": [],
         "brand_avoid": [],
         "cooking_method_avoid": [],
-        "food_form_avoid": [],
     }
 
 
 def _empty_constrain() -> dict:
-    """brief §4 constrain 块: 全部 None 初始, functional 子 dict 也全 None."""
+    """constrain 块 (D-094 砍 quality_floor / delivery_only / max_distance_km / functional).
+
+    只保留 L2 真消费的两项: oil ("low"/"normal"/null), price_max (数字/null).
+    """
     return {
         "oil": None,
         "price_max": None,
-        "quality_floor": None,
-        "delivery_only": None,
-        "max_distance_km": None,
-        "functional": {
-            "low_caffeine": None,
-            "low_satiety_drowsy": None,
-        },
     }
 
 
 @dataclass
 class RefineIntentV2:
-    """多 slot Faithful Refine schema (brief §4).
+    """多 slot Faithful Refine schema (D-094 真兑现版).
 
-    LLM 直出 (T-P1a-03 follow-up). 失败时 from_legacy 降级.
+    LLM 直出. 失败时 from_legacy 降级.
     """
     redirect: dict = field(default_factory=_empty_redirect)
     constrain: dict = field(default_factory=_empty_constrain)
@@ -82,7 +78,6 @@ class RefineIntentV2:
     raw_understanding: str = ""        # LLM 自述理解, trace 双存用
     raw_text: str = ""                 # 用户原文
     schema_version: str = "2.0"
-    unsupported_in_recall: list[str] = field(default_factory=list)
     # V1 字段在 V2 schema 没有自然位的部分进 legacy_v1 (向后兼容)
     legacy_v1: dict = field(default_factory=dict)
 
@@ -93,11 +88,8 @@ class RefineIntentV2:
         for v in self.redirect.values():
             if v:
                 return False
-        for k, v in self.constrain.items():
-            if k == "functional":
-                if isinstance(v, dict) and any(x not in (None, False) for x in v.values()):
-                    return False
-            elif v not in (None, False, [], "", {}):
+        for v in self.constrain.values():
+            if v not in (None, False, [], "", {}):
                 return False
         if self.reference:
             return False
@@ -136,7 +128,6 @@ class RefineIntentV2:
             raw_understanding=legacy.get("freeform_note") or "",
             raw_text=legacy.get("raw_text", "") or "",
             schema_version="2.0",
-            unsupported_in_recall=list(DATA_LAYER_UNSUPPORTED_FIELDS),
             legacy_v1={k: v for k, v in legacy.items()
                        if k not in ("raw_text", "schema_version")},
         )
@@ -151,11 +142,10 @@ def validate_v2_schema(d: dict) -> tuple[bool, list[str]]:
       - 顶层 dict
       - schema_version == "2.0"
       - redirect 是 dict + 各 slot 是 list[str]
-      - constrain 是 dict + functional 是 dict
+      - constrain 是 dict
       - reference: None 或 dict
       - reject_previous: bool
       - raw_understanding / raw_text: str
-      - unsupported_in_recall: list[str]
       - legacy_v1: dict
     不检查内层 enum (那是 LLM 解析的 best-effort).
     """
@@ -190,10 +180,6 @@ def validate_v2_schema(d: dict) -> tuple[bool, list[str]]:
         errors.append("raw_understanding not str")
     if not isinstance(d.get("raw_text", ""), str):
         errors.append("raw_text not str")
-    uir = d.get("unsupported_in_recall")
-    if uir is not None:
-        if not isinstance(uir, list) or any(not isinstance(x, str) for x in uir):
-            errors.append("unsupported_in_recall not list[str]")
     legacy = d.get("legacy_v1")
     if legacy is not None and not isinstance(legacy, dict):
         errors.append("legacy_v1 not dict")
@@ -335,7 +321,6 @@ def _coerce_enum_or_null(v: Any, allowed: set[str]) -> str | None:
 
 
 _OIL_VALUES = {"low", "normal"}
-_QUALITY_FLOOR_VALUES = {"non_fast_food"}
 _REFERENCE_RELATIONS = {"lighter", "similar_but_different_venue", "avoid_pattern"}
 
 
@@ -343,27 +328,23 @@ def _clean_parsed_to_v2(parsed: dict, *, raw_text: str) -> RefineIntentV2:
     """LLM 返回的 dict → RefineIntentV2 dataclass. 每个 slot 都做防御性清洗.
 
     任何不符合 schema 的子字段降级到默认值 (空 list / None / False), 不抛.
+
+    D-094: cooking_method_avoid 枚举闭包过滤 — LLM 越界值丢弃 (例: "烧烤" 必须先映射到
+    "烤", "煎炸" 拆成 "油炸"/"煎"; "油腻" 不进此字段, 应进 constrain.oil="low").
     """
     redirect_raw = parsed.get("redirect") or {}
     redirect = _empty_redirect()
     for k in redirect.keys():
         redirect[k] = _clean_str_list(redirect_raw.get(k))
+    # D-094: cooking_method_avoid 必须命中 9 类枚举, 越界值丢弃
+    redirect["cooking_method_avoid"] = [
+        x for x in redirect["cooking_method_avoid"] if x in COOKING_METHOD_ENUM
+    ]
 
     constrain_raw = parsed.get("constrain") or {}
     constrain = _empty_constrain()
     constrain["oil"] = _coerce_enum_or_null(constrain_raw.get("oil"), _OIL_VALUES)
     constrain["price_max"] = _coerce_number_or_null(constrain_raw.get("price_max"))
-    constrain["quality_floor"] = _coerce_enum_or_null(
-        constrain_raw.get("quality_floor"), _QUALITY_FLOOR_VALUES)
-    constrain["delivery_only"] = _coerce_bool_or_null(constrain_raw.get("delivery_only"))
-    constrain["max_distance_km"] = _coerce_number_or_null(
-        constrain_raw.get("max_distance_km"))
-    functional_raw = constrain_raw.get("functional") or {}
-    if isinstance(functional_raw, dict):
-        constrain["functional"]["low_caffeine"] = _coerce_bool_or_null(
-            functional_raw.get("low_caffeine"))
-        constrain["functional"]["low_satiety_drowsy"] = _coerce_bool_or_null(
-            functional_raw.get("low_satiety_drowsy"))
 
     reference: dict | None = None
     reference_raw = parsed.get("reference")
@@ -391,7 +372,6 @@ def _clean_parsed_to_v2(parsed: dict, *, raw_text: str) -> RefineIntentV2:
         raw_understanding=raw_understanding,
         raw_text=raw_text,
         schema_version="2.0",
-        unsupported_in_recall=list(DATA_LAYER_UNSUPPORTED_FIELDS),
         legacy_v1={},
     )
 
@@ -414,27 +394,25 @@ def _llm_parse_v2(text: str,
     refine round trace 自包含的关键 — 让 debug-ui 能 replay 当次意图解析全过程.
     """
     import time as _time
-    # parse_refine_intent_v2.md 不像 rerank 那样有 {INPUT_TEXT} 之外的动态部分,
-    # system_prompt 形态上等同 "整个 prompt 模板"; user_message 是 INPUT_TEXT 子串.
-    # 但当前实现是单消息: 整段 prompt = system + user 混合放在 user role.
-    # 落 trace 时分两段: prompt_template (== system_prompt_full),
-    # input_text (== user_message_full). 等迁移到 system/user 分离后这里语义自然.
+    # D-095: prompt 模板拆 system/user, 启用 Anthropic ephemeral cache.
+    # system = template_head (INPUT_TEXT 之前的固定指令 + 八例 + "用户 refine 文本:\n```\n"),
+    # user  = text + template_tail (用户原文 + "\n```\n\n输出 JSON:").
+    # 模板顺序不变, 仅把固定部分挪到 system 让 cache_control 命中.
+    # trace_collector 落实际发给 LLM 的内容 (1:1 对齐, 不再"假拆").
     prompt_template = ""
-    final_prompt = ""
+    system_prompt = ""
+    user_msg = ""
     try:
         from chisha.llm_client import call_text, _resolve_provider
         prompt_template = PROMPT_PATH_V2.read_text(encoding="utf-8")
-        final_prompt = prompt_template.replace("{INPUT_TEXT}", text)
+        template_head, _sep, template_tail = prompt_template.partition("{INPUT_TEXT}")
+        system_prompt = template_head
+        user_msg = text + template_tail
         if trace_collector is not None:
-            # 当前 prompt 形式: 整段模板 (含 {INPUT_TEXT} 替换). 拆解:
-            # system_prompt_full = prompt 模板里 INPUT_TEXT 之前的固定部分 +
-            # user_message_full = INPUT_TEXT 本身 (用户追问原文).
-            # 用 split: 让 trace 体现"框架部分"和"用户输入部分"边界.
-            template_head, _sep, template_tail = prompt_template.partition("{INPUT_TEXT}")
-            trace_collector["system_prompt_full"] = template_head + template_tail
-            trace_collector["system_prompt_chars"] = len(template_head + template_tail)
-            trace_collector["user_message_full"] = text
-            trace_collector["user_message_chars"] = len(text)
+            trace_collector["system_prompt_full"] = system_prompt
+            trace_collector["system_prompt_chars"] = len(system_prompt)
+            trace_collector["user_message_full"] = user_msg
+            trace_collector["user_message_chars"] = len(user_msg)
             try:
                 trace_collector["resolved_provider"] = _resolve_provider(profile_llm)
             except Exception:
@@ -442,7 +420,8 @@ def _llm_parse_v2(text: str,
             trace_collector["max_tokens"] = 1024
             trace_collector["temperature"] = 0.0
         t0 = _time.time()
-        resp = call_text(final_prompt, max_tokens=1024, temperature=0.0,
+        resp = call_text(user_msg, system=system_prompt, cache_system=True,
+                          max_tokens=1024, temperature=0.0,
                           json_mode=True, profile_llm=profile_llm)
         latency_ms = int((_time.time() - t0) * 1000)
         out = resp.get("content", "") if isinstance(resp, dict) else ""
@@ -543,8 +522,6 @@ def extract_refine_intent_v2(
     parsed.setdefault("raw_text", text)
     parsed.setdefault("reference", None)
     parsed.setdefault("reject_previous", False)
-    parsed.setdefault("unsupported_in_recall",
-                       list(DATA_LAYER_UNSUPPORTED_FIELDS))
     parsed.setdefault("legacy_v1", {})
 
     ok, errors = validate_v2_schema(parsed)

@@ -310,3 +310,191 @@ def test_per_rest_max_5_brand_cap_still_applies():
     brands = [c["restaurant"]["brand"] for c in capped]
     # brand cap=2 (默认), 即使 per_rest_max 改了, brand cap 仍生效
     assert brands.count("same_brand") <= 2
+
+
+# ────────────────────────── D-094: cooking_method_avoid 硬过滤
+
+
+def test_d094_cooking_method_avoid_filters_dish_in_combo():
+    """combo 内任一 dish 命中 cooking_method_avoid → 整个 combo 弃."""
+    from chisha.recall import _apply_intent_buckets
+    combos = [
+        {  # 含 1 道油炸 → 应弃
+            "restaurant": {"id": "r1", "name": "店1", "brand": "b1"},
+            "dishes": [
+                {"dish_id": "d1a", "canonical_name": "炸鸡", "raw_name": "炸鸡",
+                 "cuisine": "湘菜",
+                 "nutrition_profile": {"cooking_method": "油炸",
+                                        "main_ingredient_type": "白肉"}},
+                {"dish_id": "d1b", "canonical_name": "青菜", "raw_name": "青菜",
+                 "cuisine": "湘菜",
+                 "nutrition_profile": {"cooking_method": "炒",
+                                        "main_ingredient_type": "蔬菜"}},
+            ],
+        },
+        {  # 全炒 → 应留
+            "restaurant": {"id": "r2", "name": "店2", "brand": "b2"},
+            "dishes": [
+                {"dish_id": "d2a", "canonical_name": "炒牛肉", "raw_name": "炒牛肉",
+                 "cuisine": "湘菜",
+                 "nutrition_profile": {"cooking_method": "炒",
+                                        "main_ingredient_type": "红肉"}},
+            ],
+        },
+    ]
+    intent = RefineIntent(cooking_method_avoid=["油炸"], raw_text="不要油炸")
+    out = _apply_intent_buckets(combos, intent, n=5)
+    assert len(out) == 1
+    assert out[0]["restaurant"]["id"] == "r2"
+
+
+def test_d094_cooking_method_avoid_multi_method():
+    """cooking_method_avoid=['油炸','烤'] → 含任一即弃."""
+    from chisha.recall import _apply_intent_buckets
+    combos = [
+        {"restaurant": {"id": "ra", "name": "X", "brand": "ba"},
+         "dishes": [{"dish_id": "da", "canonical_name": "煎饺", "raw_name": "煎饺",
+                      "cuisine": "粤菜",
+                      "nutrition_profile": {"cooking_method": "煎",
+                                             "main_ingredient_type": "白肉"}}]},
+        {"restaurant": {"id": "rb", "name": "Y", "brand": "bb"},
+         "dishes": [{"dish_id": "db", "canonical_name": "烤鸭", "raw_name": "烤鸭",
+                      "cuisine": "粤菜",
+                      "nutrition_profile": {"cooking_method": "烤",
+                                             "main_ingredient_type": "白肉"}}]},
+        {"restaurant": {"id": "rc", "name": "Z", "brand": "bc"},
+         "dishes": [{"dish_id": "dc", "canonical_name": "炸鸡", "raw_name": "炸鸡",
+                      "cuisine": "粤菜",
+                      "nutrition_profile": {"cooking_method": "油炸",
+                                             "main_ingredient_type": "白肉"}}]},
+    ]
+    intent = RefineIntent(cooking_method_avoid=["油炸", "烤"], raw_text="不要油炸不要烤")
+    out = _apply_intent_buckets(combos, intent, n=5)
+    # 烤 + 油炸 都被弃, 煎留下
+    ids = {c["restaurant"]["id"] for c in out}
+    assert ids == {"ra"}
+
+
+# ────────────────────────── D-094: cuisine_candidates_expanded → bucket_soft
+
+
+def test_d094_cuisine_expanded_routes_to_bucket_soft():
+    """cuisine_want=[], expanded=['川菜'] → 川菜 combos 进 bucket_soft (优先), 其他进 rest."""
+    from chisha.recall import _apply_intent_buckets
+    combos = [
+        {"restaurant": {"id": f"rc{i}", "name": f"川店{i}", "brand": f"b{i}"},
+         "dishes": [{"dish_id": f"dc{i}", "canonical_name": f"川菜{i}",
+                      "raw_name": f"川菜{i}", "cuisine": "川菜",
+                      "nutrition_profile": {"cooking_method": "炒",
+                                             "main_ingredient_type": "红肉"}}]}
+        for i in range(3)
+    ] + [
+        {"restaurant": {"id": f"rj{i}", "name": f"日店{i}", "brand": f"jb{i}"},
+         "dishes": [{"dish_id": f"dj{i}", "canonical_name": f"寿司{i}",
+                      "raw_name": f"寿司{i}", "cuisine": "日料",
+                      "nutrition_profile": {"cooking_method": "生",
+                                             "main_ingredient_type": "海鲜"}}]}
+        for i in range(3)
+    ]
+    intent = RefineIntent(cuisine_candidates_expanded=["川菜"], raw_text="想吃辣")
+    out = _apply_intent_buckets(combos, intent, n=5)
+    # bucket_soft + bucket_rest 拼合, 川菜 (soft) 应排在前
+    top3_ids = {c["restaurant"]["id"] for c in out[:3]}
+    assert all(rid.startswith("rc") for rid in top3_ids)
+
+
+def test_d094_cuisine_want_beats_expanded_when_both_present():
+    """cuisine_want=['湘菜'], expanded=['川菜'] → 湘菜进 exact (顶层), 川菜进 soft."""
+    from chisha.recall import _apply_intent_buckets
+    combos = [
+        {"restaurant": {"id": "rxiang", "name": "湘店", "brand": "bx"},
+         "dishes": [{"dish_id": "dx", "canonical_name": "辣椒炒肉",
+                      "raw_name": "辣椒炒肉", "cuisine": "湘菜",
+                      "nutrition_profile": {"cooking_method": "炒",
+                                             "main_ingredient_type": "红肉"}}]},
+        {"restaurant": {"id": "rchuan", "name": "川店", "brand": "bc"},
+         "dishes": [{"dish_id": "dc", "canonical_name": "麻婆豆腐",
+                      "raw_name": "麻婆豆腐", "cuisine": "川菜",
+                      "nutrition_profile": {"cooking_method": "煮",
+                                             "main_ingredient_type": "蔬菜"}}]},
+        {"restaurant": {"id": "rjp", "name": "日店", "brand": "bj"},
+         "dishes": [{"dish_id": "dj", "canonical_name": "寿司",
+                      "raw_name": "寿司", "cuisine": "日料",
+                      "nutrition_profile": {"cooking_method": "生",
+                                             "main_ingredient_type": "海鲜"}}]},
+    ]
+    intent = RefineIntent(cuisine_want=["湘菜"],
+                            cuisine_candidates_expanded=["川菜"],
+                            raw_text="湘菜或者辣的")
+    out = _apply_intent_buckets(combos, intent, n=5)
+    # 湘菜 exact 优先, 川菜 soft 第二, 日料 rest 第三
+    assert out[0]["restaurant"]["id"] == "rxiang"
+    assert out[1]["restaurant"]["id"] == "rchuan"
+    assert out[2]["restaurant"]["id"] == "rjp"
+
+
+def test_d094_cuisine_expanded_only_no_want_no_ingredient_still_buckets():
+    """`if not cuisine_want and not ingredient_want: return combos` 早退 gate
+    要也认 cuisine_candidates_expanded — 不然 expanded 单字段 refine 不进桶.
+    """
+    from chisha.recall import _apply_intent_buckets
+    combos = [
+        {"restaurant": {"id": "rc", "name": "川店", "brand": "bc"},
+         "dishes": [{"dish_id": "dc", "canonical_name": "麻婆豆腐",
+                      "raw_name": "麻婆豆腐", "cuisine": "川菜",
+                      "nutrition_profile": {"cooking_method": "煮",
+                                             "main_ingredient_type": "蔬菜"}}]},
+        {"restaurant": {"id": "rj", "name": "日店", "brand": "bj"},
+         "dishes": [{"dish_id": "dj", "canonical_name": "寿司",
+                      "raw_name": "寿司", "cuisine": "日料",
+                      "nutrition_profile": {"cooking_method": "生",
+                                             "main_ingredient_type": "海鲜"}}]},
+    ]
+    intent = RefineIntent(cuisine_candidates_expanded=["川菜"], raw_text="想吃辣")
+    events: list[dict] = []
+    out = _apply_intent_buckets(combos, intent, n=5,
+                                  recall_fallback_events=events)
+    # 进桶了: 川菜在 bucket_soft, 日料在 rest, 顺序应是川菜在前
+    assert out[0]["restaurant"]["id"] == "rc"
+    # events 写到了 (说明走了三级回落分支, 不是早退)
+    assert len(events) == 1
+
+
+# ────────────────────────── D-094: brand_avoid venue 整店硬过滤
+
+
+def test_d094_brand_avoid_excludes_whole_venue():
+    """recall() 顶层: brand_avoid 命中的 venue 整店剔除 (含其所有 dish)."""
+    dishes = [
+        _make_dish("d_sal_1", "意面1", restaurant_id="r_sal"),
+        _make_dish("d_sal_2", "披萨1", restaurant_id="r_sal"),
+        _make_veg_dish("d_sal_v", "沙拉", restaurant_id="r_sal"),
+        _make_dish("d_ok_1", "红烧肉", restaurant_id="r_ok"),
+        _make_veg_dish("d_ok_v", "炒青菜", restaurant_id="r_ok"),
+    ]
+    rests = [
+        _make_rest("r_sal", "萨莉亚南山店", brand="萨莉亚"),
+        _make_rest("r_ok", "湘菜馆", brand="湘菜馆"),
+    ]
+    p = _make_profile()
+    intent = RefineIntent(brand_avoid=["萨莉亚"], raw_text="别再给我萨莉亚")
+    out = recall(p, rests, dishes, intent=intent)
+    # 萨莉亚整店应剔除, 出现的 combo 都不该来自 r_sal
+    venues = {c["restaurant"]["id"] for c in out}
+    assert "r_sal" not in venues
+    assert venues == {"r_ok"} if venues else True
+
+
+def test_d094_brand_avoid_empty_intent_no_effect():
+    """空 brand_avoid → 不影响召回 (baseline 行为)."""
+    dishes = [
+        _make_dish("d1", "红烧肉", restaurant_id="r1"),
+        _make_veg_dish("d1v", "炒青菜", restaurant_id="r1"),
+    ]
+    rests = [_make_rest("r1", "湘菜馆", brand="湘菜馆")]
+    p = _make_profile()
+    intent = RefineIntent(brand_avoid=[], cuisine_want=["潮汕"], raw_text="x")
+    out = recall(p, rests, dishes, intent=intent)
+    # brand_avoid 空 → r1 仍正常召回
+    assert len(out) >= 1
+    assert all(c["restaurant"]["id"] == "r1" for c in out)

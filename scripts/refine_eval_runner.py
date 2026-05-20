@@ -38,7 +38,7 @@ from chisha.refine_intent_v2 import extract_refine_intent_v2
 
 
 def _get_path(d: dict | None, path: str) -> Any:
-    """点号路径取值, 不存在返 None. e.g. 'constrain.functional.low_caffeine'."""
+    """点号路径取值, 不存在返 None. e.g. 'redirect.cuisine_want'."""
     if d is None:
         return None
     cur: Any = d

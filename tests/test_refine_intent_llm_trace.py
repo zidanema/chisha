@@ -44,8 +44,13 @@ class TestLlmParseV2TraceCollector:
             "system_prompt_full must be filled (parse_refine_intent_v2.md template body)"
         )
         assert collector["system_prompt_chars"] == len(collector["system_prompt_full"])
-        assert collector["user_message_full"] == "来点湘菜"
-        assert collector["user_message_chars"] == 4
+        # D-095: user_message_full 是 text + template_tail (模板 INPUT_TEXT 之后的固定尾巴).
+        # 不再是裸 "来点湘菜" (旧"假拆"姿态), 而是真发给 LLM 的内容.
+        assert collector["user_message_full"].startswith("来点湘菜")
+        assert "{INPUT_TEXT}" not in collector["user_message_full"]
+        assert collector["user_message_chars"] == len(collector["user_message_full"])
+        # system 不含 INPUT_TEXT 占位符 (拆点正确)
+        assert "{INPUT_TEXT}" not in collector["system_prompt_full"]
         assert collector["raw_response"] == '{"redirect": {}, "constrain": {}}'
         assert collector["latency_ms"] is not None
         assert collector["latency_ms"] >= 0

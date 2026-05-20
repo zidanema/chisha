@@ -1,9 +1,18 @@
-"""T-P1a-03 (scaffold): RefineIntentV2 schema + 安全带 单测."""
+"""RefineIntentV2 schema + 安全带 单测 (D-094 真兑现版).
+
+D-094 砍 5 字段后, 仍保留的 redirect slot:
+  cuisine_want / cuisine_avoid / cuisine_candidates_expanded /
+  ingredient_want / ingredient_avoid / brand_avoid / cooking_method_avoid
+
+constrain slot 只保留 L2 真消费的两项: oil, price_max.
+
+D-085 第二句 "字段空洞务实降级" 已废弃 by D-094 → 不再有 unsupported_in_recall.
+"""
 from __future__ import annotations
 
 from chisha.refine_intent import RefineIntent, parse_refine_intent
 from chisha.refine_intent_v2 import (
-    DATA_LAYER_UNSUPPORTED_FIELDS,
+    COOKING_METHOD_ENUM,
     RefineIntentV2,
     extract_refine_intent_v2,
     validate_v2_schema,
@@ -15,10 +24,11 @@ def test_refine_v2_empty_default():
     assert v2.schema_version == "2.0"
     assert v2.redirect["cuisine_want"] == []
     assert v2.redirect["ingredient_want"] == []
-    # follow-up: constrain 用结构化默认 (全 None / functional 子 dict 全 None)
-    assert v2.constrain["oil"] is None
-    assert v2.constrain["price_max"] is None
-    assert v2.constrain["functional"]["low_caffeine"] is None
+    assert v2.redirect["brand_avoid"] == []
+    assert v2.redirect["cooking_method_avoid"] == []
+    assert v2.redirect["cuisine_candidates_expanded"] == []
+    # D-094: constrain 只剩 oil + price_max (functional / quality_floor 等已砍)
+    assert v2.constrain == {"oil": None, "price_max": None}
     assert v2.reference is None
     assert v2.reject_previous is False
     assert v2.raw_text == ""
@@ -49,17 +59,14 @@ def test_refine_v2_from_legacy_preserves_all_v1_fields():
     assert v2.schema_version == "2.0"
 
 
-def test_refine_v2_unsupported_in_recall_lists_field_voids():
-    """brief §5: V2 from_legacy 默认列入 4 个数据层不支持字段."""
-    v1 = parse_refine_intent("想吃湘菜", use_llm=False)
-    v2 = RefineIntentV2.from_legacy(v1)
-    assert "constrain.quality_floor" in v2.unsupported_in_recall
-    assert "constrain.delivery_only" in v2.unsupported_in_recall
-    assert "constrain.max_distance_km" in v2.unsupported_in_recall
-    assert "reference" in v2.unsupported_in_recall
-    # 数据层支持的字段不应在列 (e.g. cooking_method_avoid, brand_avoid)
-    assert "cooking_method_avoid" not in v2.unsupported_in_recall
-    assert "brand_avoid" not in v2.unsupported_in_recall
+def test_refine_v2_no_unsupported_in_recall_field():
+    """D-094: 已砍 unsupported_in_recall 字段 (D-085 第二句失效).
+
+    V2 dataclass 不再有此属性, to_log_dict 也不包含该 key.
+    """
+    v2 = RefineIntentV2()
+    assert not hasattr(v2, "unsupported_in_recall")
+    assert "unsupported_in_recall" not in v2.to_log_dict()
 
 
 def test_refine_v2_schema_validation_accepts_valid_v2():
@@ -122,7 +129,6 @@ def test_refine_v2_to_log_dict_includes_required_fields():
     assert d["raw_understanding"] == "LLM 听到了 x"
     assert "redirect" in d
     assert "constrain" in d
-    assert "unsupported_in_recall" in d
 
 
 def test_refine_v2_is_empty_ignores_raw_fields():
@@ -159,7 +165,7 @@ def _fake_llm_resp(content: str) -> dict:
 
 
 def test_extract_v2_llm_happy_path_multi_slot():
-    """LLM 返回完整多 slot JSON → 全字段清洗到位."""
+    """LLM 返回完整多 slot JSON → 全字段清洗到位 (D-094 slot 清单)."""
     llm_out = _json.dumps({
         "redirect": {
             "cuisine_want": ["湖南菜"],
@@ -167,16 +173,10 @@ def test_extract_v2_llm_happy_path_multi_slot():
             "cuisine_candidates_expanded": [],
             "ingredient_want": ["肉"],
             "ingredient_avoid": [],
-            "ingredient_synonyms": ["排骨", "牛肉"],
             "brand_avoid": [],
             "cooking_method_avoid": [],
-            "food_form_avoid": [],
         },
-        "constrain": {
-            "oil": None, "price_max": None, "quality_floor": None,
-            "delivery_only": None, "max_distance_km": None,
-            "functional": {"low_caffeine": None, "low_satiety_drowsy": None},
-        },
+        "constrain": {"oil": None, "price_max": None},
         "reference": None,
         "reject_previous": False,
         "raw_understanding": "想吃湖南菜, 而且要肉量多",
@@ -187,32 +187,99 @@ def test_extract_v2_llm_happy_path_multi_slot():
         v2 = extract_refine_intent_v2("想吃湖南菜, 肉多一点", use_llm=True)
     assert v2.redirect["cuisine_want"] == ["湖南菜"]
     assert v2.redirect["ingredient_want"] == ["肉"]
-    assert v2.redirect["ingredient_synonyms"] == ["排骨", "牛肉"]
     assert v2.raw_understanding == "想吃湖南菜, 而且要肉量多"
     assert v2.raw_text == "想吃湖南菜, 肉多一点"
+    # D-094: 已砍字段不应出现在 V2 (即使 LLM 漏给, 框架不补回)
+    assert "ingredient_synonyms" not in v2.redirect
+    assert "food_form_avoid" not in v2.redirect
 
 
 def test_extract_v2_constrain_coerce_number():
-    """LLM 给 price_max=30, oil='low', functional.low_satiety_drowsy=True → 全清洗."""
+    """LLM 给 price_max=30, oil='low' → 清洗到位 (D-094 后 constrain 只剩这两项)."""
     parsed = {
-        "redirect": {"cuisine_want": [], "cuisine_avoid": [],
-                     "cuisine_candidates_expanded": [],
-                     "ingredient_want": [], "ingredient_avoid": [],
-                     "ingredient_synonyms": [], "brand_avoid": [],
-                     "cooking_method_avoid": [], "food_form_avoid": []},
-        "constrain": {"oil": "low", "price_max": "30 块", "quality_floor": None,
-                      "delivery_only": None, "max_distance_km": None,
-                      "functional": {"low_caffeine": None,
-                                      "low_satiety_drowsy": True}},
+        "redirect": _empty_redirect_for_test(),
+        "constrain": {"oil": "low", "price_max": "30 块"},
         "reference": None, "reject_previous": False,
-        "raw_understanding": "少油, 30 块以内, 别犯困",
+        "raw_understanding": "少油, 30 块以内",
         "schema_version": "2.0",
     }
     with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed):
-        v2 = extract_refine_intent_v2("少油, 30 块以内, 别犯困", use_llm=True)
+        v2 = extract_refine_intent_v2("少油, 30 块以内", use_llm=True)
     assert v2.constrain["oil"] == "low"
     assert v2.constrain["price_max"] == 30  # 字符串数字提取
-    assert v2.constrain["functional"]["low_satiety_drowsy"] is True
+    # D-094: constrain 不再有 functional / quality_floor / delivery_only / max_distance_km
+    assert set(v2.constrain.keys()) == {"oil", "price_max"}
+
+
+def test_extract_v2_cooking_method_avoid_enum_filter():
+    """D-094: cooking_method_avoid 必须是 9 类枚举之一, 越界值丢弃.
+
+    LLM 偶尔输出"烧烤"/"煎炸"/"油腻" 等非枚举值, 框架在 _clean_parsed_to_v2 丢掉,
+    防止 recall.py 拿到无意义字符串做硬过滤.
+    """
+    parsed = {
+        "redirect": {
+            "cuisine_want": [], "cuisine_avoid": [],
+            "cuisine_candidates_expanded": [],
+            "ingredient_want": [], "ingredient_avoid": [],
+            "brand_avoid": [],
+            # 混合 enum + 越界值: "油炸"/"煎" 留, "烧烤"/"油腻" 丢
+            "cooking_method_avoid": ["油炸", "烧烤", "煎", "油腻"],
+        },
+        "constrain": {"oil": None, "price_max": None},
+        "reference": None, "reject_previous": False,
+        "raw_understanding": "test",
+        "schema_version": "2.0",
+    }
+    with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed):
+        v2 = extract_refine_intent_v2("不要油炸/烧烤/煎/油腻", use_llm=True)
+    assert v2.redirect["cooking_method_avoid"] == ["油炸", "煎"]
+
+
+def test_cooking_method_enum_constants():
+    """D-094: 9 类枚举 (codex audit dishes_tagged.json 实读)."""
+    assert COOKING_METHOD_ENUM == frozenset({
+        "油炸", "凉拌", "生", "炖", "炒", "煮", "蒸", "烤", "煎",
+    })
+
+
+def test_extract_v2_brand_avoid_passes_through():
+    """D-094: brand_avoid 清洗保留 (recall.py 用作 venue 整店硬过滤)."""
+    parsed = {
+        "redirect": {
+            "cuisine_want": [], "cuisine_avoid": [],
+            "cuisine_candidates_expanded": [],
+            "ingredient_want": [], "ingredient_avoid": [],
+            "brand_avoid": ["萨莉亚", "麦当劳＆麦咖啡"],
+            "cooking_method_avoid": [],
+        },
+        "constrain": {"oil": None, "price_max": None},
+        "reference": None, "reject_previous": False,
+        "raw_understanding": "排除萨莉亚和麦当劳",
+        "schema_version": "2.0",
+    }
+    with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed):
+        v2 = extract_refine_intent_v2("别再给我萨莉亚和麦当劳", use_llm=True)
+    assert v2.redirect["brand_avoid"] == ["萨莉亚", "麦当劳＆麦咖啡"]
+
+
+def test_extract_v2_cuisine_candidates_expanded_passes_through():
+    """D-094: cuisine_candidates_expanded 清洗保留 (recall.py 进 bucket_soft)."""
+    parsed = {
+        "redirect": {
+            "cuisine_want": [], "cuisine_avoid": [],
+            "cuisine_candidates_expanded": ["川菜", "湘菜", "贵州菜", "重庆菜"],
+            "ingredient_want": [], "ingredient_avoid": [],
+            "brand_avoid": [], "cooking_method_avoid": [],
+        },
+        "constrain": {"oil": None, "price_max": None},
+        "reference": None, "reject_previous": False,
+        "raw_understanding": "想吃辣, 推断为川/湘/贵/重",
+        "schema_version": "2.0",
+    }
+    with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed):
+        v2 = extract_refine_intent_v2("想吃辣的", use_llm=True)
+    assert v2.redirect["cuisine_candidates_expanded"] == ["川菜", "湘菜", "贵州菜", "重庆菜"]
 
 
 def test_extract_v2_reference_relation_only_valid_enum():
@@ -268,6 +335,51 @@ def test_extract_v2_llm_returns_none_falls_back_to_legacy():
     assert "V1 兜底" in v2.raw_understanding
     # V1 rule_parse 能识别"湘菜" → 应填到 redirect.cuisine_want
     assert v2.redirect["cuisine_want"]
+
+
+def test_extract_v2_llm_call_uses_split_system_user_with_cache():
+    """D-095: call_text 必须按 system/user 拆调用 + cache_system=True.
+
+    system 含模板固定指令 (不含 INPUT_TEXT), user 含真实用户文本.
+    trace_collector 字段同步落实际发给 LLM 的内容.
+    """
+    captured = {}
+
+    def _capturing_call_text(prompt, **kwargs):
+        captured["prompt"] = prompt
+        captured["kwargs"] = kwargs
+        return _fake_llm_resp(_json.dumps({
+            "redirect": _empty_redirect_for_test(),
+            "constrain": _empty_constrain_for_test(),
+            "reference": None, "reject_previous": False,
+            "raw_understanding": "ok", "schema_version": "2.0",
+        }))
+
+    trace: dict = {}
+    with patch("chisha.llm_client.call_text", _capturing_call_text), \
+         patch("chisha.llm_client.has_llm_key", return_value=True):
+        extract_refine_intent_v2("想吃辣的", use_llm=True, trace_collector=trace)
+
+    kw = captured["kwargs"]
+    # 1) cache_system=True 必须开
+    assert kw.get("cache_system") is True
+    # 2) system 必须存在, 且**不含 {INPUT_TEXT} 占位符** (拆点正确)
+    assert kw.get("system"), "system 参数缺失"
+    assert "{INPUT_TEXT}" not in kw["system"]
+    # 2b) 用户真实文本**不能**漏进 system (否则 ephemeral cache 命中率瓦解)
+    assert "想吃辣的" not in kw["system"]
+    # 3) user prompt 必须含真实 refine 文本
+    assert "想吃辣的" in captured["prompt"]
+    assert "{INPUT_TEXT}" not in captured["prompt"]
+    # 4) 调用超参不变
+    assert kw.get("max_tokens") == 1024
+    assert kw.get("temperature") == 0.0
+    assert kw.get("json_mode") is True
+    # 5) trace 字段 1:1 对齐实际发出的内容
+    assert trace["system_prompt_full"] == kw["system"]
+    assert trace["user_message_full"] == captured["prompt"]
+    assert "{INPUT_TEXT}" not in trace["system_prompt_full"]
+    assert "想吃辣的" in trace["user_message_full"]
 
 
 def test_extract_v2_llm_returns_bad_json_falls_back():
@@ -463,22 +575,18 @@ def test_v2_mode_default_sync(monkeypatch):
 
 
 def _empty_redirect_for_test() -> dict:
-    """test helper, 不引重新名空间."""
+    """test helper, D-094 后 7 个 slot (砍了 ingredient_synonyms + food_form_avoid)."""
     return {
         "cuisine_want": [], "cuisine_avoid": [],
         "cuisine_candidates_expanded": [],
         "ingredient_want": [], "ingredient_avoid": [],
-        "ingredient_synonyms": [],
-        "brand_avoid": [], "cooking_method_avoid": [], "food_form_avoid": [],
+        "brand_avoid": [], "cooking_method_avoid": [],
     }
 
 
 def _empty_constrain_for_test() -> dict:
-    return {
-        "oil": None, "price_max": None, "quality_floor": None,
-        "delivery_only": None, "max_distance_km": None,
-        "functional": {"low_caffeine": None, "low_satiety_drowsy": None},
-    }
+    """D-094 后只剩 oil + price_max."""
+    return {"oil": None, "price_max": None}
 
 
 # ─────────────── T-PR-02: T-PR-01 prompt boundary守门 (mocked LLM) ───────────
@@ -509,46 +617,47 @@ def test_refine_v2_prompt_boundary_flavor_conflict():
     assert "冲突" in v2.raw_understanding
 
 
-def test_refine_v2_prompt_boundary_no_pseudo_low_caffeine():
-    """T-PR-01 P0-E3 第一原则 + spec §What 2: '下午要睡觉' (违反第一原则的旧示例)
-    → functional.low_caffeine 应为 None (LLM 不脑补"睡前 → 低咖啡因").
+def test_refine_v2_prompt_boundary_no_pseudo_cuisine_expanded():
+    """D-094 第一原则 + spec §What 2: '下午要睡觉' (无明确食物诉求)
+    → cuisine_candidates_expanded 应为空 (不脑补"睡前 → 清淡菜").
+
+    旧 functional.low_caffeine 字段已砍, 此 case 改测 cuisine 不脑补.
     """
     parsed = {
         "redirect": _empty_redirect_for_test(),
         "constrain": _empty_constrain_for_test(),
         "reference": None,
         "reject_previous": False,
-        "raw_understanding": "用户提到下午要睡觉, 未明示别喝咖啡, 不擅自推断 low_caffeine",
+        "raw_understanding": "用户提到下午要睡觉, 未明示食物诉求, 不擅自推断菜系",
         "schema_version": "2.0",
     }
     with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed):
         v2 = extract_refine_intent_v2("下午要睡觉", use_llm=True)
-    # 第一原则: 没明示低咖啡因诉求, 不能脑补 True
-    assert v2.constrain["functional"]["low_caffeine"] is None
-    assert v2.constrain["functional"]["low_satiety_drowsy"] is None
+    assert v2.redirect["cuisine_candidates_expanded"] == []
+    assert v2.redirect["cuisine_want"] == []
 
 
-def test_refine_v2_prompt_boundary_delivery_only_explicit_vs_implicit():
-    """T-PR-01 P1-2 + spec §What 3/4:
-    - '今天只吃外卖' (明示 delivery) → delivery_only=True
-    - '今天加班好累' (无关联场景) → delivery_only=None (不脑补 False, 也不脑补 True)
+def test_refine_v2_prompt_boundary_brand_avoid_explicit_vs_implicit():
+    """D-094 第一原则:
+    - '别再给我萨莉亚' (明示 brand) → brand_avoid=['萨莉亚']
+    - '今天加班好累' (无关联场景) → brand_avoid=[] (不脑补 brand 偏好)
+
+    旧 delivery_only 字段已砍, 此 case 改测 brand_avoid 第一原则.
     """
     # case 1: 明示
+    redirect_explicit = _empty_redirect_for_test()
+    redirect_explicit["brand_avoid"] = ["萨莉亚"]
     parsed_explicit = {
-        "redirect": _empty_redirect_for_test(),
-        "constrain": {
-            "oil": None, "price_max": None, "quality_floor": None,
-            "delivery_only": True, "max_distance_km": None,
-            "functional": {"low_caffeine": None, "low_satiety_drowsy": None},
-        },
+        "redirect": redirect_explicit,
+        "constrain": _empty_constrain_for_test(),
         "reference": None,
         "reject_previous": False,
-        "raw_understanding": "用户明示只吃外卖, 已抽出 delivery_only=true",
+        "raw_understanding": "用户明示别再给萨莉亚, 已抽出 brand_avoid",
         "schema_version": "2.0",
     }
     with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed_explicit):
-        v2 = extract_refine_intent_v2("今天只吃外卖", use_llm=True)
-    assert v2.constrain["delivery_only"] is True
+        v2 = extract_refine_intent_v2("别再给我萨莉亚", use_llm=True)
+    assert v2.redirect["brand_avoid"] == ["萨莉亚"]
 
     # case 2: 无关联场景陈述, 不脑补
     parsed_implicit = {
@@ -556,12 +665,12 @@ def test_refine_v2_prompt_boundary_delivery_only_explicit_vs_implicit():
         "constrain": _empty_constrain_for_test(),
         "reference": None,
         "reject_previous": False,
-        "raw_understanding": "用户提到加班场景, 但未表达任何菜系/口味/价格诉求, 不擅自推断要外卖",
+        "raw_understanding": "用户提到加班场景, 但未表达品牌/菜系诉求, 不擅自推断",
         "schema_version": "2.0",
     }
     with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed_implicit):
         v2 = extract_refine_intent_v2("今天加班好累", use_llm=True)
-    assert v2.constrain["delivery_only"] is None
+    assert v2.redirect["brand_avoid"] == []
 
 
 def test_refine_v2_prompt_boundary_subset_reject_keeps_cuisine_avoid():

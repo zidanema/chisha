@@ -179,8 +179,8 @@ def test_refine_intent_v2_attached(tmp_path, small_profile, tiny_zone):
     assert v2["raw_understanding"]   # 非空 (use_llm=False 走 V1 兜底, raw_understanding 填降级原因)
     # 3. redirect.cuisine_want 从 V1 from_legacy 同步 (rule_parse 抓"湘菜"→"湖南菜")
     assert "湖南菜" in v2["redirect"]["cuisine_want"]
-    # 4. 数据层不支持字段列出 (brief §5)
-    assert "constrain.quality_floor" in v2["unsupported_in_recall"]
+    # 4. D-094: unsupported_in_recall 字段已砍, 不再出现 (D-085 第二句失效)
+    assert "unsupported_in_recall" not in v2
     # 5. V1 字段保留 (legacy_v1)
     assert v2["legacy_v1"].get("portion") == ["more_meat"]
 

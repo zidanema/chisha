@@ -16,8 +16,9 @@
 **北极星指标**: [D-028](#d-028)
 **Refine 重做**: [D-073+D-073.1](#d-073--d-0731)
 **L1 长期反馈层 / Sandbox 形态**: [D-076+D-076.1](#d-076--d-0761) · [D-077](#d-077)
-**Refine v2 / Faithful Refine**: [D-080](#d-080) · [D-081](#d-081) · [D-082](#d-082) · [D-083](#d-083) · [D-084](#d-084) · [D-085](#d-085)
+**Refine v2 / Faithful Refine**: [D-080](#d-080) · [D-081](#d-081) · [D-082](#d-082) · [D-083](#d-083) · [D-084](#d-084) · [D-085](#d-085) · [D-094](#d-094)
 **L2 信号校准**: [D-090~D-092](#d-090--d-091--d-092)
+**LLM 调用基建**: [D-095](#d-095)
 **Agent 接入 (草稿)**: [D-074](#d-074)
 
 > **不在本文件**: 内部工具的工程契约 (debug 台 / sandbox 实现细节 / trace schema / worktree 教训) → [CONTRACTS.md](CONTRACTS.md). 历史 D-039 调试台立项也已迁移过去。
@@ -192,7 +193,7 @@ per_restaurant_max 3 → 5-8 / 总召回 2-3x / ingredient_want 进 L1 反查 / 
 
 ## D-085
 **narrative + 状态条必须后置 — 漂亮 narrative 是信任放大器 (Codex 反直觉挑战).** (2026-05-18) · 实施次序硬约束
-L3 prompt 加 narrative 字段 + 顶部 always-on 状态条, 但必须在 D-083/D-084 之后上线, 否则 LLM 会自信编"为你避开了高油菜"实际没过滤, 欺骗深、失信代价大. 字段空洞 (quality_floor / delivery_only / reference) 务实降级: 抽出但 L1/L2 不消费, 仅透传 L3 + trace 标 `unsupported_in_recall=true`.
+L3 prompt 加 narrative 字段 + 顶部 always-on 状态条, 必须在 D-083/D-084 之后上线, 否则 LLM 会自信编"为你避开了高油菜"实际没过滤, 欺骗深、失信代价大. ~~字段空洞 (quality_floor / delivery_only / reference) 务实降级: 抽出但 L1/L2 不消费, 仅透传 L3 + trace 标 `unsupported_in_recall=true`.~~ [第二句已废弃 by D-094: 字段闭包替代务实降级, 不留 trace-only 字段]
 
 ## D-090 + D-091 + D-092
 **L2 refine 信号校准三轮 (intent 提权 → slot-aware overlay → 死维度清理).** (2026-05-19~20)
@@ -200,4 +201,12 @@ L3 prompt 加 narrative 字段 + 顶部 always-on 状态条, 但必须在 D-083/
 - D-091: slot-gated 通用健康权重让位 + `price_band` 语义解耦 (price 维度独立, 不再塞 cuisine 通道) + `context_boost` 清零
 - D-092: 5 死维度清理 (vegetable_floor_pass / protein_floor_pass / distance / wetness / context_boost), 19 维 → 14 维 breakdown
 - 数值在 `chisha/score.py`, 守门规则 + 改新维度走 D-09x.x + snapshot 守门见 CONTRACTS.md
+
+## D-094
+**Faithful Refine 真兑现 — refine v2 schema 字段闭包.** (2026-05-21) · 推翻 D-085 第二句"字段空洞务实降级"
+**砍 5**: `redirect.ingredient_synonyms` (代码 `_INGREDIENT_BROAD` 已替代) + `constrain.{quality_floor, delivery_only, max_distance_km, functional.low_caffeine, low_satiety_drowsy}` (单用户实际不用). **修 3 真消费**: `cuisine_candidates_expanded` 进 `_apply_intent_buckets` bucket_soft + `_intent_dish_score` 1.0 加分 (显式 want 仍优先 exact) / `brand_avoid` 在 `recall()` 顶层做 venue 整店硬过滤 (数据 277 venue 100% 单 brand) / `cooking_method_avoid` 在 `_apply_intent_buckets` 做 dish-级硬过滤, **9 类枚举闭包** {油炸/凉拌/生/炖/炒/煮/蒸/烤/煎} (codex audit 实读, brief 写 7 类是漏数据). `food_form_avoid` 数据层 0% 覆盖 → 砍 schema, 立 F-011 数据打标 follow-up; narrative 不主动提"不要面条"诉求 (老实暴露局限 > 假装支持). `DATA_LAYER_UNSUPPORTED_FIELDS` 常量 + `unsupported_in_recall` 字段全删. V2→V1 桥接: `refine.py` 把 intent_v2.redirect 的新字段拷到 V1 RefineIntent. baseline_l2_snapshot 守门: 空 refine 路径 0 diff 验证通过. 详见 `docs/proposals/2026-05-21-faithful-refine-true-fulfillment.md`.
+
+## D-095
+**Refine LLM 调用拆 system/user + Anthropic ephemeral cache.** (2026-05-21) · prompt 优化 Step 1 收尾后 Step 3 🔴 项落地
+`_llm_parse_v2` 早先把整段 prompt 模板 (含 `{INPUT_TEXT}` 替换后) 塞 user role, `call_text` 没传 `system=` 导致 Anthropic prompt cache 完全失效 — 注释自承认是已识别 bug. **方案 B (Codex 共商定)**: `template.partition("{INPUT_TEXT}")` 切点, `system=template_head` (含八例 + "用户 refine 文本:\n\`\`\`\n", 约 6-7K static tokens), `user=text+template_tail` (用户原文 + "\n\`\`\`\n\n输出 JSON:"). `cache_system=True` 启用 ephemeral cache. trace `system_prompt_full / user_message_full` 由"假拆"变与实际 LLM 入参 1:1 对齐. 模板顺序与语义不变, 仅挪 static head 到 system. 预期 ROI: refine latency 6-8s → 3-4s, input_tokens 95%+ 走 cache_read (10% 价格). 跨 provider: anthropic_api / openrouter ephemeral cache 真生效, claude_code_cli 静默忽略 (CLI 自管). 守门: 全套 pytest 984 pass + baseline_l2_snapshot 0 diff + Codex diff review SHIP. 详见 `docs/proposals/2026-05-21-refine-cache-fix.md`.
 

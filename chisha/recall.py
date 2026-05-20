@@ -478,6 +478,7 @@ def _intent_dish_score(d: dict, intent) -> float:
 
     # cuisine 命中: 用 score.normalize_cuisine 复用归一表
     cuisine_want = getattr(intent, "cuisine_want", None) or []
+    cuisine_expanded = getattr(intent, "cuisine_candidates_expanded", None) or []
     if cuisine_want:
         from chisha.score import normalize_cuisine
         targets = {normalize_cuisine(c) for c in cuisine_want}
@@ -486,6 +487,13 @@ def _intent_dish_score(d: dict, intent) -> float:
             score += 2.0
         # 软命中: 菜名子串
         elif any(c in full_name for c in cuisine_want if c):
+            score += 1.0
+    # D-094: cuisine_candidates_expanded 给 1.0 加分 (比显式 want 弱一级, 不破坏 want 优先).
+    if cuisine_expanded:
+        from chisha.score import normalize_cuisine
+        exp_targets = {normalize_cuisine(c) for c in cuisine_expanded}
+        exp_targets.discard(None)
+        if d.get("cuisine") in exp_targets:
             score += 1.0
 
     # ingredient 命中: 复用 contains_ingredient 的逻辑 (但只看单 dish)
@@ -661,6 +669,16 @@ def recall(
     extra_banned = compute_extra_banned_restaurants(restaurants, profile)
     avoid_rests = diversity_avoid | extra_banned
 
+    # 1c. D-094 (T-FR-03): brand_avoid venue 整店硬过滤.
+    # 用户 "别再给我萨莉亚" → restaurants.json[].brand == "萨莉亚" 的 venue 整店剔除.
+    # 数据 audit: 277 venue 100% 单 brand (最多 4 venue 共享 1 brand, 0 多 brand venue) → 实现无歧义.
+    if has_intent:
+        brand_avoid = set(getattr(intent, "brand_avoid", None) or [])
+        if brand_avoid:
+            for r in restaurants:
+                if r.get("brand") in brand_avoid:
+                    avoid_rests.add(r["id"])
+
     # 2. 硬过滤 dishes (含 P1 三个黑名单 + L0-A/B 永不可破)
     dishes, _ = hard_filter(dishes_tagged, profile, avoid_rests)
 
@@ -800,6 +818,9 @@ def _apply_intent_buckets(
     def _not_avoided(c):
         cu_av = getattr(intent, "cuisine_avoid", None) or []
         ing_av = getattr(intent, "ingredient_avoid", None) or []
+        # D-094 (T-FR-03): cooking_method_avoid dish 维度硬过滤. combo 内任一 dish 命中即弃
+        # (用户看完整 combo, 含 1 道油炸即破诉求).
+        cm_av = set(getattr(intent, "cooking_method_avoid", None) or [])
         if cu_av and cuisine_exact_match(c, cu_av):
             return False
         if cu_av and cuisine_soft_match(c, cu_av):
@@ -807,14 +828,22 @@ def _apply_intent_buckets(
         for ing in ing_av:
             if contains_ingredient(c, ing):
                 return False
+        if cm_av:
+            for d in c.get("dishes", []):
+                np_ = d.get("nutrition_profile") or {}
+                if np_.get("cooking_method") in cm_av:
+                    return False
         return True
 
     combos = [c for c in combos if _not_avoided(c)]
 
     cuisine_want = getattr(intent, "cuisine_want", None) or []
     ingredient_want = getattr(intent, "ingredient_want", None) or []
+    # D-094 (T-FR-04): cuisine_candidates_expanded — LLM 抽出的同源菜系扩展 (例: "想吃辣"→川/湘/贵/重).
+    # 进 bucket_soft (跟 cuisine_soft_match 同档, 比显式 cuisine_want 低一级). 不进 bucket_exact.
+    cuisine_expanded = getattr(intent, "cuisine_candidates_expanded", None) or []
 
-    if not cuisine_want and not ingredient_want:
+    if not cuisine_want and not ingredient_want and not cuisine_expanded:
         # 用户未表达 want, 不做桶过滤 (avoid 已处理), 全集走 L2
         return combos
 
@@ -825,6 +854,7 @@ def _apply_intent_buckets(
         if cuisine_want and cuisine_exact_match(c, cuisine_want):
             bucket_exact.append(c)
         elif (cuisine_want and cuisine_soft_match(c, cuisine_want)) or \
+             (cuisine_expanded and cuisine_exact_match(c, cuisine_expanded)) or \
              any(contains_ingredient(c, ing) for ing in ingredient_want):
             bucket_soft.append(c)
         else:

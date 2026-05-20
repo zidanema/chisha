@@ -4,44 +4,41 @@
 {"id": "cuisine-04", "text": "想吃日料或粤菜", "category": "cuisine_switch", "expected": {"redirect.cuisine_want": ["日料", "粤菜"]}}
 {"id": "cuisine-05", "text": "换个菜系", "category": "cuisine_switch", "expected": {"is_empty_redirect": true}}
 {"id": "cuisine-06", "text": "今晚想来点辣的", "category": "cuisine_abstract", "expected": {"redirect.cuisine_candidates_expanded_contains_any": ["川菜", "湘菜", "贵州菜", "重庆菜", "韩式", "火锅"]}}
-{"id": "ingredient-01", "text": "肉多一点", "category": "ingredient_want", "expected": {"redirect.ingredient_want": ["肉"], "redirect.ingredient_synonyms_contains_any": ["排骨", "牛肉", "猪肉", "鸡", "鸭", "羊", "鸡肉"]}}
+{"id": "ingredient-01", "text": "肉多一点", "category": "ingredient_want", "expected": {"redirect.ingredient_want": ["肉"]}}
 {"id": "ingredient-02", "text": "想吃牛肉", "category": "ingredient_want", "expected": {"redirect.ingredient_want": ["牛肉"]}}
 {"id": "ingredient-03", "text": "不要香菜", "category": "ingredient_avoid", "expected": {"redirect.ingredient_avoid": ["香菜"]}}
 {"id": "ingredient-04", "text": "别给我海鲜", "category": "ingredient_avoid", "expected": {"redirect.ingredient_avoid_has_exact": "海鲜"}}
-{"id": "ingredient-05", "text": "想吃海鲜", "category": "ingredient_abstract", "expected": {"redirect.ingredient_want_has_exact": "海鲜", "redirect.ingredient_synonyms_contains_any": ["虾", "蟹", "鱼", "贝"]}}
+{"id": "ingredient-05", "text": "想吃海鲜", "category": "ingredient_abstract", "expected": {"redirect.ingredient_want_has_exact": "海鲜"}}
 {"id": "flavor-01", "text": "清淡少油", "category": "flavor", "expected": {"constrain.oil": "low"}}
 {"id": "flavor-02", "text": "想吃辣但别太辣", "category": "flavor_conflict", "expected": {"raw_understanding_nonempty": true, "redirect.cuisine_candidates_expanded": []}}
 {"id": "flavor-03", "text": "酸辣口的", "category": "flavor", "expected": {"redirect.cuisine_candidates_expanded_contains_any": ["川菜", "湘菜", "贵州菜", "重庆菜", "韩式", "云南菜"]}}
 {"id": "flavor-04", "text": "清爽一点的", "category": "flavor", "expected": {"constrain.oil": "low"}}
+{"id": "flavor-05", "text": "今天不要油腻的", "category": "flavor_oil", "expected": {"constrain.oil": "low", "redirect.cooking_method_avoid": []}}
 {"id": "brand-01", "text": "别再给我萨莉亚", "category": "brand_avoid", "expected": {"redirect.brand_avoid": ["萨莉亚"]}}
 {"id": "brand-02", "text": "上一组那个海底捞不要", "category": "brand_avoid", "expected": {"redirect.brand_avoid_has_exact": "海底捞"}}
 {"id": "brand-03", "text": "今天别吃肯德基麦当劳", "category": "brand_avoid", "expected": {"redirect.brand_avoid_contains_all": ["肯德基", "麦当劳"]}}
 {"id": "cook-01", "text": "别要油炸的", "category": "cooking_method_avoid", "expected": {"redirect.cooking_method_avoid_has_exact": "油炸"}}
-{"id": "cook-02", "text": "不要生冷", "category": "cooking_method_avoid", "expected": {"redirect.cooking_method_avoid_has_exact": "生冷"}}
-{"id": "form-01", "text": "不要汤汤水水的", "category": "food_form_avoid", "expected": {"redirect.food_form_avoid_contains_any": ["汤汤水水", "汤水", "带汤", "汤"]}}
-{"id": "form-02", "text": "别再给我拌饭", "category": "food_form_avoid", "expected": {"redirect.food_form_avoid_has_exact": "拌饭"}}
+{"id": "cook-02", "text": "不要生冷", "category": "cooking_method_avoid", "expected": {"redirect.cooking_method_avoid_contains_any": ["生", "凉拌"]}}
+{"id": "cook-03", "text": "不要烧烤", "category": "cooking_method_avoid", "expected": {"redirect.cooking_method_avoid_has_exact": "烤"}}
+{"id": "cook-04", "text": "别给我煎炸的", "category": "cooking_method_avoid", "expected": {"redirect.cooking_method_avoid_contains_any": ["油炸", "煎"]}}
 {"id": "ref-01", "text": "比昨天清淡一点", "category": "reference", "expected": {"reference.relation": "lighter"}}
 {"id": "ref-02", "text": "和上次那家差不多但换一家", "category": "reference", "expected": {"reference.relation": "similar_but_different_venue"}}
 {"id": "ref-03", "text": "上一组那种风格全部都不要再来了", "category": "reference", "expected": {"reference.relation": "avoid_pattern"}}
 {"id": "price-01", "text": "30 块以内", "category": "price", "expected": {"constrain.price_max": 30}}
 {"id": "price-02", "text": "便宜点", "category": "price", "expected": {"raw_understanding_nonempty": true}}
 {"id": "price-03", "text": "今天预算 50 块", "category": "price", "expected": {"constrain.price_max": 50}}
-{"id": "distance-01", "text": "走路 10 分钟内的", "category": "distance", "expected": {"constrain.max_distance_km_nonnull": true}}
-{"id": "delivery-01", "text": "今天只吃外卖", "category": "delivery", "expected": {"constrain.delivery_only": true}}
-{"id": "quality-01", "text": "今晚不要快餐", "category": "quality_floor", "expected": {"constrain.quality_floor": "non_fast_food"}}
-{"id": "func-01", "text": "下午还要开会, 别犯困", "category": "functional", "expected": {"constrain.functional.low_satiety_drowsy": true}}
-{"id": "func-02", "text": "晚上要睡觉, 别喝咖啡", "category": "functional", "expected": {"constrain.functional.low_caffeine": true}}
+{"id": "food-form-01", "text": "不要面条", "category": "schema_unsupported", "expected": {"raw_understanding_nonempty": true}}
+{"id": "food-form-02", "text": "不要汤汤水水的", "category": "schema_unsupported", "expected": {"raw_understanding_nonempty": true}}
 {"id": "reject-01", "text": "上一组全不要", "category": "reject", "expected": {"reject_previous": true}}
 {"id": "reject-02", "text": "都不行, 重来", "category": "reject", "expected": {"reject_previous": true}}
 {"id": "reject-03", "text": "换一个吧", "category": "reject", "expected": {"reject_previous": false}}
 {"id": "combo-01", "text": "想吃湖南菜, 肉多一点, 不要海鲜", "category": "combo", "expected": {"redirect.cuisine_want": ["湖南菜"], "redirect.ingredient_want_has_exact": "肉", "redirect.ingredient_avoid_has_exact": "海鲜"}}
 {"id": "combo-02", "text": "想吃辣的, 但价格 30 以内, 别萨莉亚", "category": "combo", "expected": {"constrain.price_max": 30, "redirect.brand_avoid_has_exact": "萨莉亚", "redirect.cuisine_candidates_expanded_contains_any": ["川菜", "湘菜", "贵州菜", "重庆菜", "韩式", "火锅"]}}
-{"id": "combo-03", "text": "下午开会别困, 来点清淡的, 不要外卖", "category": "combo", "expected": {"constrain.oil": "low", "constrain.functional.low_satiety_drowsy": true, "constrain.delivery_only": false}}
+{"id": "combo-03", "text": "不要油炸, 想吃湘菜, 别给萨莉亚", "category": "combo", "expected": {"redirect.cuisine_want": ["湘菜"], "redirect.brand_avoid_has_exact": "萨莉亚", "redirect.cooking_method_avoid_has_exact": "油炸"}}
 {"id": "edge-01", "text": "", "category": "edge", "expected": {"is_empty": true, "raw_understanding_nonempty": true}}
 {"id": "edge-02", "text": "随便, 你看着来", "category": "edge", "expected": {"is_empty_strict": true, "raw_understanding_nonempty": true}}
 {"id": "edge-03", "text": "今天加班好累", "category": "edge_no_associate", "expected": {"is_empty_strict": true, "raw_understanding_nonempty": true}}
 {"id": "edge-04", "text": "周末来个大餐", "category": "edge_no_associate", "expected": {"is_empty_strict": true, "raw_understanding_nonempty": true}}
 {"id": "flavor-conflict-01", "text": "想吃辣但别太辣", "category": "flavor_conflict", "expected": {"raw_understanding_contains": "冲突", "redirect.cuisine_candidates_expanded": []}}
-{"id": "func-03", "text": "下午要睡觉", "category": "functional", "expected": {"constrain.functional.low_caffeine": null, "raw_understanding_nonempty": true}}
 {"id": "subset-reject-01", "text": "这些广东菜都不想吃, 换湖南菜吧", "category": "subset_reject", "expected": {"redirect.cuisine_avoid_has_exact": "广东菜", "redirect.cuisine_want": ["湖南菜"], "reject_previous": false}}
-{"id": "delivery-02", "text": "今天加班好累", "category": "delivery_implicit", "expected": {"constrain.delivery_only": null, "raw_understanding_nonempty": true}}
+{"id": "edge-no-associate-01", "text": "今天加班好累", "category": "edge_no_associate", "expected": {"is_empty_strict": true, "raw_understanding_nonempty": true}}

@@ -58,7 +58,7 @@
 - **explore 默认开启 (top 5 中 1-2 个), refine 路径关闭.** 用户已主动给方向就不要再 explore (D-015).
 - **refine 与空输入必须走差异化 L1 召回分支** (per_restaurant_max / 总召回 / top_k 兜底 / ingredient 反查). 空输入路径行为变化需 baseline_l2_snapshot 0 diff 验证 (D-084).
 - **refine 多 slot LLM 解析必须带 3 安全带**: schema 验证 + 失败降级到"空 refine 模式" + UI 显式告知 / trace 双存 raw + 结构化 + raw_understanding / 改 prompt 或换模型必跑 eval set (D-081).
-- **字段空洞 (quality_floor / delivery_only / reference) 务实降级**: schema 抽出但 L1/L2 不消费, 只透传 L3 + trace 标 `unsupported_in_recall=true`. **不假装做了** (D-085).
+- **refine v2 schema 字段闭包 (D-094, 推翻 D-085 第二句)**: redirect 7 slot (`cuisine_want / cuisine_avoid / cuisine_candidates_expanded / ingredient_want / ingredient_avoid / brand_avoid / cooking_method_avoid`) + constrain 2 slot (`oil / price_max`) + `reference.relation∈{lighter, similar_but_different_venue}` 全部 L1/L2/L3 真消费. 已砍 trace-only 字段: `ingredient_synonyms / food_form_avoid / quality_floor / delivery_only / max_distance_km / functional.*`. `cooking_method_avoid` 是 **9 类枚举闭包** {油炸/凉拌/生/炖/炒/煮/蒸/烤/煎}, LLM 越界值在 `_clean_parsed_to_v2` 丢弃. schema 未覆盖诉求 (例: "不要面条") narrative 不假装支持, 老实说局限. F-011 数据打标后会重新加 food_form_avoid.
 
 ---
 

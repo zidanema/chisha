@@ -162,6 +162,16 @@ def refine(
             trace_collector=refine_intent_llm_collector,
         )
 
+    # D-094 (T-FR-05): V2 → V1 桥接, 把 V2 真消费字段拷到 V1 intent
+    # 让 recall.py / score.py 直接 getattr(intent, "...") 即可消费.
+    # 仅在 sync 模式且 V2 LLM 成功抽到时生效 (V2 默认空 list → 不破坏 R1/refine 0-diff 守门).
+    _v2_redirect = intent_v2.redirect if intent_v2 and intent_v2.redirect else {}
+    intent.cuisine_candidates_expanded = list(
+        _v2_redirect.get("cuisine_candidates_expanded") or [])
+    intent.brand_avoid = list(_v2_redirect.get("brand_avoid") or [])
+    intent.cooking_method_avoid = list(
+        _v2_redirect.get("cooking_method_avoid") or [])
+
     # 2. 重建 ContextSnapshot, 注入 refine_input (原文) + refine_intent (结构化)
     ctx = build_context(
         profile=profile,
