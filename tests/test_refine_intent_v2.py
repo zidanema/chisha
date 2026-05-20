@@ -479,3 +479,127 @@ def _empty_constrain_for_test() -> dict:
         "delivery_only": None, "max_distance_km": None,
         "functional": {"low_caffeine": None, "low_satiety_drowsy": None},
     }
+
+
+# ─────────────── T-PR-02: T-PR-01 prompt boundary守门 (mocked LLM) ───────────
+# 用 mocked `_llm_parse_v2` 模拟 T-PR-01 prompt 期望的"正确 LLM 输出",
+# 守 V2 清洗 + schema 接受这些 case 不破. 不调真 LLM, CI 友好.
+# 真 LLM prompt 效果由 tests/refine_eval/eval_set.jsonl + scripts/refine_eval_runner.py 守.
+
+
+def test_refine_v2_prompt_boundary_flavor_conflict():
+    """T-PR-01 P0-E3 + spec §What 1: '想吃辣但别太辣' (冲突表达)
+    → 对应 slot 全空 + raw_understanding 含冲突短语 (prompt line 144 example).
+    """
+    parsed = {
+        "redirect": _empty_redirect_for_test(),
+        "constrain": _empty_constrain_for_test(),
+        "reference": None,
+        "reject_previous": False,
+        "raw_understanding": "冲突表达: 想吃辣但不要太辣, 不擅自扩展辣味菜系, 交给 L3 把握",
+        "schema_version": "2.0",
+    }
+    with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed):
+        v2 = extract_refine_intent_v2("想吃辣但别太辣", use_llm=True)
+    # 冲突表达 → flavor / cuisine_candidates_expanded 等全空 (Faithful Refine 不脑补)
+    assert v2.redirect["cuisine_candidates_expanded"] == []
+    assert v2.redirect["cuisine_want"] == []
+    assert v2.redirect["cuisine_avoid"] == []
+    # raw_understanding 含"冲突"短语 (T-PR-01 prompt 改动 P0-E3 守门)
+    assert "冲突" in v2.raw_understanding
+
+
+def test_refine_v2_prompt_boundary_no_pseudo_low_caffeine():
+    """T-PR-01 P0-E3 第一原则 + spec §What 2: '下午要睡觉' (违反第一原则的旧示例)
+    → functional.low_caffeine 应为 None (LLM 不脑补"睡前 → 低咖啡因").
+    """
+    parsed = {
+        "redirect": _empty_redirect_for_test(),
+        "constrain": _empty_constrain_for_test(),
+        "reference": None,
+        "reject_previous": False,
+        "raw_understanding": "用户提到下午要睡觉, 未明示别喝咖啡, 不擅自推断 low_caffeine",
+        "schema_version": "2.0",
+    }
+    with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed):
+        v2 = extract_refine_intent_v2("下午要睡觉", use_llm=True)
+    # 第一原则: 没明示低咖啡因诉求, 不能脑补 True
+    assert v2.constrain["functional"]["low_caffeine"] is None
+    assert v2.constrain["functional"]["low_satiety_drowsy"] is None
+
+
+def test_refine_v2_prompt_boundary_delivery_only_explicit_vs_implicit():
+    """T-PR-01 P1-2 + spec §What 3/4:
+    - '今天只吃外卖' (明示 delivery) → delivery_only=True
+    - '今天加班好累' (无关联场景) → delivery_only=None (不脑补 False, 也不脑补 True)
+    """
+    # case 1: 明示
+    parsed_explicit = {
+        "redirect": _empty_redirect_for_test(),
+        "constrain": {
+            "oil": None, "price_max": None, "quality_floor": None,
+            "delivery_only": True, "max_distance_km": None,
+            "functional": {"low_caffeine": None, "low_satiety_drowsy": None},
+        },
+        "reference": None,
+        "reject_previous": False,
+        "raw_understanding": "用户明示只吃外卖, 已抽出 delivery_only=true",
+        "schema_version": "2.0",
+    }
+    with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed_explicit):
+        v2 = extract_refine_intent_v2("今天只吃外卖", use_llm=True)
+    assert v2.constrain["delivery_only"] is True
+
+    # case 2: 无关联场景陈述, 不脑补
+    parsed_implicit = {
+        "redirect": _empty_redirect_for_test(),
+        "constrain": _empty_constrain_for_test(),
+        "reference": None,
+        "reject_previous": False,
+        "raw_understanding": "用户提到加班场景, 但未表达任何菜系/口味/价格诉求, 不擅自推断要外卖",
+        "schema_version": "2.0",
+    }
+    with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed_implicit):
+        v2 = extract_refine_intent_v2("今天加班好累", use_llm=True)
+    assert v2.constrain["delivery_only"] is None
+
+
+def test_refine_v2_prompt_boundary_subset_reject_keeps_cuisine_avoid():
+    """T-PR-01 P1-3 + spec §What 5: '这些广东菜都不想吃, 换湖南菜吧'
+    (子类否定 + 换菜系, 非全推翻)
+    → reject_previous=False + cuisine_avoid=["广东菜"] + cuisine_want=["湖南菜"].
+    Prompt line 72 example 显式要求.
+    """
+    redirect = _empty_redirect_for_test()
+    redirect["cuisine_avoid"] = ["广东菜"]
+    redirect["cuisine_want"] = ["湖南菜"]
+    parsed = {
+        "redirect": redirect,
+        "constrain": _empty_constrain_for_test(),
+        "reference": None,
+        "reject_previous": False,
+        "raw_understanding": "用户拒绝了上一轮的广东菜, 换成湖南菜, 子类否定非全推翻",
+        "schema_version": "2.0",
+    }
+    with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed):
+        v2 = extract_refine_intent_v2("这些广东菜都不想吃, 换湖南菜吧", use_llm=True)
+    assert v2.reject_previous is False
+    assert "广东菜" in v2.redirect["cuisine_avoid"]
+    assert "湖南菜" in v2.redirect["cuisine_want"]
+
+
+def test_refine_v2_prompt_boundary_full_reject_sets_flag():
+    """T-PR-01 P1-8 + spec §What 6: '上一组全不要, 重来' (明确推翻)
+    → reject_previous=True (LLM 应识别完整重置短语).
+    """
+    parsed = {
+        "redirect": _empty_redirect_for_test(),
+        "constrain": _empty_constrain_for_test(),
+        "reference": None,
+        "reject_previous": True,
+        "raw_understanding": "用户明确推翻上一组结果, 要求重新生成",
+        "schema_version": "2.0",
+    }
+    with patch("chisha.refine_intent_v2._llm_parse_v2", return_value=parsed):
+        v2 = extract_refine_intent_v2("上一组全不要, 重来", use_llm=True)
+    assert v2.reject_previous is True

@@ -246,7 +246,7 @@
       "depends_on": [
         "T-PR-01"
       ],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "T-PR-03",
