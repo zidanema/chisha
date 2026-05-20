@@ -101,6 +101,26 @@
 - **与 B-001 关系**: 同属反馈改造范畴, 应在反馈优化 session 中一起做
 - **优先级**: P2 (反馈优化专题里做)
 
+### F-009 · Faithful Refine 真兑现 (L1/L2 真听 quality_floor / delivery_only / max_distance_km / reference)
+
+- **来源**: 2026-05-20 prompt 优化 Step 1 Opus+Codex 共识 brief §5 D1
+- **状态**: open, Phase 1 推广启动时再决定
+- **What**: 当前 V2 refine schema 抽出 `constrain.quality_floor / delivery_only / max_distance_km / reference` 等字段, 但 L1/L2 召回链路按 D-085 "务实降级"只透传 L3 + trace 标 `unsupported_in_recall`. **真做的话**: L1 召回阶段加 `quality_floor=non_fast_food` → 过滤 fast_food 餐厅; `delivery_only=true` → 过滤堂食; `max_distance_km` → 过滤 distance; `reference.avoid_pattern` → 接 resolver
+- **影响**: 让 D-080~D-085 Faithful Refine 第一原则真正兑现 (而非"听见但不办"). 但触碰 `chisha/recall.py + score.py` 高风险白名单, 需要独立 D-XXX + baseline_l2_snapshot 守门
+- **不修原因**: 跨 Step 1 范围 (prompt 文案) → Step 2-4 (基建) 也都不动召回链路. 等 Phase 1 推广启动时 review 是否提前
+- **关联**: D-080~D-085, brief `docs/proposals/2026-05-20-prompt-effect-optimization.md` §5 D1
+- **优先级**: P2 (Phase 1 推广启动时 review)
+
+### F-010 · expanded / synonyms 词典化 (移出 LLM)
+
+- **来源**: 2026-05-20 prompt 优化 Step 1 Opus+Codex 共识 brief §5 D2
+- **状态**: open, Phase 1 推广启动时再决定
+- **What**: 当前 refine v2 schema 让 LLM 推断 `cuisine_candidates_expanded` ("辣"→["川菜","湘菜",...]) 和 `ingredient_synonyms` ("肉"→["排骨","牛肉",...]). 这违反第一原则 "不联想" + LLM 一致性差. **真做的话**: 建 `chisha/data/cuisine_synonyms.yaml` + `chisha/data/ingredient_synonyms.yaml`, L1/L2 召回时查表展开, LLM 只负责"识别"
+- **本轮处理 (T-PR-01)**: prompt 文案闭集化收紧, 词典不迁
+- **影响**: 解决一致性 + 词典可 PR review, 但需 L1/L2 召回逻辑改造 (跨 Step 1 范围)
+- **关联**: D-080~D-085, brief §5 D2, T-PR-01 P1-1 已闭集化但未迁词典
+- **优先级**: P2 (Phase 1 推广启动时 review)
+
 ---
 
 ## Ideas
@@ -119,3 +139,4 @@ _(待填)_
 - 2026-05-18 · Refine v2 设计后追加 F-006 (eater_context) / F-007 (refine 高级 slot 扩展) / F-008 (反馈 3 维); B-001 / F-001 标注与 Refine v2 (D-080~D-085) 的关系
 - 2026-05-20 · 文档治理: F-005 (OpenClaw 接入) 与 D-074 草稿重复, 删 F-005 统一到 D-074; B-001 顶部加 "Phase 1 推广前必修" 强提示
 - 2026-05-20 · V1.0 代码治理跑 integration 测试: 修 4 个 cc.call 返 dict 后未同步的 `.strip()` fail (D-050 遗留); 删 test_real_rerank_end_to_end (D-047 设计期 acceptance, CLI 是 fallback 不是 tool_use 主路径, smoke 已被另 4 个测试覆盖)
+- 2026-05-20 · prompt 优化 Step 1 拆 7 task (T-PR-01~07) 共识审完成, brief §5 D1+D2 入 F-009 / F-010 (Phase 1 推广启动时 review)
