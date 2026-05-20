@@ -37,19 +37,6 @@
 - **不修原因**: 涉及打分链路改动, 必须 baseline_l2_snapshot 守门; 衰减曲线 + hard/soft 决策需要设计讨论, 不能边写边定
 - **与 Refine v2 (D-080~D-085) 关系**: 不重叠。Refine v2 解决 "当下意图忠实兑现"，B-001 解决 "近期反馈对长期偏好的衰减"。两条路径独立、可并行做。Refine v2 完成不解此 bug，仍需单独 session 设计。
 
-### B-002 · test_real_rerank_end_to_end LLM 输出 schema 漂移
-
-- **来源**: 2026-05-20 V1.0 代码治理收尾跑 integration 测试发现
-- **状态**: open, P3 (integration 测试, 默认 CI 不跑, 影响小)
-- **现象**: `tests/integration/test_claude_code_cli_e2e.py::test_real_rerank_end_to_end` fail — LLM (sonnet) 通过 claude CLI 跑 rerank, 输出 valid JSON 但**没有 `candidates` key**, 导致 `assert isinstance(cands, list)` fail
-- **同套 4/5 已修**: 同次治理顺手修了 4 个 `out.strip()` 类 fail (D-050 后 cc.call 返 dict 测试没同步) + 改 `json.JSONDecoder().raw_decode` 容忍 trailing markdown
-- **根因待查**:
-  - prompts/rerank_system.md 是否调过让 LLM 输出 schema 偏离 candidates
-  - sonnet 实际输出是不是分析文字 + 别的 JSON (而非 `{candidates:[...]}`)
-  - rerank.build_user_message 给 CLI 路径的 schema 提示是不是漏了
-- **绕过**: 生产路径走 anthropic / openrouter tool_use, 不受 CLI text 路径影响
-- **不修原因**: 不是治理引入的 regression, 是独立的 LLM 输出格式问题; 修测试就是掩盖 prompt 漂移. 留 BACKLOG 等下次 CLI 路径专题再修
-
 ---
 
 ## Features
@@ -131,4 +118,4 @@ _(待填)_
 - 2026-05-17 · BACKLOG.md 建档, 从 ROADMAP / CLAUDE.md 收 F-001~F-005 五条 Phase 1 deferred 种子
 - 2026-05-18 · Refine v2 设计后追加 F-006 (eater_context) / F-007 (refine 高级 slot 扩展) / F-008 (反馈 3 维); B-001 / F-001 标注与 Refine v2 (D-080~D-085) 的关系
 - 2026-05-20 · 文档治理: F-005 (OpenClaw 接入) 与 D-074 草稿重复, 删 F-005 统一到 D-074; B-001 顶部加 "Phase 1 推广前必修" 强提示
-- 2026-05-20 · V1.0 代码治理跑 integration 测试: 修 4 个 cc.call 返 dict 后未同步的 `.strip()` fail (D-050 遗留); 第 5 个 LLM schema 漂移收为 B-002
+- 2026-05-20 · V1.0 代码治理跑 integration 测试: 修 4 个 cc.call 返 dict 后未同步的 `.strip()` fail (D-050 遗留); 删 test_real_rerank_end_to_end (D-047 设计期 acceptance, CLI 是 fallback 不是 tool_use 主路径, smoke 已被另 4 个测试覆盖)

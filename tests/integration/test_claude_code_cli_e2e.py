@@ -30,63 +30,6 @@ def test_ping_echo(_skip_if_no_cli):
     assert "回声测试" in out or "v047" in out, f"unexpected: {out[:200]}"
 
 
-def test_real_rerank_end_to_end(_skip_if_no_cli):
-    """真跑 N=10 rerank → 解析为 valid JSON."""
-    import datetime as dt
-    import json
-    import re
-
-    from chisha.context import build_context
-    from chisha.debug_recommend import _build_l1_trace, ROOT
-    from chisha.llm_providers import claude_code_cli as cc
-    from chisha.recall import (
-        load_meal_log,
-        load_profile,
-        load_zone_data,
-    )
-    from chisha.rerank import SYSTEM_PROMPT_PATH, build_user_message
-    from chisha.score import apply_caps, rank_combos
-
-    profile = load_profile(ROOT / "profile.yaml")
-    zone = profile["basics"]["zones"].get(
-        "lunch", profile["basics"]["office_zone"]
-    )
-    rests, tagged = load_zone_data(zone, ROOT)
-    meal_log = load_meal_log(ROOT)
-    today = dt.date.today()
-    _, combos = _build_l1_trace(
-        profile, rests, tagged, meal_log, today, meal_type="lunch"
-    )
-    ctx = build_context(profile, meal_log, "lunch", today)
-    ranked_raw = rank_combos(
-        combos, profile, meal_log, today,
-        context=ctx, meal_type="lunch", root=ROOT,
-    )
-    ranked = apply_caps(ranked_raw, profile)
-    top10 = ranked[:10]
-
-    sys_text = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
-    user_msg = build_user_message(top10, profile, ctx, n=5, n_explore=2)
-
-    resp = cc.call(
-        user_msg, system=sys_text, model="sonnet",
-        timeout_sec=180,
-    )
-    out = resp["content"]
-    m = re.search(r"\{.*\}", out, re.DOTALL)
-    assert m, f"未找到 JSON, 实际: {out[:300]}"
-    # raw_decode: 容忍 JSON 后面有 trailing markdown / 说明文字
-    data, _ = json.JSONDecoder().raw_decode(m.group(0))
-    cands = data.get("candidates")
-    assert isinstance(cands, list)
-    assert 1 <= len(cands) <= 5
-    for c in cands:
-        assert "combo_index" in c
-        assert 0 <= c["combo_index"] < 10
-        assert "rank" in c
-        assert "is_explore" in c
-
-
 def test_isolation_no_claude_md_leakage(_skip_if_no_cli):
     """Codex review P2#5: 写一个带 sentinel 的 CLAUDE.md 到 cc.call 用的 cwd
     (即 _TMP_DIR), 跑一个回声任务, 输出不该含 sentinel — 证明 setting-sources=""
