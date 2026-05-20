@@ -1,7 +1,7 @@
 {
   "_frozen_at": "2026-05-20 V1.0",
   "_note": "V1.0 工程里程碑后冻结. 新任务等 Phase 1 推广启动时再开新 tasks 文件",
-  "_design_brief": "docs/design_briefs/archive/2026-05-18-refine-v2-faithful-refine.md",
+  "_design_brief": "docs/proposals/archive/2026-05-18-refine-v2-faithful-refine.md",
   "_decisions": "D-080~D-085 (待落，指回 design brief)",
   "_first_principle": "Faithful Refine — 系统对 refine 文本的理解深度和执行忠实度是用户信任的唯一来源",
   "tasks": [
@@ -233,7 +233,7 @@
     {
       "id": "T-PR-01",
       "title": "refine prompt 多项边界修订 (low_caffeine/expanded 闭集/delivery_only/reject_previous/字段空洞/raw_understanding)",
-      "spec": "specs/T-PR-01.md",
+      "spec": "specs/archive/T-PR-01.md",
       "regression_risk": "medium",
       "depends_on": [],
       "status": "done"
@@ -241,7 +241,7 @@
     {
       "id": "T-PR-02",
       "title": "refine eval fixtures 更新 (4-6 个新 case 守门 P0-E3 + P1-1/2/7)",
-      "spec": "specs/T-PR-02.md",
+      "spec": "specs/archive/T-PR-02.md",
       "regression_risk": "low",
       "depends_on": [
         "T-PR-01"
@@ -251,7 +251,7 @@
     {
       "id": "T-PR-03",
       "title": "rerank §6 健康语义归位 (风险披露 + 不主动美化, 不加 hard filter)",
-      "spec": "specs/T-PR-03.md",
+      "spec": "specs/archive/T-PR-03.md",
       "regression_risk": "high",
       "depends_on": [],
       "status": "done",
@@ -260,7 +260,7 @@
     {
       "id": "T-PR-04",
       "title": "rerank refine_intent 字段口径同步 V1 + V2 reference 说明",
-      "spec": "specs/T-PR-04.md",
+      "spec": "specs/archive/T-PR-04.md",
       "regression_risk": "medium",
       "depends_on": [],
       "status": "done_with_disagreement",
@@ -269,7 +269,7 @@
     {
       "id": "T-PR-05",
       "title": "rerank tool_use schema description 微调 + CLI no-tool 段同步",
-      "spec": "specs/T-PR-05.md",
+      "spec": "specs/archive/T-PR-05.md",
       "regression_risk": "high",
       "depends_on": [],
       "status": "done",
@@ -278,7 +278,7 @@
     {
       "id": "T-PR-06",
       "title": "rerank prompt 三项 P1 文案补丁 (taste_match rubric + one_line_reason + explore escape)",
-      "spec": "specs/T-PR-06.md",
+      "spec": "specs/archive/T-PR-06.md",
       "regression_risk": "high",
       "depends_on": [],
       "status": "done",
@@ -287,7 +287,7 @@
     {
       "id": "T-PR-07",
       "title": "兼容性守门 + Step 1 整体验收",
-      "spec": "specs/T-PR-07.md",
+      "spec": "specs/archive/T-PR-07.md",
       "regression_risk": "low",
       "depends_on": [
         "T-PR-01",
@@ -301,6 +301,6 @@
       "_notes": "Step 1 整体验收 gate 通过: 测试 979 passed / _patch_system_prompt_for_cli 3 锚点守门通过 / baseline_l2_snapshot before(d660b90) vs after(855404f) 0 diff / 3 refine + 50 dry_run case 全部反映 T-PR-01/03/04/06 修订意图. 实施发现 git worktree 不含 untracked mutable state (logs/meal_log.jsonl + data/feedback_history.jsonl), 必须 cp -p 复制到 worktree 才能跑出可比 baseline. 详见 plans/T-PR-07.review.md."
     }
   ],
-  "_sandbox_lab_brief": "docs/design_briefs/archive/2026-05-19-sandbox-lab.md",
-  "_prompt_review_brief": "docs/proposals/2026-05-20-prompt-effect-optimization.md"
+  "_sandbox_lab_brief": "docs/proposals/archive/2026-05-19-sandbox-lab.md",
+  "_prompt_review_brief": "docs/proposals/archive/2026-05-20-prompt-effect-optimization.md"
 }

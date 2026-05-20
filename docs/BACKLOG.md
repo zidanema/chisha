@@ -108,7 +108,7 @@
 - **What**: 当前 V2 refine schema 抽出 `constrain.quality_floor / delivery_only / max_distance_km / reference` 等字段, 但 L1/L2 召回链路按 D-085 "务实降级"只透传 L3 + trace 标 `unsupported_in_recall`. **真做的话**: L1 召回阶段加 `quality_floor=non_fast_food` → 过滤 fast_food 餐厅; `delivery_only=true` → 过滤堂食; `max_distance_km` → 过滤 distance; `reference.avoid_pattern` → 接 resolver
 - **影响**: 让 D-080~D-085 Faithful Refine 第一原则真正兑现 (而非"听见但不办"). 但触碰 `chisha/recall.py + score.py` 高风险白名单, 需要独立 D-XXX + baseline_l2_snapshot 守门
 - **不修原因**: 跨 Step 1 范围 (prompt 文案) → Step 2-4 (基建) 也都不动召回链路. 等 Phase 1 推广启动时 review 是否提前
-- **关联**: D-080~D-085, brief `docs/proposals/2026-05-20-prompt-effect-optimization.md` §5 D1
+- **关联**: D-080~D-085, brief `docs/proposals/archive/2026-05-20-prompt-effect-optimization.md` §5 D1
 - **优先级**: P2 (Phase 1 推广启动时 review)
 
 ### F-010 · expanded / synonyms 词典化 (移出 LLM)

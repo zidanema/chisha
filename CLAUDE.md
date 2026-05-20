@@ -63,7 +63,7 @@ uv run python -m scripts.compare_traces                                         
 
 跨文件 invariants(L1/L2/L3 链路 / refine / sandbox / trace / 三模式 / 前端可信源)全部沉淀在 [docs/CONTRACTS.md](docs/CONTRACTS.md)。
 
-**high-risk 文件白名单** (单一权威源, `/plan-brief` 评级 + `/run-task` Phase 4 reviewer 选择都引用这份):
+**high-risk 文件白名单** (单一权威源, 下方「工作流 § Codex 双触点」引用这份):
 
 后端 12 模块 — 改任一 → `regression_risk = high`:
 - `chisha/{api,recall,score,rerank,refine,l1_extractor,sandbox,clock,data_root,trace_store,debug_what_if,web_api}.py`
@@ -90,9 +90,16 @@ stuck override 护栏: `high` (含 unknown 默认) 严禁 override; `low/medium`
 
 不适用:纯后端 (`chisha/**` Python) / 脚本 (`scripts/**`) / 测试 (`tests/**`) 改动 — pytest + baseline_l2_snapshot 已经够。
 
-## 自动化工作流 (brief → tasks → autorun)
+## 工作流: Claude Code 原生 + Codex 双触点
 
-`/plan-brief <docs/proposals/xxx.md>` 拆原子任务 + Codex 共识审 → 写 `specs/T-*.md` + `specs/tasks.json` → 志丹 review → `/ship-tasks` 串跑, 内部每 task 走 `/run-task <id>` (plan → Codex 审 → 实施 → Codex 对抗审 → commit). 业务逻辑在 `/plan-brief.md` + `/run-task.md`. V1.0 后历史 specs 已归档, 新 task 等 Phase 1 启动再建.
+默认走 Claude Code 原生 TaskCreate todolist + Agent subagent. 两个关键点强制拉 Codex 共商:
+
+1. **方案设计敲定前** → 调 `codex:rescue` skill 一起讨论
+   - 触发: design plan / 架构选型 / **改 high-risk 12 文件白名单前**
+2. **git commit 前** → 调 `codex:rescue` 做 diff review
+   - 触发: 改 high-risk 12 文件白名单时强制; 其他场景志丹可说"跳过 codex review"
+
+high-risk 12 文件白名单 + 前端高风险条件单一权威源在 § 推荐链路改动红线.
 
 ## 提醒
 
