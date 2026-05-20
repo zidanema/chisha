@@ -1,6 +1,6 @@
 # T-PR-04 · rerank refine_intent 字段口径同步 V1 + V2 reference 说明
 
-参考: `docs/proposals/2026-05-20-prompt-effect-optimization.md` §3.2 P0-E1 + Codex 盲点 #1/#2 + §4 T-PR-04
+参考: `docs/proposals/archive/2026-05-20-prompt-effect-optimization.md` §3.2 P0-E1 + Codex 盲点 #1/#2 + §4 T-PR-04
 
 ## What
 

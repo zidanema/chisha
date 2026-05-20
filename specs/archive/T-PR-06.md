@@ -1,6 +1,6 @@
 # T-PR-06 · rerank prompt 三项 P1 文案补丁 (taste_match rubric + one_line_reason + explore escape)
 
-参考: `docs/proposals/2026-05-20-prompt-effect-optimization.md` §3.3 P1-4/P1-5/P1-6 + §4 T-PR-06
+参考: `docs/proposals/archive/2026-05-20-prompt-effect-optimization.md` §3.3 P1-4/P1-5/P1-6 + §4 T-PR-06
 
 ## What
 

@@ -1,6 +1,6 @@
 # T-PR-03 · rerank §6 健康语义归位 (风险披露 + 不主动美化)
 
-参考: `docs/proposals/2026-05-20-prompt-effect-optimization.md` §3.2 P0-E2 + §4 T-PR-03
+参考: `docs/proposals/archive/2026-05-20-prompt-effect-optimization.md` §3.2 P0-E2 + §4 T-PR-03
 
 ## What
 

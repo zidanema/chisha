@@ -1,6 +1,6 @@
 # T-PR-01 · refine prompt 多项边界修订
 
-参考: `docs/proposals/2026-05-20-prompt-effect-optimization.md` §3.2 P0-E3 + §3.3 P1-1/P1-2/P1-3/P1-7/P1-8 + §4 T-PR-01
+参考: `docs/proposals/archive/2026-05-20-prompt-effect-optimization.md` §3.2 P0-E3 + §3.3 P1-1/P1-2/P1-3/P1-7/P1-8 + §4 T-PR-01
 
 ## What
 

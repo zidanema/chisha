@@ -1,6 +1,6 @@
 # T-PR-07 · 兼容性守门 + Step 1 整体验收
 
-参考: `docs/proposals/2026-05-20-prompt-effect-optimization.md` §4 T-PR-07 + §6 落地流程 step 5
+参考: `docs/proposals/archive/2026-05-20-prompt-effect-optimization.md` §4 T-PR-07 + §6 落地流程 step 5
 
 ## What
 
@@ -24,7 +24,7 @@
    - 跑 3 条 refine 文本 ("想吃辣但别太辣" / "下午要开会" / "这些广东菜都不想吃, 换湖南菜吧"), 看 refine_intent_v2 输出是否落 P0-E3 / P1-2 修订
    - 结果写到 `plans/T-PR-07.review.md` 留存
 
-Step 1 完成的标记由 git log + tasks.json status=done 体现, **不写回 `docs/proposals/2026-05-20-prompt-effect-optimization.md`** (CLAUDE.md 文档纪律: commit hash / 完成日期 / 测试列表 不写文档).
+Step 1 完成的标记由 git log + tasks.json status=done 体现, **不写回 `docs/proposals/archive/2026-05-20-prompt-effect-optimization.md`** (CLAUDE.md 文档纪律: commit hash / 完成日期 / 测试列表 不写文档).
 
 ## Why
 

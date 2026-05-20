@@ -1,6 +1,6 @@
 # T-PR-05 · rerank tool_use schema description 微调 + CLI no-tool 段同步
 
-参考: `docs/proposals/2026-05-20-prompt-effect-optimization.md` §3.3 P1-9 + Codex review §5.5 + §4 T-PR-05
+参考: `docs/proposals/archive/2026-05-20-prompt-effect-optimization.md` §3.3 P1-9 + Codex review §5.5 + §4 T-PR-05
 
 ## What
 

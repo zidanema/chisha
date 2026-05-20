@@ -1,6 +1,6 @@
 # T-PR-02 · refine eval fixtures 更新
 
-参考: `docs/proposals/2026-05-20-prompt-effect-optimization.md` §4 T-PR-02 + Codex review §5.2
+参考: `docs/proposals/archive/2026-05-20-prompt-effect-optimization.md` §4 T-PR-02 + Codex review §5.2
 
 ## What
 
