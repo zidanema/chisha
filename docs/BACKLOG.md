@@ -22,7 +22,7 @@
 ### B-001 · 近期反馈对推荐影响过弱 (短链路缺口)
 
 - **来源**: 2026-05-17 沙盒实测 (sandbox 8 天 / 11 顿 / 10 反馈, L1 抽取产物全空, 推荐不受任何反馈影响) + 志丹拍板"这是根本问题"
-- **状态**: open, **P0**
+- **状态**: open, **P0 · V1.0 收尾后 Phase 1 推广前必修** (2026-05-20 复核: D-090~D-092 解的是 refine→L2 信号校准, 与本条 rating→L2 短链路是两件事, 未修)
 - **现象**: 用户给某餐厅/菜品 👎, 7 天 hard cooldown 后系统**照样推**, 行为与 👍 完全一致。连续吃同一配料 (如香菜, 非 main_ingredient_type) 也无法 cooldown
 - **根因**: 反馈 → 推荐路径**只有一条**, 走 L1 抽取慢路径 (`feedback_store → L1 extractor → long_term_prefs.boost/penalty`)。但:
   - L1 prompt 保守阈值: 信号弱 / 矛盾 / 样本 < 阈值 → 抽空。沙盒 9 餐实测就抽空
@@ -74,13 +74,6 @@
 - **约束**: 不允许借机改 score.py 逻辑或调权重 (D-072 边界)
 - **优先级**: P1 (验证抽象的关键)
 
-### F-005 · OpenClaw / 多 Agent 接入
-
-- **来源**: [ROADMAP.md](ROADMAP.md) "CLI + Skill 模式" + design brief
-- **状态**: open, 排到 Phase 1
-- **What**: Phase 0 只做 Claude Code reference adapter, Phase 1 扩 OpenClaw / HappyClaw / Codex 等
-- **优先级**: P2
-
 ### F-006 · eater_context (替别人点餐场景)
 
 - **来源**: 2026-05-18 Codex v2 review Refine v2 蓝图时挑出
@@ -124,3 +117,4 @@ _(待填)_
 
 - 2026-05-17 · BACKLOG.md 建档, 从 ROADMAP / CLAUDE.md 收 F-001~F-005 五条 Phase 1 deferred 种子
 - 2026-05-18 · Refine v2 设计后追加 F-006 (eater_context) / F-007 (refine 高级 slot 扩展) / F-008 (反馈 3 维); B-001 / F-001 标注与 Refine v2 (D-080~D-085) 的关系
+- 2026-05-20 · 文档治理: F-005 (OpenClaw 接入) 与 D-074 草稿重复, 删 F-005 统一到 D-074; B-001 顶部加 "Phase 1 推广前必修" 强提示

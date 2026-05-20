@@ -13,14 +13,14 @@
 **Context / Mood**: [D-034](#d-034) · [D-071](#d-071) · [D-015](#d-015)
 **方法论 (L0)**: [D-023](#d-023) · [D-072+D-072.1](#d-072--d-0721)
 **反馈系统**: [D-063~D-065](#d-063--d-064--d-065) · [D-066+D-067](#d-066--d-067)
-**调试 / 工具**: [D-028](#d-028) · [D-039](#d-039) · [D-075](#d-075) · [D-079](#d-079) · [D-087](#d-087)
+**北极星指标**: [D-028](#d-028)
 **Refine 重做**: [D-073+D-073.1](#d-073--d-0731)
-**L1 真兑现 / Sandbox**: [D-076+D-076.1](#d-076--d-0761) · [D-077](#d-077) · [D-078](#d-078)
+**L1 长期反馈层 / Sandbox 形态**: [D-076+D-076.1](#d-076--d-0761) · [D-077](#d-077)
 **Refine v2 / Faithful Refine**: [D-080](#d-080) · [D-081](#d-081) · [D-082](#d-082) · [D-083](#d-083) · [D-084](#d-084) · [D-085](#d-085)
 **L2 信号校准**: [D-090~D-092](#d-090--d-091--d-092)
-**Sandbox Lab**: [D-093](#d-093)
-**血泪教训**: [D-086](#d-086) · [D-078](#d-078)
 **Agent 接入 (草稿)**: [D-074](#d-074)
+
+> **不在本文件**: 内部工具的工程契约 (debug 台 / sandbox 实现细节 / trace schema / worktree 教训) → [CONTRACTS.md](CONTRACTS.md). 历史 D-039 调试台立项也已迁移过去。
 
 ---
 
@@ -141,10 +141,6 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 **北极星指标 = 连续采纳率 (7d/30d), 不是决策时间.** (2026-05-11)
 决策时间数据漂移大. 连续采纳率直接反映"够不够好用以至于愿意每天用".
 
-## D-039
-**调试台是独立 FastAPI :8765, 跟主推荐链路解耦.** (2026-05-13)
-改打分链路时调试台必须先反映. 不要把调试逻辑混进生产代码.
-
 ## D-073 + D-073.1
 **refine 走结构化意图 (RefineIntent) + 重召回. 完全推翻 D-071, 部分推翻 D-035 / D-043 P3 在 refine 端的应用.** (2026-05-16)
 - 病根: 把 refine `parse_feedback` (餐后, 词表稳定) 和 `parse_refine_intent` (餐中, 开放 schema) 挤一起
@@ -153,11 +149,7 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 
 ## D-074
 **AI-friendly 接入终态共识 = CLI + Skill 模式 (草稿, 未正式落).** (2026-05-16, draft)
-编号占住, 共识来源 + 设计 brief 见 [`design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md`](design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md). Phase 1 推广启动时翻 active.
-
-## D-075
-**`apps/debug-ui/` 独立 Vite SPA, 不并入 `apps/web/`.** (2026-05-16)
-受众不同 (用户视图克制 vs 调试自用密集), CSS 体系不同 (5 套 oklch palette), 依赖分歧 (user 端 Tailwind, debug 端禁). 独立项目仅通过 `/api/*` 联调.
+编号占住, 共识来源 + 设计 brief 见 [`proposals/2026-05-16-ai-friendly-integration-v2-consensus.md`](proposals/2026-05-16-ai-friendly-integration-v2-consensus.md). Phase 1 推广启动时翻 active.
 
 ## D-076 + D-076.1
 **L1 长期反馈层重构 — 砍伪 L1 + LLM 抽取真兑现.** (2026-05-16) · 推翻 D-043 "refine chip → load_runtime_hints"
@@ -170,17 +162,9 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - prod 路径行为零变 (sandbox off 默认开关)
 - 强制 fail-loud: sandbox off + 显式非 `_default` sid → RuntimeError, 防数据串桶
 
-## D-078
-**Sandbox 三处血泪锚点 (改这些路径必看).** (2026-05-16) · 血泪教训
-- 时钟必须走 `clock.today(root)` 注入, 默认 today 不能裸调 `dt.date.today`
-- `/api/accept` 写 `meal_log.jsonl` 必须 hard-fail (与 `record_accept` 同级), 不能 silent swallow
-- L1 → L3 / refine 调用链 `root` 必须显式透传, 任何 None 路径都是坑
-- CONTRACTS.md Sandbox 段挂这条, 改 sandbox 时必读
-
 ## D-079
 **推荐 trace 持久化 + Debug 三模式 (Replay / What-if / Live).** (2026-05-16)
-- Replay 默认: 读 `logs/recommend_trace/{sid}.json`; What-if: 冻结 ctx + L1 combos 改下游 weights/rules; Live: 现场全链路永不写盘
-- 后端是单一可信源; 改 trace schema 必 bump `TRACE_SCHEMA_VERSION`
+工程契约见 [CONTRACTS.md §Trace + Debug 三模式](CONTRACTS.md#trace--debug-三模式-d-079).
 
 ## D-080
 **第一原则: Faithful Refine — 系统对 refine 文本的理解深度和执行忠实度, 是用户对 chisha 信任的唯一来源. 冲突时, 忠实优先于多样性 / 效率 / 探索 / narrative 美观.** (2026-05-18) · 系统宪法
@@ -210,18 +194,6 @@ per_restaurant_max 3 → 5-8 / 总召回 2-3x / ingredient_want 进 L1 反查 / 
 **narrative + 状态条必须后置 — 漂亮 narrative 是信任放大器 (Codex 反直觉挑战).** (2026-05-18) · 实施次序硬约束
 L3 prompt 加 narrative 字段 + 顶部 always-on 状态条, 但必须在 D-083/D-084 之后上线, 否则 LLM 会自信编"为你避开了高油菜"实际没过滤, 欺骗深、失信代价大. 字段空洞 (quality_floor / delivery_only / reference) 务实降级: 抽出但 L1/L2 不消费, 仅透传 L3 + trace 标 `unsupported_in_recall=true`.
 
-## D-086
-**回滚 main 05-17 D-080~D-085 过渡版, 合并 worktree-recommand-v3 framework 重构版.** (2026-05-18) · worktree 教训实例
-根因: worktree 创建时基于 `origin/main` (落后本地 main 24 commit), 没拉本地 main, 双线并行实施同组 D-080~D-085. 教训: 开 worktree 前确认基于本地 main + 立即 merge main.
-
-## D-087
-**Debug 工具台收敛到 Workflow A · 分析 trace (100% read-only) + trace_store v3 (多 round 持久化).** (2026-05-19)
-Workflow A 是唯一动线: 浏览历史 trace + 比较 refine 轮次. 写入路径 (Live / What-if / Refine submit) 全删 — debug 工具 ≠ 用户视图, 加写入只会污染数据.
-
-## D-089
-**trace 自包含化 + refine 全链路落盘.** (2026-05-19) · trace 第一原则
-所有 LLM call 的 `system_prompt_full` / `user_message_full` / `raw_response` body 必须落 trace 不能事后从 `prompts/*.md` 当前版本重建 (prompt 会迭代, 留 chars 丢 body 等于 trace 无法 replay).
-
 ## D-090 + D-091 + D-092
 **L2 refine 信号校准三轮 (intent 提权 → slot-aware overlay → 死维度清理).** (2026-05-19~20)
 - D-090: intent 三维权重 ×2~×4 + `health_guardrail` slot-aware 松绑, 解决"湘菜+重口"L2 top-5 信号被淹没
@@ -229,7 +201,3 @@ Workflow A 是唯一动线: 浏览历史 trace + 比较 refine 轮次. 写入路
 - D-092: 5 死维度清理 (vegetable_floor_pass / protein_floor_pass / distance / wetness / context_boost), 19 维 → 14 维 breakdown
 - 数值在 `chisha/score.py`, 守门规则 + 改新维度走 D-09x.x + snapshot 守门见 CONTRACTS.md
 
-## D-093
-**Sandbox Lab 白盒时光机落地 — `apps/sandbox-lab/` 独立 SPA :5175.** (2026-05-20)
-7~14 天可回放/分支推荐沙箱; 多 session + branch/rollback 完整版; Refine 单 round; 共用后端 `chisha.debug_server` :8765 新增 `sandbox/*` 端点. 不并入 `apps/debug-ui` (后者 D-087 read-only invariant 必须保留).
-编号备注: 原写 D-088, 因 worktree 双线并行与 main 上 D-088 撞号, merge 时改 D-093 (D-086 worktree 同步坑教训实例).

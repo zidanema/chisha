@@ -260,7 +260,7 @@ recommendation_started
 
 ---
 
-**文档物理位置**: `docs/design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md`
-**v1 历史 brief**: `docs/design_briefs/2026-05-16-ai-friendly-integration.md`
+**文档物理位置**: `docs/proposals/2026-05-16-ai-friendly-integration-v2-consensus.md` (2026-05-20 文档治理: design_briefs/ → proposals/)
+**v1 历史 brief**: `docs/proposals/archive/2026-05-16-ai-friendly-integration.md`
 **Codex 第一轮辩论 transcript**: 上一轮 chat (Section A / B / C / D)
 **Codex 第二轮辩论 transcript**: 本轮 chat (YES/MODIFY + 5 项盲点)

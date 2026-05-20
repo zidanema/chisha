@@ -1,8 +1,10 @@
 # chisha · UI 样式与文案规范 (V1)
 
-> 本文档约束 `apps/web` 用户视图的所有 UI 输出（文案 + 视觉系统）。LLM 产出的字段（reason_one_line / summary）也必须遵守 §1 文案规则。
+> **作用域**: `apps/web/` 用户视图。改前端必读，改后端无需理会。
+> **价值**: §3 反模式清单是这份文档的核心 —— 防止 agent 把已经否决的 UI 元素 (卡路里数字 / 旋转 spinner / toast 闪一下 / mood chip / 反馈可修改 ...) 重新加回来。
 >
-> 原型沉淀于 `chisha-user.zip / DESIGN_NOTES.md` §3 §4；正式约束写入本文档 + [DECISIONS](archive/DECISIONS_phase0.md) D-052~D-055。
+> 文案 + 视觉约束都对 LLM 产出的字段 (reason_one_line / summary) 一并生效。
+> 历史决策源在 [archive/DECISIONS_phase0.md](archive/DECISIONS_phase0.md) D-052~D-068。
 
 ---
 

@@ -1,6 +1,6 @@
 # chisha web · 用户视图 V1 + V1.1
 
-> 本机 localhost SPA。来源于 [`docs/design_briefs/archive/v1_user_view.md`](../../docs/design_briefs/archive/v1_user_view.md) + claude.ai/design 原型两轮迭代沉淀（[`docs/style-guide.md`](../../docs/style-guide.md)、D-052~D-055 入口架构、D-056~D-068 反馈系统）。
+> 本机 localhost SPA。来源于 [`docs/proposals/archive/v1_user_view.md`](../../docs/proposals/archive/v1_user_view.md) + claude.ai/design 原型两轮迭代沉淀（[`docs/style-guide.md`](../../docs/style-guide.md)、D-052~D-055 入口架构、D-056~D-068 反馈系统）。
 
 ## 启动
 

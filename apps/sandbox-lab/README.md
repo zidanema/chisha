@@ -3,7 +3,7 @@
 D-093 「白盒时光机」内部 debug SPA。7~14 天可回放、可分支、可改规则的推荐沙箱。
 
 设计源: `chidiansha-sandbox/project/sandbox-lab/` (HTML 原型,Phase 1/2 字句搬过来不重设计)
-落地 brief: `docs/design_briefs/archive/2026-05-19-sandbox-lab.md`
+落地 brief: `docs/proposals/archive/2026-05-19-sandbox-lab.md`
 
 ## 本地拉起
 

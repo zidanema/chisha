@@ -1,7 +1,7 @@
 # chisha · 项目级指令
 
 > 项目名: 今天吃点啥 (chisha) · 个人 AI **原则派点餐执行外包**工具 (L0 方法论 spec / L1 数据 / L2 打分 / L3 LLM 精排)
-> 当前阶段: **V1.0 工程里程碑收尾完成** (D-001~D-093, 2026-05-20). 推荐链路 L1/L2/L3 + Web SPA + V1.1 反馈 + L1 真兑现 + sandbox time-travel + trace 持久化 + Debug 三模式 + FastAPI 23 端点 + Refine v2 / Faithful Refine framework (D-080~D-085) + L2 信号校准 (D-090~092, 14 维) + Sandbox Lab (D-093). 进入 **Phase 1 推广准备**, 路线见 [docs/ROADMAP.md](docs/ROADMAP.md).
+> 当前阶段: **V1.0 工程里程碑收尾完成** (2026-05-20). 推荐链路 L1/L2/L3 + Web SPA + V1.1 反馈 + L1 真兑现 + sandbox time-travel + trace 持久化 + Debug 三模式 + FastAPI 23 端点 + Refine v2 / Faithful Refine framework (D-080~D-085) + L2 信号校准 (D-090~092, 14 维) + Sandbox Lab. 进入 **Phase 1 推广准备**, 路线见 [docs/ROADMAP.md](docs/ROADMAP.md).
 > 主语言: Python (后端) + TypeScript (前端) · 包管理: uv / npm · 测试: pytest
 
 ## 必读(首次接触本项目)
@@ -13,23 +13,15 @@
 4. [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md) — 文档纪律 (改任何文档前必读)
 5. [docs/decisions.md](docs/decisions.md) + [docs/CONTRACTS.md](docs/CONTRACTS.md) — 活决策 + Agent 跨文件契约
 
-改 `apps/web/` 用户视图前必读 [docs/style-guide.md](docs/style-guide.md)(D-052~D-055 + D-060/D-066/D-067 锁定的交互不可重设计);改 `apps/debug-ui/` debug 台 SPA 前必读 [apps/debug-ui/README.md](apps/debug-ui/README.md)(D-075 独立 Vite SPA / V12 DAG / 5 主题,不并入 apps/web);改 `/api/*` 前必读 [docs/api.md](docs/api.md)。
-改推荐链路 / L3 精排:历史背景在 [docs/archive/DECISIONS_phase0.md](docs/archive/DECISIONS_phase0.md) + [docs/archive/RECOMMEND_PRINCIPLES_phase0.md](docs/archive/RECOMMEND_PRINCIPLES_phase0.md) + [docs/archive/L3_RERANK_REDESIGN_phase0.md](docs/archive/L3_RERANK_REDESIGN_phase0.md),活约束在 `docs/CONTRACTS.md`。
+改 `apps/web/` 用户视图前必读 [docs/style-guide.md](docs/style-guide.md)(D-052~D-055 + D-060/D-066/D-067 锁定的交互不可重设计);改 `apps/debug-ui/` debug 台 SPA 前必读 [apps/debug-ui/README.md](apps/debug-ui/README.md)(独立 Vite SPA / V12 DAG / 5 主题,不并入 apps/web);改 `apps/sandbox-lab/` 前必读 [apps/sandbox-lab/README.md](apps/sandbox-lab/README.md);改 `/api/*` 前必读 [docs/api.md](docs/api.md)。
+改推荐链路 / L3 精排:活约束在 [docs/CONTRACTS.md](docs/CONTRACTS.md) (这是单一可信源)。`docs/archive/*_phase0.md` 是 frozen 历史归档, **不作为改代码前的必读**;只有想溯源某条 D-XXX 决策的上下文时才点对应 anchor 进去。
 
-## 文档纪律(强制 · 2026-05-16 重构后)
+## 文档纪律
 
-文档按"读者"分四桶:
-
-| 桶 | 文件 | 写什么 | 写多长 |
-|---|---|---|---|
-| 产品决策(给用户) | `docs/decisions.md` | 产品方向 / 推翻历史 / 没选 B 方案的原因 | **3-5 行**,> 15 行说明你在写实施,停下 |
-| Agent 契约(给 Claude/Codex) | `docs/CONTRACTS.md` | 跨文件隐含约束 / 反直觉规则 / 系统级 invariant | 单条 ≤ 10 行,全文 ≤ 200 行 |
-| Agent 红线(给 Claude/Codex) | `CLAUDE.md`(本文件) | 命令 / avoid 清单 / 当前阶段焦点 | 全文 ≤ 100 行 |
-| 历史归档(不维护) | `docs/archive/*_phase0.md` | Phase 0 历史 | 只读 |
-
-**不写**(无论多重要,代码已有): 字段表 / schema keyset / prompt 行号 / 参数值 / 测试列表 / batch 数 / commit hash / 文件改动清单 — git log + grep 代码即权威。
-
-详见 [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md)(Wave 4 重写)。
+- 写产品决策 → `docs/decisions.md`, ≤ 15 行/条, 超过就是塞实施
+- 写 agent 跨文件契约 → `docs/CONTRACTS.md`
+- 字段表 / schema / prompt 行号 / 参数值 / 测试列表 / commit hash / 文件改动清单一律**不写文档** — git log + grep 代码即权威
+- 完整规则 + 反 antipattern 见 [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md)
 
 ## 决策编号约定
 
@@ -40,13 +32,13 @@
 ## 常用命令
 
 ```bash
-# 老调试台 (D-039 vanilla HTML) + 新 debug-ui (D-075 Vite SPA) 共用同一后端
+# 后端 (老调试台 vanilla HTML + 新 SPA 共用)
 uv run python -m chisha.debug_server  # :8765 (老:/debug, SPA:/, swagger:/swagger)
 
-# 新 debug 台 SPA (D-075, 端口 5174, proxy /api → :8765)
+# 新 debug 台 SPA (端口 5174, proxy /api → :8765)
 cd apps/debug-ui && npm install && npm run dev  # http://127.0.0.1:5174
 
-# Sandbox Lab 白盒时光机 (D-093, 端口 5175, proxy /api → :8765)
+# Sandbox Lab 白盒时光机 (端口 5175, proxy /api → :8765)
 cd apps/sandbox-lab && npm install && npm run dev  # http://127.0.0.1:5175
 
 # 推荐 dry_run
@@ -86,7 +78,7 @@ stuck override 护栏: `high` (含 unknown 默认) 严禁 override; `low/medium`
 
 ## 前端自测(强制,改 apps/web 或 apps/debug-ui 或 apps/sandbox-lab 必走)
 
-本项目装了 `chrome-devtools-mcp` (user scope, 2026-05-16). 改 `apps/web/src/**` (用户视图 :5173) / `apps/debug-ui/src/**` (D-075 SPA :5174) / `apps/sandbox-lab/src/**` (D-093 SPA :5175) 任意 `.tsx` / `.css` / `vite.config.ts` / proxy 后, **必须用 `mcp__chrome-devtools__*` 工具自驱浏览器验证**,不许只跑 vitest/tsc 就宣告完成,也不许让志丹去当眼睛。
+本项目装了 `chrome-devtools-mcp` (user scope, 2026-05-16). 改 `apps/web/src/**` (用户视图 :5173) / `apps/debug-ui/src/**` (调试台 SPA :5174) / `apps/sandbox-lab/src/**` (Sandbox Lab :5175) 任意 `.tsx` / `.css` / `vite.config.ts` / proxy 后, **必须用 `mcp__chrome-devtools__*` 工具自驱浏览器验证**,不许只跑 vitest/tsc 就宣告完成,也不许让志丹去当眼睛。
 
 最小流程:
 
@@ -100,22 +92,9 @@ stuck override 护栏: `high` (含 unknown 默认) 严禁 override; `low/medium`
 
 ## 自动化工作流 (brief → tasks → autorun)
 
-```
-讨论需求 → docs/design_briefs/<name>.md
-   ↓
-/plan-brief <brief>    # 拆原子任务, 调 /codex:rescue 共识审一轮, 写 specs 文件 + tasks.json
-   ↓ (志丹 review specs)
-   ↓
-/ship-tasks            # thin wrapper → bash scripts/ship.sh
-   └ 内部每 task 调 /run-task <id>: plan → /codex:rescue 审 plan → 实施 → /codex:adversarial-review 审 diff → commit
-```
+`/plan-brief <docs/proposals/xxx.md>` 拆原子任务 + Codex 共识审 → 写 `specs/T-*.md` + `specs/tasks.json` → 志丹 review → `/ship-tasks` 串跑, 内部每 task 走 `/run-task <id>` (plan → Codex 审 → 实施 → Codex 对抗审 → commit). 业务逻辑在 `/plan-brief.md` + `/run-task.md`. V1.0 后历史 specs 已归档, 新 task 等 Phase 1 启动再建.
 
-V1.0 后历史 specs 全部归档到 `specs/archive/`, `/run-task` 改从 `specs/tasks.json` 的 `spec` 字段读路径 (jq 解析). 新 task 等 Phase 1 启动时再建.
+## 提醒
 
-3 个 slash command + 1 个 bash 脚本. 业务逻辑全在 `/plan-brief.md` 和 `/run-task.md` 里; codex 调用走 `codex-plugin-cc` plugin; opus fallback 在 `/run-task` 里用 `Agent` tool 内联调 (model: opus, 独立 context 防 self-confirmation bias).
-
-## 提醒 (给未来的 Claude Code)
-
-- 文档体系按读者分四桶: DECISIONS/IMPL_LOG/DESIGN/ROADMAP_phase0 已归档, 新决策只写 `docs/decisions.md`, ≤ 15 行/条. 超过就是你在写实施, 删掉重写.
 - 改完任意 D-XXX 后, **主动检查** README / ROADMAP / CONTRACTS 是否要同步更新.
-- 阶段性收口时主动调用 `neat-freak` skill, 带一句"≤ 15 行原则, 讲不完就丢弃"防过度沉淀.
+- 阶段性收口主动调用 `neat-freak` skill, 带一句"≤ 15 行原则, 讲不完就丢弃"防过度沉淀.

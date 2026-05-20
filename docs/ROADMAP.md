@@ -10,7 +10,7 @@
 
 ## 当前状态
 
-**V1.0 工程里程碑收尾完成** (2026-05-20, D-001~D-093) — 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈 + L1 真兑现 (LLM 抽取) + Sandbox Time-Travel + trace 持久化 + Debug 三模式 + FastAPI 23 端点 + Refine v2 / Faithful Refine framework (D-080~D-085) + L2 refine 信号校准 + 死维度清理 (D-090/091/092, 14 维 breakdown) + Sandbox Lab 白盒时光机 (D-093).
+**V1.0 工程里程碑收尾完成** (2026-05-20) — 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + L1 长期反馈层 (LLM 抽取真兑现) + Sandbox Time-Travel + trace 持久化 + Debug 三模式 + FastAPI 23 端点 + Refine v2 / Faithful Refine framework (D-080~D-085) + L2 refine 信号校准 + 死维度清理 (D-090~092, 14 维 breakdown) + Sandbox Lab 白盒时光机.
 
 **接下来**: 进入 **Phase 1 推广准备** — 自用沉淀 + 个人 agent 接入跑通 + 同事 screener.
 
@@ -46,11 +46,11 @@ Phase 2 · 双向扩展 (顺序后议)
 - 沙箱模式交互动线重设计 (推广前用户心智不能乱)
 - L1 词表扩 cuisine token (同事 cuisine 比志丹分散)
 - B-001 v2 反馈短链路全字段覆盖
-- Living/Lab router 拆分重做 (D-086 回滚后待重做)
+- Living/Lab router 拆分重做 (worktree 回滚后未完成项)
 - Living API agent-ready 参数化 (meal_hint + at_time 重做)
 - D-074 翻 active: AI-friendly 接入终态 = CLI + Skill 模式, `llm_request_spec` 数据契约取代 closure 注入
 
-详细 design brief: [`design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md`](design_briefs/2026-05-16-ai-friendly-integration-v2-consensus.md).
+详细 design brief: [`proposals/2026-05-16-ai-friendly-integration-v2-consensus.md`](proposals/2026-05-16-ai-friendly-integration-v2-consensus.md).
 
 ---
 
