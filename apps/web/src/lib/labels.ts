@@ -2,7 +2,7 @@
 // Keep API parity with the prototype's window.LABELS (DESIGN_NOTES §3).
 // All UI components MUST go through `LABELS` rather than rendering raw enum values.
 
-import type { Mood, MealType, ZoneId, IngredientKind } from "./types";
+import type { Mood, MoodResponse, MealType, ZoneId, IngredientKind } from "./types";
 
 interface BannerText {
   before: string;
@@ -13,6 +13,9 @@ interface BannerText {
 export const LABELS = {
   meal: { lunch: "午餐", dinner: "晚餐" } as Record<MealType, string>,
 
+  // D-071: mood picker 已下线, 仅保留 neutral chip. 历史标签 (清淡/解馋/轻食/想喝汤/
+  // 低碳水) 走 refine 文本关键词通道, 不再以 chip 形式 UI 展示, 但旧 history 数据
+  // 仍可能带历史 mood key — 这里给出兜底标签防 undefined.
   mood: {
     neutral: "随便",
     want_clean: "清淡",
@@ -20,16 +23,9 @@ export const LABELS = {
     want_light: "轻食",
     want_soup: "想喝汤",
     low_carb: "低碳水",
-  } as Record<Mood, string>,
+  } as Record<MoodResponse, string>,
 
-  moodList: [
-    "neutral",
-    "want_clean",
-    "want_indulgent",
-    "want_light",
-    "want_soup",
-    "low_carb",
-  ] as Mood[],
+  moodList: ["neutral"] as Mood[],
 
   zone: {
     "shenzhen-bay": "深圳湾科技园",

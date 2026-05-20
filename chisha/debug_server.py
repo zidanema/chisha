@@ -61,9 +61,11 @@ class DebugRecommendReq(BaseModel):
 
 
 class CompareMoodsReq(BaseModel):
-    # moods 最多 8 个 (DAILY_MOODS 全集), 防止误传成 100 个跑死服务器
+    # D-073 后 neutral 是 V1.2 唯一对 L2 产生加分的 mood; 历史枚举入参仍接受
+    # (向后兼容), 但 compare 结果横向差异趋零. 默认只比 neutral 自身, 调用方
+    # 想横向对历史 mood 仍可显式传 moods=[...]. 上限 8 防误传跑死服务器.
     moods: list[str] = Field(
-        default_factory=lambda: ["want_light", "want_soup", "want_indulgent"],
+        default_factory=lambda: ["neutral"],
         min_length=1, max_length=8,
     )
     meal_type: str = "lunch"

@@ -711,25 +711,20 @@ refine 输入: (无)
       <h2>Context 注入 · 软调权</h2>
       <p><code>ContextSnapshot</code>（D-034）每次推荐前生成，不做硬过滤，只做软调权：</p>
       <ul>
-        <li><strong>L2 阶段</strong>：<code>context_boost</code> 维度按 mood 给 combo +/- 调（权重 0.4）</li>
-        <li><strong>L3 阶段</strong>：整个 snapshot 拍进 LLM payload，LLM 自己用语义判断（"用户今天 want_soup，所以我更倾向带汤水的"）</li>
+        <li><strong>L2 阶段</strong>：<code>context_boost</code> 维度仅在 <code>daily_mood = neutral</code>（V1.2 唯一生效值）时进入打分；当日偏好统一走 refine 文本通道。</li>
+        <li><strong>L3 阶段</strong>：整个 snapshot 拍进 LLM payload，由 LLM 用语义判断（如用户在 refine 里写"想喝汤"，LLM 倾向带汤水的）。</li>
       </ul>
 
-      <h3>6 个 daily_mood 的 L2 效应</h3>
+      <h3>daily_mood 的 L2 效应（V1.2 简化后）</h3>
       <p>看 <code>chisha.score.context_boost</code>：</p>
       <table>
         <thead><tr><th>mood</th><th>触发条件</th><th>调分</th></tr></thead>
         <tbody>
-          <tr><td><code>want_soup</code></td><td>combo 有汤水（wetness_bonus &gt; 0）</td><td><span class="badge badge-pos">+0.5</span></td></tr>
-          <tr><td><code>want_light</code></td><td>平均油 ≤2</td><td><span class="badge badge-pos">+0.3</span></td></tr>
-          <tr><td><code>want_light</code></td><td>平均油 ≥4</td><td><span class="badge badge-neg">-0.3</span></td></tr>
-          <tr><td><code>low_carb</code></td><td>combo 含主食 dish</td><td><span class="badge badge-neg">-0.3</span></td></tr>
-          <tr><td><code>want_clean</code></td><td>含 processed_meat</td><td><span class="badge badge-neg">-0.4</span></td></tr>
-          <tr><td><code>want_indulgent</code></td><td>油 ≤2（太清淡不解馋）</td><td><span class="badge badge-neg">-0.2</span></td></tr>
-          <tr><td><code>neutral</code> / None</td><td>—</td><td>0</td></tr>
+          <tr><td><code>neutral</code> / None</td><td>—（唯一生效值，默认无加成）</td><td>0</td></tr>
+          <tr><td><code>want_soup</code> / <code>want_light</code> / <code>low_carb</code> / <code>want_clean</code> / <code>want_indulgent</code></td><td>D-071 砍 4 条，D-073 进一步砍 want_soup — 全部不再产生 L2 加分（schema 仍接受入参以保证向后兼容）。当日偏好改走 <code>RefineIntent.flavor_tags</code>。</td><td>0</td></tr>
         </tbody>
       </table>
-      <p>这些值经 G4 权重（默认 0.4）后才进入 score，所以实际 deltascore = 表中的值 × 0.4。</p>
+      <p>历史背景：D-034 曾按 6 个 mood 给 ±0.2~0.5 的加权，D-071/D-073 砍掉以让"当日情绪偏好"统一走 refine 文本通道（防 mood chip + refine text 双通道冲突）。</p>
     </section>
 
     <section id="checklist">

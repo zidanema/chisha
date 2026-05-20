@@ -37,7 +37,6 @@ export function HomePage() {
   }, []);
 
   // D-071: 不再让用户选 mood, mood 固定 'neutral' (后端 daily_mood=None).
-  // want_soup 走 refine 文本关键词识别 (chisha/refine.py:infer_refine_mood).
   const FIXED_MOOD: Mood = "neutral";
 
   async function fetchRecommend(args?: { meal?: MealType }) {

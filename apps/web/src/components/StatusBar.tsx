@@ -2,10 +2,8 @@ import { LABELS } from "@/lib/labels";
 import { cx } from "@/lib/cx";
 import type { MealType } from "@/lib/types";
 
-// D-071: mood picker 整块隐藏 (随便/清淡/解馋/轻食 4 chip).
-// 方法论 baseline 已固化, 不需要 session 级显式 mood; want_soup 偏好走 refine
-// 文本关键词识别 (chisha/refine.py:infer_refine_mood). Mood 类型/LABELS.mood
-// 保留供调试台对比能力, 不删 — 仅前端入口移除.
+// D-071: mood picker 整块隐藏. 方法论 baseline 已固化, 不需要 session 级显式
+// mood; 当日偏好统一走 refine 文本关键词识别.
 
 export function StatusBar({
   meal,

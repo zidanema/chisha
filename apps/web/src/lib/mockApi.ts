@@ -21,7 +21,8 @@ import type { ChishaApi } from "./api";
 import { PROFILE_DEFAULTS } from "./profileDefaults";
 
 type PoolCandidate = Omit<Candidate, "rank"> & {
-  mood_affinity: Partial<Record<Mood, number>>;
+  // D-071/D-073: 后端历史枚举 key, 仅 mock 数据保留多样性, V1.2 实际只用 neutral
+  mood_affinity: Partial<Record<string, number>>;
 };
 
 const POOL: PoolCandidate[] = [
@@ -518,20 +519,20 @@ export const api: ChishaApi = {
     await sleep(220);
     void days;
     const items: HistoryItem[] = [];
-    const moods: Mood[] = ["neutral", "want_clean", "want_indulgent", "want_soup"];
+    const moods: Mood[] = ["neutral"];
     for (let i = 0; i < 7; i++) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const isLunch = (i + d.getDate()) % 3 !== 0;
       const meal: MealType = isLunch ? "lunch" : "dinner";
-      const picks = pickFive({ mood: moods[i % 4], round: i + 1 });
+      const picks = pickFive({ mood: moods[i % moods.length], round: i + 1 });
       items.push({
         session_id: `2026_${d.toISOString().slice(0, 10)}_${meal}`,
         meal_type: meal,
         generated_at: d.toISOString(),
         accepted_rank: i === 0 ? null : i % 4 === 0 ? null : (i % 3) + 1,
         candidates_summary: picks.slice(0, 3).map((c) => c.restaurant.name.split("·")[0]),
-        mood: moods[i % 4],
+        mood: moods[i % moods.length],
       });
     }
     return { items };

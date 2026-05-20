@@ -3,8 +3,14 @@
 
 export type MealType = "lunch" | "dinner";
 
-export type Mood =
-  | "neutral"
+// D-071/D-073: mood picker 已下线, V1.2 前端 input 类型只用 "neutral".
+// 前端发出的 mood 一律 neutral; UI 类型 (LABELS / FIXED_MOOD / recommend args) 用此.
+export type Mood = "neutral";
+
+// 后端 schema 仍接受历史枚举 (旧 session / debug 调用方可能仍带), response
+// 字段 (HistoryItem.mood / context.daily_mood) 用此宽类型兜底, 防运行时不匹配.
+export type MoodResponse =
+  | Mood
   | "want_clean"
   | "want_indulgent"
   | "want_light"
@@ -69,7 +75,8 @@ export interface Candidate {
   reason_one_line: string;
   health_flags: HealthFlags;
   risk_flags: string[];
-  mood_affinity?: Partial<Record<Mood, number>>;
+  // 后端历史枚举 (D-071/D-073 后 L2 不再用), 类型保持 string key 放宽兼容
+  mood_affinity?: Partial<Record<string, number>>;
 }
 
 export interface RecommendResponse {
@@ -88,7 +95,7 @@ export interface RecommendResponse {
     recent_3d_cuisines: Record<string, number>;
     recent_3d_ingredients: Record<string, number>;
     last_feedback: unknown;
-    daily_mood: Mood;
+    daily_mood: MoodResponse;
     refine_input: string | null;
   };
   stats: {
@@ -151,8 +158,7 @@ export interface FeedbackSession {
   candidates: Candidate[];
 }
 
-// V1.1 schema (D-063/062/063/064). Old `rating_taste/rating_satisfaction/chips`
-// removed — the legacy 5-star double-axis form is gone.
+// V1.1 schema (D-063/062/063/064).
 export type DimVal = 0 | 1 | 2 | null;        // 0=low / 1=mid / 2=high
 export type GutVal = -1 | 0 | 1 | null;       // 难吃 / 普通 / 好吃
 export type FeedbackVariant = "progressive" | "not-eaten";
@@ -199,7 +205,7 @@ export interface HistoryItem {
   generated_at: string;
   accepted_rank: number | null;
   candidates_summary: string[];
-  mood: Mood;
+  mood: MoodResponse;
 }
 
 // ── Skip-meal (D-054) ────────────────────────────────────────────────────────

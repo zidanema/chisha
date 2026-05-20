@@ -1720,7 +1720,7 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
 .shell.wa[data-tb="collapsed"] { --sidebar-w: 60px; }
 
 /* ────────────────────────────────────────────────
-   top bar · workspace switcher (A / B)
+   top bar · workspace switcher (A only, B 已迁 sandbox-lab :5175)
    ──────────────────────────────────────────────── */
 .wa-topbar {
   display: flex;
@@ -1783,9 +1783,6 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
   left: 12px; right: 12px; bottom: -1px; height: 2px;
   background: var(--accent);
 }
-.workspace-switch .ws.locked { color: var(--t-4); cursor: not-allowed; }
-.workspace-switch .ws.locked .sub { color: var(--t-4); }
-
 .wa-topbar .right {
   margin-left: auto;
   display: flex; align-items: center; gap: 10px;
