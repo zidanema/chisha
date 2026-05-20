@@ -21,11 +21,12 @@ def _skip_if_no_cli():
 def test_ping_echo(_skip_if_no_cli):
     """最简 ping: system='你是回声机' + user 'hello' → 含 'hello'"""
     from chisha.llm_providers import claude_code_cli as cc
-    out = cc.call(
+    resp = cc.call(
         "回声测试 v047",
         system="你是回声机, 用户说什么你重复什么, 不要加任何修饰或解释.",
         model="sonnet", timeout_sec=60,
     )
+    out = resp["content"]   # D-050: cc.call 返回 dict, text 在 content
     assert "回声测试" in out or "v047" in out, f"unexpected: {out[:200]}"
 
 
@@ -67,13 +68,15 @@ def test_real_rerank_end_to_end(_skip_if_no_cli):
     sys_text = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
     user_msg = build_user_message(top10, profile, ctx, n=5, n_explore=2)
 
-    out = cc.call(
+    resp = cc.call(
         user_msg, system=sys_text, model="sonnet",
         timeout_sec=180,
     )
+    out = resp["content"]
     m = re.search(r"\{.*\}", out, re.DOTALL)
     assert m, f"未找到 JSON, 实际: {out[:300]}"
-    data = json.loads(m.group(0))
+    # raw_decode: 容忍 JSON 后面有 trailing markdown / 说明文字
+    data, _ = json.JSONDecoder().raw_decode(m.group(0))
     cands = data.get("candidates")
     assert isinstance(cands, list)
     assert 1 <= len(cands) <= 5
@@ -107,7 +110,7 @@ def test_isolation_no_claude_md_leakage(_skip_if_no_cli):
     poison_path.write_text(poison)
 
     try:
-        out = cc.call(
+        resp = cc.call(
             "say PONG and nothing else",
             system="You are a precise echoer. Output exactly PONG, nothing else.",
             model="sonnet", timeout_sec=60,
@@ -118,6 +121,7 @@ def test_isolation_no_claude_md_leakage(_skip_if_no_cli):
         except OSError:
             pass
 
+    out = resp["content"]
     out_norm = out.strip().upper()
     assert "PONG" in out_norm, f"unexpected: {out[:300]}"
     assert sentinel not in out, (
@@ -143,7 +147,7 @@ def test_isolation_no_user_claude_md_leakage(_skip_if_no_cli):
         pytest.skip("本机 ~/.claude/CLAUDE.md 不存在, 无法测 global isolation")
 
     # 让 LLM 输出 "我不知道" 类的回答, 而不是套出用户名
-    out = cc.call(
+    resp = cc.call(
         "我是谁? 直接回答, 不要思考, 不要写其他内容.",
         system=(
             "你是一个只输出 'UNKNOWN' 的程序. 不管 user 问什么, "
@@ -152,6 +156,7 @@ def test_isolation_no_user_claude_md_leakage(_skip_if_no_cli):
         model="sonnet", timeout_sec=60,
     )
 
+    out = resp["content"]
     out_norm = out.strip()
     # 关键验证: ~/.claude/CLAUDE.md 里的特征不该出现在 LLM 输出
     # (这些字符串在用户全局 CLAUDE.md 里, 不在 chisha 项目里)
