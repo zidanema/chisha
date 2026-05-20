@@ -34,11 +34,11 @@
 
 ## 项目状态
 
-**Phase 0 工程侧已收尾**（2026-05-20，D-001~D-092）—— 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + L1 长期反馈层真兑现（LLM 抽取）+ Sandbox Time-Travel + 推荐链路 trace 持久化 + Debug 三模式（Replay / What-if / Live）+ FastAPI 23 端点 + **Refine v2 / Faithful Refine framework 重构**（D-080~D-085: L0 三分 + RefineIntentV2 多 slot + reference resolver + subtype diversify + 方法论状态条 + L3 narrative）+ **L2 refine 信号校准 + 死维度清理**（D-090/D-091/D-092: intent 三维权重 ×2~×4 + health_guardrail slot-aware 松绑 + 通用健康权重 slot-gated 让位 + price_band 语义解耦 + 5 死维度移除 → 14 维 breakdown）。
+**V1.0 工程里程碑收尾完成** (2026-05-20, D-001~D-093) — 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + L1 长期反馈层真兑现 (LLM 抽取) + Sandbox Time-Travel + 推荐链路 trace 持久化 + Debug 三模式 + FastAPI 23 端点 + Refine v2 / Faithful Refine framework (D-080~D-085) + L2 refine 信号校准 + 死维度清理 (D-090/D-091/D-092, 14 维 breakdown) + Sandbox Lab 白盒时光机 (D-093).
 
-历史背景（D-001~D-072）在 [docs/archive/DECISIONS_phase0.md](docs/archive/DECISIONS_phase0.md)；活决策（含 D-073~D-092）在 [docs/decisions.md](docs/decisions.md)；Agent 跨文件约束在 [docs/CONTRACTS.md](docs/CONTRACTS.md)。
+历史背景 (D-001~D-072) 在 [docs/archive/DECISIONS_phase0.md](docs/archive/DECISIONS_phase0.md); 活决策 (含 D-073~D-093) 在 [docs/decisions.md](docs/decisions.md); Agent 跨文件约束在 [docs/CONTRACTS.md](docs/CONTRACTS.md).
 
-**接下来**：5 步推进路线（debug trace 验收 → 摸清 L1 → 沙盒 e2e + D-080~D-085 framework 复测 → 接个人 agent + context 注入 → 同 query 随机性），详见 [docs/ROADMAP.md "Phase 0 收尾路线"](docs/ROADMAP.md)。终极路径：自用稳定 → 接个人 agent → 扩同事 / 数据源。
+**接下来**: 进入 **Phase 1 推广准备** — 自用沉淀 + 个人 agent 接入跑通 + 同事 screener. 详见 [docs/ROADMAP.md](docs/ROADMAP.md). 终极路径: 自用稳定 → 接个人 agent → 扩同事 / 数据源.
 
 > **V1 主交互**：本机 localhost Web SPA。`cd apps/web && npm install && npm run dev` → http://localhost:5173。详见 [`apps/web/README.md`](apps/web/README.md) + [`docs/style-guide.md`](docs/style-guide.md) + [`docs/api.md`](docs/api.md)。飞书延后到 V1.5 做推送通道。
 
@@ -48,36 +48,36 @@
 
 ## 文档体系
 
-> **📋 整理中（2026-05-16 重构）**：文档体系按"读者分层"分四桶（详见 [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md)）。
-> 旧的 `DECISIONS.md` / `IMPLEMENTATION_LOG.md` / `DESIGN.md` / `L3_RERANK_REDESIGN.md` / `RECOMMEND_PRINCIPLES.md` 已归档到 `docs/archive/`，不再维护。
+> 文档按"读者分层"分四桶 (详见 [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md)).
+> 旧的 `DECISIONS.md` / `IMPLEMENTATION_LOG.md` / `DESIGN.md` / `L3_RERANK_REDESIGN.md` / `RECOMMEND_PRINCIPLES.md` / Phase 0 design briefs / specs / 一次性 scripts 已归档到对应 `archive/` 或 `deprecated/`, 不再维护.
 
 | 文档 | 主读者 | 内容 |
 |---|---|---|
 | [docs/PRD.md](docs/PRD.md) | 你 | 产品需求 · 为什么做、做给谁 |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 你 | 路线图 · V1/V2/V3 边界，已砍清单 |
-| [docs/decisions.md](docs/decisions.md) | 你 · agent 偶尔 grep | 活决策日志（单文件，≤ 15 行/条，提炼中） |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 你 | 路线图 · Phase 路线, 已砍清单 |
+| [docs/decisions.md](docs/decisions.md) | 你 · agent 偶尔 grep | 活决策日志 (单文件, ≤ 15 行/条) |
 | [docs/BACKLOG.md](docs/BACKLOG.md) | 你 | 待办池 · 已知但当前不解决的 bug / feature / idea |
 | [CLAUDE.md](CLAUDE.md) | Coding agent 每次会话 | 项目红线 / 常用命令 / avoid 清单 |
 | [docs/CONTRACTS.md](docs/CONTRACTS.md) | Coding agent 每次会话 | 跨文件隐含约束 / 反直觉规则 / 系统级 invariant |
-| [docs/api.md](docs/api.md) | agent | 前后端 API 契约（V1 + V1.1） |
-| [docs/style-guide.md](docs/style-guide.md) | agent | `apps/web/` UI 文案 + 视觉系统 + 反模式（D-052~D-068 锁定） |
-| [apps/debug-ui/README.md](apps/debug-ui/README.md) | agent | `apps/debug-ui/` SPA 设计（D-075 独立 Vite SPA / V12 DAG / 5 主题） |
-| [apps/sandbox-lab/README.md](apps/sandbox-lab/README.md) | agent | `apps/sandbox-lab/` Sandbox Lab 白盒时光机 SPA（D-093 独立 Vite SPA / 端口 5175） |
-| [docs/intro-for-colleagues.md](docs/intro-for-colleagues.md) | 同事 | 给同事的产品 sale 文档（750 字） |
-| [docs/agent-integration-approach.md](docs/agent-integration-approach.md) | 同行 | "CLI + Skill" 模式技术交流文档 |
-| [docs/design_briefs/](docs/design_briefs/) | 你 · 历史 | 设计草稿（如 D-074 AI-friendly 接入共识） |
-| [eval/dish_tagging_eval/](eval/dish_tagging_eval/) | 复评 prompt 时 | 打标评测框架（171 条 golden set） |
-| [docs/archive/](docs/archive/) | 历史考古 | Phase 0 旧 DECISIONS / IMPL_LOG / DESIGN / L3_REDESIGN / RECOMMEND_PRINCIPLES，**不再维护** |
+| [docs/api.md](docs/api.md) | agent | 前后端 API 契约 (V1 + V1.1) |
+| [docs/style-guide.md](docs/style-guide.md) | agent | `apps/web/` UI 文案 + 视觉系统 + 反模式 |
+| [apps/debug-ui/README.md](apps/debug-ui/README.md) | agent | `apps/debug-ui/` SPA 设计 (D-075 + D-087 Workflow A) |
+| [apps/sandbox-lab/README.md](apps/sandbox-lab/README.md) | agent | `apps/sandbox-lab/` Sandbox Lab 白盒时光机 SPA (D-093) |
+| [docs/intro-for-colleagues.md](docs/intro-for-colleagues.md) | 同事 | 给同事的产品 sale 文档 |
+| [docs/agent-integration-approach.md](docs/agent-integration-approach.md) | 同行 | "CLI + Skill" 模式技术交流 (草稿, 待 D-074 翻 active) |
+| [docs/design_briefs/](docs/design_briefs/) | 你 · 历史 | 当前活的 design 草稿 (V1.0 后只剩 D-074 AI-friendly 接入共识); 已落地的归 archive/ |
+| [eval/dish_tagging_eval/](eval/dish_tagging_eval/) | 复评 prompt 时 | 打标评测框架 (171 条 golden set) |
+| [docs/archive/](docs/archive/) | 历史考古 | Phase 0 旧 DECISIONS / IMPL_LOG / DESIGN / ROADMAP_phase0 / L3_REDESIGN / RECOMMEND_PRINCIPLES, **不再维护** |
 
 ---
 
 ## 当前进度
 
-**Phase 0 工程侧 ✅ 收尾**（2026-05-17）。详细 phase 状态、里程碑、已砍清单见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+**V1.0 工程里程碑 ✅ 收尾** (2026-05-20). 详细 phase 状态、里程碑、已砍清单见 [docs/ROADMAP.md](docs/ROADMAP.md).
 
-**接下来**：5 步收尾路线（详见 [ROADMAP "Phase 0 收尾路线"](docs/ROADMAP.md)）→ Phase 1 同事推广（启动条件：自用稳定 + 个人 agent 接入跑通 + ≥ 3 同事自发持续使用）。
+**接下来**: Phase 1 同事推广 (启动条件: 自用稳定 + 个人 agent 接入跑通 + ≥ 3 同事自发持续使用).
 
-实现新功能前先查 [ROADMAP](docs/ROADMAP.md) 当前版本范围；想推翻已有设计先查 [decisions.md](docs/decisions.md) + [archive/DECISIONS_phase0.md](docs/archive/DECISIONS_phase0.md)；改代码前查 [CONTRACTS.md](docs/CONTRACTS.md) 跨文件约束。
+实现新功能前先查 [ROADMAP](docs/ROADMAP.md) 当前版本范围; 想推翻已有设计先查 [decisions.md](docs/decisions.md) + [archive/DECISIONS_phase0.md](docs/archive/DECISIONS_phase0.md); 改代码前查 [CONTRACTS.md](docs/CONTRACTS.md) 跨文件约束.
 
 ---
 
@@ -112,8 +112,8 @@ chisha/
 │   ├── api.md                 # 前后端 API 契约 (V1 + V1.1)
 │   ├── style-guide.md         # UI 文案规范 + 视觉系统
 │   ├── CONTRIBUTING_DOCS.md   # 文档维护准则 (四桶分层)
-│   ├── design_briefs/         # 设计草稿 (D-074 AI-friendly 接入共识等)
-│   └── archive/               # Phase 0 旧 DECISIONS / IMPL_LOG / DESIGN / L3_REDESIGN / RECOMMEND_PRINCIPLES (不再维护)
+│   ├── design_briefs/         # 当前活草稿 (D-074 AI-friendly 接入共识); archive/ 存已落地
+│   └── archive/               # Phase 0 旧 DECISIONS / IMPL_LOG / DESIGN / ROADMAP_phase0 (不再维护)
 ├── data/
 │   ├── shenzhen-bay/          # office zone, 139 家 7256 菜
 │   └── home/           # home zone, 38 家 2117 菜
@@ -122,7 +122,7 @@ chisha/
 ├── apps/debug-ui/             # V12 DAG 调试台 SPA (D-075, 端口 5174)
 ├── apps/sandbox-lab/          # 白盒时光机 sandbox SPA (D-093, 端口 5175)
 ├── integrations/openclaw/     # 飞书推送通道骨架, V1.5 接入 (D-051 翻案)
-├── scripts/                   # 数据维护 + 回归工具 (tag_via_api / dry_run / inspect_candidates / baseline_l2_snapshot / compare_traces / bootstrap_l1_from_legacy / ...)
+├── scripts/                   # 数据维护 + 回归工具 (tag_via_api / dry_run / inspect_candidates / baseline_l2_snapshot / compare_traces / bootstrap_l1_from_legacy / ...); deprecated/ 存一次性脚本
 ├── prompts/                   # LLM prompt 模板 (rerank_system / l1_extract / parse_refine_intent 等)
 └── tests/                     # pytest 全链路 + 单元 (435+)
 ```

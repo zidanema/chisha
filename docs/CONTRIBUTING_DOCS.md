@@ -15,7 +15,7 @@
 | | [../CLAUDE.md](../CLAUDE.md) | Coding agent 每次会话 | 红线 / 常用命令 / 当前阶段焦点 | ≤ 100 行 |
 | | [api.md](api.md) | Agent | 前后端 API 契约（V1） | 接口变化时改 |
 | | [style-guide.md](style-guide.md) | Agent | `apps/web/` UI 文案 + 视觉系统 + 反模式 | UI 决策落地时改 |
-| **C · 归档** | [archive/](archive/) | 历史考古 | Phase 0 旧 DECISIONS / IMPL_LOG / DESIGN / 等 | **不维护** |
+| **C · 归档** | [archive/](archive/) | 历史考古 | Phase 0 旧 DECISIONS / IMPL_LOG / DESIGN / ROADMAP_phase0 + `design_briefs/archive/` + `specs/archive/` | **不维护** |
 | **D · 评测** | [../eval/](../eval/) | 复评 prompt 时 | 评测框架 + golden set + spec | 评测重做时改 |
 
 ---
@@ -87,7 +87,7 @@ V1 / V2 / V3 切换或每周一次 wrap-up 时：
 3. **ROADMAP 当前状态** — 与最近 git log 对照，缺的补
 4. **README 进度章节** — 与 ROADMAP 对齐
 
-若用 `neat-freak` skill 自动整理，**调用前 prompt 加一句**："写决策 ≤ 15 行，超过就是实施。讲不完就丢弃，不要塞回旧 IMPL_LOG 归档"。
+若用 `neat-freak` skill 自动整理, **调用前 prompt 加一句**: "写决策 ≤ 15 行, 超过就是实施. 讲不完就丢弃, 不要把实施细节塞回 archive/"。
 
 ---
 

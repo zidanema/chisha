@@ -1,17 +1,17 @@
 # chisha · 项目级指令
 
-> 项目名:今天吃点啥 (chisha) · 个人 AI **原则派点餐执行外包**工具 (L0 方法论 spec / L1 数据 / L2 打分 / L3 LLM 精排)
-> 当前阶段:**Phase 0 工程侧收尾**(D-001~D-085,2026-05-18)— 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈 + L1 真兑现(LLM 抽取)+ sandbox time-travel + trace 持久化 + Debug 三模式(Replay / What-if / Live)+ FastAPI 23 端点 + **Refine v2 / Faithful Refine framework 重构**(D-080~D-085: L0 三分 + RefineIntentV2 多 slot + reference resolver + subtype diversify + 方法论状态条 + L3 narrative)。当前 5 步推进路线见 [docs/ROADMAP.md "Phase 0 收尾路线"](docs/ROADMAP.md)。
-> 主语言:Python (后端) + TypeScript (前端) · 包管理:uv / npm · 测试:pytest
+> 项目名: 今天吃点啥 (chisha) · 个人 AI **原则派点餐执行外包**工具 (L0 方法论 spec / L1 数据 / L2 打分 / L3 LLM 精排)
+> 当前阶段: **V1.0 工程里程碑收尾完成** (D-001~D-093, 2026-05-20). 推荐链路 L1/L2/L3 + Web SPA + V1.1 反馈 + L1 真兑现 + sandbox time-travel + trace 持久化 + Debug 三模式 + FastAPI 23 端点 + Refine v2 / Faithful Refine framework (D-080~D-085) + L2 信号校准 (D-090~092, 14 维) + Sandbox Lab (D-093). 进入 **Phase 1 推广准备**, 路线见 [docs/ROADMAP.md](docs/ROADMAP.md).
+> 主语言: Python (后端) + TypeScript (前端) · 包管理: uv / npm · 测试: pytest
 
 ## 必读(首次接触本项目)
 
 按顺序读:
 1. [README.md](README.md) — 项目状态与文档体系总表
 2. [docs/PRD.md](docs/PRD.md) — 产品定位
-3. [docs/ROADMAP.md](docs/ROADMAP.md) — V1/V2/V3 边界、已砍清单
-4. [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md) — 文档纪律(改任何文档前必读)
-5. [docs/decisions.md](docs/decisions.md) + [docs/CONTRACTS.md](docs/CONTRACTS.md) — 替代已归档的 DESIGN / DECISIONS / IMPL_LOG
+3. [docs/ROADMAP.md](docs/ROADMAP.md) — Phase 路线、已砍清单
+4. [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md) — 文档纪律 (改任何文档前必读)
+5. [docs/decisions.md](docs/decisions.md) + [docs/CONTRACTS.md](docs/CONTRACTS.md) — 活决策 + Agent 跨文件契约
 
 改 `apps/web/` 用户视图前必读 [docs/style-guide.md](docs/style-guide.md)(D-052~D-055 + D-060/D-066/D-067 锁定的交互不可重设计);改 `apps/debug-ui/` debug 台 SPA 前必读 [apps/debug-ui/README.md](apps/debug-ui/README.md)(D-075 独立 Vite SPA / V12 DAG / 5 主题,不并入 apps/web);改 `/api/*` 前必读 [docs/api.md](docs/api.md)。
 改推荐链路 / L3 精排:历史背景在 [docs/archive/DECISIONS_phase0.md](docs/archive/DECISIONS_phase0.md) + [docs/archive/RECOMMEND_PRINCIPLES_phase0.md](docs/archive/RECOMMEND_PRINCIPLES_phase0.md) + [docs/archive/L3_RERANK_REDESIGN_phase0.md](docs/archive/L3_RERANK_REDESIGN_phase0.md),活约束在 `docs/CONTRACTS.md`。
@@ -69,9 +69,20 @@ uv run python -m scripts.compare_traces                                         
 
 ## 推荐链路改动红线
 
-跨文件 invariants(L1/L2/L3 链路 / refine / sandbox / trace / 三模式 / 前端可信源)全部沉淀在 [docs/CONTRACTS.md](docs/CONTRACTS.md)。改 `chisha/{api,recall,score,rerank,refine,l1_extractor,sandbox,clock,data_root,trace_store,debug_what_if,web_api}.py` 或 `apps/debug-ui/src/**` 前**必读**。
+跨文件 invariants(L1/L2/L3 链路 / refine / sandbox / trace / 三模式 / 前端可信源)全部沉淀在 [docs/CONTRACTS.md](docs/CONTRACTS.md)。
 
-**Phase 0 内不做**(scope creep 防护): data zone 拆包发布 / OpenClaw 接入(待 D-074 落定) / screener 设计 / 第二份 methodology spec / L1 词表扩 / 调试台进一步 React 化整合 — 详见 CONTRACTS.md「范围红线」。
+**high-risk 文件白名单** (单一权威源, `/plan-brief` 评级 + `/run-task` Phase 4 reviewer 选择都引用这份):
+
+后端 12 模块 — 改任一 → `regression_risk = high`:
+- `chisha/{api,recall,score,rerank,refine,l1_extractor,sandbox,clock,data_root,trace_store,debug_what_if,web_api}.py`
+
+前端 — 改 `apps/{web,debug-ui}/src/**` 任意 .tsx / .css / vite.config.ts:
+- 跟后端 API contract 同时改 → `high`
+- 单独改 → `medium` (前端不进 baseline_l2_snapshot 严格回归网, 但触发"前端自测强制")
+
+stuck override 护栏: `high` (含 unknown 默认) 严禁 override; `low/medium` 允许过度谨慎通过 → `done_with_disagreement`。改了文件名 / 加新核心模块只改这一处。
+
+**V1.0 后 Phase 1 推广前不做** (scope creep 防护): data zone 拆包发布 / OpenClaw 接入 (待 D-074 翻 active) / screener 设计 / 第二份 methodology spec / L1 词表扩 / 调试台进一步 React 化整合 — 详见 CONTRACTS.md「范围红线」.
 
 ## 前端自测(强制,改 apps/web 或 apps/debug-ui 或 apps/sandbox-lab 必走)
 
@@ -87,8 +98,24 @@ uv run python -m scripts.compare_traces                                         
 
 不适用:纯后端 (`chisha/**` Python) / 脚本 (`scripts/**`) / 测试 (`tests/**`) 改动 — pytest + baseline_l2_snapshot 已经够。
 
-## 提醒(给未来的 Claude Code)
+## 自动化工作流 (brief → tasks → autorun)
 
-- **文档体系 2026-05-16 重构过**:DECISIONS/IMPL_LOG/DESIGN 已归档,新决策只写 `docs/decisions.md`,且 ≤ 15 行/条。超过就是你在写实施,删掉重写
-- 改完任意 D-XXX 后,**主动检查** README / ROADMAP 是否要同步更新
-- 阶段性收口时主动调用 `neat-freak` skill,但要带一句"≤ 15 行原则,讲不完就丢弃"防它过度沉淀
+```
+讨论需求 → docs/design_briefs/<name>.md
+   ↓
+/plan-brief <brief>    # 拆原子任务, 调 /codex:rescue 共识审一轮, 写 specs 文件 + tasks.json
+   ↓ (志丹 review specs)
+   ↓
+/ship-tasks            # thin wrapper → bash scripts/ship.sh
+   └ 内部每 task 调 /run-task <id>: plan → /codex:rescue 审 plan → 实施 → /codex:adversarial-review 审 diff → commit
+```
+
+V1.0 后历史 specs 全部归档到 `specs/archive/`, `/run-task` 改从 `specs/tasks.json` 的 `spec` 字段读路径 (jq 解析). 新 task 等 Phase 1 启动时再建.
+
+3 个 slash command + 1 个 bash 脚本. 业务逻辑全在 `/plan-brief.md` 和 `/run-task.md` 里; codex 调用走 `codex-plugin-cc` plugin; opus fallback 在 `/run-task` 里用 `Agent` tool 内联调 (model: opus, 独立 context 防 self-confirmation bias).
+
+## 提醒 (给未来的 Claude Code)
+
+- 文档体系按读者分四桶: DECISIONS/IMPL_LOG/DESIGN/ROADMAP_phase0 已归档, 新决策只写 `docs/decisions.md`, ≤ 15 行/条. 超过就是你在写实施, 删掉重写.
+- 改完任意 D-XXX 后, **主动检查** README / ROADMAP / CONTRACTS 是否要同步更新.
+- 阶段性收口时主动调用 `neat-freak` skill, 带一句"≤ 15 行原则, 讲不完就丢弃"防过度沉淀.

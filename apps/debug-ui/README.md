@@ -152,5 +152,4 @@ src/
 
 ## 设计稿源
 
-`~/chisha/.claude/worktrees/debug_trace_merge/chisha-debug/project/`
-(非 git 跟踪) — 改 UI 前先看一遍 wa-*.jsx。
+设计稿在 `chisha-debug/project/wa-*.jsx` (非 git 跟踪, 仅本机有), 改 UI 前先看一遍。

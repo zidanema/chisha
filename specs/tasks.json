@@ -1,5 +1,7 @@
 {
-  "_design_brief": "docs/design_briefs/2026-05-18-refine-v2-faithful-refine.md",
+  "_frozen_at": "2026-05-20 V1.0",
+  "_note": "V1.0 工程里程碑后冻结. 新任务等 Phase 1 推广启动时再开新 tasks 文件",
+  "_design_brief": "docs/design_briefs/archive/2026-05-18-refine-v2-faithful-refine.md",
   "_decisions": "D-080~D-085 (待落，指回 design brief)",
   "_first_principle": "Faithful Refine — 系统对 refine 文本的理解深度和执行忠实度是用户信任的唯一来源",
   "tasks": [
@@ -8,7 +10,8 @@
       "title": "trace event schema + intent schema 版本号",
       "regression_risk": "low",
       "depends_on": [],
-      "status": "done"
+      "status": "done",
+      "spec": "specs/archive/T-00.md"
     },
     {
       "id": "T-P1a-01",
@@ -17,7 +20,8 @@
       "depends_on": [
         "T-00"
       ],
-      "status": "done"
+      "status": "done",
+      "spec": "specs/archive/T-P1a-01.md"
     },
     {
       "id": "T-P1a-02",
@@ -26,7 +30,8 @@
       "depends_on": [
         "T-00"
       ],
-      "status": "done"
+      "status": "done",
+      "spec": "specs/archive/T-P1a-02.md"
     },
     {
       "id": "T-P1a-03",
@@ -36,7 +41,8 @@
         "T-00"
       ],
       "status": "done",
-      "_notes": "follow-up 完成: 多 slot LLM prompt (prompts/parse_refine_intent_v2.md) + 真 LLM extractor + 6 失败降级路径单测 + 43 条 eval set + runner 跑过 96.2% 准确率 (≥ 85% 阈值) + refine.py 接 intent_v2 双存 trace. 新 slot (brand_avoid / cooking_method_avoid / functional / reference) 在 trace 已存, 下游 L1/L2 真消费留 T-P2-01/02 接入."
+      "_notes": "follow-up 完成: 多 slot LLM prompt (prompts/parse_refine_intent_v2.md) + 真 LLM extractor + 6 失败降级路径单测 + 43 条 eval set + runner 跑过 96.2% 准确率 (≥ 85% 阈值) + refine.py 接 intent_v2 双存 trace. 新 slot (brand_avoid / cooking_method_avoid / functional / reference) 在 trace 已存, 下游 L1/L2 真消费留 T-P2-01/02 接入.",
+      "spec": "specs/archive/T-P1a-03.md"
     },
     {
       "id": "T-P1b-01",
@@ -46,7 +52,8 @@
         "T-P1a-01"
       ],
       "status": "done",
-      "_notes": "后端 chisha/status_bar.py 派生 active_methodology + l0_protections + override_events; recommend / refine 响应均带 status_bar 字段. 前端 apps/web/src/components/MethodologyBar.tsx (挂在 HomePage StatusBar 之前) 渲三态: baseline / l0_a/b_block / l0_c_relaxed. 9 单测 + 761 全测试通过. chrome-devtools-mcp 自驱实测三态全通: 空输入展示 哈佛餐盘+蔬菜≥1+蛋白≥40g+油≤4; 注入花生过敏 → 红色保护 chip + 事件行 (dropped_count=70); refine '今晚就放纵' → 琥珀色破戒模式提示."
+      "_notes": "后端 chisha/status_bar.py 派生 active_methodology + l0_protections + override_events; recommend / refine 响应均带 status_bar 字段. 前端 apps/web/src/components/MethodologyBar.tsx (挂在 HomePage StatusBar 之前) 渲三态: baseline / l0_a/b_block / l0_c_relaxed. 9 单测 + 761 全测试通过. chrome-devtools-mcp 自驱实测三态全通: 空输入展示 哈佛餐盘+蔬菜≥1+蛋白≥40g+油≤4; 注入花生过敏 → 红色保护 chip + 事件行 (dropped_count=70); refine '今晚就放纵' → 琥珀色破戒模式提示.",
+      "spec": "specs/archive/T-P1b-01.md"
     },
     {
       "id": "T-P1b-02",
@@ -57,7 +64,8 @@
         "T-P1a-02"
       ],
       "status": "done",
-      "_notes": "backend half + 前端全部完成: schema/prompt/trace/3 单测 + collector 透传 (rerank → recommend_meal/refine → web_api) + RecCard 上方独立 narrative 卡 + HomePage 4 个 set 调用点同步. chrome-devtools-mcp 实测 narrative 渲染通过 ('力量训练期+真实口味...' / '晚餐想吃锅气重口下饭菜→...'). 761 单测过."
+      "_notes": "backend half + 前端全部完成: schema/prompt/trace/3 单测 + collector 透传 (rerank → recommend_meal/refine → web_api) + RecCard 上方独立 narrative 卡 + HomePage 4 个 set 调用点同步. chrome-devtools-mcp 实测 narrative 渲染通过 ('力量训练期+真实口味...' / '晚餐想吃锅气重口下饭菜→...'). 761 单测过.",
+      "spec": "specs/archive/T-P1b-02.md"
     },
     {
       "id": "T-P2-01",
@@ -67,7 +75,8 @@
         "T-P1a-03"
       ],
       "status": "done",
-      "_notes": "resolver + 3 comparator + 17 单测; refine.py 真接入: rank_combos 后切 top_k 前调 parse_reference_text → resolve_reference (读 trace_store) → apply_relation 软重排; trace.reference_resolved 落 base session/relation/notes. 7 集成测试 + 17 unit + 768 全测试通过. baseline_l2_snapshot 无变 (refine 内改, 空路径不触发)."
+      "_notes": "resolver + 3 comparator + 17 单测; refine.py 真接入: rank_combos 后切 top_k 前调 parse_reference_text → resolve_reference (读 trace_store) → apply_relation 软重排; trace.reference_resolved 落 base session/relation/notes. 7 集成测试 + 17 unit + 768 全测试通过. baseline_l2_snapshot 无变 (refine 内改, 空路径不触发).",
+      "spec": "specs/archive/T-P2-01.md"
     },
     {
       "id": "T-P2-02",
@@ -78,7 +87,8 @@
         "T-P1a-03"
       ],
       "status": "done",
-      "_notes": "subtype_diversity 模块 + 8 菜系子类词表 + 11 单测 + refine.py 真接入: intent.cuisine_want 非空时 ranked 走 diversify_by_subtype (round-robin 让 top N 覆盖 ≥ 3 subtype). 5 集成测试 + 773 全测试通过. trace.subtype_diversified 落 debug. baseline_l2_snapshot 0 diff (空 refine 不触发)."
+      "_notes": "subtype_diversity 模块 + 8 菜系子类词表 + 11 单测 + refine.py 真接入: intent.cuisine_want 非空时 ranked 走 diversify_by_subtype (round-robin 让 top N 覆盖 ≥ 3 subtype). 5 集成测试 + 773 全测试通过. trace.subtype_diversified 落 debug. baseline_l2_snapshot 0 diff (空 refine 不触发).",
+      "spec": "specs/archive/T-P2-02.md"
     },
     {
       "id": "Debug",
@@ -88,7 +98,7 @@
         "T-P2-02"
       ],
       "status": "done",
-      "_spec": "specs/Debug.md",
+      "_spec": "specs/archive/Debug.md",
       "_notes": "D-088 落地: 6 bug 全修 + chrome-devtools-mcp golden path 全过. pytest 796 (基线 791 + 5 新增). Codex 3 轮 plan 审 + 1 轮 diff review APPROVED. 主要修法: adapter.ts B6 (config_error 透传) + App.tsx B1 (activeRound 读 latestRound) + useWaTrace.ts B1/B3/B5 (stale guard + zero-state + 5s 轮询) + RefineTimeline B2 (button + a11y) + web_api.py B4 (restaurant_name 派生) + TraceBrowser B4 (★ + 餐厅名渲染) + PanelL3 B6 (fallback_reason 显示)."
     },
     {
@@ -97,6 +107,7 @@
       "regression_risk": "low",
       "depends_on": [],
       "status": "done",
+      "spec": "specs/archive/S-01.md",
       "_notes": "apps/sandbox-lab/ Vite+React+TS SPA :5175 (VITE_PORT 可覆盖). useTweaks 持久 theme+accent (chisha:sandboxTweaks). styles.css 4 accent palette + .theme-dark + demo 区. npm install/typecheck/build 全绿; pytest 791 passed; chrome-devtools-mcp 视觉验证留 S-02."
     },
     {
@@ -107,6 +118,7 @@
         "S-01"
       ],
       "status": "done",
+      "spec": "specs/archive/S-02.md",
       "_notes": "17 新组件 (TopBar/Banners/Timeline+OpBar/DecisionArea/RecCard/ReviewCard/RightCol/TweaksPanel + panels A/B/C/D + modals Summary/Confirm/Refine) + types/sandbox.ts (HandoffXxx 严格契约 + sandbox 视图扩展) + mocks/sbxMocks.ts (删 ttl/taste.color) + styles.css 全量搬 (2585 行) + useTweaks 扩 5 字段 + S-01→S-02 migration. 验证: npm typecheck/build 全绿; backend pytest 791 passed 0 regressions; codex review APPROVED 无 blocking; chrome-devtools-mcp 因 profile 锁不可用 → 视觉验证按 plan §7.3 (Codex Q9) 推迟. 交互逻辑 / 后端 fetch / trace 跳转 不在本任务范围 (S-03/S-08/S-09)."
     },
     {
@@ -118,6 +130,7 @@
         "S-02"
       ],
       "status": "done",
+      "spec": "specs/archive/S-03.md",
       "_notes": "useSandbox per-session state Map (~380 行) + useKeyboard Esc 单层关 (~22 行). 14 actions 全在 hook 内: eat/skip/swap/refine/selectCell/rollback/branch/openSummary/closeSummary/openConfirm/closeConfirm/openRefineModal/closeRefineModal/dismissTransient. 派生 banners (refine_conflict/review_mode/done) 全 dismissable=false 直接 derive, 不进 dismiss filter (修订 B 防 stale-id 死锁). 现有 components 全不改 (仅 App.tsx prop 接线). demo-* query 通过 hook initialState 保留 (修订 F). typecheck + build 全绿. Codex plan 3 iter (iter1 Codex 实例不可用走 opus-fallback-reviewer 标 5 BLOCKERs → v2 修订 A-J → v2 iter2 标 2 新 BLOCKERs §3.1/§3.4 文本残留 → v2.1 同步 → APPROVED), Codex diff 1 iter APPROVED. **chrome-devtools-mcp 视觉验证因 profile 锁 (其它 agent 占用) 不可用 → 推迟到 S-08 联调 (同 S-02 _notes 处理)**. 11 条验收清单功能层面 hook 覆盖 (#1-#9), 视觉层面 (#10-#11 mono 字体 / RecCard parity / 暗色) 走 S-08 视觉对比."
     },
     {
@@ -126,6 +139,7 @@
       "regression_risk": "high",
       "depends_on": [],
       "status": "done",
+      "spec": "specs/archive/S-04.md",
       "_notes": "新建 chisha/sandbox_context.py (ContextVar + sid 校验: regex fullmatch + _legacy 黑名单 + _default 白名单). data_root.py 8 path helper 加 session_id kwarg, 行为矩阵: sandbox 关 + 显式非 default sid → RuntimeError (fail-loud 防串桶), sandbox 开 + _default → flat (D-077 兼容), sandbox 开 + 非 default → sessions/{sid}/ 子树. clock.py 3 helper 透 ctx sid. sandbox.py 10 API 加 sid kwarg, destructive (init/advance/reset/disable/record_l1_extraction) 非 default raise NotImplementedError 防 S-06a 误用. tests/test_sandbox_context.py 24 case (含 2 条 S-06a forward guards: copy_context propagate + 显式 sid kwarg override). 814 pytest 全过 + baseline_l2_snapshot 0 diff (EPSILON=1e-6). Reviewer chain: Codex plan audit 3 轮 (BLOCKED→BLOCKED→APPROVED via v3 plan), Codex adversarial diff 2 轮 (needs-attention 2 highs 修完 → approve)."
     },
     {
@@ -136,7 +150,8 @@
         "S-04"
       ],
       "status": "done",
-      "_notes": "scope 故意收窄 (vs v4 929 行 archived plans/S-05.plan-v4-bigscope.md.bak, 3 轮 Codex BLOCKED): 只做 4 件事 — (1) 静态路径布局确认 default=flat (S-04 已就位, 不改路径代码), (2) chisha/sandbox_migration.py + scripts/migrate_sandbox_layout.py migration 脚本 (idempotent + --dry-run + --relocate-legacy opt-in + collision-safe .bak.<utc-ts>), (3) tests/test_sandbox_layout_default_compat.py 15 guard tests, (4) baseline_l2_snapshot 0 diff. chisha/sandbox.py 只加 has_sandbox_meta() helper + _META_REL 常量 (10 行). 829 pytest 全过 + baseline 0 diff (compare_traces ✓) + 4-scenario migration self-test (dry-run / default / relocate-legacy / 二次跑) 全过. Reviewer chain: Codex plan audit iter1 BLOCKED (4 issues: sessions/ self-copy, relocate after default no-op, .bak collision, baseline cmd) → iter2 BLOCKED (1 issue: relocate idempotency 无 work 时不 satisfied) → iter3 APPROVED; Codex adversarial diff review APPROVED. Defer to S-06a: (A) /sandbox/inspect listing 在 layout 已建但 enabled=False 时, (B) rollback API 持锁修订, (C) 非 default sid runtime 路由门控 (web_api wrap with set_sandbox_session), (D) 多 session 并发 lock 文件设计, (E) _meta.lock 重定位 / sandbox layout reset 时序."
+      "spec": "specs/archive/S-05.md",
+      "_notes": "scope 故意收窄 (vs v4 929 行 archived, 3 轮 Codex BLOCKED): 只做 4 件事 — (1) 静态路径布局确认 default=flat (S-04 已就位, 不改路径代码), (2) chisha/sandbox_migration.py + scripts/deprecated/migrate_sandbox_layout.py migration 脚本 (idempotent + --dry-run + --relocate-legacy opt-in + collision-safe .bak.<utc-ts>), (3) tests/test_sandbox_layout_default_compat.py 15 guard tests, (4) baseline_l2_snapshot 0 diff. chisha/sandbox.py 只加 has_sandbox_meta() helper + _META_REL 常量 (10 行). 829 pytest 全过 + baseline 0 diff (compare_traces ✓) + 4-scenario migration self-test (dry-run / default / relocate-legacy / 二次跑) 全过."
     },
     {
       "id": "S-06a",
@@ -146,7 +161,8 @@
         "S-05"
       ],
       "status": "done",
-      "_notes": "scope 比原 spec 扩张: 不止 sessions CRUD (GET/POST/DELETE/POST rename), 还含 S-05 deferred (A) /sandbox/inspect 三态 + (C) 非 default sid runtime 路由门控 (web_api 11 端点挂 _with_sandbox_sid dep + 用 _sandbox_ctx(_sid) 包关键 IO). v4 plan §0.b/c 修订 D/F/G/H 全部落: api_recommend 显式 root=ROOT, recommend_meal 透 root 给 clock; _with_sandbox_sid dep 在非 default sid + sandbox disabled 时 409 fail-loud 防 data_root silent fall back; 桶不存在 → 404; sandbox.init() ensure _meta.json idempotent. dep 用 request.query_params 读避免与 /feedback/{session_id} path 冲突. risk 应是 high (chisha/{api,sandbox,web_api}.py 全在 high-risk 白名单, 非 medium). 3 新 test 文件 ~659 行 + 868 全测试通过 + baseline_l2_snapshot 0 diff. Codex review 3 iter: iter1 BLOCKED (3 endpoint 缺 dep) → iter2 BLOCKED (3 endpoint dep 加了但 body 没 with _sandbox_ctx wrap → ContextVar 没 set) → iter3 APPROVED."
+      "spec": "specs/archive/S-06a.md",
+      "_notes": "scope 比原 spec 扩张: 不止 sessions CRUD (GET/POST/DELETE/POST rename), 还含 S-05 deferred (A) /sandbox/inspect 三态 + (C) 非 default sid runtime 路由门控 (web_api 11 端点挂 _with_sandbox_sid dep + 用 _sandbox_ctx(_sid) 包关键 IO). 3 新 test 文件 ~659 行 + 868 全测试通过 + baseline_l2_snapshot 0 diff. Codex review 3 iter: iter1 BLOCKED (3 endpoint 缺 dep) → iter2 BLOCKED (3 endpoint dep 加了但 body 没 with _sandbox_ctx wrap → ContextVar 没 set) → iter3 APPROVED."
     },
     {
       "id": "S-06b",
@@ -156,7 +172,8 @@
         "S-05"
       ],
       "status": "done",
-      "_notes": "chisha/sandbox.py 加 meal_idx_to_slot + _state_path_for_sid + advance_meal (~95 行); chisha/sandbox_decision_diff.py 新建 build_decision 纯函数 (~135 行). advance_meal 走自有 sid-aware path helper (绕开 S-04 state() stub 的 `del session_id`), 默认桶扁平 / 非 default → sessions/{sid}/state.json. total_meals 语义: idx ∈ [0, total], idx=total 是 done sentinel. build_decision: history[-1]=本顿契约, prev/new long_term_prefs.boost epsilon=1e-3 落 taste up/dn. 17 单测 (9+8) + 888 全测试通过. Codex plan 3 iter (BLOCKED→BLOCKED→APPROVED): iter1 BLOCKER 1/2 (state()/_state_path 不 sid-aware) + FINDING-3 (total_meals 边界) → v2 修订 A (自有 path helper) / B (语义文档) / C (history 契约); iter2 BLOCKER-3 (§6 残留 ContextVar 描述) → v2.1 同步; iter3 APPROVED. Codex diff 1 iter APPROVED."
+      "spec": "specs/archive/S-06b.md",
+      "_notes": "chisha/sandbox.py 加 meal_idx_to_slot + _state_path_for_sid + advance_meal (~95 行); chisha/sandbox_decision_diff.py 新建 build_decision 纯函数 (~135 行). advance_meal 走自有 sid-aware path helper. total_meals 语义: idx ∈ [0, total], idx=total 是 done sentinel. 17 单测 (9+8) + 888 全测试通过."
     },
     {
       "id": "S-06c",
@@ -167,7 +184,8 @@
         "S-06b"
       ],
       "status": "done",
-      "_notes": "6 new endpoints (/recs/eat/skip/swap/refine/jobs/{jid}) + async BG task + mock_recommend flag + adapter. scope 比原 spec 多: 同时改 sandbox.create_session 修订 A (seed state.json 让 POST /sessions 创建的桶可直接用), 提抽 _impl_l1_refresh 修订 C (复用 + lock 互斥), swap 改用 recommend_meal + post-filter 不调 _impl_refine 修订 B (保 Faithful Refine), _build_decision_async BG task 显式 `with _sandbox_ctx(sid):` 包修订 D (ContextVar 跨 thread), _ensure_not_done 修订 E (done sentinel guard), _atomic_write_json 修订 F (4 类落盘原子). chisha/sandbox_adapter.py 新建 format_v2_to_rec + 5 条 MOCK_CURRENT_RECS 复刻 sbxMocks. 28 单测全 mock 路径 (18 eat_skip + 10 swap_refine) + 917 全测试通过 (+29). baseline_l2_snapshot 0 diff. Codex plan 3 iter (BLOCKED 5→2→APPROVED v3): iter1 5 BLOCKERs (create_session 不 seed state / swap _impl_refine 违反 Faithful Refine / _impl_l1_refresh 不存在 / picked_rec name 嵌套 KeyError / /recs 缺 done guard) → v2 修订 A-G; iter2 2 BLOCKERs (Q3 文字残留 / BG task 不持锁) → v2 iter2 修订; iter3 APPROVED. Codex diff 1 iter APPROVED."
+      "spec": "specs/archive/S-06c.md",
+      "_notes": "6 new endpoints (/recs/eat/skip/swap/refine/jobs/{jid}) + async BG task + mock_recommend flag + adapter. chisha/sandbox_adapter.py 新建 format_v2_to_rec + 5 条 MOCK_CURRENT_RECS 复刻 sbxMocks. 28 单测全 mock 路径 (18 eat_skip + 10 swap_refine) + 917 全测试通过. baseline_l2_snapshot 0 diff."
     },
     {
       "id": "S-07",
@@ -177,7 +195,8 @@
         "S-06c"
       ],
       "status": "done",
-      "_notes": "3 新端点 (POST .../rollback, POST .../branch, GET .../sessions/{sid} FullSnapshot — 补 S-06a 漏项) + per-sid op lock 基础设施 (_SESSION_OP_LOCK_REGISTRY + _session_op_lock ctx mgr) + 既有 5 端点入口加 lock guard (recs/eat/skip/swap/refine) + BG _build_decision_async 加 _L1_EXTRACTION_LOCK + per-sid lock + stale-meal-idx guard (rollback 已 truncate → 早退) + reset/disable 改用 _l1_extraction_lock_or_409 持锁穿透 lifecycle mutation (废 _block_until_l1_idle_or_409 probe-release) + rollback/branch 入口持 L1 lock 防 reset rmtree 与 rollback 写并发. 全事务 rollback (state.json 列尾 commit barrier, backup-restore on failure, trace v2/v3 + decisions + last_recs + D-039 session + recommend_log/meal_log 全部纳入 actions). 15 单测 (含 atomicity 2 case / D-039 + uneaten last_recs / OSError 阶段失败 / reset L1 lock 持锁 / per-sid lock 409 等) + 932 全测试通过 + baseline_l2_snapshot 0 diff. Codex plan 3 iter (BLOCKED→BLOCKED→APPROVED), Codex diff 5 iter (BLOCKED 4→4→1→1→APPROVED): iter1-4 BLOCKERs 全 fix (post-commit 在事务外 / _JOB_TABLE TOCTOU / FullSnapshot 不全 / GET 缺 / /recs 未加锁 / last_recs sid 不在 trash / OSError swallow / D-039 session 漏删 / BG 不持 L1 / reset/disable probe-release leak / reset rmtree vs rollback 写并发). 没动 refine / score / l1 / trace_store, Faithful Refine 不变."
+      "spec": "specs/archive/S-07.md",
+      "_notes": "3 新端点 (POST .../rollback, POST .../branch, GET .../sessions/{sid} FullSnapshot) + per-sid op lock 基础设施 + 全事务 rollback (state.json 列尾 commit barrier, backup-restore on failure, trace v2/v3 + decisions + last_recs + D-039 session + recommend_log/meal_log 全部纳入 actions). 15 单测 + 932 全测试通过 + baseline_l2_snapshot 0 diff."
     },
     {
       "id": "S-08",
@@ -187,7 +206,8 @@
         "S-03",
         "S-07"
       ],
-      "status": "done"
+      "status": "done",
+      "spec": "specs/archive/S-08.md"
     },
     {
       "id": "S-09",
@@ -196,7 +216,8 @@
       "depends_on": [
         "S-08"
       ],
-      "status": "done"
+      "status": "done",
+      "spec": "specs/archive/S-09.md"
     },
     {
       "id": "S-10",
@@ -206,8 +227,9 @@
         "S-09"
       ],
       "status": "done",
-      "_notes": "D-093 (原 D-088, 因与 main 撞号重编) 落 decisions.md (8 行) + CONTRACTS.md 加 5 条 sandbox 约束 (全文 134→144 ≤ 200) + CLAUDE.md 常用命令补 sandbox-lab :5175 (91→94 ≤ 100) + §前端自测 段同步 :5175 (in-place) + apps/sandbox-lab/README.md 'D-093 落地完成' + 数据流段 + README.md §项目结构 + §文档体系 表格双加索引 + brief status 转正 (落地 2026-05-20). HANDOFF_PROMPT.md 加 '## 落地状态' 节 (本地, chidiansha-sandbox/ 在 .git/info/exclude). memory: 新建 chisha_sandbox_lab_d093.md + MEMORY.md 加索引. 933 pytest 0 regression. Codex plan APPROVED iter 1 (4 LOW 全 changelog 接受), Codex diff APPROVED iter 1 (2 LOW 非阻断). Phase 1 plan worker halt @ Phase 2 (deferred Agent tool 未发现), 主 agent 接手 Phase 2-5."
+      "spec": "specs/archive/S-10.md",
+      "_notes": "D-093 (原 D-088, 因与 main 撞号重编) 落 decisions.md + CONTRACTS.md sandbox 约束 + CLAUDE.md 常用命令补 sandbox-lab :5175. 933 pytest 0 regression."
     }
   ],
-  "_sandbox_lab_brief": "docs/design_briefs/2026-05-19-sandbox-lab.md"
+  "_sandbox_lab_brief": "docs/design_briefs/archive/2026-05-19-sandbox-lab.md"
 }

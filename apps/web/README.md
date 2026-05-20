@@ -1,6 +1,6 @@
 # chisha web · 用户视图 V1 + V1.1
 
-> 本机 localhost SPA。来源于 [`docs/design_briefs/v1_user_view.md`](../../docs/design_briefs/v1_user_view.md) + claude.ai/design 原型两轮迭代沉淀（[`docs/style-guide.md`](../../docs/style-guide.md)、D-052~D-055 入口架构、D-056~D-068 反馈系统）。
+> 本机 localhost SPA。来源于 [`docs/design_briefs/archive/v1_user_view.md`](../../docs/design_briefs/archive/v1_user_view.md) + claude.ai/design 原型两轮迭代沉淀（[`docs/style-guide.md`](../../docs/style-guide.md)、D-052~D-055 入口架构、D-056~D-068 反馈系统）。
 
 ## 启动
 
@@ -13,7 +13,7 @@ npm run dev                      # http://localhost:5173 (默认: 真接口, /ap
 
 **默认走真接口** (D-073 后, backend stable). 后端 `chisha/debug_server.py` 监听 8765, `/api/*` 已在 `vite.config.ts` 配反代.
 
-历史: 早期 mock-first 默认导致 D-073 调试时对着 mock 看不到 backend 实测差异 — 改 real-first + NavBar `MOCK` 角标双保险, 详见 IMPL_LOG D-073 sanity sweep.
+历史: 早期 mock-first 默认导致 D-073 调试时对着 mock 看不到 backend 实测差异 — 改 real-first + NavBar `MOCK` 角标双保险.
 
 ## Claude Code 自测约定
 
@@ -36,7 +36,7 @@ npm run dev                      # http://localhost:5173 (默认: 真接口, /ap
 - `src/lib/mockApi.ts` — mock 数据，端口 §5 契约（[docs/api.md](../../docs/api.md)）
 - `VITE_USE_MOCK=0`（默认, 真接口）；`VITE_USE_MOCK=1` 切 mock (UI 上 NavBar 显示红色 `MOCK` 角标)
 
-V1.1 反馈链路 7 个端点已在后端 FastAPI 装上 (D-069) 并在 mockApi 全量实现 — 详见 [docs/api.md §5](../../docs/api.md) + [IMPL_LOG D-056~D-068](../../docs/archive/IMPLEMENTATION_LOG_phase0.md#d-056d-068-执行记录--v11-反馈系统落地-appsweb)。
+V1.1 反馈链路 7 个端点已在后端 FastAPI 装上 (D-069) 并在 mockApi 全量实现 — 详见 [docs/api.md §5](../../docs/api.md)。
 
 ## 设计原则
 
