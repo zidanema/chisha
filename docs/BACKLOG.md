@@ -117,6 +117,15 @@
 - **依赖**: data 打标工作流 (LLM 批量打标 dishes_tagged.json + 人工抽检)
 - **优先级**: P2 (下次数据轮次)
 
+### F-012 · rerank 多 cache breakpoint (5min 连续 refine 链路提速)
+
+- **来源**: 2026-05-21 prompt 优化 Step 3 续 brief 项 B, codex 共商 SHIP 但志丹砍
+- **状态**: open, 暂不做 (ROI 不足)
+- **What**: rerank `build_user_message` 在 [PROFILE] 段尾加第 2 个 ephemeral cache breakpoint, 让 5min TTL 内连续 refine 链路 (refine→refine→refine 不带 L1 抽取重算) input_tokens 再省 ~2k cache_read. 详见 `docs/proposals/2026-05-21-prompt-step3-cache-and-examples.md`
+- **砍的原因**: (1) 工程量 ~9h + 3 个 high-risk 文件 (llm_client.py / anthropic_api.py / openrouter.py + rerank.py 改 build_user_message), (2) 真命中窗口窄 — 仅"5min TTL 内连续 refine 且后台 L1 抽取没触发", codex Q-B2 警告 "PROFILE 一天内不变" 不成立, (3) 单用户日常 refine 频率不高, 长尾场景
+- **触发重做条件**: Phase 1 推广有真用户连续 refine 数据 / refine latency 还要再压 / Anthropic 计费成本成为瓶颈
+- **优先级**: P3 (长尾)
+
 ---
 
 ## Ideas
@@ -138,3 +147,4 @@ _(待填)_
 - 2026-05-20 · prompt 优化 Step 1 拆 7 task (T-PR-01~07) 共识审完成, brief §5 D1+D2 入 F-009 / F-010 (Phase 1 推广启动时 review)
 - 2026-05-21 · F-009 / F-010 scope 翻盘 superseded by D-094 (草, 待 codex 共商 + plan-brief): D1 quality_floor/delivery_only/max_distance_km/functional 砍 (志丹不用), D2 expanded 真消费 + synonyms 砍. food_form_avoid 拆出新立 F-011 等数据打标
 - 2026-05-21 · D-094 落地实施完成 (T-FR-01~07, 7 task closed): refine_intent_v2.py 砍 5 字段 + 9 类枚举闭包; recall.py 加 brand_avoid (venue 整店) + cooking_method_avoid (dish-级) 硬过滤 + cuisine_candidates_expanded 进 bucket_soft; refine.py V2→V1 桥接; rerank prompt 删 unsupported 段; eval set + 18 个 recall branch 测试同步; baseline_l2_snapshot 0 diff 守门通过
+- 2026-05-21 · prompt 优化 Step 3 续收口: 🔴 refine cache bug 通过 D-095 修完 (拆 system/user + cache_system=True, latency 6-8s → 3-4s 预期); top-K 60→40 砍 (跟 D-047 矩阵实测冲突); reason 示例精简砍 0 (信号都不重复, codex 共识); 多 cache breakpoint 立 F-012 不做 (5min 连续 refine 长尾 + 9h 工程量 + 3 high-risk 文件). **prompt 优化大题 (Step 1 + 2 + 3) 全部收口**

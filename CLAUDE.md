@@ -1,7 +1,7 @@
 # chisha · 项目级指令
 
 > 项目名: 今天吃点啥 (chisha) · 个人 AI **原则派点餐执行外包**工具 (L0 方法论 spec / L1 数据 / L2 打分 / L3 LLM 精排)
-> 当前阶段: **V1.0 工程里程碑收尾完成** (2026-05-20). 推荐链路 L1/L2/L3 + Web SPA + V1.1 反馈 + L1 真兑现 + sandbox time-travel + trace 持久化 + Debug 三模式 + FastAPI 23 端点 + Refine v2 / Faithful Refine framework (D-080~D-085) + L2 信号校准 (D-090~092, 14 维) + Sandbox Lab. 进入 **Phase 1 推广准备**, 路线见 [docs/ROADMAP.md](docs/ROADMAP.md).
+> 当前阶段: **V1.0 工程里程碑收尾完成** (2026-05-20). 推荐链路 L1/L2/L3 + Web SPA + V1.1 反馈 + L1 真兑现 + sandbox time-travel + trace 持久化 + Debug 三模式 + FastAPI 23 端点 + Refine v2 / Faithful Refine framework (D-080~D-085) + 真兑现字段闭包 (D-094) + L2 信号校准 (D-090~092, 14 维) + Sandbox Lab. 进入 **Phase 1 推广准备**, 路线见 [docs/ROADMAP.md](docs/ROADMAP.md).
 > 主语言: Python (后端) + TypeScript (前端) · 包管理: uv / npm · 测试: pytest
 
 ## 必读(首次接触本项目)
