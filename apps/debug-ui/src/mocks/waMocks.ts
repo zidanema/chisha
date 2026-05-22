@@ -172,7 +172,7 @@ const R2 = (() => {
   const intent: RoundIntentV2 = {
     redirect: { cuisine_want: [], cuisine_avoid: [], ingredient_want: [],
       ingredient_avoid: ["加工肉", "动物内脏"], brand_avoid: [] },
-    constrain: { oil: null, price_max: 80, functional: {} },
+    constrain: { oil: null, price_max: 80 },
     reject_previous: true,
     raw_understanding: "用户要求轮换；不点名拒绝具体餐厅，触发 novelty 提权.",
     raw_text: "换一组，这几个我都吃过",
@@ -181,7 +181,7 @@ const R2 = (() => {
   return { L1, L2, L3, FINAL, intent };
 })();
 
-// ─── R3 · "想喝汤，别给我面食和米饭" ──────────────────────
+// ─── R3 · "想喝汤，别给我面食和米饭，西少爷那个不要了" ──────────────────────
 const R3 = (() => {
   const L1: L1Trace = deepClone(MOCK_SESSION.l1);
   L1.funnel = deepClone(MOCK_SESSION.l1.funnel);
@@ -240,10 +240,10 @@ const R3 = (() => {
 
   const intent: RoundIntentV2 = {
     redirect: { ingredient_want: ["鱼", "禽"], ingredient_avoid: ["加工肉", "动物内脏"],
-      brand_avoid: ["西少爷肉夹馍"], food_form_avoid: ["面", "米饭"] },
-    constrain: { oil: null, price_max: 80, functional: {} },
+      brand_avoid: ["西少爷肉夹馍"] },
+    constrain: { oil: null, price_max: 80 },
     raw_understanding: "明确想要汤水类；主食拒面与米；点名拒绝西少爷.",
-    raw_text: "想喝汤，别给我面食和米饭",
+    raw_text: "想喝汤，别给我面食和米饭，西少爷那个不要了",
     schema_version: "2.0",
   };
   return { L1, L2, L3, FINAL, intent };
@@ -313,9 +313,8 @@ const R4 = (() => {
       ingredient_want: ["鱼", "禽"], ingredient_avoid: ["加工肉", "动物内脏", "油炸"],
       brand_avoid: ["西少爷肉夹馍"],
       cooking_method_avoid: ["油炸", "干煸", "重煎"],
-      food_form_avoid: ["面", "米饭"],
     },
-    constrain: { oil: "low", price_max: 80, functional: {} },
+    constrain: { oil: "low", price_max: 80 },
     raw_understanding: "用户加强清淡偏好；累计：汤 + 清淡 + 拒重油重辣.",
     raw_text: "再来一轮，别要重的，太油了",
     schema_version: "2.0",
@@ -341,7 +340,7 @@ export const ACTIVE_TRACE_ROUNDS: RoundRecord[] = [
   },
   {
     id: "R3", label: "想喝汤", started_at: "12:09",
-    user_input: "想喝汤，别给我面食和米饭", intent_v2: R3.intent,
+    user_input: "想喝汤，别给我面食和米饭，西少爷那个不要了", intent_v2: R3.intent,
     kpi: { combos: 1180, l2_top: 60, top1: "椰客椰子鸡 (科兴店)", latency_ms: 2310 },
     diff: { vs: "R2", in: 3, out: 3, up: 2, down: 1 },
     l1: R3.L1, l2: R3.L2, l3: R3.L3, final: R3.FINAL,

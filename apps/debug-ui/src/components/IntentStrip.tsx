@@ -45,7 +45,7 @@ function renderScalar(v: unknown): string {
   if (v === null || v === undefined) return "";
   if (typeof v === "boolean") return v ? "true" : "false";
   if (typeof v === "string" || typeof v === "number") return String(v);
-  // functional / reference: 紧凑 JSON
+  // reference: 紧凑 JSON
   try { return JSON.stringify(v); } catch { return String(v); }
 }
 

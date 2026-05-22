@@ -274,28 +274,18 @@ export type RoundIntentV2 = {
     cuisine_candidates_expanded?: string[];
     ingredient_want?: string[];
     ingredient_avoid?: string[];
-    ingredient_synonyms?: string[];
     brand_avoid?: string[];
     cooking_method_avoid?: string[];
-    food_form_avoid?: string[];
   };
   constrain?: {
     oil?: string | null;
     price_max?: number | null;
-    quality_floor?: string | null;
-    delivery_only?: boolean | null;
-    max_distance_km?: number | null;
-    functional?: {
-      low_caffeine?: boolean | null;
-      low_satiety_drowsy?: boolean | null;
-    };
   };
   reference?: { round?: string; pick?: string } | null;
   reject_previous?: boolean;
   raw_understanding?: string;
   raw_text?: string;
   schema_version?: string;
-  unsupported_in_recall?: string[];
   // legacy_v1 / 后端将来扩字段 — open schema
   [key: string]: unknown;
 };
