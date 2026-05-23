@@ -15,6 +15,7 @@
 | `rerank_user.md` | template (仅供人对照) | 不加载, 实际 user message 由 `rerank.build_user_message()` 拼 | — |
 | `tag_dishes.md` | active | `scripts/tag_via_api.py`, `scripts/tag_dishes.py` | D-036/D-037 (dual-model audit, deepseek-v4-flash) |
 | `tag_dishes.v3.pre_dual.md` | **archive** | 无加载点 | D-036 之前备份; git 可溯源, 待评估删除 |
+| `_dev_notes.md` | dev notes (not loaded) | 无加载点 | prompt 锚点 + 跨文件耦合提醒, 不进 token bill |
 
 ## 纪律
 
