@@ -47,3 +47,6 @@ chisha-user.zip
 
 # debug-ui 高保真设计稿 source-of-truth (D-075 输入材料, 不进版本库)
 design/
+
+# prompts/ 本地阅读用 PDF (从 .md 导出, 不进版本库)
+prompts/*.pdf
