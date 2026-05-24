@@ -176,7 +176,7 @@ const R2 = (() => {
     reject_previous: true,
     raw_understanding: "用户要求轮换；不点名拒绝具体餐厅，触发 novelty 提权.",
     raw_text: "换一组，这几个我都吃过",
-    schema_version: "2.0",
+    schema_version: "2.1",
   };
   return { L1, L2, L3, FINAL, intent };
 })();
@@ -240,11 +240,14 @@ const R3 = (() => {
 
   const intent: RoundIntentV2 = {
     redirect: { ingredient_want: ["鱼", "禽"], ingredient_avoid: ["加工肉", "动物内脏"],
-      brand_avoid: ["西少爷肉夹馍"] },
-    constrain: { oil: null, price_max: 80 },
+      brand_avoid: ["西少爷肉夹馍"],
+      // D-094.1: 主食拒面与米 → staple_avoid
+      staple_avoid: ["面", "米饭"] },
+    // D-094.1: 想喝汤 → wants_soup=true
+    constrain: { oil: null, price_max: 80, wants_soup: true },
     raw_understanding: "明确想要汤水类；主食拒面与米；点名拒绝西少爷.",
     raw_text: "想喝汤，别给我面食和米饭，西少爷那个不要了",
-    schema_version: "2.0",
+    schema_version: "2.1",
   };
   return { L1, L2, L3, FINAL, intent };
 })();
@@ -312,12 +315,16 @@ const R4 = (() => {
       cuisine_avoid: ["川菜", "湘菜"],
       ingredient_want: ["鱼", "禽"], ingredient_avoid: ["加工肉", "动物内脏", "油炸"],
       brand_avoid: ["西少爷肉夹馍"],
-      cooking_method_avoid: ["油炸", "干煸", "重煎"],
+      // D-094.1: 9 类枚举闭包 {油炸/凉拌/生/炖/炒/煮/蒸/烤/煎}, 越界值会被框架丢弃.
+      cooking_method_avoid: ["油炸", "煎"],
+      // R3 累计: 拒面与米
+      staple_avoid: ["面", "米饭"],
     },
-    constrain: { oil: "low", price_max: 80 },
+    // R3 累计: wants_soup=true; R4 新增 oil=low
+    constrain: { oil: "low", price_max: 80, wants_soup: true },
     raw_understanding: "用户加强清淡偏好；累计：汤 + 清淡 + 拒重油重辣.",
     raw_text: "再来一轮，别要重的，太油了",
-    schema_version: "2.0",
+    schema_version: "2.1",
   };
   return { L1, L2, L3, FINAL, intent };
 })();

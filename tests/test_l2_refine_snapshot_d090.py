@@ -15,7 +15,41 @@ from pathlib import Path
 import pytest
 
 from chisha.recall import load_meal_log, load_profile, load_zone_data
-from chisha.refine_intent import RefineIntent
+from chisha.refine_intent_v2 import RefineIntentV2
+def RefineIntent(*, cuisine_want=None, cuisine_avoid=None, ingredient_want=None,
+                 ingredient_avoid=None, flavor_tags=None, portion=None,
+                 staple_preference=None, staple_want=None, staple_avoid=None,
+                 price_band=None, raw_text="", cuisine_candidates_expanded=None,
+                 brand_avoid=None, cooking_method_avoid=None) -> RefineIntentV2:
+    """V1-compat helper: 把 V1 kwargs 映射到 V2 schema."""
+    redirect = {
+        "cuisine_want": cuisine_want or [],
+        "cuisine_avoid": cuisine_avoid or [],
+        "cuisine_candidates_expanded": cuisine_candidates_expanded or [],
+        "ingredient_want": ingredient_want or [],
+        "ingredient_avoid": ingredient_avoid or [],
+        "brand_avoid": brand_avoid or [],
+        "cooking_method_avoid": cooking_method_avoid or [],
+        "staple_want": staple_want or [],
+        "staple_avoid": staple_avoid or [],
+    }
+    constrain = {"oil": None, "price_max": None, "price_band": price_band,
+                 "wants_soup": False}
+    for tag in (flavor_tags or []):
+        if tag == "heavy":
+            constrain["oil"] = "high"
+        elif tag == "light":
+            constrain["oil"] = "low"
+        elif tag == "soup":
+            constrain["wants_soup"] = True
+    if staple_preference == "want_rice":
+        redirect["staple_want"] = ["米饭"]
+    elif staple_preference == "want_noodle":
+        redirect["staple_want"] = ["面"]
+    elif staple_preference == "avoid_staple":
+        redirect["staple_avoid"] = ["米饭", "面"]
+    return RefineIntentV2(redirect=redirect, constrain=constrain, raw_text=raw_text)
+
 from chisha.score import rank_combos
 
 

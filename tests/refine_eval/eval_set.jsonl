@@ -27,7 +27,7 @@
 {"id": "price-01", "text": "30 块以内", "category": "price", "expected": {"constrain.price_max": 30}}
 {"id": "price-02", "text": "便宜点", "category": "price", "expected": {"raw_understanding_nonempty": true}}
 {"id": "price-03", "text": "今天预算 50 块", "category": "price", "expected": {"constrain.price_max": 50}}
-{"id": "food-form-01", "text": "不要面条", "category": "schema_unsupported", "expected": {"raw_understanding_nonempty": true}}
+{"id": "food-form-01", "text": "不要宽面", "category": "schema_unsupported", "expected": {"raw_understanding_nonempty": true}}
 {"id": "food-form-02", "text": "不要汤汤水水的", "category": "schema_unsupported", "expected": {"raw_understanding_nonempty": true}}
 {"id": "reject-01", "text": "上一组全不要", "category": "reject", "expected": {"reject_previous": true}}
 {"id": "reject-02", "text": "都不行, 重来", "category": "reject", "expected": {"reject_previous": true}}
@@ -42,3 +42,23 @@
 {"id": "flavor-conflict-01", "text": "想吃辣但别太辣", "category": "flavor_conflict", "expected": {"raw_understanding_contains": "冲突", "redirect.cuisine_candidates_expanded": []}}
 {"id": "subset-reject-01", "text": "这些广东菜都不想吃, 换湖南菜吧", "category": "subset_reject", "expected": {"redirect.cuisine_avoid_has_exact": "广东菜", "redirect.cuisine_want": ["湖南菜"], "reject_previous": false}}
 {"id": "edge-no-associate-01", "text": "今天加班好累", "category": "edge_no_associate", "expected": {"is_empty_strict": true, "raw_understanding_nonempty": true}}
+{"id": "oil-high-01", "text": "想来点重口味的下饭菜", "category": "oil_high", "expected": {"constrain.oil": "high"}}
+{"id": "oil-high-02", "text": "今天来个够味儿的", "category": "oil_high", "expected": {"constrain.oil": "high"}}
+{"id": "oil-high-03", "text": "重口下饭", "category": "oil_high", "expected": {"constrain.oil": "high"}}
+{"id": "oil-high-04", "text": "想吃点重的", "category": "oil_high", "expected": {"constrain.oil": "high"}}
+{"id": "oil-high-05", "text": "随便整个下饭", "category": "oil_high", "expected": {"constrain.oil": "high"}}
+{"id": "soup-01", "text": "想喝汤", "category": "wants_soup", "expected": {"constrain.wants_soup": true}}
+{"id": "soup-02", "text": "来点有汤的", "category": "wants_soup", "expected": {"constrain.wants_soup": true}}
+{"id": "soup-03", "text": "喝点粥", "category": "wants_soup", "expected": {"constrain.wants_soup": true}}
+{"id": "soup-04", "text": "今晚来碗汤", "category": "wants_soup", "expected": {"constrain.wants_soup": true}}
+{"id": "soup-05", "text": "想喝汤水", "category": "wants_soup", "expected": {"constrain.wants_soup": true}}
+{"id": "staple-01", "text": "想吃米饭", "category": "staple_want", "expected": {"redirect.staple_want_contains_any": ["米饭", "饭"]}}
+{"id": "staple-02", "text": "来碗面", "category": "staple_want", "expected": {"redirect.staple_want_contains_any": ["面", "面条"]}}
+{"id": "staple-03", "text": "今天想吃粥", "category": "staple_want", "expected": {"redirect.staple_want_contains_any": ["粥"]}}
+{"id": "staple-04", "text": "不要面条", "category": "staple_avoid", "expected": {"redirect.staple_avoid_contains_any": ["面", "面条"]}}
+{"id": "staple-05", "text": "少饭", "category": "staple_avoid", "expected": {"redirect.staple_avoid_contains_any": ["米饭", "饭"]}}
+{"id": "price-band-01", "text": "便宜实惠就行", "category": "price_band", "expected": {"constrain.price_band": "cheap"}}
+{"id": "price-band-02", "text": "今天想吃高端的", "category": "price_band", "expected": {"constrain.price_band": "premium"}}
+{"id": "price-band-03", "text": "来个精致大餐", "category": "price_band", "expected": {"constrain.price_band": "premium"}}
+{"id": "price-band-04", "text": "找个不贵的", "category": "price_band", "expected": {"constrain.price_band": "cheap"}}
+{"id": "price-band-05", "text": "随便整个便宜的", "category": "price_band", "expected": {"constrain.price_band": "cheap"}}

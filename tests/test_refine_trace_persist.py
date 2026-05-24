@@ -36,7 +36,12 @@ def app_with_root(tmp_path: Path, monkeypatch):
             "round": 2,
             "generated_at": "2026-05-16T12:34:56+00:00",
             "refine_input": kwargs.get("user_input", ""),
-            "refine_intent": {"cuisine_want": "湘菜"},
+            # D-094.1: refine_intent 直接是 V2 shape (V1 已退役)
+            "refine_intent": {"schema_version": "2.1",
+                                "redirect": {"cuisine_want": ["湘菜"]},
+                                "constrain": {},
+                                "raw_text": kwargs.get("user_input", ""),
+                                "raw_understanding": "mock"},
             "stats": {
                 "n_dishes_total": 100,
                 "n_combos_recalled": 60,
@@ -167,7 +172,9 @@ def test_refine_appends_v3_round(app_with_root):
 
     r2 = json.loads((d / sid / "rounds" / "R2.json").read_text("utf-8"))
     assert r2["user_input"] == "想吃湖南菜, 肉多一点"
-    assert r2["intent"] == {"cuisine_want": "湘菜"}
+    # D-094.1: round trace 砍 V1 intent 字段, 只保留 intent_v2 (V2 shape)
+    assert r2["intent_v2"]["schema_version"] == "2.1"
+    assert r2["intent_v2"]["redirect"]["cuisine_want"] == ["湘菜"]
 
 
 def test_refine_base_trace_falls_through_new_fields(app_with_root, monkeypatch):
@@ -189,9 +196,12 @@ def test_refine_base_trace_falls_through_new_fields(app_with_root, monkeypatch):
             "meal_type": "lunch", "zone": "shenzhen-bay", "round": 2,
             "generated_at": "2026-05-16T12:34:56+00:00",
             "refine_input": kwargs.get("user_input", ""),
-            "refine_intent": {"cuisine_want": "湘菜"},
-            "refine_intent_v2": {"schema_version": "2.0",
-                                   "raw_text": "比昨天清淡"},
+            # D-094.1: refine_intent 直接是 V2 shape (V1 已退役, 砍 refine_intent_v2 冗余)
+            "refine_intent": {"schema_version": "2.1",
+                                "redirect": {"cuisine_want": ["湘菜"]},
+                                "constrain": {},
+                                "raw_text": "比昨天清淡",
+                                "raw_understanding": "mock"},
             "stats": {"n_dishes_total": 10, "n_combos_recalled": 10,
                        "n_combos_after_score": 10, "n_returned": 5},
             "candidates": [],
@@ -222,7 +232,7 @@ def test_refine_base_trace_falls_through_new_fields(app_with_root, monkeypatch):
     assert rr["relation"] == "lighter"
     assert rr["source"] == "v2_intent"
     assert rr["base_session_id"] == "sess-base"
-    assert r2["intent_v2"]["schema_version"] == "2.0"
+    assert r2["intent_v2"]["schema_version"] == "2.1"
 
 
 def test_refine_with_missing_base_trace_warns_not_persists(app_with_root, caplog):
@@ -267,8 +277,10 @@ def test_refine_round_persists_full_l1_l2_l3_trace_slices(tmp_path, monkeypatch)
             "round": 2,
             "generated_at": "2026-05-19T12:34:56+00:00",
             "refine_input": kwargs.get("user_input", ""),
-            "refine_intent": {"cuisine_want": "湘菜"},
-            "refine_intent_v2": {"redirect": {}, "constrain": {}},
+            # D-094.1: refine_intent 直接是 V2 shape
+            "refine_intent": {"schema_version": "2.1", "redirect": {},
+                                "constrain": {}, "raw_text": "想吃湘菜",
+                                "raw_understanding": "mock"},
             "narrative": "test narrative",
             "stats": {"n_dishes_total": 100, "n_combos_recalled": 60,
                        "n_combos_after_score": 40, "n_returned": 5},

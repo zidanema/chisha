@@ -501,16 +501,28 @@ def _context_block(context: "ContextSnapshot | None") -> str:
         f"上次反馈 chips: {chips or '(无)'}",
         f"refine 输入: {cd.get('refine_input') or '(无)'}",
     ]
-    # D-073: 结构化意图段 (refine 二轮才有)
+    # D-094.1: 结构化意图段 (refine 二轮才有) — V2 shape:
+    # redirect / constrain / reference / reject_previous / raw_understanding.
     intent = cd.get("refine_intent")
     if intent:
-        non_empty = {k: v for k, v in intent.items()
-                     if v and k not in ("raw_text", "freeform_note")}
-        if non_empty:
-            intent_str = "; ".join(
-                f"{k}={v}" for k, v in non_empty.items()
-            )
-            lines.append(f"refine 意图 (结构化): {intent_str}")
+        parts: list[str] = []
+        redirect = intent.get("redirect") or {}
+        for k, v in redirect.items():
+            if v:
+                parts.append(f"{k}={v}")
+        constrain = intent.get("constrain") or {}
+        for k, v in constrain.items():
+            if v not in (None, False, [], "", {}):
+                parts.append(f"{k}={v}")
+        if intent.get("reference"):
+            parts.append(f"reference={intent['reference']}")
+        if intent.get("reject_previous"):
+            parts.append("reject_previous=true")
+        ru = (intent.get("raw_understanding") or "").strip()
+        if parts:
+            lines.append(f"refine 意图 (结构化): {'; '.join(parts)}")
+        if ru:
+            lines.append(f"refine 自述理解: {ru}")
     return "\n".join(lines)
 
 

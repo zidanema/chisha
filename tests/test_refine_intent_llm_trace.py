@@ -31,7 +31,8 @@ def _make_v2_response(content: str) -> dict:
 class TestLlmParseV2TraceCollector:
     def test_success_path_fills_full_trace(self):
         collector: dict = {}
-        with patch("chisha.llm_client.call_text") as mock_call:
+        with patch("chisha.llm_client.call_text") as mock_call, \
+             patch("chisha.llm_client._resolve_provider", return_value="openrouter"):
             mock_call.return_value = _make_v2_response('{"redirect": {}, "constrain": {}}')
             result = _llm_parse_v2(
                 "来点湘菜",

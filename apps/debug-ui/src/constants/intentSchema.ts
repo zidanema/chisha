@@ -23,11 +23,21 @@ export const INTENT_SCHEMA: IntentFieldDescriptor[] = [
     slot_path: ["redirect", "brand_avoid"] },
   { key: "redirect.cooking_method_avoid", label: "烹饪方式拒绝", tone: "avoid", group: "redirect",
     slot_path: ["redirect", "cooking_method_avoid"] },
+  // D-094.1: staple_want / staple_avoid (主食偏好自由字符串)
+  { key: "redirect.staple_want", label: "主食想", tone: "want", group: "redirect",
+    slot_path: ["redirect", "staple_want"] },
+  { key: "redirect.staple_avoid", label: "主食不想", tone: "avoid", group: "redirect",
+    slot_path: ["redirect", "staple_avoid"] },
   // constrain 块 — 单值约束 (L1/L2 硬过滤 / 软分)
+  // D-094.1: oil 枚举扩 {low,normal,high}; 加 wants_soup (bool) + price_band (模糊兜底)
   { key: "constrain.oil", label: "油控", tone: "neutral", group: "constrain",
     slot_path: ["constrain", "oil"], scalar: true },
   { key: "constrain.price_max", label: "价格上限", tone: "neutral", group: "constrain",
     slot_path: ["constrain", "price_max"], scalar: true },
+  { key: "constrain.price_band", label: "价格档位", tone: "neutral", group: "constrain",
+    slot_path: ["constrain", "price_band"], scalar: true },
+  { key: "constrain.wants_soup", label: "想喝汤", tone: "neutral", group: "constrain",
+    slot_path: ["constrain", "wants_soup"], scalar: true },
   // meta 块 — 引用 / reject_previous / 自述
   { key: "reference", label: "引用上一轮", tone: "neutral", group: "meta",
     slot_path: ["reference"], scalar: true },

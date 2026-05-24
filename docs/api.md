@@ -44,9 +44,9 @@ Sandbox Lab 端点 (`/api/sandbox/*`) 见 [apps/sandbox-lab/README.md](../apps/s
 Query: `meal_type=lunch|dinner&mood=...`. 响应 `RecommendResponse` (types.ts). 含 `session_id` (形如 `2026034521_lunch`) + `round=1` + `candidates[]` (5 个按 rank 排序) + `stats`.
 
 ### `POST /api/refine`
-Body: `{ session_id, refine_text, meal_type, mood, round, excludeIds }`. 响应同 `RecommendResponse`, 复用 `session_id`, `round++`, 顶层加 `refine_input` (原文) + `refine_intent` (结构化意图 V2 多 slot schema, 详见 types.ts `RefineIntentV2`).
+Body: `{ session_id, refine_text, meal_type, mood, round, excludeIds }`. 响应同 `RecommendResponse`, 复用 `session_id`, `round++`, 顶层加 `refine_input` (原文) + `refine_intent` (结构化意图 **V2.1** 多 slot schema, 详见 types.ts `RefineIntentV2`).
 
-`refine_intent` 由 `chisha/refine_intent.py::parse_refine_intent` 生成 (LLM + 规则 fallback). 详见 D-073 / D-081.
+`refine_intent` 由 `chisha/refine_intent_v2.py::extract_refine_intent_v2` 生成 (D-096: V1 `refine_intent.py` 已退役, LLM 失败/不可用 → empty V2 + raw_understanding 注明). 详见 D-094.1 / D-096.
 
 ### `POST /api/accept`
 Body: `{ session_id, candidate_rank, candidate }`. 响应: `{ deeplink_url }`.

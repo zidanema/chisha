@@ -1,68 +1,30 @@
-"""refine_recommendation API (D-073 v2).
+"""refine_recommendation API (D-094.1 V2-only 版).
 
-D-073 重写要点 (推翻 D-035 在 refine 端 + D-071 全量):
-  - 用 parse_refine_intent (开放结构) 取代 parse_feedback (chip 词表)
-  - 砍 chips_to_taste_hints + _CHIP_TO_HINT (refine 端不再产 chip)
-  - 砍 infer_refine_mood + want_soup 关键词识别 + mood_trace 全套 (D-071 superseded)
-  - 断 append_feedback (refine 不沉淀长期偏好; 只走餐后反馈)
-  - 写 logs/refine_intent_trace.jsonl 替代 mood_trace (观测用)
+D-094.1 修订要点 (推翻 D-073 V1 双模式 + 切 V2 单一):
+  - V1 refine_intent.py 整模块退役; refine_intent_v2 是唯一意图解析层
+  - V1→V2 桥接代码砍掉, 下游 (recall / score / rerank) 直接消费 V2 intent
+  - response 保留 refine_intent 字段名 (前端兼容), 内容直接是 V2 shape; 砍 refine_intent_v2 冗余 alias
+  - V2 extract 必走 sync (V1 已无 fallback, 不再需要 async/off 三模)
 
 数据流:
-  user_input → parse_refine_intent → RefineIntent
-    → recall(intent=...) 三桶 + intent-aware combo 排序
-    → rank_combos(intent=...) L2 intent_match_bonus 三档
-    → rerank(ctx.refine_intent=...) L3 看结构化 + 原文
+  user_input → extract_refine_intent_v2 → RefineIntentV2
+    → recall(intent=...) 三桶 + intent-aware combo 排序 (V2 properties: cuisine_want/ingredient_want/cuisine_avoid/cuisine_candidates_expanded/brand_avoid/cooking_method_avoid)
+    → rank_combos(intent=...) L2 intent_match_bonus + refine_weight_overlay (V2 oil/wants_soup/staple_want/staple_avoid/price_band)
+    → rerank(ctx.refine_intent=...) L3 看 V2 结构化 + raw_understanding
 """
 from __future__ import annotations
 
 import datetime as dt
 import json
-import os
-import threading
 from pathlib import Path
 from typing import Any
 
 from chisha.context import build_context
-from chisha.debug_recommend import _build_l1_trace  # D-089-S2: 复用 L1 trace 构造
+from chisha.debug_recommend import _build_l1_trace
 from chisha.recall import recall
-from chisha.refine_intent import RefineIntent, parse_refine_intent
 from chisha.refine_intent_v2 import RefineIntentV2, extract_refine_intent_v2
 
 
-# Codex H7 修: V2 抽取额外 ~6s LLM call, 仅 trace 用, 不该阻塞用户响应.
-# 三种 mode:
-#   "sync"  (默认): 同步抽 V2, 阻塞但 response 字段完整 (开发 / eval 时用)
-#   "async":        后台线程抽 V2, response 立即给 placeholder, trace 后台补 (生产推荐)
-#   "off":          完全跳过 V2 抽取, response/trace 给 placeholder (紧急 disable)
-# 通过 env CHISHA_REFINE_V2_TRACE 控制.
-def _v2_mode() -> str:
-    return (os.environ.get("CHISHA_REFINE_V2_TRACE") or "sync").lower()
-
-
-_V2_ASYNC_TRACE_FILENAME = "logs/refine_intent_v2_async_trace.jsonl"
-
-
-def _async_extract_and_log(text: str, use_llm: bool | None,
-                            profile_llm: dict | None,
-                            session_id: str, round_n: int,
-                            root: Path) -> None:
-    """后台线程: 抽 V2 + 追加 trace, 失败静默. 主路径已返回."""
-    try:
-        v2 = extract_refine_intent_v2(text=text, use_llm=use_llm,
-                                        profile_llm=profile_llm)
-        entry = {
-            "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
-            "session_id": session_id,
-            "round": round_n,
-            "intent_v2": v2.to_log_dict(),
-        }
-        p = root / _V2_ASYNC_TRACE_FILENAME
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except Exception:
-        # daemon thread, 失败不影响任何已返回的主请求.
-        pass
 from chisha.rerank import rerank
 from chisha.score import apply_caps, rank_combos
 from chisha.session import SessionState, load_session, save_session
@@ -125,54 +87,17 @@ def refine(
     import time as _time
     _t_start = _time.time()
 
-    # 1. parse_refine_intent: user_input → 结构化意图 (V1, 下游 recall/score 消费)
-    intent: RefineIntent = parse_refine_intent(
+    # 1. extract_refine_intent_v2: user_input → V2 结构化意图.
+    # D-094.1: V1 已退役, sync 直出. trace_collector 落 R2 round.refine_intent_llm.
+    refine_intent_llm_collector: dict = {}
+    intent: RefineIntentV2 = extract_refine_intent_v2(
         text=user_input,
         use_llm=use_llm,
         profile_llm=profile.get("llm"),
+        trace_collector=refine_intent_llm_collector,
     )
 
-    # T-P1a-03 follow-up: V2 多 slot (Faithful Refine), trace 双存. 下游 recall/
-    # score/L3 仍消费 V1 (T-P2-01/02 接入新 slot 时再切换). Codex H7 修: V2 多耗
-    # ~6s LLM call, 仅 trace 用不该阻塞响应, 用 _v2_mode() 切 sync/async/off.
-    # D-089-S3: 收集 refine_intent_v2 LLM call 完整 trace, 落 R2 round.refine_intent_llm.
-    # async / off 路径不调 sync LLM, collector 保持 None (round trace 该字段为 None).
-    refine_intent_llm_collector: dict | None = None
-    v2_mode = _v2_mode()
-    if v2_mode == "off":
-        intent_v2 = RefineIntentV2(raw_text=user_input,
-                                     raw_understanding="(V2 trace disabled)")
-    elif v2_mode == "async":
-        intent_v2 = RefineIntentV2(raw_text=user_input,
-                                     raw_understanding="(V2 trace async pending)")
-        # fire-and-forget: 后台抽 + 写 async trace 文件, 主路径不等
-        # round 还未 +1 (state.round += 1 在下面), 这里用 state.round + 1 预测
-        threading.Thread(
-            target=_async_extract_and_log,
-            args=(user_input, use_llm, profile.get("llm"),
-                  session_id, state.round + 1, root),
-            daemon=True,
-        ).start()
-    else:  # "sync" (default)
-        refine_intent_llm_collector = {}
-        intent_v2 = extract_refine_intent_v2(
-            text=user_input,
-            use_llm=use_llm,
-            profile_llm=profile.get("llm"),
-            trace_collector=refine_intent_llm_collector,
-        )
-
-    # D-094 (T-FR-05): V2 → V1 桥接, 把 V2 真消费字段拷到 V1 intent
-    # 让 recall.py / score.py 直接 getattr(intent, "...") 即可消费.
-    # 仅在 sync 模式且 V2 LLM 成功抽到时生效 (V2 默认空 list → 不破坏 R1/refine 0-diff 守门).
-    _v2_redirect = intent_v2.redirect if intent_v2 and intent_v2.redirect else {}
-    intent.cuisine_candidates_expanded = list(
-        _v2_redirect.get("cuisine_candidates_expanded") or [])
-    intent.brand_avoid = list(_v2_redirect.get("brand_avoid") or [])
-    intent.cooking_method_avoid = list(
-        _v2_redirect.get("cooking_method_avoid") or [])
-
-    # 2. 重建 ContextSnapshot, 注入 refine_input (原文) + refine_intent (结构化)
+    # 2. 重建 ContextSnapshot, 注入 refine_input (原文) + refine_intent (V2 结构化)
     ctx = build_context(
         profile=profile,
         meal_log=meal_log,
@@ -209,7 +134,7 @@ def refine(
     # 在 top_k 切片前对 ranked 软重排; baseline_l2_snapshot 行为不变 (无 refine 时不触发).
     # 失败/未命中静默降级, 不阻断 refine.
     #
-    # Codex M3 修: 优先消费 V2 intent_v2.reference (LLM 已结构化), raw_text parser
+    # Codex M3 修: 优先消费 V2 intent.reference (LLM 已结构化), raw_text parser
     # 作 fallback. 若 LLM 给了 relation 词表没命中的 raw_text → 不再静默忽略
     # (违反 Faithful Refine 的 "执行用户表达" 第一原则).
     resolved_reference: object | None = None
@@ -220,8 +145,8 @@ def refine(
             ReferenceQuery, _extract_days_back, _extract_meal_hint,
         )
         ref_query = None
-        # 1) V2 优先: intent_v2.reference 存在且 relation 在 resolver 支持的集合
-        v2_ref = intent_v2.reference if intent_v2.reference else None
+        # 1) V2 优先: intent.reference 存在且 relation 在 resolver 支持的集合
+        v2_ref = intent.reference if intent.reference else None
         v2_rel = (v2_ref or {}).get("relation")
         # V2 relation 集合: lighter / similar_but_different_venue / avoid_pattern
         # resolver/apply 当前消费: lighter / similar_but_different_venue / similar
@@ -344,9 +269,9 @@ def refine(
         )
         l3_trace = None
     # D-089-S3: refine_intent LLM call trace → 走 serialize_llm_call_trace 统一 shape.
-    # collector 是 None (async / off / 空 refine) 时 trace 也是 None.
+    # collector 空 (LLM 不可用 / 空 refine) 时 trace 也是 None.
     refine_intent_llm_trace: dict | None = None
-    if refine_intent_llm_collector is not None and refine_intent_llm_collector:
+    if refine_intent_llm_collector:
         try:
             from chisha.trace_helpers import serialize_llm_call_trace
             refine_intent_llm_trace = serialize_llm_call_trace(refine_intent_llm_collector)
@@ -363,15 +288,13 @@ def refine(
     state.refine_history.append(user_input)
     save_session(state, root)
 
-    # 7. trace 写入 (D-073: 替代 D-071 mood_trace; T-P1a-03 follow-up: 加 intent_v2 双存)
+    # 7. trace 写入 (D-094.1: 砍 V1 intent 双存, 只保留 V2 intent)
     trace = {
         "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
         "session_id": session_id,
         "round": state.round,
         "user_input": user_input,
-        "intent": intent.to_log_dict(),
-        # T-P1a-03 follow-up trace 双存: raw_text + 结构化 V2 + raw_understanding 三份
-        "intent_v2": intent_v2.to_log_dict(),
+        "intent_v2": intent.to_log_dict(),
         "n_combos_recalled": len(combos),
         "n_after_l2": len(ranked),
         "n_returned": len(reranked),
@@ -444,9 +367,8 @@ def refine(
         "round": state.round,
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "refine_input": user_input,
-        "refine_intent": intent.to_log_dict(),  # D-073: 替代 parsed_feedback
-        # T-P1a-03 follow-up: 响应里 + trace 都带 V2, 前端 / debug-ui / L3 可读
-        "refine_intent_v2": intent_v2.to_log_dict(),
+        # D-094.1: refine_intent 字段直接返 V2 shape (V1 已退役), 砍 refine_intent_v2 冗余 alias.
+        "refine_intent": intent.to_log_dict(),
         "stats": {
             "n_dishes_total": len(tagged),
             "n_combos_recalled": len(combos),

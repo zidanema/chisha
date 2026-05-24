@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from chisha.subtype_diversity import diversify_by_subtype, infer_combo_subtype
+from tests._v2_compat import make_v1_compat_intent as RefineIntent
 
 
 def _combo(cuisine: str, dish_names: list[str]) -> dict:
@@ -54,15 +55,21 @@ def test_diversify_empty_safe():
     assert diversify_by_subtype([]) == []
 
 
-def test_refine_intent_cuisine_want_gate(monkeypatch):
-    """refine.py 内 cuisine_want 空 → 不调 diversify_by_subtype."""
-    # 因为 refine_session 是重量级函数, 这里只验 cuisine_want gate 逻辑等价:
-    # if intent.cuisine_want: diversify(...)
-    from chisha.refine_intent import RefineIntent
+def test_refine_intent_cuisine_want_gate():
+    """refine.py 内 `if intent.cuisine_want: diversify(...)` gate 等价验证.
+
+    refine_session 重量级, 这里只验 gate 信号 — cuisine_want 空 → falsy → 不触发 diversify;
+    非空 → truthy → 触发. V2 property `intent.cuisine_want` 行为正确才能保证 refine.py
+    line ~197 的 gate 不退化.
+    """
     intent_empty = RefineIntent()
     assert not intent_empty.cuisine_want
+    assert intent_empty.is_empty()
+
     intent_filled = RefineIntent(cuisine_want=["湘菜"])
     assert bool(intent_filled.cuisine_want) is True
+    assert intent_filled.cuisine_want == ["湘菜"]
+    assert not intent_filled.is_empty()
 
 
 def test_diversify_max_per_subtype_caps_repeat():

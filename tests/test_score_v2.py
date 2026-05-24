@@ -333,19 +333,22 @@ def test_score_combo_processed_meat_lowers_total(basic_profile):
     assert s_bad < s_clean
 
 
-def test_score_combo_soup_boost_via_refine_intent_d073(basic_profile):
-    """D-073: 汤水加分链路从 daily_mood=want_soup 迁移到 RefineIntent.flavor_tags=['soup'].
+def test_score_combo_soup_boost_via_refine_intent_v2(basic_profile):
+    """D-094.1: 汤水加分链路 V1 flavor_tags=['soup'] → V2 constrain.wants_soup=True.
 
-    锁定: 同 combo 带 intent (flavor_tags=['soup']) → 比无 intent 更高分.
+    锁定: 同 combo 带 V2 intent (wants_soup=True) → 比无 intent 更高分.
     """
-    from chisha.refine_intent import RefineIntent
+    from chisha.refine_intent_v2 import RefineIntentV2
     soup = make_dish(wetness=3, dish_role="主菜",
                      protein_grams_estimate=30)
     veg = make_dish(dish_id="dv", main_ingredient_type="纯素",
                     vegetable_ratio_estimate=0.9, dish_role="配菜")
     c = _combo([soup, veg])
     s_no_intent, _ = score_combo(c, basic_profile)
-    intent = RefineIntent(flavor_tags=["soup"])
+    intent = RefineIntentV2(
+        constrain={"oil": None, "price_max": None,
+                   "price_band": None, "wants_soup": True},
+    )
     s_with_intent, _ = score_combo(c, basic_profile, intent=intent)
     assert s_with_intent > s_no_intent
 

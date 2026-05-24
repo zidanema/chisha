@@ -1,13 +1,16 @@
-"""Faithful Refine 多 slot schema + LLM 解析层 + 安全带 (D-094 真兑现版).
+"""Faithful Refine 多 slot schema + LLM 解析层 + 安全带 (D-094.1 schema 扩展版).
 
-边界 (D-094 后):
-  - LLM 解析直出多 slot 结构; 解析失败时**降级到 V1 from_legacy**, 永不崩.
-  - 下游 L1/L2/L3 真消费的 slot:
-    - redirect.cuisine_want / cuisine_avoid / ingredient_want / ingredient_avoid (V1 兼容)
+边界 (D-094.1 后):
+  - LLM 解析直出多 slot 结构; 解析失败时**降级到 empty V2**, 永不崩 (V1 已退役).
+  - 下游 L1/L2/L3 真消费的 slot (D-094.1: 13 槽真兑现):
+    - redirect.cuisine_want / cuisine_avoid / ingredient_want / ingredient_avoid
     - redirect.cuisine_candidates_expanded (D-094: L1 bucket_soft 真召回)
     - redirect.brand_avoid (D-094: L1 venue 整店硬过滤)
     - redirect.cooking_method_avoid (D-094: L1 dish 硬过滤, 9 类枚举)
-    - constrain.oil / price_max (L2 消费)
+    - redirect.staple_want / staple_avoid (D-094.1: 主食偏好 L2 真打分)
+    - constrain.oil ∈ {"low","normal","high"} | null (D-094.1: "high" 替代 V1 heavy 触发 D-090.1 油豁免)
+    - constrain.price_max (数字精确) / price_band ∈ {"cheap","normal","premium"} | null (D-094.1: 模糊文本)
+    - constrain.wants_soup (D-094.1: bool, L2 真打分有汤优先)
     - reference (T-P2-01 L3 软重排消费)
     - reject_previous (V2 全盘重推)
   - 已砍字段 (D-094: 字段要么真消费要么砍, 不留 trace-only 装饰):
@@ -15,7 +18,9 @@
     - redirect.food_form_avoid (dish.food_form 0 覆盖, F-011 数据打标后再加回)
     - constrain.quality_floor / delivery_only / max_distance_km
     - constrain.functional.{low_caffeine, low_satiety_drowsy}
+  - 已砍字段 (D-094.1 本案): V1 flavor_tags=sweet/sour 走 raw_understanding + L3 兜底 (narrative 不假装).
   - D-085 第二句 "字段空洞务实降级" 已废弃 (by D-094): 没 trace-only 字段了, 没 unsupported_in_recall.
+  - schema_version bump "2.0" → "2.1" (D-094.1).
 
 trace 双存 (安全带):
   - raw_text: 用户原文
@@ -28,7 +33,7 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 ROOT = Path(__file__).resolve().parent.parent
 PROMPT_PATH_V2 = ROOT / "prompts" / "parse_refine_intent_v2.md"
@@ -42,7 +47,10 @@ COOKING_METHOD_ENUM: frozenset[str] = frozenset({
 
 
 def _empty_redirect() -> dict:
-    """redirect 块: 全部 list 字段空数组 (D-094 砍 ingredient_synonyms + food_form_avoid)."""
+    """redirect 块: 全部 list 字段空数组.
+
+    D-094.1: 加 staple_want / staple_avoid (主食偏好 L2 真打分).
+    """
     return {
         "cuisine_want": [],
         "cuisine_avoid": [],
@@ -51,25 +59,33 @@ def _empty_redirect() -> dict:
         "ingredient_avoid": [],
         "brand_avoid": [],
         "cooking_method_avoid": [],
+        "staple_want": [],
+        "staple_avoid": [],
     }
 
 
 def _empty_constrain() -> dict:
     """constrain 块 (D-094 砍 quality_floor / delivery_only / max_distance_km / functional).
 
-    只保留 L2 真消费的两项: oil ("low"/"normal"/null), price_max (数字/null).
+    D-094.1 扩 4 槽真消费:
+      - oil ∈ {"low","normal","high"} | null  ("high" 替代 V1 heavy + 触发 D-090.1 oil 豁免)
+      - price_max (数字, 精确) — 优先于 price_band
+      - price_band ∈ {"cheap","normal","premium"} | null  (模糊文本, price_max 缺失时兜底)
+      - wants_soup: bool (想喝汤/粥, L2 真打分有汤优先)
     """
     return {
         "oil": None,
         "price_max": None,
+        "price_band": None,
+        "wants_soup": False,
     }
 
 
 @dataclass
 class RefineIntentV2:
-    """多 slot Faithful Refine schema (D-094 真兑现版).
+    """多 slot Faithful Refine schema (D-094.1 schema 扩展版).
 
-    LLM 直出. 失败时 from_legacy 降级.
+    LLM 直出. 失败时降级到 empty V2 (V1 已退役, 无 legacy fallback).
     """
     redirect: dict = field(default_factory=_empty_redirect)
     constrain: dict = field(default_factory=_empty_constrain)
@@ -77,9 +93,13 @@ class RefineIntentV2:
     reject_previous: bool = False
     raw_understanding: str = ""        # LLM 自述理解, trace 双存用
     raw_text: str = ""                 # 用户原文
-    schema_version: str = "2.0"
-    # V1 字段在 V2 schema 没有自然位的部分进 legacy_v1 (向后兼容)
-    legacy_v1: dict = field(default_factory=dict)
+    schema_version: str = "2.1"
+
+    # T-P1a-01 (D-094.1 沿用): refine 文本里出现这些词才视为"显式解除 L0-C 健康硬契约".
+    _METHODOLOGY_BREAK_KEYWORDS: ClassVar[tuple[str, ...]] = (
+        "破戒", "放纵", "放开吃", "今晚不管", "今晚就", "无所谓",
+        "随便", "别管那么多", "一次性", "今天就这样", "今天放飞",
+    )
 
     def is_empty(self) -> bool:
         """所有语义维度均空 → True. raw_text / raw_understanding / schema_version 不算."""
@@ -93,44 +113,74 @@ class RefineIntentV2:
                 return False
         if self.reference:
             return False
-        for k in ("cuisine_want", "cuisine_avoid", "ingredient_want",
-                  "ingredient_avoid", "cooking_method", "flavor_tags",
-                  "portion", "staple_preference", "price_band"):
-            if self.legacy_v1.get(k):
-                return False
         return True
 
     def to_log_dict(self) -> dict[str, Any]:
         return asdict(self)
 
-    @classmethod
-    def from_legacy(cls, intent) -> "RefineIntentV2":
-        """无损 V1 → V2 迁移. LLM 失败降级时调.
+    def allows_methodology_break(self) -> bool:
+        """T-P1a-01: L0-C 硬契约 (蔬菜/油上限/价格带/方法论) 是否被 refine 文本明确解除.
 
-        - cuisine_want/avoid + ingredient_want/avoid 拷到 redirect 对应 slot
-        - 其他 V1 字段 (cooking_method/flavor_tags/raw_flavor/portion/staple_preference/
-          price_band/freeform_note) 完整进 legacy_v1
-        - raw_text 同步
-        - raw_understanding 回填 freeform_note (兜底)
-        - schema_version 强制 "2.0"
+        L0-A 医学过敏 + L0-B 身份伦理永不可破.
+        L0-C 仅当 refine 文本含 "破戒/放纵/今晚就/无所谓" 等明确信号时放开.
+        检查 raw_text + raw_understanding 拼接子串.
         """
-        legacy = intent.to_log_dict() if hasattr(intent, "to_log_dict") else {}
-        redirect = _empty_redirect()
-        redirect["cuisine_want"] = list(legacy.get("cuisine_want", []) or [])
-        redirect["cuisine_avoid"] = list(legacy.get("cuisine_avoid", []) or [])
-        redirect["ingredient_want"] = list(legacy.get("ingredient_want", []) or [])
-        redirect["ingredient_avoid"] = list(legacy.get("ingredient_avoid", []) or [])
-        return cls(
-            redirect=redirect,
-            constrain=_empty_constrain(),
-            reference=None,
-            reject_previous=False,
-            raw_understanding=legacy.get("freeform_note") or "",
-            raw_text=legacy.get("raw_text", "") or "",
-            schema_version="2.0",
-            legacy_v1={k: v for k, v in legacy.items()
-                       if k not in ("raw_text", "schema_version")},
-        )
+        text = (self.raw_text or "") + " " + (self.raw_understanding or "")
+        return any(k in text for k in self._METHODOLOGY_BREAK_KEYWORDS)
+
+    # ─── 便捷 properties (语义层 alias, 不进 asdict, trace 干净) ───
+    # backend (recall/score/rerank) 通过 intent.cuisine_want 直接访问, 不必每处都 intent.redirect["..."].
+    @property
+    def cuisine_want(self) -> list[str]:
+        return list(self.redirect.get("cuisine_want") or [])
+
+    @property
+    def cuisine_avoid(self) -> list[str]:
+        return list(self.redirect.get("cuisine_avoid") or [])
+
+    @property
+    def cuisine_candidates_expanded(self) -> list[str]:
+        return list(self.redirect.get("cuisine_candidates_expanded") or [])
+
+    @property
+    def ingredient_want(self) -> list[str]:
+        return list(self.redirect.get("ingredient_want") or [])
+
+    @property
+    def ingredient_avoid(self) -> list[str]:
+        return list(self.redirect.get("ingredient_avoid") or [])
+
+    @property
+    def brand_avoid(self) -> list[str]:
+        return list(self.redirect.get("brand_avoid") or [])
+
+    @property
+    def cooking_method_avoid(self) -> list[str]:
+        return list(self.redirect.get("cooking_method_avoid") or [])
+
+    @property
+    def staple_want(self) -> list[str]:
+        return list(self.redirect.get("staple_want") or [])
+
+    @property
+    def staple_avoid(self) -> list[str]:
+        return list(self.redirect.get("staple_avoid") or [])
+
+    @property
+    def oil(self) -> str | None:
+        return self.constrain.get("oil")
+
+    @property
+    def price_max(self) -> float | int | None:
+        return self.constrain.get("price_max")
+
+    @property
+    def price_band(self) -> str | None:
+        return self.constrain.get("price_band")
+
+    @property
+    def wants_soup(self) -> bool:
+        return bool(self.constrain.get("wants_soup"))
 
 
 # ─────────────────────────── schema 验证 (安全带 #1) ───────────────────────
@@ -140,21 +190,20 @@ def validate_v2_schema(d: dict) -> tuple[bool, list[str]]:
 
     检查范围:
       - 顶层 dict
-      - schema_version == "2.0"
+      - schema_version == "2.1"
       - redirect 是 dict + 各 slot 是 list[str]
       - constrain 是 dict
       - reference: None 或 dict
       - reject_previous: bool
       - raw_understanding / raw_text: str
-      - legacy_v1: dict
-    不检查内层 enum (那是 LLM 解析的 best-effort).
+    不检查内层 enum (那是 LLM 解析的 best-effort, _clean_parsed_to_v2 兜底).
     """
     errors: list[str] = []
     if not isinstance(d, dict):
         return False, [f"top-level not dict: {type(d).__name__}"]
     sv = d.get("schema_version")
-    if sv != "2.0":
-        errors.append(f"schema_version != '2.0': {sv!r}")
+    if sv != "2.1":
+        errors.append(f"schema_version != '2.1': {sv!r}")
     redirect = d.get("redirect")
     if not isinstance(redirect, dict):
         errors.append(f"redirect not dict: {type(redirect).__name__}")
@@ -167,10 +216,6 @@ def validate_v2_schema(d: dict) -> tuple[bool, list[str]]:
     constrain = d.get("constrain")
     if not isinstance(constrain, dict):
         errors.append("constrain not dict")
-    else:
-        functional = constrain.get("functional")
-        if functional is not None and not isinstance(functional, dict):
-            errors.append("constrain.functional not dict")
     ref = d.get("reference")
     if ref is not None and not isinstance(ref, dict):
         errors.append(f"reference must be None or dict: {type(ref).__name__}")
@@ -180,9 +225,6 @@ def validate_v2_schema(d: dict) -> tuple[bool, list[str]]:
         errors.append("raw_understanding not str")
     if not isinstance(d.get("raw_text", ""), str):
         errors.append("raw_text not str")
-    legacy = d.get("legacy_v1")
-    if legacy is not None and not isinstance(legacy, dict):
-        errors.append("legacy_v1 not dict")
     return len(errors) == 0, errors
 
 
@@ -320,7 +362,8 @@ def _coerce_enum_or_null(v: Any, allowed: set[str]) -> str | None:
     return s if s in allowed else None
 
 
-_OIL_VALUES = {"low", "normal"}
+_OIL_VALUES = {"low", "normal", "high"}     # D-094.1: 加 "high" 替代 V1 heavy
+_PRICE_BAND_VALUES = {"cheap", "normal", "premium"}   # D-094.1: 模糊文本兜底
 _REFERENCE_RELATIONS = {"lighter", "similar_but_different_venue", "avoid_pattern"}
 
 
@@ -348,6 +391,11 @@ def _clean_parsed_to_v2(parsed: dict, *, raw_text: str) -> RefineIntentV2:
     constrain = _empty_constrain()
     constrain["oil"] = _coerce_enum_or_null(constrain_raw.get("oil"), _OIL_VALUES)
     constrain["price_max"] = _coerce_number_or_null(constrain_raw.get("price_max"))
+    # D-094.1: price_band 模糊文本枚举, 优先级低于 price_max (数字更精确)
+    constrain["price_band"] = _coerce_enum_or_null(
+        constrain_raw.get("price_band"), _PRICE_BAND_VALUES)
+    # D-094.1: wants_soup bool (兼容中文 truthy/falsy)
+    constrain["wants_soup"] = _coerce_bool_or_null(constrain_raw.get("wants_soup")) or False
 
     reference: dict | None = None
     reference_raw = parsed.get("reference")
@@ -379,8 +427,7 @@ def _clean_parsed_to_v2(parsed: dict, *, raw_text: str) -> RefineIntentV2:
         reject_previous=reject_previous,
         raw_understanding=raw_understanding,
         raw_text=raw_text,
-        schema_version="2.0",
-        legacy_v1={},
+        schema_version="2.1",
     )
 
 
@@ -455,7 +502,7 @@ def _llm_parse_v2(text: str,
         fail_msg = f"{type(e).__name__}: {str(e)[:160]}"
         if trace_collector is not None:
             trace_collector["fallback_reason"] = fail_msg
-        print(f"  [refine_intent_v2] LLM 失败 ({fail_msg}), 降级 V1 from_legacy")
+        print(f"  [refine_intent_v2] LLM 失败 ({fail_msg}), 降级到空 V2 + raw_understanding 占位")
         return None
 
 
@@ -468,20 +515,18 @@ def extract_refine_intent_v2(
     profile_llm: dict | None = None,
     trace_collector: dict | None = None,
 ) -> RefineIntentV2:
-    """安全带 #1: LLM 多 slot 解析, 失败降级到 V1 from_legacy.
+    """安全带 #1: LLM 多 slot 解析, 失败降级到 empty V2 (V1 已退役).
 
     流程:
-      1. text 空 → 返 empty V2 (不调 LLM).
-      2. use_llm=False 或 LLM 不可用 → V1 parse → from_legacy.
+      1. text 空 → 返 empty V2 (不调 LLM), raw_understanding="(空 refine)".
+      2. use_llm=False 或 LLM 不可用 → empty V2 + raw_understanding 占位 ("LLM 不可用").
       3. LLM 调用:
          a. 成功 + JSON 解析成功 + schema validate 通过 → _clean_parsed_to_v2.
-         b. LLM 失败 / 坏 JSON / schema 不匹配 → 降级 V1 parse → from_legacy.
-            raw_understanding 回填占位 ("LLM 解析失败, 走 V1 兜底").
+         b. LLM 失败 / 坏 JSON / schema 不匹配 → empty V2 + raw_understanding 占位.
 
     LLM 失败时绝不抛, 绝不瞎猜 (brief §4 安全带 #1).
+    D-094.1 (本案): V1 整模块已删, 不再有 from_legacy / V1 规则兜底.
     """
-    from chisha.refine_intent import parse_refine_intent
-
     text = (text or "").strip()
     if not text:
         # 空 text 也回填 raw_understanding 占位 (eval edge-01), trace 双存语义统一.
@@ -495,47 +540,38 @@ def extract_refine_intent_v2(
         except Exception:
             use_llm = False
 
-    # ─ V1 fallback path ─
-    def _fallback_to_legacy(reason: str) -> RefineIntentV2:
-        try:
-            v1 = parse_refine_intent(text=text, use_llm=False,
-                                       profile_llm=profile_llm)
-            v2 = RefineIntentV2.from_legacy(v1)
-        except Exception:
-            v2 = RefineIntentV2(raw_text=text)
-        # 安全带: raw_understanding 总是反映降级原因 (raw_text 已经在 raw_text 字段),
-        # V1 的 freeform_note 是用户原文重复, 信息冗余且 misleading.
-        v2.raw_understanding = reason
-        return v2
+    def _empty_fallback(reason: str) -> RefineIntentV2:
+        """V1 退役后, LLM 失败/不可用 → 全空 V2 + raw_understanding 注明原因.
+
+        Faithful Refine 第一原则: 没 LLM 解析就不假装理解, 让 narrative 老实说.
+        """
+        return RefineIntentV2(raw_text=text, raw_understanding=reason)
 
     if not use_llm:
-        return _fallback_to_legacy("LLM 不可用, 走规则兜底")
+        return _empty_fallback("LLM 不可用, refine 字段全空, 走 raw_text + L3 兜底")
 
     parsed = _llm_parse_v2(text, profile_llm=profile_llm,
                              trace_collector=trace_collector)
     if parsed is None:
-        return _fallback_to_legacy("LLM 解析失败, 走 V1 兜底")
+        return _empty_fallback("LLM 解析失败, refine 字段全空, 走 raw_text + L3 兜底")
 
-    # Codex H6 修: schema 关键字段 LLM 必须主动给, 漏了就视为"LLM 没理解 schema"
-    # → 降级 V1, 不能 setdefault 静默补默认值绕过安全带.
-    # 必填 = LLM 必须输出, 框架不补的: schema_version / redirect / constrain / raw_understanding
+    # Codex H6: schema 关键字段 LLM 必须主动给, 漏了视为"LLM 没理解 schema" → empty 兜底.
     required_keys = ("schema_version", "redirect", "constrain", "raw_understanding")
     missing = [k for k in required_keys if k not in parsed]
     if missing:
-        print(f"  [refine_intent_v2] LLM 漏必填字段 {missing}, 降级 V1")
-        return _fallback_to_legacy(
-            f"LLM 漏必填字段 {missing[0]}, 走 V1 兜底")
+        print(f"  [refine_intent_v2] LLM 漏必填字段 {missing}, 走 empty 兜底")
+        return _empty_fallback(
+            f"LLM 漏必填字段 {missing[0]}, refine 字段全空")
 
-    # 可选字段补默认值 (这些是 framework 控制, LLM 漏掉不算"没理解 schema")
+    # 可选字段补默认值 (framework 控制, LLM 漏掉不算"没理解 schema")
     parsed.setdefault("raw_text", text)
     parsed.setdefault("reference", None)
     parsed.setdefault("reject_previous", False)
-    parsed.setdefault("legacy_v1", {})
 
     ok, errors = validate_v2_schema(parsed)
     if not ok:
         print(f"  [refine_intent_v2] schema validate fail: {errors[:3]}, "
-              f"降级 V1")
-        return _fallback_to_legacy("LLM schema 不匹配, 走 V1 兜底")
+              f"走 empty 兜底")
+        return _empty_fallback("LLM schema 不匹配, refine 字段全空")
 
     return _clean_parsed_to_v2(parsed, raw_text=text)

@@ -645,7 +645,7 @@ def _build_r1_round_from_v2(v2_trace: dict) -> dict:
         "id": "R1",
         "started_at": v2_trace.get("started_at"),
         "user_input": None,
-        "intent": None,
+        # D-094.1: R1 是初始推荐 round, 没有用户 refine, intent_v2 永远是 None.
         "intent_v2": None,
         "narrative": "",
         "kpi": {

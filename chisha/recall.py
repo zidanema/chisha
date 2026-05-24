@@ -512,13 +512,16 @@ def _intent_dish_score(d: dict, intent) -> float:
             score += 0.5
             break
 
-    # flavor 命中: spicy/soup/light
-    flavor_tags = getattr(intent, "flavor_tags", None) or []
-    if "spicy" in flavor_tags and np_.get("spicy_level", 0) >= 1:
+    # D-094.1: V2 constrain.oil / wants_soup 直接驱动 dish-level 加分.
+    # "spicy" V1 信号 → bucket_soft 路径已通过 cuisine_candidates_expanded 处理, dish 级不再加分.
+    oil = getattr(intent, "oil", None)
+    if oil == "low" and np_.get("oil_level", 3) <= 2:
         score += 0.5
-    if "soup" in flavor_tags and (np_.get("wetness", 1) >= 2 or "汤" in name):
-        score += 0.5
-    if "light" in flavor_tags and np_.get("oil_level", 3) <= 2:
+    if oil == "high" and np_.get("oil_level", 3) >= 4:
+        score += 0.3
+    if getattr(intent, "wants_soup", False) and (
+        np_.get("wetness", 1) >= 2 or "汤" in name or "粥" in name
+    ):
         score += 0.5
 
     # cuisine_avoid 命中 → 负分, 把它压到池子末尾 (硬过滤在 recall 层做; 这里保留 sort 顺位)
@@ -802,7 +805,7 @@ def _apply_intent_buckets(
     """D-073: 三桶拼合 + Q1 回落. T-P1a-02: 三级回落 + 事件落 trace.
 
     流程:
-      1. 硬过滤: cuisine_avoid + ingredient_avoid (用户明确不要)
+      1. 硬过滤: cuisine_avoid + ingredient_avoid + cooking_method_avoid + staple_avoid (用户明确不要)
       2. 三桶分级:
          - bucket_exact: cuisine_exact_match
          - bucket_soft: cuisine_soft_match (店名/菜名子串) 或 ingredient 命中
@@ -816,7 +819,8 @@ def _apply_intent_buckets(
          - Level 3 (intent_hit < 10): refine 严重偏数据, 返全集 (event 提示)
       4. avoid 硬过滤始终生效 (在三桶分类前).
     """
-    from chisha.score import cuisine_exact_match, cuisine_soft_match, contains_ingredient
+    from chisha.score import (cuisine_exact_match, cuisine_soft_match,
+                              contains_ingredient, dish_is_staple)
     from chisha.rerank import L3_INPUT_TOP_K
 
     # 硬过滤 avoid
@@ -826,6 +830,10 @@ def _apply_intent_buckets(
         # D-094 (T-FR-03): cooking_method_avoid dish 维度硬过滤. combo 内任一 dish 命中即弃
         # (用户看完整 combo, 含 1 道油炸即破诉求).
         cm_av = set(getattr(intent, "cooking_method_avoid", None) or [])
+        # D-094.1: staple_avoid dish 维度硬过滤, 跟 cuisine_avoid/ingredient_avoid 一致语义
+        # (intent_match_bonus 是 [0,1] 正向加分表达不了 demote, codex BLOCK 修复). dish_is_staple
+        # 先按 grain_type 过滤防 "面包/面筋" 误命中, 再对 canonical_name 做子串.
+        st_av = getattr(intent, "staple_avoid", None) or []
         if cu_av and cuisine_exact_match(c, cu_av):
             return False
         if cu_av and cuisine_soft_match(c, cu_av):
@@ -838,10 +846,15 @@ def _apply_intent_buckets(
                 np_ = d.get("nutrition_profile") or {}
                 if np_.get("cooking_method") in cm_av:
                     return False
+        if st_av:
+            for d in c.get("dishes", []):
+                name = d.get("canonical_name") or ""
+                if dish_is_staple(d) and any(s and s in name for s in st_av):
+                    return False
         return True
 
     # codex review Q2 nit: 记 _not_avoided 弃了多少 combo (cuisine_avoid + ingredient_avoid
-    # + cooking_method_avoid 三者合计), 让 trace 能区分"L1 命中本身少" vs "硬过滤后剩余少",
+    # + cooking_method_avoid + staple_avoid 合计), 让 trace 能区分"L1 命中本身少" vs "硬过滤后剩余少",
     # 防 intent_hit 虚低误判 level=2/3.
     _pre_filter_count = len(combos)
     combos = [c for c in combos if _not_avoided(c)]
