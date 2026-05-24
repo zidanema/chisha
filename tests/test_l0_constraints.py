@@ -16,7 +16,7 @@ from chisha.l0_constraints import (
     load_l0_constraints,
     make_hard_filter_event,
 )
-from chisha.refine_intent import RefineIntent
+from chisha.refine_intent_v2 import RefineIntentV2 as RefineIntent
 from chisha.recall import (
     hard_filter,
     combo_passes_plate_rule,

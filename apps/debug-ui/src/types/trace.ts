@@ -265,7 +265,9 @@ export type Session = {
 // Workflow A · 分析 trace 类型 (D-086+)
 // ═══════════════════════════════════════════════════════════════════
 
-// V2 RefineIntent schema (chisha/refine_intent_v2.py: RefineIntentV2).
+// V2.1 RefineIntent schema (chisha/refine_intent_v2.py: RefineIntentV2).
+// D-094.1: schema 9→13 槽 (加 staple_want/avoid + oil="high" + wants_soup + price_band).
+// D-096: V1 已退役, schema_version 强制 "2.1".
 // open-schema: 后端 V2 schema 扩字段时自动透传, 前端按 intent_schema descriptor 渲染.
 export type RoundIntentV2 = {
   redirect?: {
@@ -276,17 +278,25 @@ export type RoundIntentV2 = {
     ingredient_avoid?: string[];
     brand_avoid?: string[];
     cooking_method_avoid?: string[];
+    // D-094.1: 主食偏好自由字符串
+    staple_want?: string[];
+    staple_avoid?: string[];
   };
   constrain?: {
-    oil?: string | null;
+    // D-094.1: oil 枚举扩 {low, normal, high} ("high" 替代 V1 heavy + 触发 D-090.1 油豁免)
+    oil?: "low" | "normal" | "high" | null;
     price_max?: number | null;
+    // D-094.1: 模糊文本兜底, price_max 优先
+    price_band?: "cheap" | "normal" | "premium" | null;
+    // D-094.1: 想喝汤/粥 (L2 真打分)
+    wants_soup?: boolean;
   };
   reference?: { round?: string; pick?: string } | null;
   reject_previous?: boolean;
   raw_understanding?: string;
   raw_text?: string;
   schema_version?: string;
-  // legacy_v1 / 后端将来扩字段 — open schema
+  // 后端将来扩字段 — open schema
   [key: string]: unknown;
 };
 

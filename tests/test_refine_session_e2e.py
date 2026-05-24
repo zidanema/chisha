@@ -26,7 +26,6 @@ import pytest
 def fake_refine_env(tmp_path: Path, monkeypatch):
     """monkeypatch refine_session 内部所有重依赖, 留 refine.py 真逻辑跑."""
     from chisha import refine as refine_mod
-    from chisha.refine_intent import RefineIntent
     from chisha.refine_intent_v2 import RefineIntentV2
     from chisha.session import SessionState
 
@@ -159,18 +158,33 @@ def test_v2_reference_takes_priority_over_raw_parser(fake_refine_env):
 
 
 def test_subtype_diversified_threads_through_when_cuisine_want_filled(fake_refine_env):
-    """cuisine_want 非空 → raw._subtype_diversified=True (refine.py gate 工作)."""
+    """cuisine_want 非空 → raw._subtype_diversified=True (refine.py gate 工作).
+
+    D-094.1: V1 rule_parse 已删, use_llm=False 不再自动抽 cuisine_want.
+    必须 mock V2 intent 注入 cuisine_want.
+    """
     refine_mod, root, today = fake_refine_env
-    # 命中 cuisine_want=["湘菜"]: refine_intent parser 内置湖南菜识别
-    raw = _run_refine(refine_mod, root,
-                       user_input="想吃湘菜, 肉多一点", today=today)
+    from chisha.refine_intent_v2 import RefineIntentV2
+    intent_v2 = RefineIntentV2(
+        redirect={"cuisine_want": ["湘菜"], "cuisine_avoid": [],
+                  "cuisine_candidates_expanded": [],
+                  "ingredient_want": ["肉"], "ingredient_avoid": [],
+                  "brand_avoid": [], "cooking_method_avoid": [],
+                  "staple_want": [], "staple_avoid": []},
+        constrain={"oil": None, "price_max": None,
+                   "price_band": None, "wants_soup": False},
+        raw_text="想吃湘菜, 肉多一点",
+        raw_understanding="mock",
+    )
+    raw = _run_refine(refine_mod, root, user_input="想吃湘菜, 肉多一点",
+                       intent_v2=intent_v2, today=today)
     assert raw["_subtype_diversified"] is True
 
 
 def test_subtype_diversified_false_when_cuisine_want_empty(fake_refine_env):
     """cuisine_want 空 → raw._subtype_diversified=False, baseline 行为不变."""
     refine_mod, root, today = fake_refine_env
-    # 用户 input 不含 cuisine 词, parse_refine_intent 出空 cuisine_want
+    # 用户 input 不含 cuisine 词, use_llm=False → empty V2 cuisine_want
     raw = _run_refine(refine_mod, root, user_input="少油", today=today)
     assert raw["_subtype_diversified"] is False
 

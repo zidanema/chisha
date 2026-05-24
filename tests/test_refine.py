@@ -116,9 +116,10 @@ def test_refine_increments_round(tmp_path, small_profile, tiny_zone):
     assert out["round"] == 2
     assert out["refine_input"] == "想喝汤别给我面"
     assert "candidates" in out
-    # D-073: refine_intent 取代 parsed_feedback/taste_hints
+    # D-094.1: refine_intent 字段直接是 V2 shape (use_llm=False → empty V2, V1 已退役).
     assert "refine_intent" in out
-    assert "soup" in out["refine_intent"]["flavor_tags"]
+    assert out["refine_intent"]["schema_version"] == "2.1"
+    assert "LLM 不可用" in out["refine_intent"]["raw_understanding"]
 
 
 def test_refine_no_explore(tmp_path, small_profile, tiny_zone):
@@ -148,8 +149,8 @@ def test_refine_persists_session(tmp_path, small_profile, tiny_zone):
     assert len(reloaded.last_candidates) > 0
 
 
-def test_refine_intent_attached(tmp_path, small_profile, tiny_zone):
-    """D-073: refine 输出携带结构化 refine_intent."""
+def test_refine_intent_attached_v2_shape(tmp_path, small_profile, tiny_zone):
+    """D-094.1: refine 输出 refine_intent = V2 shape (V1 已退役)."""
     rests, dishes = tiny_zone
     sid = "sid_intent"
     s = create_session(sid, "lunch", "test")
@@ -157,43 +158,73 @@ def test_refine_intent_attached(tmp_path, small_profile, tiny_zone):
     out = refine(sid, "想吃湘菜, 肉多一点", small_profile, rests, dishes, [],
                   root=tmp_path, today=dt.date(2026, 5, 13), use_llm=False)
     intent = out["refine_intent"]
-    # rule_parse fallback 应能抓到 cuisine + portion
-    assert "湖南菜" in intent["cuisine_want"]
-    assert "more_meat" in intent["portion"]
+    assert intent["schema_version"] == "2.1"
+    assert intent["raw_text"] == "想吃湘菜, 肉多一点"
+    # use_llm=False → empty V2 (V1 rule_parse 已删, 无 fallback 兜底解析)
+    assert intent["redirect"]["cuisine_want"] == []
+    assert intent["redirect"]["staple_want"] == []
+    assert "LLM 不可用" in intent["raw_understanding"]
 
 
-def test_refine_intent_v2_attached(tmp_path, small_profile, tiny_zone):
-    """T-P1a-03 follow-up: refine 输出携带 V2 多 slot trace 双存."""
+def test_refine_intent_v2_llm_mocked(tmp_path, small_profile, tiny_zone, monkeypatch):
+    """V2 LLM 路径 mock: refine_intent 应从 LLM 结构化结果拷贝."""
     rests, dishes = tiny_zone
     sid = "sid_intent_v2"
     s = create_session(sid, "lunch", "test")
     save_session(s, tmp_path)
+
+    # mock _llm_parse_v2 返回结构化结果
+    def _fake_llm(text, profile_llm=None, trace_collector=None):
+        if trace_collector is not None:
+            trace_collector["raw_response"] = "{}"
+            trace_collector["model"] = "mock"
+        return {
+            "redirect": {"cuisine_want": ["湖南菜"], "cuisine_avoid": [],
+                         "cuisine_candidates_expanded": [],
+                         "ingredient_want": ["肉"], "ingredient_avoid": [],
+                         "brand_avoid": [], "cooking_method_avoid": [],
+                         "staple_want": [], "staple_avoid": []},
+            "constrain": {"oil": None, "price_max": None,
+                          "price_band": None, "wants_soup": False},
+            "reference": None, "reject_previous": False,
+            "raw_understanding": "想吃湖南菜+肉",
+            "schema_version": "2.1",
+        }
+    monkeypatch.setattr("chisha.refine_intent_v2._llm_parse_v2", _fake_llm)
+    # 让 use_llm=True 通过 (默认 has_llm_key may be False, 显式传)
     out = refine(sid, "想吃湘菜, 肉多一点", small_profile, rests, dishes, [],
-                  root=tmp_path, today=dt.date(2026, 5, 13), use_llm=False)
-    # 1. response 携带 refine_intent_v2 字段
-    assert "refine_intent_v2" in out
-    v2 = out["refine_intent_v2"]
-    # 2. trace 双存三份 都在
-    assert v2["schema_version"] == "2.0"
-    assert v2["raw_text"] == "想吃湘菜, 肉多一点"
-    assert v2["raw_understanding"]   # 非空 (use_llm=False 走 V1 兜底, raw_understanding 填降级原因)
-    # 3. redirect.cuisine_want 从 V1 from_legacy 同步 (rule_parse 抓"湘菜"→"湖南菜")
-    assert "湖南菜" in v2["redirect"]["cuisine_want"]
-    # 4. D-094: unsupported_in_recall 字段已砍, 不再出现 (D-085 第二句失效)
-    assert "unsupported_in_recall" not in v2
-    # 5. V1 字段保留 (legacy_v1)
-    assert v2["legacy_v1"].get("portion") == ["more_meat"]
+                  root=tmp_path, today=dt.date(2026, 5, 13), use_llm=True)
+    intent = out["refine_intent"]
+    assert intent["schema_version"] == "2.1"
+    assert "湖南菜" in intent["redirect"]["cuisine_want"]
+    assert "肉" in intent["redirect"]["ingredient_want"]
+    assert intent["raw_understanding"] == "想吃湖南菜+肉"
+    # D-094.1: 砍 legacy_v1 字段
+    assert "legacy_v1" not in intent
 
 
-def test_refine_avoid_hard_filter(tmp_path, small_profile, tiny_zone):
-    """D-073: cuisine_avoid 硬过滤, 二轮候选不含目标菜系."""
+def test_refine_avoid_hard_filter_v2(tmp_path, small_profile, tiny_zone, monkeypatch):
+    """D-094.1: cuisine_avoid 硬过滤, 二轮候选不含目标菜系 (V2 LLM mock)."""
     rests, dishes = tiny_zone
     sid = "sid_avoid"
     s = create_session(sid, "lunch", "test")
     save_session(s, tmp_path)
+    def _fake_llm(text, profile_llm=None, trace_collector=None):
+        return {
+            "redirect": {"cuisine_want": ["湖南菜"], "cuisine_avoid": ["日料"],
+                         "cuisine_candidates_expanded": [],
+                         "ingredient_want": [], "ingredient_avoid": [],
+                         "brand_avoid": [], "cooking_method_avoid": [],
+                         "staple_want": [], "staple_avoid": []},
+            "constrain": {"oil": None, "price_max": None,
+                          "price_band": None, "wants_soup": False},
+            "reference": None, "reject_previous": False,
+            "raw_understanding": "湘菜 + 排除日料",
+            "schema_version": "2.1",
+        }
+    monkeypatch.setattr("chisha.refine_intent_v2._llm_parse_v2", _fake_llm)
     out = refine(sid, "不要日料, 想吃湘菜", small_profile, rests, dishes, [],
-                  root=tmp_path, today=dt.date(2026, 5, 13), use_llm=False)
-    # candidates 全部不该是 日式 cuisine
+                  root=tmp_path, today=dt.date(2026, 5, 13), use_llm=True)
     cuisines = []
     for c in out["candidates"]:
         for d in c.get("dishes", []):

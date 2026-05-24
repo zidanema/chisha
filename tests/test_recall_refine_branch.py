@@ -13,7 +13,8 @@ from __future__ import annotations
 import datetime as dt
 
 from chisha.recall import recall, _ingredient_want_reverse_lookup
-from chisha.refine_intent import RefineIntent
+from tests._v2_compat import make_v1_compat_intent as RefineIntent
+
 
 
 def _make_dish(dish_id, name, *, restaurant_id="r1",

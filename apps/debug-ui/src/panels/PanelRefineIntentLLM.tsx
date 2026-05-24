@@ -68,7 +68,7 @@ export function PanelRefineIntentLLM({ trace }: { trace: LlmCallTrace }) {
         <div className="alert alert-warn">
           <strong>fallback_reason:</strong> {trace.fallback_reason}
           <div className="dim small">
-            意图解析 LLM 调用失败 → 降级到 V1 规则解析 (refine_intent.py).
+            意图解析 LLM 调用失败 → 降级到 empty V2 (无结构化 slot, 走 raw_text + L3 兜底; V1 规则解析已退役).
             raw_response 字段可能为空; system_prompt / user_message 仍可看.
           </div>
         </div>

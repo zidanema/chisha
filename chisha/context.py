@@ -54,7 +54,7 @@ class ContextSnapshot:
     last_feedback: FeedbackSummary | None
     daily_mood: str | None                # 见 DAILY_MOODS
     refine_input: str | None              # refine 二轮用户自然语言原文 (L3 看)
-    refine_intent: dict | None = None     # D-073: 结构化意图 (RefineIntent.to_log_dict())
+    refine_intent: dict | None = None     # D-094.1: 结构化意图 V2 (RefineIntentV2.to_log_dict())
 
     def to_llm_dict(self) -> dict[str, Any]:
         """LLM rerank prompt 用的扁平 dict, 去掉 dt 类型."""

@@ -588,14 +588,11 @@ def health_guardrail(combo: dict, profile: dict, intent=None) -> float:
 
     Codex review §3: 防止"全是麻辣火锅"——intent 服从健康约束.
 
-    D-090 (2026-05-19): slot-aware 松绑 — intent ≠ None 且明确表达对应 L0-C 放宽信号时,
-    对应触发不计. 兼容: intent=None 时行为与旧 API 完全一致 (R1 baseline 0-diff 守门).
-      - flavor_tags 含 "heavy" → oil 触发豁免 (用户明确要重口)
-    其他 (sweet/processed_meat/wetness) 当前无明确 explicit slot 信号, 仍照常压制.
+    D-090.1 (D-094.1 修正案): slot-aware 松绑触发字段从 V1 flavor_tags="heavy"
+    切换到 V2 constrain.oil="high" (用户明确要重口/下饭/够味). intent=None 时行为与旧 API 完全一致.
     """
     # slot-aware 信号 (R1 路径 intent=None 时全 False, 行为与旧 API 一致)
-    flavor_tags = set(getattr(intent, "flavor_tags", None) or []) if intent else set()
-    oil_exempt = "heavy" in flavor_tags
+    oil_exempt = (getattr(intent, "oil", None) == "high") if intent else False
 
     prefer_oil = profile["plate_rule"].get("prefer_oil_level_at_most", 3)
     oils = [
@@ -626,32 +623,57 @@ def health_guardrail(combo: dict, profile: dict, intent=None) -> float:
     return 1.0
 
 
+def _resolve_price_band(intent) -> str | None:
+    """D-094.1: V2 price 优先级 = price_max 数字优先 (更精确) > price_band 文本兜底.
+
+    spec T-FR-V1-RETIRE §41: price_max 是数字、更精确, 两者共存时数字赢;
+    仅当 price_max 缺失/非法才回落到 explicit price_band (模糊文本).
+
+    price_max 推 band 阈值 (跟 V1 cheap/normal/premium 经验值一致):
+      <= 30 → cheap, <= 80 → normal, > 80 → premium.
+    """
+    if intent is None:
+        return None
+    pm = getattr(intent, "price_max", None)
+    if pm is not None:
+        try:
+            pmf: float | None = float(pm)
+        except (TypeError, ValueError):
+            pmf = None
+        if pmf is not None:
+            if pmf <= 30:
+                return "cheap"
+            if pmf <= 80:
+                return "normal"
+            return "premium"
+    pb = getattr(intent, "price_band", None)
+    if pb in {"cheap", "normal", "premium"}:
+        return pb
+    return None
+
+
 def _build_refine_weight_overlay(intent) -> dict[str, float]:
     """D-091 phase-2: refine 模式下按 explicit slot 给 score weight 加 multiplier.
 
     返回 dict[dim_name → multiplier]. 缺省 dim multiplier = 1.0 (不变).
     intent=None 时返回空 dict → score_combo 走 baseline 权重 → R1 0-diff 守门.
 
-    设计 (D-091 S3, self-S2 修订):
-      - heavy flavor → low_oil ×0.3 (用户明确要重口, 保留 30% 健康 safety net)
-      - sweet flavor → sweet_sauce ×0.3
-      - staple want_rice/want_noodle → carb_quality ×0.0 (用户主动接受 carb 惩罚)
-      - price_band == cheap → price ×1.5 (放大对贵菜惩罚, 帮用户选便宜)
-      - price_band == premium → price ×0.0 (用户主动要贵, 不再扣)
+    D-094.1 修正案: 触发字段切 V2:
+      - V2 constrain.oil == "high" → low_oil ×0.3 (替代 V1 flavor_tags="heavy")
+      - V2 staple_want 非空 → carb_quality ×0.0 (替代 V1 staple_preference ∈ {want_rice, want_noodle})
+      - V2 price_band == cheap (or price_max 推 cheap) → price ×1.5
+      - V2 price_band == premium (or price_max 推 premium) → price ×0.0
       - cuisine_want 非空 → cuisine_preference ×0.5 (refine 优先于画像)
+      - 已砍: sweet → sweet_sauce ×0.3 (V2 不再 explicit sweet 信号; 走 narrative)
     """
     if intent is None:
         return {}
     mult: dict[str, float] = {}
-    flavor_tags = set(getattr(intent, "flavor_tags", None) or [])
-    if "heavy" in flavor_tags:
+    if getattr(intent, "oil", None) == "high":
         mult["low_oil"] = 0.3
-    if "sweet" in flavor_tags:
-        mult["sweet_sauce"] = 0.3
-    staple = getattr(intent, "staple_preference", None)
-    if staple in {"want_rice", "want_noodle"}:
+    if getattr(intent, "staple_want", None):
         mult["carb_quality"] = 0.0
-    pb = getattr(intent, "price_band", None)
+    pb = _resolve_price_band(intent)
     if pb == "cheap":
         mult["price"] = 1.5
     elif pb == "premium":
@@ -659,6 +681,22 @@ def _build_refine_weight_overlay(intent) -> dict[str, float]:
     if getattr(intent, "cuisine_want", None):
         mult["cuisine_preference"] = 0.5
     return mult
+
+
+# D-094.1: staple (主食) 判定 — score bonus + recall staple_avoid 硬过滤共用.
+# codex review YELLOW: 短 token "面" 子串会误命中 "面包/面筋", 必须先按 grain_type
+# 过滤 (dish 是真主食) 再做子串. grain_type ∈ 主食类 或 dish_role=主食 才算.
+_STAPLE_GRAIN_TYPES = {"精制面", "全麦面", "白米", "糙米杂粮"}
+
+
+def dish_is_staple(d: dict) -> bool:
+    np_ = d.get("nutrition_profile") or {}
+    if np_.get("grain_type") in _STAPLE_GRAIN_TYPES:
+        return True
+    # dish_role=主食 兜底 (主食类目但 grain_type 缺标)
+    if np_.get("dish_role") == DISH_ROLE_CARB:
+        return True
+    return False
 
 
 def intent_match_bonus(
@@ -689,128 +727,40 @@ def intent_match_bonus(
                   if contains_ingredient(combo, ing))
         out["ingredient"] = min(1.0, hit * 0.4)
 
-    # 3. flavor
+    # 3. flavor (D-094.1: V2 oil / wants_soup 替代 V1 flavor_tags)
     flavor_score = 0.0
-    flavor_tags = getattr(intent, "flavor_tags", None) or []
+    oil = getattr(intent, "oil", None)
 
-    if "spicy" in flavor_tags:
-        # Codex §5: 用 profile.spicy_tolerance 做安全边界, 不覆盖
-        prefs = profile.get("preferences") or {}
-        tolerance = prefs.get("spicy_tolerance", 2)
-        target = min(tolerance, 2)
-        spicies = [d.get("nutrition_profile", {}).get("spicy_level", 0)
-                   for d in combo.get("dishes") or []]
-        max_spicy = max(spicies, default=0)
-        # max_spicy > tolerance 已由 L1 硬过滤拦截; 此路径只考虑 [0, tolerance]
-        if max_spicy == target:
-            flavor_score += 0.5
-        elif 1 <= max_spicy < target:
-            flavor_score += 0.25
-        # max_spicy == 0 不加分 (用户想吃辣但 combo 完全不辣)
-
-    if "soup" in flavor_tags and wetness_bonus(combo) > 0:
+    if getattr(intent, "wants_soup", False) and wetness_bonus(combo) > 0:
         flavor_score += 0.5
 
-    if "light" in flavor_tags:
+    if oil == "low":
         oils = [d.get("nutrition_profile", {}).get("oil_level", 3)
                 for d in combo.get("dishes") or []]
         if oils and (sum(oils) / len(oils)) <= 2:
             flavor_score += 0.5
 
-    if "heavy" in flavor_tags:
+    if oil == "high":
         oils = [d.get("nutrition_profile", {}).get("oil_level", 3)
                 for d in combo.get("dishes") or []]
         if oils and (sum(oils) / len(oils)) >= 3:
             flavor_score += 0.3
 
-    if "sour" in flavor_tags:
-        # 数据没 sour_level, 走 dish 名子串
-        names = " ".join((d.get("canonical_name") or "")
-                          for d in combo.get("dishes") or [])
-        if any(k in names for k in ("酸", "醋", "柠檬")):
-            flavor_score += 0.3
-
-    if "sweet" in flavor_tags:
-        # 与现有 sweet_sauce_penalty 相反方向, 仅 sweet_sauce_level >= 2 给分
-        max_sweet = 0
-        for d in combo.get("dishes") or []:
-            lvl = _safe_int((d.get("nutrition_profile") or {}).get("sweet_sauce_level"), 0)
-            max_sweet = max(max_sweet, lvl)
-        if max_sweet >= 2:
-            flavor_score += 0.3
-
-    if "dry" in flavor_tags:
-        # 反 wetness: combo 全 wetness <= 1
-        wets = [_safe_int((d.get("nutrition_profile") or {}).get("wetness"), 1)
-                for d in combo.get("dishes") or []]
-        if wets and max(wets) <= 1:
-            flavor_score += 0.3
-
-    if "mild" in flavor_tags:
-        # 不辣偏好: combo 所有 dish spicy_level == 0
-        spicies = [d.get("nutrition_profile", {}).get("spicy_level", 0)
-                   for d in combo.get("dishes") or []]
-        if spicies and max(spicies) == 0:
-            flavor_score += 0.3
-
     out["flavor"] = min(1.0, flavor_score)
 
-    # 4. portion 信号 (Codex §2 补充): 进 ingredient 通道 (more_meat → 多肉加分)
-    portion = getattr(intent, "portion", None) or []
-    if "more_meat" in portion:
-        meat_n = sum(
-            1 for d in combo.get("dishes") or []
-            if (d.get("nutrition_profile") or {}).get("main_ingredient_type")
-                in {"红肉", "白肉", "海鲜"}
-        )
-        if meat_n >= 2:
-            out["ingredient"] = min(1.0, out["ingredient"] + 0.4)
-        elif meat_n >= 1:
-            out["ingredient"] = min(1.0, out["ingredient"] + 0.2)
-    if "less_carb" in portion:
-        carb_n = sum(
-            1 for d in combo.get("dishes") or []
-            if (d.get("nutrition_profile") or {}).get("dish_role") == DISH_ROLE_CARB
-        )
-        if carb_n == 0:
-            out["ingredient"] = min(1.0, out["ingredient"] + 0.3)
-        elif carb_n >= 2:
-            out["ingredient"] = max(0.0, out["ingredient"] - 0.3)
-    if "more_veg" in portion:
-        from chisha.recall import is_vegetable_dish
-        veg_n = sum(1 for d in combo.get("dishes") or [] if is_vegetable_dish(d))
-        if veg_n >= 2:
-            out["ingredient"] = min(1.0, out["ingredient"] + 0.3)
-
-    # 5. staple_preference 信号: 进 ingredient 通道
-    staple = getattr(intent, "staple_preference", None)
-    if staple == "avoid_staple":
-        has_carb = any(
-            (d.get("nutrition_profile") or {}).get("dish_role") == DISH_ROLE_CARB
+    # 4. staple_want (D-094.1 新增, 替代 V1 staple_preference + portion).
+    # staple_avoid 不在这里: avoid 语义跟 cuisine_avoid/ingredient_avoid 一致, 走 recall
+    # 硬过滤 (intent_match_bonus 是 [0,1] 正向加分, 表达不了 demote — 见 BLOCK 修复).
+    staple_want = getattr(intent, "staple_want", None) or []
+    if staple_want:
+        has_want = any(
+            dish_is_staple(d) and any(
+                s and s in (d.get("canonical_name") or "") for s in staple_want
+            )
             for d in combo.get("dishes") or []
         )
-        if not has_carb:
+        if has_want:
             out["ingredient"] = min(1.0, out["ingredient"] + 0.3)
-    elif staple == "want_rice":
-        has_rice = any(
-            (d.get("nutrition_profile") or {}).get("grain_type") in {"白米", "糙米杂粮"}
-            or "饭" in (d.get("canonical_name") or "")
-            for d in combo.get("dishes") or []
-        )
-        if has_rice:
-            out["ingredient"] = min(1.0, out["ingredient"] + 0.3)
-    elif staple == "want_noodle":
-        has_noodle = any(
-            (d.get("nutrition_profile") or {}).get("grain_type") in {"精制面", "全麦面"}
-            or "面" in (d.get("canonical_name") or "")
-            for d in combo.get("dishes") or []
-        )
-        if has_noodle:
-            out["ingredient"] = min(1.0, out["ingredient"] + 0.3)
-
-    # 6. price_band: D-091 删除——历史上把 price_band 加到 cuisine 通道是语义重载
-    # (cuisine 通道塞了非 cuisine 语义), price 维度本身已能表达价格意图.
-    # phase-2 改 _apply_refine_overlay 在 price weight 上 slot-gated 调整 (cheap ×1.5, premium ×0).
 
     # 7. 健康 guardrail (Codex §3) + slot-aware 松绑 (D-090)
     guard = health_guardrail(combo, profile, intent=intent)
@@ -828,8 +778,8 @@ def context_boost(combo: dict, context: "ContextSnapshot | None",
     历史:
       - D-034/D-043: 4 条 mood 规则 (want_light / low_carb / want_clean / want_indulgent)
       - D-071: 砍 4 条, 仅留 want_soup 一条 (combo 含汤水 → +0.5)
-      - D-073: 彻底砍 want_soup, 由 RefineIntent.flavor_tags=["soup"] +
-        intent_match_bonus 取代. 不再走 daily_mood 通道.
+      - D-073: 彻底砍 want_soup, 由 intent_match_bonus 取代, 不再走 daily_mood 通道
+        (D-094.1 后信号字段是 constrain.wants_soup; D-073 当时叫 flavor_tags=["soup"]).
 
     此函数现在恒返回 0.0. 保留只为不破坏 score_combo 的字段 layout.
     后续如要重启 context-level 软调权, 必须先回看 D-070/D-073 决策再加.

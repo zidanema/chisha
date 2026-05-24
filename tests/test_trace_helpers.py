@@ -172,8 +172,8 @@ class TestBuildRefineRoundPayload:
     def test_full_refine_response(self):
         refine_raw = {
             "generated_at": "2026-05-19T12:00:00",
-            "refine_intent": {"v1": "stub"},
-            "refine_intent_v2": {"redirect": {}, "constrain": {}},
+            # D-094.1: refine_intent 直接是 V2 shape (V1 已退役, 砍 refine_intent_v2 冗余)
+            "refine_intent": {"redirect": {}, "constrain": {}},
             "narrative": "湘菜重口味方案",
             "candidates": [
                 {"restaurant": {"name": "湘颂"}, "dishes": [], "score": 2.5, "kind": "exploit"},

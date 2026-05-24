@@ -49,7 +49,8 @@ def format_v2_to_rec(
     if intent_override is not None:
         intent = intent_override
     elif refine_intent:
-        intent = (refine_intent.get("summary_text") or "refine")[:12]
+        # D-094.1: V2 shape, 用 raw_understanding 当 12 字摘要
+        intent = (refine_intent.get("raw_understanding") or "refine")[:12]
     else:
         intent = "context-fit"
 

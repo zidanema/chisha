@@ -20,7 +20,7 @@ Eval 维度 (expected JSON 支持以下 assertion 操作符):
   - is_empty_strict: true       redirect+constrain+reference+reject_previous 全空
   - is_empty_redirect_avoid_assoc: true  redirect 全空 (验证"不主观联想")
   - raw_understanding_nonempty: true
-  - constrain.price_max_nonnull_or_legacy_cheap: true  价格类容错 (legacy price_band=cheap 也算)
+  - constrain.price_max_nonnull_or_price_band_cheap: true  价格类容错 (price_band="cheap" 兜底也算)
 """
 from __future__ import annotations
 
@@ -60,24 +60,23 @@ def _check_assertion(v2_dict: dict, key: str, expected: Any) -> tuple[bool, str]
         passed = bool(expected) == _all_empty_lists(v2_dict.get("redirect", {}))
         return passed, f"redirect empty={_all_empty_lists(v2_dict.get('redirect', {}))}"
     if key == "is_empty_strict":
-        # Codex H5 修: 直接复用 _v2_is_empty (覆盖 legacy_v1 字段),
-        # 与 RefineIntentV2.is_empty 行为一致, 防止"LLM 输出落到 legacy 字段"漏检.
+        # 与 RefineIntentV2.is_empty 行为一致 (全面检查 redirect / constrain / reference / reject_previous).
         passed = bool(expected) == _v2_is_empty(v2_dict)
         return passed, f"v2_is_empty={_v2_is_empty(v2_dict)} (expected {expected})"
     if key == "is_empty_redirect_avoid_assoc":
-        # Codex H4 修: 别名实质等同 is_empty_strict, 也走全检查 (含 constrain / reference / legacy_v1).
-        # 命名保留是为 eval set 可读性 ("此 case 重点是不联想").
+        # 别名等同 is_empty_strict, 命名保留是为 eval set 可读性 ("此 case 重点是不联想").
         passed = bool(expected) == _v2_is_empty(v2_dict)
         return passed, f"v2_is_empty={_v2_is_empty(v2_dict)} (expected {expected})"
     if key == "raw_understanding_nonempty":
         ru = v2_dict.get("raw_understanding") or ""
         passed = bool(expected) == (len(ru.strip()) > 0)
         return passed, f"raw_understanding={ru[:30]!r}"
-    if key == "constrain.price_max_nonnull_or_legacy_cheap":
+    if key == "constrain.price_max_nonnull_or_price_band_cheap":
+        # D-094.1: price_max 数字优先, price_band="cheap" 兜底.
         pm = _get_path(v2_dict, "constrain.price_max")
-        legacy_cheap = (v2_dict.get("legacy_v1", {}).get("price_band") == "cheap")
-        passed = bool(expected) == (pm is not None or legacy_cheap)
-        return passed, f"price_max={pm} legacy_cheap={legacy_cheap}"
+        pb_cheap = (_get_path(v2_dict, "constrain.price_band") == "cheap")
+        passed = bool(expected) == (pm is not None or pb_cheap)
+        return passed, f"price_max={pm} price_band_cheap={pb_cheap}"
 
     # 操作符后缀
     if key.endswith("_contains"):
@@ -130,26 +129,17 @@ def _check_assertion(v2_dict: dict, key: str, expected: Any) -> tuple[bool, str]
 
 
 def _v2_is_empty(d: dict) -> bool:
-    """复用 RefineIntentV2.is_empty 的等价逻辑 (避开 dataclass 重建)."""
+    """复用 RefineIntentV2.is_empty 的等价逻辑."""
     if d.get("reject_previous"):
         return False
     if not _all_empty_lists(d.get("redirect", {})):
         return False
     constrain = d.get("constrain") or {}
-    for k, v in constrain.items():
-        if k == "functional":
-            if isinstance(v, dict) and any(x not in (None, False) for x in v.values()):
-                return False
-        elif v not in (None, False, [], "", {}):
+    for v in constrain.values():
+        if v not in (None, False, [], "", {}):
             return False
     if d.get("reference"):
         return False
-    legacy = d.get("legacy_v1") or {}
-    for k in ("cuisine_want", "cuisine_avoid", "ingredient_want",
-              "ingredient_avoid", "cooking_method", "flavor_tags",
-              "portion", "staple_preference", "price_band"):
-        if legacy.get(k):
-            return False
     return True
 
 

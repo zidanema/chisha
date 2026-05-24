@@ -241,8 +241,9 @@ def build_refine_round_payload(refine_raw: dict, refine_text: str) -> dict:
         "started_at": refine_raw.get("generated_at"),
         "label": (refine_text or "追问")[:20],
         "user_input": refine_text or "",
-        "intent": refine_raw.get("refine_intent"),
-        "intent_v2": refine_raw.get("refine_intent_v2"),
+        # D-094.1: refine_intent 直接是 V2 shape (V1 已退役, 砍 intent / refine_intent_v2 双存).
+        # round trace 字段名保留 intent_v2 (debug-ui 已跟此 key).
+        "intent_v2": refine_raw.get("refine_intent"),
         "narrative": refine_raw.get("narrative") or "",
         "reference_resolved": refine_raw.get("_reference_resolved"),
         "subtype_diversified": bool(refine_raw.get("_subtype_diversified")),
