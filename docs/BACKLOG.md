@@ -112,8 +112,8 @@
 ### F-011 · food_form_avoid 数据打标 + L1 硬过滤
 
 - **来源**: 2026-05-21 D-094 scope audit 拆出
-- **状态**: open, 等下个数据轮次启动
-- **What**: dish 数据层当前**无 `food_form` 字段** (audit 0/11123). 志丹会说"不要面条 / 不要米粉" 等形态排除, 但本轮 D-094 把 `food_form_avoid` 砍 schema (避免抽出来但没字段过滤的 ghost field). 数据轮次到时: (1) dish 打标 `food_form` (面条/米饭/粥/汤/饼/...) (2) refine v2 schema 重新加回 `food_form_avoid` (3) L1 硬过滤命中
+- **状态**: open (收窄), 等下个数据轮次启动
+- **What**: D-094.1 (2026-05-24) 已加 `staple_want/avoid` 走 recall 硬过滤, 覆盖**粗粒度**主食排除 (面/米饭/粥, canonical_name 子串 + grain_type 守门防"面包"误命中). F-011 收窄为**细粒度形态** (面条 vs 米粉 vs 拉面 vs 饼 — staple_avoid 子串区分不了) 仍需 food_form 数据字段. dish 数据层当前**无 `food_form`** (audit 0/11123). 数据轮次到时: (1) dish 打标 `food_form` (面条/米粉/饼/...) (2) schema 加回 `food_form_avoid` (3) L1 硬过滤命中
 - **依赖**: data 打标工作流 (LLM 批量打标 dishes_tagged.json + 人工抽检)
 - **优先级**: P2 (下次数据轮次)
 
