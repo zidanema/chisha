@@ -25,12 +25,15 @@ from chisha import data_root
 
 logger = logging.getLogger(__name__)
 
-TRACE_SCHEMA_VERSION = 3  # D-087: bump 2→3, refine 单 dict → rounds[] 数组, 同时拆目录存储
+TRACE_SCHEMA_VERSION = 4  # B-001/D-098: bump 3→4, __frozen 增 feedback_signal_snapshot
+# + feedback_avoided_names (What-if 零 runtime read 重放输入扩充).
+# D-087: bump 2→3, refine 单 dict → rounds[] 数组, 同时拆目录存储.
 # v=1 trace 可被 read/list 接受 (on-read migration 注空 hard_filter_events).
 # v=2 trace 同上 (单文件 + refine 单 dict). v=3 = {sid}/meta.json + {sid}/rounds/R{n}.json
 # 拆目录, on-read 把 v2 单文件视图升 v3 view (不写回); /api/refine 写盘走 append_round
-# 自动 migrate v2 → v3.
-ACCEPTED_TRACE_VERSIONS: set[int] = {1, 2, 3}
+# 自动 migrate v2 → v3. v=4 纯增量 frozen 字段, v3 trace 缺该键 → what_if .get()→None
+# → 无反馈效果 (pre-D098 trace 本就无反馈信号, 恰好正确), 故 v3 仍在 accepted 集.
+ACCEPTED_TRACE_VERSIONS: set[int] = {1, 2, 3, 4}
 # D-079 用户决策: trace 大小不省空间, 调试完整性优先 (Phase 0 单 zone 1260 dishes
 # 实测 ~1.3MB 是常态). 这里 50MB 是纯 sanity bound, 防意外/恶意大数据写满磁盘,
 # 不是日常裁剪阈值. 正常 trace (<5MB) 直接写, 不走任何裁剪.

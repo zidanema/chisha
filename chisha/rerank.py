@@ -411,6 +411,24 @@ def _fmt_counts_or_none(d) -> str:
 # snapshot 里 l1_prefs_snapshot 本来就允许是 None (那餐没抽出 prefs).
 _UNSET_L1_PREFS: Any = object()
 
+def _feedback_avoided_block(feedback_avoided_names: list[str] | None) -> str | None:
+    """B-001/D-098 (T-FB-05): 把"本次因强负差评真剔除的店名"作为事实透传给 L3.
+
+    D-085 忠实纪律: names 由 api/refine 算好 (强负剔除 ∩ 本 zone 存在的店 = 本次
+    确实被 recall 删掉、且本来可能出现的店). narrative 据此说"已按你上次反馈避开
+    XX" 是 by-construction 忠实. 全局 evict_names 里跨 zone / 本就不会出现的店不入
+    此列 (Codex review BLOCKER: 防把"压根不在本次候选域"误归因给 feedback).
+
+    None / 空 → None (无此块).
+    """
+    names = [n for n in (feedback_avoided_names or []) if n]
+    if not names:
+        return None
+    return (
+        "[FEEDBACK_AVOIDED] 以下餐厅因你近期明确差评(👎且不想再吃)已从候选剔除, "
+        "本次推荐不会出现: " + "、".join(names)
+    )
+
 
 def _profile_block(
     profile: dict,
@@ -534,19 +552,25 @@ def build_user_message(
     n_explore: int,
     root: "Path | None" = None,
     l1_prefs_override: Any = _UNSET_L1_PREFS,
+    feedback_avoided_names: list[str] | None = None,
 ) -> str:
-    """拼 user message: CONFIG + PROFILE + CONTEXT + CANDIDATES, 紧凑符号化.
+    """拼 user message: CONFIG + PROFILE + CONTEXT + [FEEDBACK_AVOIDED] + CANDIDATES.
 
     D-078.2: root 透传给 _profile_block 注入 L1 prefs.
     D-079 BLOCKER fix: l1_prefs_override 透传, What-if 路径必须走 frozen 而非
     runtime load (违反 "What-if 零 runtime read" 红线).
+    B-001/D-098 (T-FB-05): feedback_avoided_names (api/refine 算好的本 zone 真剔除
+    店名) → [FEEDBACK_AVOIDED] 段 (D-085 忠实纪律, 只列真剔除的).
     """
     blocks = [
         f"[CONFIG] n={n} n_explore={n_explore}",
         _profile_block(profile, root=root, l1_prefs_override=l1_prefs_override),
         _context_block(context),
-        "[CANDIDATES]",
     ]
+    avoided = _feedback_avoided_block(feedback_avoided_names)
+    if avoided:
+        blocks.append(avoided)
+    blocks.append("[CANDIDATES]")
     for idx, c in enumerate(top_combos):
         blocks.append(_fmt_combo_block(idx, c))
     return "\n\n".join(blocks)
@@ -1005,6 +1029,7 @@ def _run_llm_rerank(
     profile_llm: dict | None = None,
     root: "Path | None" = None,
     l1_prefs_override: Any = _UNSET_L1_PREFS,
+    feedback_avoided_names: list[str] | None = None,
 ) -> dict:
     """共享 LLM rerank 调用 helper (D-047 抽出, 同时给 prod _llm_rerank +
     debug _llm_rerank_traced 用, 解决双份代码漂移问题).
@@ -1109,7 +1134,8 @@ def _run_llm_rerank(
             system_prompt = system_prompt_raw
         user_msg = build_user_message(top_combos, profile, context,
                                        n=n, n_explore=n_explore, root=root,
-                                       l1_prefs_override=l1_prefs_override)
+                                       l1_prefs_override=l1_prefs_override,
+                                       feedback_avoided_names=feedback_avoided_names)
         # D-089-S1: 落实际发给 LLM 的 system prompt body (patch 过的 CLI 版 / 主路径 raw 版).
         # T-PR-05: 主路径 tool_use 把 ordering 等行为关键指令搬进 _RERANK_TOOL.description,
         # 为 D-079 trace 自包含原则 (CONTRACTS.md:115), 把 outgoing tool schema 拼到
@@ -1312,7 +1338,8 @@ def _llm_rerank(top_combos: list[dict], profile: dict,
                 model: str | None = None,
                 n_max: int = 5,
                 root: "Path | None" = None,
-                l1_prefs_override: Any = _UNSET_L1_PREFS) -> list[dict] | None:
+                l1_prefs_override: Any = _UNSET_L1_PREFS,
+                feedback_avoided_names: list[str] | None = None) -> list[dict] | None:
     """调 LLM 返回 list of candidate dict, 失败返回 None (上游 fallback).
 
     D-047: 走 _run_llm_rerank 共享 helper + tool_use 强制 schema.
@@ -1327,6 +1354,7 @@ def _llm_rerank(top_combos: list[dict], profile: dict,
         profile_llm=profile.get("llm"),
         root=root,
         l1_prefs_override=l1_prefs_override,
+        feedback_avoided_names=feedback_avoided_names,
     )
     if res["status"] == "config_error":
         # D-048 BLOCKER: provider 配置错误显式 ERROR 级日志, 不当普通 fallback.
@@ -1355,6 +1383,7 @@ def rerank(
     today: "dt.date | None" = None,
     trace_collector: dict | None = None,
     l1_prefs_override: Any = _UNSET_L1_PREFS,
+    feedback_avoided_names: list[str] | None = None,
 ) -> list[dict]:
     """主入口. LLM 精排 + fallback.
 
@@ -1411,6 +1440,7 @@ def rerank(
                 model=model, profile_llm=profile.get("llm"),
                 root=root,
                 l1_prefs_override=l1_prefs_override,
+                feedback_avoided_names=feedback_avoided_names,
             )
             llm_resp = res.get("llm_response") or {}
             # D-089-S1: raw_response 直接从 res (内部已统一: tool_use raw_text /
@@ -1464,7 +1494,8 @@ def rerank(
                                    profile=profile, context=context,
                                    n=n, n_explore=n_explore,
                                    model=model, n_max=n, root=root,
-                                   l1_prefs_override=l1_prefs_override)
+                                   l1_prefs_override=l1_prefs_override,
+                                   feedback_avoided_names=feedback_avoided_names)
             if llm_out is not None:
                 llm_called = True
         if llm_out is not None:

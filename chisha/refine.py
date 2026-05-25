@@ -83,6 +83,24 @@ def refine(
     from chisha import clock
     today = today or clock.today(root)
 
+    # B-001/D-098: refine R2 也必须消费短链路反馈 (否则 R1 已剔除的强负差评店会在
+    # 用户 refine 后重新出现, 破坏"差评不生效"修复的用户可见承诺 — Codex review
+    # BLOCKER). 单次构建一个对象供 recall/score/narrative 共享 (§8.1). best-effort.
+    fb_signal: dict | None = None
+    try:
+        from chisha.feedback_signal import build_feedback_signal
+        from chisha.feedback_store import load_store
+        fb_signal = build_feedback_signal(load_store(root), today, root=root)
+    except Exception as _fb_e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "refine feedback_signal build failed (non-fatal): %s: %s",
+            type(_fb_e).__name__, _fb_e,
+        )
+        fb_signal = None
+    # narrative 避开店名 = recall 实际剔除集 (回填), 不预算 (Codex review BLOCKER).
+    feedback_evicted_rids: set[str] = set()
+
     # D-089-S2: 总耗时埋点, 供 round trace kpi.latency_ms (跟 R1 一致).
     import time as _time
     _t_start = _time.time()
@@ -115,7 +133,13 @@ def refine(
                      meal_type=state.meal_type,
                      intent=intent if not intent.is_empty() else None,
                      n=n,
-                     recall_fallback_events=recall_fallback_events)
+                     recall_fallback_events=recall_fallback_events,
+                     feedback_signal=fb_signal,
+                     feedback_evicted_out=feedback_evicted_rids)
+    # B-001/D-098: narrative 店名 = recall 实际剔除集 (忠实). evict_names 已排序.
+    _evict_names = (fb_signal or {}).get("evict_names") or {}
+    feedback_avoided_names = [_evict_names[rid] for rid in sorted(feedback_evicted_rids)
+                              if rid in _evict_names]
 
     # 4. L2 打分 (intent 进 intent_match_bonus 三档)
     # D-089-S2: 保留 ranked_raw (cap 前) 供 trace_helpers.build_l2_trace_for_round
@@ -124,7 +148,8 @@ def refine(
                               context=ctx,
                               meal_type=state.meal_type,
                               root=root,
-                              intent=intent if not intent.is_empty() else None)
+                              intent=intent if not intent.is_empty() else None,
+                              feedback_signal_override=fb_signal)
     # D-043: refine 也走三层 cap
     # D-073 followup: 传 intent, cuisine_want 命中的菜系免 cuisine cap (「换日料」bug)
     ranked = apply_caps(ranked_raw, profile,
@@ -217,7 +242,8 @@ def refine(
     l3_collector: dict = {}
     reranked = rerank(top_k, profile, context=ctx, meal_log=meal_log,
                        n=n, n_explore=0, refine=True, use_llm=use_llm,
-                       root=root, trace_collector=l3_collector)
+                       root=root, trace_collector=l3_collector,
+                       feedback_avoided_names=feedback_avoided_names)
 
     # D-089-S2: refine round 必须落 L1/L2/L3 完整切片 (trace self-contained 原则).
     # 之前 web_api 落盘时 l1/l2/l3=None stub, debug-ui R2 panel 全是空 — 现在 refine
@@ -237,6 +263,7 @@ def refine(
         l1_trace, _l1_combos = _build_l1_trace(
             profile, rests, tagged, meal_log, today,
             meal_type=state.meal_type, intent=refine_intent_for_l1,
+            feedback_signal=fb_signal,
         )
     except Exception as _l1_e:
         import logging as _logging

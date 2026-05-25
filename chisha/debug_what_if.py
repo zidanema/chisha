@@ -188,6 +188,11 @@ def what_if_rerun(
         ) from e
     meal_type = frozen.get("meal_type") or "lunch"
     l1_prefs_snapshot = frozen.get("l1_prefs_snapshot")
+    # B-001/D-098: 冻结的短链路反馈信号 (零 runtime read). 老 trace 无此键 → None
+    # → feedback_recency 维 0 (pre-D098 trace 本就无反馈信号, 恰好正确).
+    feedback_signal_snapshot = frozen.get("feedback_signal_snapshot")
+    # narrative 避开店名也用冻结值 (frozen l1_combos 已不含被剔除店, 无法重算).
+    feedback_avoided_names = frozen.get("feedback_avoided_names") or []
     l2_meal_log_view = frozen.get("l2_meal_log_view") or []
     ctx_dict = frozen.get("ctx") or {}
 
@@ -209,6 +214,9 @@ def what_if_rerun(
         meal_type=meal_type,
         root=root,
         l1_prefs_override=l1_prefs_snapshot,
+        # B-001/D-098: 显式传冻结值 (含 None), 走 frozen 路径不重读 store
+        # (recall 不在 What-if 重跑, 已冻结 l1_combos 足以复现, §8.2).
+        feedback_signal_override=feedback_signal_snapshot,
     )
     ranked = apply_caps(ranked_raw, profile)
 
@@ -238,6 +246,8 @@ def what_if_rerun(
                 today=today,
                 trace_collector=rerank_collector,
                 l1_prefs_override=l1_prefs_snapshot,
+                # B-001/D-098: narrative 避开店名用冻结值, 不重读 store
+                feedback_avoided_names=feedback_avoided_names,
             )
         except Exception as e:
             # v2_rerank 自身不应抛 (内部已 fallback), 这里是 defense-in-depth

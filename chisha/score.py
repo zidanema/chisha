@@ -48,6 +48,13 @@ V2_DEFAULT_WEIGHTS: dict[str, float] = {
     "intent_cuisine": 1.00,      # D-090: 0.50 → 1.00 (×2)
     "intent_ingredient": 0.50,   # D-090: 0.20 → 0.50 (×2.5)
     "intent_flavor": 0.40,       # D-090: 0.10 → 0.40 (×4, 让 heavy/spicy/light 真正生效)
+    # ── B-001 / D-098: 短链路反馈即时生效 (差评强压 / 好评弱升) ──
+    # T-FB-07 top5 cutoff margin 法标定 = 1.5: 实测 shenzhen-bay 真实数据 top1=2.65 /
+    # top5 cutoff=2.40 (margin 0.25 极密). mild_neg (base -0.6) × 1.5 = -0.9 把 top1
+    # 压到 1.75 << cutoff → 稳出 top5 (余量 3.6×); 好评 boost (base +0.3) × 1.5 = +0.45
+    # 温和上托 (弱 boost). feedback_recency_bonus 已 gating (无反馈→0), 对无反馈
+    # combo 0-diff (baseline_l2_snapshot 守门).
+    "feedback_recency": 1.5,
 }
 
 
@@ -417,6 +424,35 @@ def taste_match_bonus(combo: dict, taste_hints: dict | None) -> float:
     # D-076.1: boost 和 penalty 同时含同一 token 是矛盾, 净效果 0 (上面两个分支
     # 分别 +0.5/-0.5 自然抵消). L1 prompt 规则 5 已禁此情形 (penalty 优先).
     return max(-1.0, min(1.0, s))
+
+
+# B-001 / D-098: 菜品级相对餐厅级的子权重 (§8.5 归因噪声处理). 餐厅级归因干净 (主),
+# 菜品级弱 (辅) → penalty 量纲显著 < 餐厅级. 二者叠加进同一 feedback_recency 维度.
+FEEDBACK_DISH_SUBWEIGHT = 0.3
+
+
+def feedback_recency_bonus(combo: dict, fb_signal: dict | None) -> float:
+    """B-001 / D-098 短链路: 近期反馈对该 combo 的 recency-weighted 加/扣分.
+
+    fb_signal 由 feedback_signal.build_feedback_signal 单次构建 (§8.1, api 起点),
+    形如 {"restaurant": {rid: w}, "dish": {dish_id: w}, "recall_evict": {...}}.
+    餐厅级 (主, 归因干净) + 菜品级 (辅, 弱, 跨 combo 累积) 叠加. 菜品级取 combo 内
+    反馈菜的均值 (而非和, 防 combo 菜数膨胀量纲; 单道命中被天然稀释 = 归因不确定性).
+    实际打分量纲由 score_combo 的 _w("feedback_recency") 标定.
+
+    fb_signal=None / 该 restaurant 无近期反馈 + combo 内无反馈菜 → 0 → 对无反馈
+    combo 0-diff (mirror taste_match/intent gating, baseline_l2_snapshot 守门).
+    """
+    if not fb_signal:
+        return 0.0
+    rest_map = fb_signal.get("restaurant") or {}
+    dish_map = fb_signal.get("dish") or {}
+    rid = (combo.get("restaurant") or {}).get("id")
+    rest_w = rest_map.get(rid, 0.0) if rid else 0.0
+    dishes = combo.get("dishes") or []
+    dish_ws = [dish_map.get(d.get("dish_id"), 0.0) for d in dishes if d.get("dish_id")]
+    dish_term = (sum(dish_ws) / len(dish_ws)) if dish_ws else 0.0
+    return rest_w + FEEDBACK_DISH_SUBWEIGHT * dish_term
 
 
 # ─────────────────────── D-073: cuisine/ingredient match helpers ───────────────────────
@@ -899,12 +935,14 @@ def score_combo(
     taste_hints: dict | None = None,
     meal_type: str | None = None,
     intent=None,  # D-073: RefineIntent | None
+    fb_signal: dict | None = None,  # B-001/D-098: 短链路反馈信号, None→feedback_recency 维 0
 ) -> tuple[float, dict[str, float]]:
     """计算 combo 综合分. 返回 (score, breakdown).
 
     V1 行为: 不传 context/taste_hints/meal_type/intent 时, 仍只用 6 维 + V2 维度.
     V2 行为: 传 context + taste_hints + meal_type 时, 全 ~12 维生效.
     D-073: 传 intent (refine 二轮) 时, intent_match 三档加分生效.
+    B-001/D-098: 传 fb_signal (短链路反馈) 时, feedback_recency 维生效 (None→0).
     """
     w = profile.get("scoring_weights") or {}
     # D-091 phase-2: refine 模式下按 explicit slot 动态调权重 (R1 intent=None 时 multiplier 全 1.0 → 0-diff)
@@ -940,6 +978,9 @@ def score_combo(
         "intent_cuisine": intent_parts["cuisine"] * _w("intent_cuisine"),
         "intent_ingredient": intent_parts["ingredient"] * _w("intent_ingredient"),
         "intent_flavor": intent_parts["flavor"] * _w("intent_flavor"),
+        # B-001/D-098 短链路反馈 (fb_signal=None / 无近期反馈 → 0)
+        "feedback_recency": feedback_recency_bonus(combo, fb_signal)
+            * _w("feedback_recency"),
     }
     return sum(parts.values()), parts
 
@@ -961,6 +1002,7 @@ def rank_combos(
     intent=None,  # D-073: RefineIntent | None, refine 二轮启用
     *,
     l1_prefs_override=_UNSET_L1_PREFS,  # D-079: 不传=load_prefs(root); 显式 dict 或 None=用之 (含 None 表示当时无 prefs)
+    feedback_signal_override=None,  # B-001/D-098: 调用方显式注入 (api/refine 单次构建 §8.1 / What-if 冻结值); None=无反馈. rank_combos 自身不读 store.
 ) -> list[dict]:
     """对 combos 打分排序, 返回带 score/breakdown 的列表 (降序).
 
@@ -1002,11 +1044,17 @@ def rank_combos(
     except Exception:
         runtime_hints = None
     effective_hints = merge_hints(static_hints, runtime_hints, taste_hints)
+
+    # B-001/D-098: 短链路反馈信号由调用方显式注入 (api/refine 单次构建 §8.1; What-if
+    # 传冻结值; baseline/standalone 不传→None). rank_combos 自身不读 store — 防 debug/
+    # standalone 链路 L2 live-build 与 L1/trace 不一致 (Codex review should-fix).
+    fb_signal = feedback_signal_override
+
     scored = []
     for c in combos:
         s, br = score_combo(c, profile, meal_log, today,
                             context=context, taste_hints=effective_hints,
-                            meal_type=meal_type, intent=intent)
+                            meal_type=meal_type, intent=intent, fb_signal=fb_signal)
         s = apply_unforgivable_penalty(s, c, profile)
         scored.append({**c, "score": s, "score_breakdown": br})
     scored.sort(key=lambda x: x["score"], reverse=True)

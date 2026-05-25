@@ -77,6 +77,15 @@
 - **三类信号语义不可混**: `gut` / `calibration` / `behavior`. schema 字段对应固定类别, 不要跨类 (D-063~D-065).
 - **`comments` 不直接进打分.** 可作为 LLM 推理上下文, 但 numeric ranking signal 只来自 structured ratings.
 
+## 反馈短链路 (B-001 / D-098)
+
+- **短链路 ≠ L1 慢链路, 二者独立互补.** `chisha/feedback_signal.py:build_feedback_signal` 实时/餐厅·菜品级/带衰减; L1 (`l1_prefs`) 负责泛化长期口味. 短链路只压"差评的那家店/那道菜", **不泛化** (泛化是 L1 职责, D-025).
+- **单次构建、全链路同一引用 (§8.1).** api/refine recommend 起点 `build_feedback_signal(load_store(root), clock.today(root))` 构建**一个**对象, 由 recall / score / L3 narrative / trace 共消费. `rank_combos` 自身**不读 store** (`feedback_signal_override=None` 默认=无反馈) — 防 standalone/debug 链路 L1/L2 不一致.
+- **信号源 = 组合C + Q-B 冲突规则.** 强负=`rating==-1 且 repurchase==0`; boost=`rating==1 且 repurchase==2`; 冲突时 `repurchase_intent` 优先于 `rating`. 不违反 D-063~065 (决策层并列消费两原始字段, 非改写同一字段语义).
+- **strong-neg recall 剔除放最末.** `recall()` 步骤 8 (combo 生成 + 价格 + intent avoid 之后) 对**最终 combo 集**执行剔除, `feedback_evicted_out` = with/without-feedback 最终集差集 (有 surviving dish 但组不成 combo/超价/被 intent avoid 的店**不**算 feedback 剔除). 非永久封禁 (永久 hard avoid 只来自 `preferences.avoid_restaurants`).
+- **narrative `[FEEDBACK_AVOIDED]` 只列真剔除店 (D-085 忠实).** 名字来自 `recall` 回填的 `feedback_evicted_out` → `evict_names`, 不预算 `zone ∩ evict` (会把 ETA/黑名单/跨zone 缺席误归因). 严禁声称避开未列出的店.
+- **What-if 零 runtime read.** trace `__frozen.{feedback_signal_snapshot, feedback_avoided_names}` 冻结, `what_if_rerun` 用冻结值 (recall 不在 What-if 重跑).
+
 ---
 
 ## 数据 / 打标
@@ -110,7 +119,7 @@
 ## Trace + Debug 三模式 (D-079)
 
 - **trace 落盘走 `trace_store.write_trace`, 失败仅 `logger.warning` 不阻断 recommend.** `read_trace` fail-closed: 损坏抛 `TraceCorrupt` + 备份 `.corrupt.{ts}.bak`. 改 trace schema 必 bump `TRACE_SCHEMA_VERSION`.
-- **What-if 零 runtime read.** `chisha/debug_what_if.py:what_if_rerun` 必须 100% 用 `__frozen.{ctx, today, l1_combos, l1_prefs_snapshot, l2_meal_log_view, profile_snapshot}`, **严禁** `clock.today()` / `dt.date.today()` / `load_prefs(root)` 任何 runtime state read.
+- **What-if 零 runtime read.** `chisha/debug_what_if.py:what_if_rerun` 必须 100% 用 `__frozen.{ctx, today, l1_combos, l1_prefs_snapshot, l2_meal_log_view, profile_snapshot, feedback_signal_snapshot, feedback_avoided_names}`, **严禁** `clock.today()` / `dt.date.today()` / `load_prefs(root)` / `load_store(root)` 任何 runtime state read.
 - **Live 模式永不写盘.** `/api/debug_recommend` + `chisha/api.py:recommend_meal(persist_trace=False)` 是 Live 入口, 永不调 `trace_store.write_trace`.
 - **refine 二轮写 trace 走 `trace_store.append_round`.** 同 sid 多轮持久化到 `{sid}/meta.json` + `{sid}/rounds/R{n}.json`, 文件锁 `{recommend_trace_dir}/.lock-{sid}` 序列化. **绝不**创 refine-only 孤儿 trace.
 - **trace 自包含原则**: 所有 LLM call 的 `system_prompt_full` / `user_message_full` / `raw_response` body 必须落 trace, 不能事后从 `prompts/*.md` 重建 (prompt 会迭代, 留 chars 丢 body 等于 trace 无法 replay). `usage` 统一 Anthropic-style 命名, 由 `trace_helpers.normalize_usage_fields` 在落盘前转换.
@@ -122,7 +131,7 @@
 - **老调试台 = 独立 FastAPI on `:8765`, 与主推荐链路解耦.** 调试逻辑不要混进 `chisha/api.py`.
 - **新 debug-ui SPA (`apps/debug-ui/`) 独立 Vite 项目, 端口 5174, 不并入 `apps/web/`** (D-075). 只通过 `/api/*` 联调.
 - **debug-ui SPA 100% read-only.** Live / What-if / Refine submit 路径全删; 4 个 endpoint 都是 GET. 加写入入口前先在 decisions 加新条目, 不要复活已删的写入路径.
-- **Trace v3 目录布局是 append_round / 多 round 持久化的唯一形式.** `read_trace_v3_view` 走 on-read migrate (v2 单文件 → 转 v3 目录). `TRACE_SCHEMA_VERSION = 3`, `ACCEPTED_TRACE_VERSIONS = {1, 2, 3}`.
+- **Trace v3 目录布局是 append_round / 多 round 持久化的唯一形式.** `read_trace_v3_view` 走 on-read migrate (v2 单文件 → 转 v3 目录). `TRACE_SCHEMA_VERSION = 4` (D-098 bump 3→4, frozen 增反馈短链路字段), `ACCEPTED_TRACE_VERSIONS = {1, 2, 3, 4}` (旧 v3 缺新键→`.get()`→None 无反馈效果).
 
 ---
 

@@ -46,7 +46,7 @@ Phase 2 · 双向扩展 (顺序后议)
 - screener 设计 (筛同事原则派密度)
 - 沙箱模式交互动线重设计 (推广前用户心智不能乱)
 - L1 词表扩 cuisine token (同事 cuisine 比志丹分散)
-- B-001 v2 反馈短链路全字段覆盖
+- ✅ B-001 反馈短链路即时生效 (差评不生效 P0, D-098, 2026-05-25) — 残留香菜连吃 ingredient 粒度走 F-011
 - Living/Lab router 拆分重做 (worktree 回滚后未完成项)
 - Living API agent-ready 参数化 (meal_hint + at_time 重做)
 - D-074 翻 active: AI-friendly 接入终态 = CLI + Skill 模式, `llm_request_spec` 数据契约取代 closure 注入

@@ -60,8 +60,11 @@ def snapshot(
         today=today,
         daily_mood=daily_mood,
     )
+    # B-001/D-098: 显式 disable 短链路反馈信号 (gating 守门 — 基线必须无反馈态,
+    # 与"先 disable 信号跑对旧基线 0-diff"一致, 对未来 store.json 出现也鲁棒).
     ranked = rank_combos(combos, profile, meal_log, today,
-                         context=ctx, meal_type=meal_type, root=root)
+                         context=ctx, meal_type=meal_type, root=root,
+                         feedback_signal_override=None)
     capped = apply_caps(ranked, profile)
     top = capped[:L3_INPUT_TOP_K]
     return {

@@ -654,6 +654,8 @@ def recall(
     n: int = 5,
     *,
     recall_fallback_events: list[dict] | None = None,
+    feedback_signal: dict | None = None,  # B-001/D-098: 短链路反馈信号 (build_feedback_signal 产物)
+    feedback_evicted_out: set[str] | None = None,  # B-001/D-098: out-param, 回填"本会出现但仅因强负反馈被剔除"的 rid (narrative 忠实)
 ) -> list[dict]:
     """主入口. 返回候选 combos: [{restaurant, dishes, meta}, ...].
 
@@ -742,6 +744,25 @@ def recall(
             combos, intent, n=n,
             recall_fallback_events=recall_fallback_events,
         )
+
+    # 8. B-001/D-098: 强负反馈 (rating=-1 且 repurchase=0) 餐厅 30 天剔除.
+    # **放在最末** (combo 生成 + 价格硬过滤 + intent avoid 之后) 对最终 combo 集执行,
+    # 这样 feedback_evicted_out 精确 = "本会进入最终候选 (过了组 combo/价格/intent 所有
+    # 关卡), 仅因强负反馈被剔除"的店 = with-feedback 与 without-feedback 最终集的差集
+    # (Codex review BLOCKER: dish 级捕获过宽 — 有 surviving dish 但组不成 combo/超价/被
+    # intent avoid 的店本就不会出现, 不能归因给 feedback). narrative 据此忠实 (D-085).
+    # 既有 7 天多样性冷却的语义强化 (非永久封禁); 永久 hard avoid 只来自用户显式
+    # preferences.avoid_restaurants (§8.1). 超 30 天仍需处置走"多次一致证据"新决策.
+    from chisha.feedback_signal import evicted_restaurant_ids
+    fb_evict = evicted_restaurant_ids(feedback_signal)
+    if fb_evict:
+        would_appear = {c["restaurant"]["id"] for c in combos
+                        if c["restaurant"]["id"] in fb_evict}
+        if would_appear:
+            combos = [c for c in combos
+                      if c["restaurant"]["id"] not in fb_evict]
+            if feedback_evicted_out is not None:
+                feedback_evicted_out |= would_appear
 
     return combos
 

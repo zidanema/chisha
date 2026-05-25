@@ -16,7 +16,7 @@
 
 **V1.0 工程里程碑完成** (2026-05-20) · **自用阶段, 非开源 ready**
 
-跑通了: 推荐链路 L1/L2/L3 / Web SPA 用户视图 / 反馈系统 / L1 长期偏好 LLM 抽取 / Sandbox time-travel / trace 持久化 + Debug 三模式 / Faithful Refine framework / L2 信号校准。
+跑通了: 推荐链路 L1/L2/L3 / Web SPA 用户视图 / 反馈系统 / L1 长期偏好 LLM 抽取 / 反馈短链路即时生效 (D-098, 差评下次推荐就降权/剔除) / Sandbox time-travel / trace 持久化 + Debug 三模式 / Faithful Refine framework / L2 信号校准。
 
 还没做的: 第二份方法论 spec (验证抽象解耦) / 数据按工区拆包 / Agent 接入 CLI 形态正式落地 / 同事推广前的 screener — 详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 

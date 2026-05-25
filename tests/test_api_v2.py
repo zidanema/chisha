@@ -127,6 +127,64 @@ def test_v2_explore_count(patched_v2_env):
     assert len(explore) <= 2
 
 
+def _write_store(root, payload):
+    from chisha.data_root import feedback_store_path
+    p = feedback_store_path(root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def test_v2_strong_neg_feedback_evicts_restaurant(patched_v2_env):
+    """B-001/D-098 端到端: 对 r1 强负反馈 (👎+不想再吃) → recommend_meal 应剔除 r1."""
+    today = dt.date(2026, 5, 13)
+    # 基线: 无反馈, r1 应在候选里
+    base = recommend_meal("lunch", today=today, log_to_file=False,
+                          use_llm_rerank=False, root=patched_v2_env)
+    base_rids = {c["restaurant"]["id"] for c in base["candidates"]}
+    assert "r1" in base_rids, "基线 r1 未召回, fixture 失效"
+
+    # 注入强负反馈: sid 的 accepted_rank=1 指向冷存 candidate (r1)
+    submitted = dt.datetime(2026, 5, 11, 12, tzinfo=dt.timezone.utc).isoformat()
+    _write_store(patched_v2_env, {
+        "accepted": {},
+        "feedbacks": {"sid1": {"session_id": "sid1", "rating": -1,
+                               "repurchase_intent": 0, "accepted_rank": 1,
+                               "submitted_at": submitted}},
+        "sessions": {"sid1": {"candidates": [
+            {"rank": 1, "restaurant": {"id": "r1", "name": "潮汕汤店"},
+             "dishes": [{"dish_id": "d1_1"}, {"dish_id": "d1_2"}]}]}},
+    })
+    after = recommend_meal("lunch", today=today, log_to_file=False,
+                           use_llm_rerank=False, root=patched_v2_env)
+    after_rids = {c["restaurant"]["id"] for c in after["candidates"]}
+    assert "r1" not in after_rids, "强负反馈未剔除 r1 (端到端 wiring 断裂)"
+
+
+def test_v2_feedback_signal_frozen_in_trace(patched_v2_env, tmp_path):
+    """B-001/D-098: recommend_meal 把 fb_signal 冻结进 trace.__frozen (D-079 零 runtime read)."""
+    today = dt.date(2026, 5, 13)
+    submitted = dt.datetime(2026, 5, 11, 12, tzinfo=dt.timezone.utc).isoformat()
+    _write_store(patched_v2_env, {
+        "accepted": {},
+        "feedbacks": {"sid1": {"session_id": "sid1", "rating": -1,
+                               "repurchase_intent": 0, "accepted_rank": 1,
+                               "submitted_at": submitted}},
+        "sessions": {"sid1": {"candidates": [
+            {"rank": 1, "restaurant": {"id": "r2", "name": "湘菜店"},
+             "dishes": [{"dish_id": "d2_1"}, {"dish_id": "d2_2"}]}]}},
+    })
+    out = recommend_meal("lunch", today=today, log_to_file=False,
+                         use_llm_rerank=False, root=patched_v2_env,
+                         persist_trace=True)
+    # 读回 trace 验证 frozen.feedback_signal_snapshot 含 r2 强负 + evict
+    from chisha import trace_store
+    trace = trace_store.read_trace(out["session_id"], root=patched_v2_env)
+    snap = (trace.get("__frozen") or {}).get("feedback_signal_snapshot")
+    assert snap is not None
+    assert snap["restaurant"].get("r2") == -1.0
+    assert "r2" in snap["recall_evict"]
+
+
 def test_v2_serializable(patched_v2_env):
     out = recommend_meal("lunch", today=dt.date(2026, 5, 13),
                          log_to_file=False,

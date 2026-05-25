@@ -101,7 +101,7 @@
     ]
   },
   "trace": {
-    "__version": 3,
+    "__version": 4,
     "__source": "production",
     "__llm_called": false,
     "__parent_session_id": null,
@@ -130,26 +130,26 @@
     "frozen_zone": "test",
     "frozen_restaurants_sorted": [
       {
-        "delivery_eta_min": 20,
-        "brand": "潮汕汤店",
-        "name": "潮汕汤店",
-        "monthly_orders": 500,
-        "rating": 4.5,
         "id": "r1",
-        "category": "潮汕",
+        "name": "潮汕汤店",
+        "rating": 4.5,
         "office_zone": "test",
-        "distance_m": 500
+        "brand": "潮汕汤店",
+        "monthly_orders": 500,
+        "delivery_eta_min": 20,
+        "distance_m": 500,
+        "category": "潮汕"
       },
       {
-        "delivery_eta_min": 20,
-        "brand": "湘菜店",
-        "name": "湘菜店",
-        "monthly_orders": 500,
-        "rating": 4.5,
         "id": "r2",
-        "category": "湘菜",
+        "name": "湘菜店",
+        "rating": 4.5,
         "office_zone": "test",
-        "distance_m": 500
+        "brand": "湘菜店",
+        "monthly_orders": 500,
+        "delivery_eta_min": 20,
+        "distance_m": 500,
+        "category": "湘菜"
       }
     ],
     "frozen_dishes_sorted": [

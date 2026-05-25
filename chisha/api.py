@@ -136,19 +136,47 @@ def recommend_meal(
     import time as _time
     _t_start = _time.monotonic()
 
+    # B-001/D-098: 短链路反馈信号单次构建 (§8.1 硬约束: recall/score/L3/trace 共消费
+    # 同一引用, 严禁各自读盘重算 → 防反馈提交竞态导致 trace 与排序不一致 + 满足 D-079).
+    # best-effort: 构建失败降级 None, 不阻断 recommend (反馈是派生数据).
+    fb_signal: dict | None = None
+    try:
+        from chisha.feedback_signal import build_feedback_signal
+        from chisha.feedback_store import load_store
+        fb_signal = build_feedback_signal(load_store(root), today, root=root)
+    except Exception as _e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "feedback_signal build failed (non-fatal): %s: %s",
+            type(_e).__name__, _e,
+        )
+        fb_signal = None
+    # narrative 避开店名 = recall 实际剔除的 rid (回填) → 名字, 不能 recall 前预算
+    # (Codex review BLOCKER: 预算的 zone∩evict 会把 ETA/黑名单/价格等其它缺席误归因).
+    feedback_evicted_rids: set[str] = set()
+
     # 1. Context 注入 (D-034)
     _t0 = _time.monotonic()
     ctx = build_context(profile, meal_log, meal_type, today,
                         daily_mood=daily_mood, refine_input=None)
     ctx_latency_ms = int((_time.monotonic() - _t0) * 1000)
-    # 2. 召回 (L1)
+    # 2. 召回 (L1) — B-001/D-098: 强负反馈餐厅 30 天剔除
     _t0 = _time.monotonic()
-    combos = recall(profile, rests, tagged, meal_log, today, meal_type=meal_type)
+    combos = recall(profile, rests, tagged, meal_log, today, meal_type=meal_type,
+                    feedback_signal=fb_signal,
+                    feedback_evicted_out=feedback_evicted_rids)
     recall_latency_ms = int((_time.monotonic() - _t0) * 1000)
+    # B-001/D-098: 从 recall 实际剔除集解析 narrative 店名 (忠实 — 仅"本会出现、
+    # 仅因强负反馈被剔除"的店). evict_names 已在 build_feedback_signal 内排序.
+    _evict_names = (fb_signal or {}).get("evict_names") or {}
+    feedback_avoided_names = [_evict_names[rid] for rid in sorted(feedback_evicted_rids)
+                              if rid in _evict_names]
     # 3. V2 打分 (~12 维, 含 context) + 三层 cap (D-043) (L2)
+    #    B-001/D-098: feedback_recency 维消费同一 fb_signal (单次构建)
     _t0 = _time.monotonic()
     ranked_raw = rank_combos(combos, profile, meal_log, today,
-                          context=ctx, meal_type=meal_type, root=root)
+                          context=ctx, meal_type=meal_type, root=root,
+                          feedback_signal_override=fb_signal)
     ranked = apply_caps(ranked_raw, profile)
     score_latency_ms = int((_time.monotonic() - _t0) * 1000)
     # 4. LLM 精排 topK → 5 (3 exploit + 2 explore, D-015; D-046: 30 → 60) (L3)
@@ -162,7 +190,9 @@ def recommend_meal(
     reranked = v2_rerank(top_k, profile, context=ctx, meal_log=meal_log,
                           n=5, n_explore=2, refine=False, use_llm=use_llm_rerank,
                           root=root,
-                          today=today, trace_collector=l3_collector)
+                          today=today, trace_collector=l3_collector,
+                          # B-001/D-098: 本 zone 真剔除店名 → narrative 忠实透传
+                          feedback_avoided_names=feedback_avoided_names)
     rerank_latency_ms = int((_time.monotonic() - _t0) * 1000)
     # 5. 创建 session (供 refine 二轮用)
     state = create_session(session_id, meal_type, zone, daily_mood=daily_mood)
@@ -178,7 +208,8 @@ def recommend_meal(
         from chisha.debug_recommend import _build_l1_trace
         from chisha.status_bar import build_status_bar
         l1_trace_cache, _ = _build_l1_trace(
-            profile, rests, tagged, meal_log, today, meal_type=meal_type
+            profile, rests, tagged, meal_log, today, meal_type=meal_type,
+            feedback_signal=fb_signal,
         )
         _hfe = l1_trace_cache.get("hard_filter_events") or []
         status_bar = build_status_bar(profile, _hfe)
@@ -255,6 +286,9 @@ def recommend_meal(
                 root=root,
                 # Codex M1: 复用 status_bar 已经跑过的 l1_trace, 避免二次重跑
                 l1_trace_precomputed=l1_trace_cache,
+                # B-001/D-098: 冻结同一份 fb_signal + 本 zone 避开店名 (单次构建, §8.1)
+                feedback_signal=fb_signal,
+                feedback_avoided_names=feedback_avoided_names,
             )
             from chisha import trace_store
             trace_store.write_trace(session_id, trace, root=root)
@@ -383,6 +417,8 @@ def _build_trace(
     use_llm_rerank: bool | None,
     root: Path | None,
     l1_trace_precomputed: dict | None = None,
+    feedback_signal: dict | None = None,  # B-001/D-098: 单次构建的反馈信号, 冻结进 __frozen
+    feedback_avoided_names: list[str] | None = None,  # B-001/D-098: 本 zone 真剔除店名 (narrative)
 ) -> dict:
     """D-079: 组装完整 trace dict (与 apps/debug-ui Session type 对齐 + __frozen).
 
@@ -403,7 +439,8 @@ def _build_trace(
         l1_trace = l1_trace_precomputed
     else:
         l1_trace, _ = _build_l1_trace(
-            profile, rests, tagged, meal_log, today, meal_type=meal_type
+            profile, rests, tagged, meal_log, today, meal_type=meal_type,
+            feedback_signal=feedback_signal,
         )
 
     # L2 trace (复用 ranked, 不重算)
@@ -485,6 +522,13 @@ def _build_trace(
         "dishes": frozen_dishes,                 # id → minimal dish record (含 scoring nutrition_profile)
         "l1_prefs_snapshot": l1_prefs_snapshot,
         "l2_meal_log_view": l2_meal_log_view,
+        # B-001/D-098: 冻结短链路反馈信号 (D-079 零 runtime read). What-if 重跑 score
+        # 用冻结值不重读 store. schema bump 3→4 (CONTRACTS frozen 字段变更要求);
+        # v3 仍 accepted, 老 trace 缺此键 → .get()→None → 无反馈效果.
+        "feedback_signal_snapshot": feedback_signal,
+        # B-001/D-098 (T-FB-05 narrative): 本次因强负反馈真剔除 + 在本 zone 的店名
+        # (api 算好冻结, What-if 直接用 — frozen l1_combos 已不含被剔除店, 无法重算).
+        "feedback_avoided_names": feedback_avoided_names,
     }
 
     return {

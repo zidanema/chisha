@@ -76,28 +76,35 @@ def _traced_hard_filter(
     avoid_restaurant_ids: set[str],
     banned_rests_by_eta: set[str] | None = None,
     banned_rests_by_name: set[str] | None = None,
+    banned_rests_by_feedback: set[str] | None = None,
     *,
     hard_filter_events: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """委托给生产 hard_filter, 仅负责把"餐厅 ban 来源"映射成可读理由.
 
-    把 ETA / avoid_restaurants / diversity 三组餐厅 id 合并成 rest_ban_reasons
-    传给生产函数, 让丢弃明细带上具体原因.
+    把 ETA / avoid_restaurants / diversity / feedback 四组餐厅 id 合并成
+    rest_ban_reasons 传给生产函数, 让丢弃明细带上具体原因.
 
     T-P1a-01: hard_filter_events 透传给生产 hard_filter, L0-A/B 事件累积到此 list.
+    B-001/D-098: banned_rests_by_feedback = 强负差评 30 天剔除 (与生产 recall 一致,
+    否则 L1 调试漏斗会显示实际已被剔除的店"通过 L1", 与 __frozen.l1_combos 矛盾).
     """
     banned_rests_by_eta = banned_rests_by_eta or set()
     banned_rests_by_name = banned_rests_by_name or set()
+    banned_rests_by_feedback = banned_rests_by_feedback or set()
     avoid_restaurant_ids = avoid_restaurant_ids or set()
     rest_ban_reasons: dict[str, str] = {}
     for rid in banned_rests_by_eta:
         rest_ban_reasons[rid] = "餐厅 ETA 超 hard_max_eta_min"
     for rid in banned_rests_by_name:
         rest_ban_reasons.setdefault(rid, "餐厅在 avoid_restaurants")
+    for rid in banned_rests_by_feedback:
+        rest_ban_reasons.setdefault(rid, "近期强负差评 30 天剔除 (B-001/D-098)")
     for rid in avoid_restaurant_ids:
         rest_ban_reasons.setdefault(rid, "餐厅近期已吃 (diversity)")
     from chisha.recall import hard_filter
-    all_avoid = banned_rests_by_eta | banned_rests_by_name | avoid_restaurant_ids
+    all_avoid = (banned_rests_by_eta | banned_rests_by_name
+                 | banned_rests_by_feedback | avoid_restaurant_ids)
     return hard_filter(
         dishes, profile,
         avoid_restaurant_ids=all_avoid,
@@ -207,6 +214,7 @@ def _build_l1_trace(
     today: dt.date,
     meal_type: str | None = None,
     intent=None,  # T-P1a-01: RefineIntent | None, 给 combo 阶段判断 L0-C 解除
+    feedback_signal: dict | None = None,  # B-001/D-098: 与生产 recall 一致地剔除强负店
 ) -> tuple[dict, list[dict]]:
     """返回 L1 trace + combos (供 L2). T-P1a-01: trace 含 hard_filter_events."""
     total_dishes = len(tagged)
@@ -223,13 +231,18 @@ def _build_l1_trace(
     banned_by_eta, banned_by_name, banned_rest_details = (
         _compute_banned_rests_traced(rests, profile)
     )
-    all_banned_rests = diversity_avoid | banned_by_eta | banned_by_name
+    # 1c. B-001/D-098: 强负差评 30 天剔除 (与生产 recall avoid_rests 同源)
+    from chisha.feedback_signal import evicted_restaurant_ids
+    banned_by_feedback = evicted_restaurant_ids(feedback_signal)
+    all_banned_rests = (diversity_avoid | banned_by_eta | banned_by_name
+                        | banned_by_feedback)
 
     # 2. hard_filter (含 P0 餐厅级 + P1 菜级黑名单 + T-P1a-01 L0-A/B)
     after_hard, hard_dropped = _traced_hard_filter(
         tagged, profile, diversity_avoid,
         banned_rests_by_eta=banned_by_eta,
         banned_rests_by_name=banned_by_name,
+        banned_rests_by_feedback=banned_by_feedback,
         hard_filter_events=hard_filter_events,
     )
 
