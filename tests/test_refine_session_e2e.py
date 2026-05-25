@@ -72,9 +72,12 @@ def fake_refine_env(tmp_path: Path, monkeypatch):
          "score": 5.0 - i * 0.1, "fit_score": 5.0 - i * 0.1}
         for i in range(10)
     ]
-    monkeypatch.setattr(refine_mod, "recall", lambda *a, **kw: fake_combos)
-    monkeypatch.setattr(refine_mod, "rank_combos", lambda *a, **kw: list(fake_combos))
-    monkeypatch.setattr(refine_mod, "apply_caps",
+    # D-074: recall/rank_combos/apply_caps/build_context 已移入 agent_orchestration
+    # (prepare_candidates), 在那里 patch 才生效.
+    from chisha import agent_orchestration as orch_mod
+    monkeypatch.setattr(orch_mod, "recall", lambda *a, **kw: fake_combos)
+    monkeypatch.setattr(orch_mod, "rank_combos", lambda *a, **kw: list(fake_combos))
+    monkeypatch.setattr(orch_mod, "apply_caps",
                          lambda ranked, *a, **kw: ranked)
 
     # mock rerank → collector 写 narrative
@@ -86,12 +89,10 @@ def fake_refine_env(tmp_path: Path, monkeypatch):
         return top_k[:n]
     monkeypatch.setattr(refine_mod, "rerank", _fake_rerank)
 
-    # mock build_context (refine inline import)
-    from chisha import context as ctx_mod
-
+    # mock build_context (D-074: 在 agent_orchestration 内调用)
     class _Ctx:
         def to_llm_dict(self): return {}
-    monkeypatch.setattr(ctx_mod, "build_context", lambda **kw: _Ctx())
+    monkeypatch.setattr(orch_mod, "build_context", lambda **kw: _Ctx())
 
     # 默认 use_llm=False → parse_refine_intent 走规则路径, V2 走 from_legacy
     return refine_mod, root, today

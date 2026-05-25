@@ -136,52 +136,29 @@ def recommend_meal(
     import time as _time
     _t_start = _time.monotonic()
 
-    # B-001/D-098: 短链路反馈信号单次构建 (§8.1 硬约束: recall/score/L3/trace 共消费
-    # 同一引用, 严禁各自读盘重算 → 防反馈提交竞态导致 trace 与排序不一致 + 满足 D-079).
-    # best-effort: 构建失败降级 None, 不阻断 recommend (反馈是派生数据).
-    fb_signal: dict | None = None
-    try:
-        from chisha.feedback_signal import build_feedback_signal
-        from chisha.feedback_store import load_store
-        fb_signal = build_feedback_signal(load_store(root), today, root=root)
-    except Exception as _e:
-        import logging
-        logging.getLogger(__name__).warning(
-            "feedback_signal build failed (non-fatal): %s: %s",
-            type(_e).__name__, _e,
-        )
-        fb_signal = None
-    # narrative 避开店名 = recall 实际剔除的 rid (回填) → 名字, 不能 recall 前预算
-    # (Codex review BLOCKER: 预算的 zone∩evict 会把 ETA/黑名单/价格等其它缺席误归因).
-    feedback_evicted_rids: set[str] = set()
-
-    # 1. Context 注入 (D-034)
-    _t0 = _time.monotonic()
-    ctx = build_context(profile, meal_log, meal_type, today,
-                        daily_mood=daily_mood, refine_input=None)
-    ctx_latency_ms = int((_time.monotonic() - _t0) * 1000)
-    # 2. 召回 (L1) — B-001/D-098: 强负反馈餐厅 30 天剔除
-    _t0 = _time.monotonic()
-    combos = recall(profile, rests, tagged, meal_log, today, meal_type=meal_type,
-                    feedback_signal=fb_signal,
-                    feedback_evicted_out=feedback_evicted_rids)
-    recall_latency_ms = int((_time.monotonic() - _t0) * 1000)
-    # B-001/D-098: 从 recall 实际剔除集解析 narrative 店名 (忠实 — 仅"本会出现、
-    # 仅因强负反馈被剔除"的店). evict_names 已在 build_feedback_signal 内排序.
-    _evict_names = (fb_signal or {}).get("evict_names") or {}
-    feedback_avoided_names = [_evict_names[rid] for rid in sorted(feedback_evicted_rids)
-                              if rid in _evict_names]
-    # 3. V2 打分 (~12 维, 含 context) + 三层 cap (D-043) (L2)
-    #    B-001/D-098: feedback_recency 维消费同一 fb_signal (单次构建)
-    _t0 = _time.monotonic()
-    ranked_raw = rank_combos(combos, profile, meal_log, today,
-                          context=ctx, meal_type=meal_type, root=root,
-                          feedback_signal_override=fb_signal)
-    ranked = apply_caps(ranked_raw, profile)
-    score_latency_ms = int((_time.monotonic() - _t0) * 1000)
+    # 1-3. 确定性编排 (D-074): 反馈冻结 (§8.1 单次构建) + Context + 召回 (L1, 强负
+    # 反馈 30 天剔除) + L2 打分 + 三层 cap. 抽到 agent_orchestration.prepare_candidates,
+    # in-process recommend_meal / refine / AI-friendly CLI 共用单一可信源 (codex #1).
+    # R1 = intent=None/refine_input=None → 不跑 reference/subtype (与历史行为一致).
+    from chisha.agent_orchestration import prepare_candidates
+    prep = prepare_candidates(
+        profile=profile, rests=rests, tagged=tagged, meal_log=meal_log,
+        meal_type=meal_type, today=today, root=root,
+        daily_mood=daily_mood, refine_input=None, intent=None,
+    )
+    fb_signal = prep.fb_signal
+    feedback_evicted_rids = prep.feedback_evicted_rids
+    ctx = prep.ctx
+    ctx_latency_ms = prep.ctx_latency_ms
+    combos = prep.combos
+    recall_latency_ms = prep.recall_latency_ms
+    feedback_avoided_names = prep.feedback_avoided_names
+    ranked_raw = prep.ranked_raw
+    ranked = prep.ranked
+    score_latency_ms = prep.score_latency_ms
     # 4. LLM 精排 topK → 5 (3 exploit + 2 explore, D-015; D-046: 30 → 60) (L3)
     from chisha.rerank import L3_INPUT_TOP_K
-    top_k = ranked[:L3_INPUT_TOP_K]
+    top_k = prep.top_k
     # D-079: trace_collector 捕获 LLM 中间状态 (Codex Q3: 传 today 防 fallback 漂移)
     # T-P1b-02: collector 始终是 dict, narrative 也要在 Live (persist_trace=False)
     # 模式下拿到给前端展示. _build_trace 只在 persist_trace=True 时跑.

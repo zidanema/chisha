@@ -83,29 +83,19 @@ def refine(
     from chisha import clock
     today = today or clock.today(root)
 
-    # B-001/D-098: refine R2 也必须消费短链路反馈 (否则 R1 已剔除的强负差评店会在
-    # 用户 refine 后重新出现, 破坏"差评不生效"修复的用户可见承诺 — Codex review
-    # BLOCKER). 单次构建一个对象供 recall/score/narrative 共享 (§8.1). best-effort.
-    fb_signal: dict | None = None
-    try:
-        from chisha.feedback_signal import build_feedback_signal
-        from chisha.feedback_store import load_store
-        fb_signal = build_feedback_signal(load_store(root), today, root=root)
-    except Exception as _fb_e:
-        import logging as _logging
-        _logging.getLogger(__name__).warning(
-            "refine feedback_signal build failed (non-fatal): %s: %s",
-            type(_fb_e).__name__, _fb_e,
-        )
-        fb_signal = None
-    # narrative 避开店名 = recall 实际剔除集 (回填), 不预算 (Codex review BLOCKER).
-    feedback_evicted_rids: set[str] = set()
+    # B-001/D-098 (codex A1 等价性修复): fb_signal 必须在 intent 抽取**之前**冻结
+    # (与原 refine 顺序一致), 避免抽取 LLM 调用窗口内反馈写入污染本轮排序; 同时让
+    # _t_start 在 fb 构建之后 (total_latency_ms 不含 fb 构建, 跟原版口径一致).
+    # 显式传入 prepare_candidates, 不让其内部重建.
+    from chisha.agent_orchestration import _build_fb_signal, prepare_candidates
+    fb_signal = _build_fb_signal(today, root)
 
     # D-089-S2: 总耗时埋点, 供 round trace kpi.latency_ms (跟 R1 一致).
     import time as _time
     _t_start = _time.time()
 
-    # 1. extract_refine_intent_v2: user_input → V2 结构化意图.
+    # 1. extract_refine_intent_v2: user_input → V2 结构化意图 (LLM, in-process 自抽;
+    #    AI-friendly CLI 改走 build_extract_spec 外置给 agent, 二者复用同 prompt).
     # D-094.1: V1 已退役, sync 直出. trace_collector 落 R2 round.refine_intent_llm.
     refine_intent_llm_collector: dict = {}
     intent: RefineIntentV2 = extract_refine_intent_v2(
@@ -115,124 +105,30 @@ def refine(
         trace_collector=refine_intent_llm_collector,
     )
 
-    # 2. 重建 ContextSnapshot, 注入 refine_input (原文) + refine_intent (V2 结构化)
-    ctx = build_context(
-        profile=profile,
-        meal_log=meal_log,
-        meal_type=state.meal_type,
-        today=today,
-        daily_mood=state.daily_mood,
-        refine_input=user_input,
-        refine_intent=intent.to_log_dict() if not intent.is_empty() else None,
+    # 2-4. 确定性编排 (D-074): Context (refine_input + intent) + recall (intent 三桶/
+    # avoid + 强负反馈剔除) + L2 打分 + 三层 cap + reference 软重排 + subtype 多样化.
+    # 抽到 agent_orchestration.prepare_candidates, in-process refine / recommend_meal /
+    # AI-friendly CLI 共用 (codex #1). fb_signal 已在上方冻结, 显式传入复用 (§8.1).
+    prep = prepare_candidates(
+        profile=profile, rests=rests, tagged=tagged, meal_log=meal_log,
+        meal_type=state.meal_type, today=today, root=root,
+        daily_mood=state.daily_mood, refine_input=user_input, intent=intent, n=n,
+        fb_signal=fb_signal,
     )
-
-    # 3. recall (intent 进 combo 生成 + 三桶 + avoid 硬过滤)
-    # T-P1a-02: recall_fallback_events 累积三级回落事件, web_api 合并到 base_trace.l1
-    recall_fallback_events: list[dict] = []
-    combos = recall(profile, rests, tagged, meal_log, today,
-                     meal_type=state.meal_type,
-                     intent=intent if not intent.is_empty() else None,
-                     n=n,
-                     recall_fallback_events=recall_fallback_events,
-                     feedback_signal=fb_signal,
-                     feedback_evicted_out=feedback_evicted_rids)
-    # B-001/D-098: narrative 店名 = recall 实际剔除集 (忠实). evict_names 已排序.
-    _evict_names = (fb_signal or {}).get("evict_names") or {}
-    feedback_avoided_names = [_evict_names[rid] for rid in sorted(feedback_evicted_rids)
-                              if rid in _evict_names]
-
-    # 4. L2 打分 (intent 进 intent_match_bonus 三档)
-    # D-089-S2: 保留 ranked_raw (cap 前) 供 trace_helpers.build_l2_trace_for_round
-    # 的 _build_l2_cap_stats 计算"cap 前后多样性对比" — 跟 R1 主链路 trace shape 一致.
-    ranked_raw = rank_combos(combos, profile, meal_log, today,
-                              context=ctx,
-                              meal_type=state.meal_type,
-                              root=root,
-                              intent=intent if not intent.is_empty() else None,
-                              feedback_signal_override=fb_signal)
-    # D-043: refine 也走三层 cap
-    # D-073 followup: 传 intent, cuisine_want 命中的菜系免 cuisine cap (「换日料」bug)
-    ranked = apply_caps(ranked_raw, profile,
-                        intent=intent if not intent.is_empty() else None)
-    # T-P2-01: reference 块软重排. user_input 含"昨天/上次/更清淡/换一家"
-    # → parse_reference_text → resolve_reference (读 trace_store) → apply_relation
-    # 在 top_k 切片前对 ranked 软重排; baseline_l2_snapshot 行为不变 (无 refine 时不触发).
-    # 失败/未命中静默降级, 不阻断 refine.
-    #
-    # Codex M3 修: 优先消费 V2 intent.reference (LLM 已结构化), raw_text parser
-    # 作 fallback. 若 LLM 给了 relation 词表没命中的 raw_text → 不再静默忽略
-    # (违反 Faithful Refine 的 "执行用户表达" 第一原则).
-    resolved_reference: object | None = None
-    reference_source: str = "none"  # "v2_intent" / "raw_parser" / "none"
-    try:
-        from chisha.reference_resolver import (
-            parse_reference_text, resolve_reference, apply_relation,
-            ReferenceQuery, _extract_days_back, _extract_meal_hint,
-        )
-        ref_query = None
-        # 1) V2 优先: intent.reference 存在且 relation 在 resolver 支持的集合
-        v2_ref = intent.reference if intent.reference else None
-        v2_rel = (v2_ref or {}).get("relation")
-        # V2 relation 集合: lighter / similar_but_different_venue / avoid_pattern
-        # resolver/apply 当前消费: lighter / similar_but_different_venue / similar
-        if v2_rel in ("lighter", "similar_but_different_venue"):
-            db = _extract_days_back(user_input)
-            mh = _extract_meal_hint(user_input)
-            # 没时间线索 → 走 -2 sentinel (上次), 与 raw parser 行为一致
-            if db is None and mh is None:
-                db = -2
-            ref_query = ReferenceQuery(
-                raw_text=user_input,
-                relation=v2_rel,
-                days_back=db,
-                meal_hint=mh,
-            )
-            reference_source = "v2_intent"
-        # 2) Fallback: raw text parser (V2 缺失 / avoid_pattern / unknown relation)
-        if ref_query is None:
-            ref_query = parse_reference_text(user_input)
-            if ref_query is not None:
-                reference_source = "raw_parser"
-        if ref_query is not None:
-            resolved_reference = resolve_reference(
-                ref_query, today=today, root=root,
-            )
-            # 边界: relation=unknown 时 resolved 不为 None 但 apply 是 no-op,
-            # 此时不当作"已执行 reference"上报 (避免 trace 误导).
-            if resolved_reference is not None:
-                if resolved_reference.relation in (
-                    "lighter", "similar_but_different_venue", "similar"
-                ):
-                    ranked = apply_relation(ranked, resolved_reference)
-                else:
-                    resolved_reference = None
-                    reference_source = "none"
-    except Exception as _e:
-        import logging as _logging
-        _logging.getLogger(__name__).warning(
-            "reference resolve/apply failed (non-fatal): %s: %s",
-            type(_e).__name__, _e,
-        )
-
-    # T-P2-02: 簇式输出 — cuisine_want 非空时按子类重排, 解决 D-073.1 副作用
-    # (同 cuisine 免 3 层 cap 后单品牌刷屏). 不影响空 refine 路径 / 非 cuisine refine.
-    # 不砍数量, round-robin 让前 N 个 combo 覆盖 ≥ 3 个 subtype.
-    subtype_diversified: bool = False
-    try:
-        if intent.cuisine_want:
-            from chisha.subtype_diversity import diversify_by_subtype
-            ranked = diversify_by_subtype(ranked)
-            subtype_diversified = True
-    except Exception as _e:
-        import logging as _logging
-        _logging.getLogger(__name__).warning(
-            "subtype diversify failed (non-fatal): %s: %s",
-            type(_e).__name__, _e,
-        )
+    fb_signal = prep.fb_signal
+    ctx = prep.ctx
+    combos = prep.combos
+    feedback_avoided_names = prep.feedback_avoided_names
+    ranked_raw = prep.ranked_raw
+    ranked = prep.ranked
+    recall_fallback_events = prep.recall_fallback_events
+    resolved_reference = prep.reference_resolved
+    reference_source = prep.reference_source
+    subtype_diversified = prep.subtype_diversified
 
     # D-046: top60 给 L3
     from chisha.rerank import L3_INPUT_TOP_K
-    top_k = ranked[:L3_INPUT_TOP_K]
+    top_k = prep.top_k
 
     # 5. L3 LLM rerank (ctx 携带 refine_input + refine_intent)
     # D-078.2 Codex S2 FIX-NOW: root 必须透传, 否则 refine 二轮 _profile_block
