@@ -1,7 +1,7 @@
 # chisha · 项目级指令
 
 > 项目名: 今天吃点啥 (chisha) · 个人 AI **原则派点餐执行外包**工具 (L0 方法论 spec / L1 数据 / L2 打分 / L3 LLM 精排)
-> 当前阶段: **V1.0 工程里程碑收尾完成** (2026-05-20). 推荐链路 L1/L2/L3 + Web SPA + V1.1 反馈 + L1 真兑现 + sandbox time-travel + trace 持久化 + Debug 三模式 + FastAPI 23 端点 + Refine V2-only (V1 退役 D-096) / Faithful Refine framework (D-080~D-085) + 字段闭包 (D-094.1, V2.1 13 槽) + L2 信号校准 (D-090~092 + D-090.1, 14 维) + Sandbox Lab + 反馈短链路即时生效 (D-098, 差评下次推荐就降权/剔除, score 第 15 维 feedback_recency). 当前定位 **自用为主、推广随缘** (D-097): 先做 AI-friendly 接个人 agent (D-074) + B-001 反馈短链路 (已 D-098 落地), 同事推广向工作推迟. 路线见 [docs/ROADMAP.md](docs/ROADMAP.md).
+> 当前阶段: **V1.0 工程里程碑收尾完成** (2026-05-20). 推荐链路 L1/L2/L3 + Web SPA + V1.1 反馈 + L1 真兑现 + sandbox time-travel + trace 持久化 + Debug 三模式 + FastAPI 23 端点 + Refine V2-only (V1 退役 D-096) / Faithful Refine framework (D-080~D-085) + 字段闭包 (D-094.1, V2.1 13 槽) + L2 信号校准 (D-090~092 + D-090.1, 14 维) + Sandbox Lab + 反馈短链路即时生效 (D-098, 差评下次推荐就降权/剔除, score 第 15 维 feedback_recency). 当前定位 **自用为主、推广随缘** (D-097): AI-friendly 接个人 agent (D-074 **Phase 0 已落地**: chisha 零 LLM + one-shot CLI `chisha.agent_cli` + Claude Code reference adapter skill, 智能外置给宿主 agent 的 LLM) + B-001 反馈短链路 (已 D-098 落地), 同事推广向工作推迟. 路线见 [docs/ROADMAP.md](docs/ROADMAP.md).
 > 主语言: Python (后端) + TypeScript (前端) · 包管理: uv / npm · 测试: pytest
 
 ## 必读(首次接触本项目)
@@ -65,8 +65,9 @@ uv run python -m scripts.compare_traces                                         
 
 **high-risk 文件白名单** (单一权威源, 下方「工作流 § Codex 双触点」引用这份):
 
-后端 13 模块 — 改任一 → `regression_risk = high`:
-- `chisha/{api,recall,score,rerank,refine,l1_extractor,sandbox,clock,data_root,trace_store,debug_what_if,web_api,feedback_signal}.py`
+后端 14 模块 — 改任一 → `regression_risk = high`:
+- `chisha/{api,recall,score,rerank,refine,l1_extractor,sandbox,clock,data_root,trace_store,debug_what_if,web_api,feedback_signal,agent_orchestration}.py`
+- (D-074 agent 面 `agent_{cli,protocol,round_store,choose,skill_init}.py` = chisha 零 LLM 协议层, 改前读 CONTRACTS「Agent CLI 协议」段; 单独改不进 baseline 严格回归网, 与 prepare_candidates/recall/score 同时改 → high)
 
 前端 — 改 `apps/{web,debug-ui}/src/**` 任意 .tsx / .css / vite.config.ts:
 - 跟后端 API contract 同时改 → `high`

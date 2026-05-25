@@ -145,6 +145,20 @@
 
 ---
 
+## Agent CLI 协议 (D-074 Phase 0)
+
+- **chisha 零 LLM.** `agent_cli` / `agent_orchestration` / `agent_protocol` 任何路径**不发 LLM 请求、不持 provider key**. 智能 (context→intent 抽取 / 候选→排序) 全外置: chisha 发 `llm_request_spec` 信封, 宿主 agent 的 LLM 执行回传, chisha 校验. 想在 CLI 里调 LLM = 违背 D-074 第一原则.
+- **CLI 必须复用 `prepare_candidates`, 严禁自己 import recall/score 重拼** (codex #1). 反馈冻结 (§8.1) / 强负剔除 / L2 cap / reference 软重排 / subtype 多样化全在 `agent_orchestration.prepare_candidates` 里; 绕过它就静默丢守卫. recommend_meal + refine + CLI 三方共用这一个入口.
+- **确定性守卫只在 chisha, 不在信封文字上补偿.** `apply_rerank_response` (校验+映射+health_flags+brand 唯一+fallback) / `apply_intent_response` (枚举闭包+清洗+disclosure) 是真守门; `required_validation` 只是给 agent 的输出约束提示, 不是合约执行.
+- **Faithful Refine: `raw_text` 只来自 CLI 注入, 忽略 agent 回传** (`apply_intent_response` validate 前 `pop("raw_text")`). agent 漏抽/伪造 raw_text 都不破坏二次软兜底.
+- **round 协议状态 (pending/resolved) 存 `agent_round_store` (logs/agent_rounds/), 与 trace_store 可见 round 索引隔离** (codex #2). 绝不让未完成 round 进 `round_ids/latest_round` (污染 list_traces_v3 + debug-ui). 只有 apply-rerank 成功后才走 write_trace/append_round 发布 ready round.
+- **apply-rerank 用 resolved round 持久化的 `top_k` 映射 agent 回传, 不重跑 prepare_candidates** (codex #a). 重跑会因 meal_log/profile 在 resolve→apply 间变化让 combo_index 映射到错 combo. trace 重跑是 best-effort debug-only.
+- **choice_key = `(sid, round_id, card_id, action)`, 双写 (feedback_store + meal_log) 同一 flock 内各自幂等** (codex #c/#4). round_id 必带 (card_id 跨 refine 轮可重名). choose 整体可重跑补缺, 不回滚.
+- **CLI 默认 production scope; sandbox 全局启用时拒绝运行** (codex #5). 不假设直 import = production (data_root/clock 按全局 sandbox marker 路由). `--at-time` 走 today 注入不碰 sandbox.
+- **交互层 (AskUserQuestion 呈现 / refine 入口) 是 adapter 特定的 Layer 2, 住 `agent_skill_init` 生成的 SKILL.md, 不进协议层.** 换 agent = 重写交互层、复用 CLI verbs + 信封.
+
+---
+
 ## 范围红线 (V1.0 后 Phase 1 推广前不做)
 
 不要在 V1.0 工程里程碑收尾后启动以下工作 (推迟到 Phase 1 推广启动后):

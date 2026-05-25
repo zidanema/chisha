@@ -44,7 +44,7 @@ Phase 2 · 双向扩展 (顺序后议)
 > D-097 (2026-05-25) 把原 9 项按"自用是否需要"重切. 真要推广同事时回看 D-097 恢复"推迟"项.
 
 **自用刚需 (真硬门, 2 项)**:
-- **AI-friendly 接个人 agent** — D-074 active (设计定稿 2026-05-25): chisha 零 LLM + one-shot CLI, agent 的 LLM 做 context 抽取 + L3 精排 (`llm_request_spec`); Phase 0 = Claude Code reference adapter. 详细设计见下方 brief
+- **AI-friendly 接个人 agent** — D-074 **Phase 0 已落地 (2026-05-25)**: chisha 零 LLM + one-shot CLI (`python -m chisha.agent_cli` verb 链 start/resolve-intent/apply-rerank/choose/init/doctor) + Claude Code reference adapter skill (`init` 生成); agent 的 LLM 做 context 抽取 + L3 精排 (`llm_request_spec` 信封). 自用一周收 bug → 稳定后 Phase 1 接 OpenClaw. 实现见 [decisions D-074](decisions.md) + [CONTRACTS「Agent CLI 协议」](CONTRACTS.md)
 - **B-001 反馈短链路** (P0) — 差评当前不生效 (score.py 不读 rating), 自用留存杀手
 
 **已完成 / 实质已解**:

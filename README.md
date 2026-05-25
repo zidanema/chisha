@@ -20,7 +20,7 @@
 
 还没做的: 第二份方法论 spec (验证抽象解耦) / 数据按工区拆包 / Agent 接入 CLI 形态正式落地 / 同事推广前的 screener — 详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
-**接下来** (D-097, 2026-05-25 定位调整): **自用为主、推广随缘** — 先做 个人 agent 接入 (D-074) + 反馈短链路修复 (B-001, P0)。同事推广向工作 (screener / 第二份 spec) 推迟到真要推时。
+**接下来** (D-097, 2026-05-25 定位调整): **自用为主、推广随缘** — 个人 agent 接入 (D-074 **Phase 0 已落地**: chisha 零 LLM + one-shot CLI `python -m chisha.agent_cli` + Claude Code reference adapter skill) + 反馈短链路修复 (B-001, 已 D-098 落地)。同事推广向工作 (screener / 第二份 spec) 推迟到真要推时。
 
 ---
 
