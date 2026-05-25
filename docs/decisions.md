@@ -19,7 +19,7 @@
 **Refine v2 / Faithful Refine**: [D-080](#d-080) · [D-081](#d-081) · [D-082](#d-082) · [D-083](#d-083) · [D-084](#d-084) · [D-085](#d-085) · [D-094](#d-094)
 **L2 信号校准**: [D-090~D-092](#d-090--d-091--d-092)
 **LLM 调用基建**: [D-095](#d-095)
-**Agent 接入 (草稿)**: [D-074](#d-074)
+**AI-friendly 接入 (active)**: [D-074](#d-074)
 
 > **不在本文件**: 内部工具的工程契约 (debug 台 / sandbox 实现细节 / trace schema / worktree 教训) → [CONTRACTS.md](CONTRACTS.md). 历史 D-039 调试台立项也已迁移过去。
 
@@ -94,7 +94,7 @@ CLI 路径成本敏感 (按 token 走自用 Max 额度), 多次重试比"承认 
 **LLM 调用层抽 provider (anthropic / openrouter / claude_code_cli), 双路径分流, config_error 必须 hard-fail.** (2026-05-12 / 2026-05-14)
 - CLI provider 不支持 tool_use, rerank 层做分流: API 走 tool_use, CLI 走 prompt+JSON 解析
 - config_error 必须 hard-fail, **不能被外层 except 吞成普通 fallback** (否则用户以为在跑 L3 实际没跑)
-- Phase 2 外部 Agent 接入待 D-074 草稿翻 active 后重写
+- 外部 Agent 接入改走 `llm_request_spec` 数据契约 (非 closure 注入), 见 D-074 (active 2026-05-25)
 
 ## D-025
 **personal_offsets 粒度 = `(cuisine, cooking, ingredient)`, 不是"店::菜".** (2026-05-11)
@@ -149,8 +149,9 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 - refine 不写 `long_term_prefs` (当下意图 ≠ 长期偏好, 会污染历史)
 
 ## D-074
-**AI-friendly 接入终态共识 = CLI + Skill 模式 (草稿, 未正式落).** (2026-05-16, draft)
-编号占住, 共识来源 + 设计 brief 见 [`proposals/2026-05-16-ai-friendly-integration-v2-consensus.md`](proposals/2026-05-16-ai-friendly-integration-v2-consensus.md). Phase 1 推广启动时翻 active.
+**AI-friendly 接入 = chisha 零 LLM 确定性内核 + one-shot CLI + agent 的 LLM 做智能.** (2026-05-25, active 设计定稿) · 推翻 2026-05-16 v2 共识 · 翻案 D-022 / D-038 / D-051
+定位 [D-097] 自用为主: Phase 0 reference adapter = Claude Code (手动/pull/同步, 不做定时推送). chisha 不持 LLM key, context 抽取 + L3 精排交 agent 的 LLM (`llm_request_spec` 带版本信封 `extract|rerank`); refine 守卫 (校验/清洗/raw_text 注入/disclosure/trace) 全留 chisha (Faithful Refine 不破). CLI verb 链 `start → [resolve-intent] → apply-rerank → choose`, 状态复用 trace_store/feedback_store/meal_log 不新建 ledger. 反馈闭环 defer [F-014]; OpenClaw (推送/定时/飞书) defer Phase 1.
+设计定稿: [`proposals/2026-05-25-ai-friendly-integration.md`](proposals/2026-05-25-ai-friendly-integration.md) (Opus + Codex 3 轮收敛 GO). 2026-05-16 v1/v2 过程稿 → `proposals/archive/`.
 
 ## D-076 + D-076.1
 **L1 长期反馈层重构 — 砍伪 L1 + LLM 抽取真兑现.** (2026-05-16) · 推翻 D-043 "refine chip → load_runtime_hints"
@@ -215,6 +216,16 @@ L3 prompt 加 narrative 字段 + 顶部 always-on 状态条, 必须在 D-083/D-0
 ## D-096 + D-090.1 + D-094.1
 **V1 refine 退役 + V2 schema 扩 4 槽 + 全栈切 V2 (单 PR).** (2026-05-24) · 推翻 D-073 双模式 + D-094 字段闭包
 **主决策 (D-096)**: V1 `refine_intent.py` + `parse_refine_intent.md` 整模块砍 (无 caller / 双模式过渡债 / 每轮多耗 2~6s); V2 是唯一意图层. response `refine_intent` 字段直接是 V2 shape (砍 V1+V2 双存); trace round 字段统一 `intent_v2`; refine.py async/off 三模式逻辑同时砍 (V1 已无 fallback). **D-090.1 修正案**: `health_guardrail` 油豁免触发字段从 V1 `flavor_tags="heavy"` 切到 V2 `constrain.oil="high"`. **D-094.1 修正案 (推翻原 D-094 字段闭包)**: V2 schema 9 槽扩到 13 槽 — `redirect` 加 `staple_want / staple_avoid` (主食偏好自由字符串, L2 真打分); `constrain.oil` 枚举 `{low}` 扩到 `{low,normal,high}` ("high" 替代 V1 heavy 触发油豁免); `constrain` 加 `wants_soup: bool` (L2 真打分) + `price_band ∈ {cheap,normal,premium} | null` (模糊文本兜底, `price_max` 数字优先). 同时砍 V1 `flavor_tags=sweet/sour` (L3 narrative 兜底). L3 prompt (`rerank_system.md`) refine_intent 字段口径 + narrative 真消费闭包同步 V2.1. schema_version bump `2.0 → 2.1`. baseline_l2_snapshot 是新基线 (schema 变 → 不跟旧对比). 守门: pytest 936 pass / V1 imports 全清 / codex BLOCK×2 修复 (price_max 优先 + staple_avoid 走 recall 硬过滤) / 前端 debug-ui 同步 V2.1 shape. 详见 `specs/archive/T-FR-V1-RETIRE.md`.
+
+## D-097
+**项目定位收敛: 自用为主、推广随缘 — 推翻 Phase 1 "同事推广" 的范围假设.** (2026-05-25) · 调整 D-070 Phase 切分优先级 (不改 Phase 结构, 只调先做什么)
+志丹拍板: 主目标回到"我自己每天用得爽"; 同事推广降为"随缘" (遇到合适的人自然推, 不为推广提前建设).
+Phase 1 启动前原 9 项必收口按"自用是否需要"重切 (清单见 [ROADMAP](ROADMAP.md) "必收口"段):
+- **留 (自用刚需)**: AI-friendly 接个人 agent (D-074 Phase 0 reference adapter, 含 Living API meal_hint+at_time 参数化) + B-001 反馈短链路 (P0, 差评当前不生效)
+- **降级到 BACKLOG (有兜底, 触发再做)**: Living/Lab router 后端拆分 (F-013) + screener (F-003)
+- **推迟 (为同事服务, 自用不需要)**: 第二份 methodology spec (F-004) / L1 cuisine token (F-001, 同事 cuisine 才分散)
+- **已实质解**: 沙箱动线 (用户视图 sandbox UI 已移除 :5173, D-093)
+不砍能力, 只调先做什么. 真要推广同事时回看本条恢复"推迟"项.
 
 ## D-098
 **Responsive Feedback — 反馈短链路即时生效 (差评不生效 B-001 P0 修复).** (2026-05-25) · 第一原则: 用户每次 👍/👎 必须在下次推荐被可感知响应, "差评不生效"=信任崩塌
