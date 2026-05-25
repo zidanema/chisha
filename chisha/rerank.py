@@ -1499,16 +1499,9 @@ def rerank(
             if llm_out is not None:
                 llm_called = True
         if llm_out is not None:
-            mapped: list[dict] = []
-            for cand in llm_out[:n]:
-                idx = cand.get("combo_index", -1)
-                if not (0 <= idx < len(top_combos)):
-                    continue
-                # health_flags 由规则补齐 (D-046: LLM 不再输出此字段)
-                cand["health_flags"] = _compute_health_flags(top_combos[idx])
-                merged = {**top_combos[idx], **cand}
-                mapped.append(merged)
-            mapped = _enforce_brand_unique(mapped, top_combos, n=n)
+            # D-074: 映射逻辑抽到 _map_validated_candidates, in-process 主路径与
+            # AI-friendly apply_rerank_response 共用单一可信源 (candidate→final 映射).
+            mapped = _map_validated_candidates(llm_out, top_combos, n)
             if mapped:
                 _log_selection_metrics(mapped, top_combos)
                 _ensure_collector_filled(
@@ -1526,6 +1519,131 @@ def rerank(
     )
     return fallback_rerank(top_combos, n=n, n_explore=n_explore,
                             meal_log=meal_log, today=today)
+
+
+# ═══════════════════════ D-074 AI-friendly: 外置 LLM 调用 ═══════════════════════
+# chisha 不调 LLM — 把"读候选→排序"这个智能步骤打包成 llm_request_spec 信封给
+# 宿主 agent 的 LLM 执行, 回传后 chisha 做全部确定性校验/映射/后处理 (设计 §2/§4).
+# in-process rerank() 仍走自有 call_text 路径 (本两函数不替换它, 保 baseline 0-diff),
+# 仅复用同一套 primitives (build_user_message / _RERANK_TOOL / _validate / _map).
+
+
+def build_rerank_spec(
+    top_combos: list[dict],
+    profile: dict,
+    context: "ContextSnapshot | None",
+    *,
+    n: int,
+    n_explore: int,
+    correlation_id: "Any",          # agent_protocol.CorrelationId
+    output_mode: str = "tool_use",
+    root: "Path | None" = None,
+    l1_prefs_override: Any = _UNSET_L1_PREFS,
+    feedback_avoided_names: list[str] | None = None,
+) -> dict:
+    """D-074: 构造 rerank `llm_request_spec` 信封 (不调 LLM).
+
+    确定性 (候选准备 / prompt / schema / 后续校验) 全留 chisha; 智能 (读候选 →
+    排序产出 + narrative) 交宿主 agent 的 LLM. system/user/tool schema 与 in-process
+    _run_llm_rerank 完全同源 (复用 build_user_message + _RERANK_TOOL), 保证 agent
+    LLM 按同一套规则排序.
+
+    output_mode:
+      - tool_use: 带 forced tool schema (anthropic/openrouter 类 agent)
+      - text_json: system prompt 走 CLI patch (no-tool provider), json_schema 描述输出
+    """
+    from chisha.agent_protocol import build_request_spec
+
+    raw_system = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+    is_text_json = (output_mode == "text_json")
+    # text_json 模式不支持 tool_use, system 走 CLI patch (与 in-process CLI 路径同源)
+    system = _patch_system_prompt_for_cli(raw_system) if is_text_json else raw_system
+    user_msg = build_user_message(
+        top_combos, profile, context, n=n, n_explore=n_explore, root=root,
+        l1_prefs_override=l1_prefs_override,
+        feedback_avoided_names=feedback_avoided_names,
+    )
+    # required_validation: 告诉 agent chisha 出口会校验什么 (合约透明, 让 agent LLM
+    # 按同一套规则产出). 人读, 非机器强约束 — 真正守门在 apply_rerank_response.
+    # 输出约束 (合约透明, 让 agent LLM 产出 chisha 出口能直接消费的结构).
+    # 只描述 agent 该产出什么, 不描述 chisha 内部 dedup/fallback 机制 (codex #d).
+    n_exploit = n - n_explore
+    required_validation = [
+        f"candidates 数量 == {n} ({n_exploit} exploit + {n_explore} explore)",
+        "rank 1..n 连续, 等于 array position + 1",
+        "combo_index ∈ [0, len(candidates)), 不重复, 不越界",
+        "fit_score / taste_match ∈ [0,1]",
+        "exploit 段在前 explore 段在后, 不穿插 (refine 模式 n_explore=0 全 exploit)",
+        "同 brand 至多 1 条",
+        "不要输出 health_flags (由 chisha 规则算)",
+    ]
+    common = dict(
+        operation_kind="rerank",
+        correlation_id=correlation_id,
+        system=system,
+        messages=[{"role": "user", "content": user_msg}],
+        required_validation=required_validation,
+    )
+    if is_text_json:
+        return build_request_spec(
+            output_mode="text_json",
+            json_schema=_RERANK_TOOL["input_schema"],
+            **common,
+        )
+    return build_request_spec(
+        output_mode="tool_use",
+        tools=[_RERANK_TOOL],
+        tool_choice=_RERANK_TOOL_CHOICE,
+        **common,
+    )
+
+
+def apply_rerank_response(
+    payload: dict,
+    top_combos: list[dict],
+    *,
+    n: int,
+    n_explore: int,
+) -> tuple[list[dict] | None, dict]:
+    """D-074: 收宿主 agent 精排回传 → 全部确定性守卫留 chisha (校验 + 映射 + 后处理).
+
+    payload (agent 按 rerank spec 产出): {"candidates": [...], "narrative": "..."}.
+
+    返回 (mapped_final | None, meta):
+      - mapped 非 None: 校验通过 + 映射完成的 final cards
+      - mapped None: 校验失败, 调用方走 fallback_policy=chisha_l2 (fallback_rerank)
+      - meta: {status: ok|fallback, code, detail, narrative}
+    """
+    narrative = ""
+    cands: Any = None
+    if isinstance(payload, dict):
+        nv = payload.get("narrative")
+        if isinstance(nv, str):
+            narrative = nv
+        cands = payload.get("candidates")
+    if not isinstance(cands, list):
+        return None, {
+            "status": "fallback", "code": "NO_CANDIDATES_LIST",
+            "detail": f"payload.candidates 非 list: {type(cands).__name__}",
+            "narrative": narrative,
+        }
+    # 与 in-process 同一套校验 (n_max=n, exploit/explore 段位, index 界, rank 连续)
+    validated, code, detail = _validate_llm_candidates_v(
+        cands, n_max=n, input_size=len(top_combos), n_explore_expected=n_explore,
+    )
+    if validated is None:
+        return None, {
+            "status": "fallback", "code": code, "detail": detail,
+            "narrative": narrative,
+        }
+    mapped = _map_validated_candidates(validated, top_combos, n)
+    if not mapped:
+        return None, {
+            "status": "fallback", "code": "EMPTY_AFTER_MAP",
+            "detail": "brand_unique 后候选为空", "narrative": narrative,
+        }
+    return mapped, {"status": "ok", "code": "OK", "detail": None,
+                    "narrative": narrative}
 
 
 def _log_selection_metrics(
@@ -1574,6 +1692,30 @@ def _log_selection_metrics(
         f"  [rerank] LLM 选中 idx={selected} band={bands} "
         f"window={len(top_combos)} | 同品牌择优 (跳过更高分 sibling): {higher_str}"
     )
+
+
+def _map_validated_candidates(
+    validated: list[dict], top_combos: list[dict], n: int,
+) -> list[dict]:
+    """把已校验的 LLM candidates 映射回 combo: combo_index→combo merge +
+    health_flags 规则补齐 (D-046) + brand 唯一性后处理 (D-045).
+
+    纯确定性, 不调 LLM. in-process rerank() 主路径与 AI-friendly
+    apply_rerank_response (D-074) 共用, 保证两条链路 candidate→final 映射单一可信源.
+
+    注意: 与历史 in-process 行为逐字一致 — 取 validated[:n], 越界 idx skip,
+    mutate cand["health_flags"], {**combo, **cand} merge, 末尾 enforce_brand_unique.
+    """
+    mapped: list[dict] = []
+    for cand in validated[:n]:
+        idx = cand.get("combo_index", -1)
+        if not (0 <= idx < len(top_combos)):
+            continue
+        # health_flags 由规则补齐 (D-046: LLM 不再输出此字段)
+        cand["health_flags"] = _compute_health_flags(top_combos[idx])
+        merged = {**top_combos[idx], **cand}
+        mapped.append(merged)
+    return _enforce_brand_unique(mapped, top_combos, n=n)
 
 
 def _enforce_brand_unique(

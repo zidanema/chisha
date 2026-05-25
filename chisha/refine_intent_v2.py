@@ -552,26 +552,148 @@ def extract_refine_intent_v2(
 
     parsed = _llm_parse_v2(text, profile_llm=profile_llm,
                              trace_collector=trace_collector)
-    if parsed is None:
-        return _empty_fallback("LLM 解析失败, refine 字段全空, 走 raw_text + L3 兜底")
+    # D-074: LLM 调用之后的全部确定性守卫 (required_keys / validate / clean /
+    # empty 兜底) 抽到 apply_intent_response, in-process 与 AI-friendly CLI 共用.
+    intent, _disclosure = apply_intent_response(parsed, raw_text=text)
+    return intent
 
-    # Codex H6: schema 关键字段 LLM 必须主动给, 漏了视为"LLM 没理解 schema" → empty 兜底.
+
+# ═══════════════════════ D-074 AI-friendly: 外置抽取 LLM 调用 ═══════════════════════
+# chisha 不调 LLM — 把"context 自然语言 → 结构化 intent"这个智能步骤打包成
+# llm_request_spec 信封给宿主 agent 的 LLM 执行, 回传后 chisha 做全部确定性
+# 清洗/校验/disclosure (设计 §5 Faithful Refine 守卫全留 chisha).
+
+
+# extract spec 的 json_schema: 描述 V2 intent 输出 shape, 让 agent LLM 产出合法结构.
+# 与 _empty_redirect / _empty_constrain / 枚举常量同源, 避免漂移.
+_V2_INTENT_JSON_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "redirect": {
+            "type": "object",
+            "properties": {
+                k: {"type": "array", "items": {"type": "string"}}
+                for k in _empty_redirect().keys()
+            },
+        },
+        "constrain": {
+            "type": "object",
+            "properties": {
+                "oil": {"enum": sorted(_OIL_VALUES) + [None]},
+                "price_max": {"type": ["number", "null"]},
+                "price_band": {"enum": sorted(_PRICE_BAND_VALUES) + [None]},
+                "wants_soup": {"type": "boolean"},
+            },
+        },
+        "reference": {
+            "type": ["object", "null"],
+            "properties": {
+                "reference_meal_id": {"type": ["string", "null"]},
+                "relation": {"enum": sorted(_REFERENCE_RELATIONS)},
+            },
+        },
+        "reject_previous": {"type": "boolean"},
+        "raw_understanding": {"type": "string"},
+        "schema_version": {"const": "2.1"},
+    },
+    "required": ["redirect", "constrain", "raw_understanding", "schema_version"],
+}
+
+
+def build_extract_spec(
+    text: str,
+    *,
+    correlation_id: "Any",          # agent_protocol.CorrelationId
+    profile_llm: dict | None = None,  # 仅签名兼容; chisha 不调 LLM, 不读 provider
+) -> dict:
+    """D-074: 构造 context→intent 抽取的 `llm_request_spec` 信封 (不调 LLM).
+
+    system/user 与 in-process _llm_parse_v2 完全同源 (同一 prompt 模板, 同一
+    {INPUT_TEXT} partition), 让 agent LLM 按**同一套 parse 规则**抽取, 忠实度对齐
+    chisha 自抽 (设计 §5 "prompt 即契约"). cooking_method_avoid 9 类枚举闭包 /
+    禁脑补 / 冲突留空 / schema 未覆盖走 narrative — 全在 prompt 里, agent 照执行.
+
+    extract 走 text_json 模式 (与 in-process json_mode 路径一致, 不引入 tool_use).
+    raw_text 不进 spec 也不信 agent 回传 — 由 CLI 注入 (apply_intent_response).
+    """
+    from chisha.agent_protocol import build_request_spec
+
+    prompt_template = PROMPT_PATH_V2.read_text(encoding="utf-8")
+    template_head, _sep, template_tail = prompt_template.partition("{INPUT_TEXT}")
+    system_prompt = template_head
+    user_msg = (text or "") + template_tail
+    # 输出约束 (合约透明, 让 agent LLM 按同一套 parse 规则产出 — 设计 §5 "prompt 即契约").
+    # 只描述 agent 该产出什么, 不描述 chisha 内部 fallback/dedup 机制 (codex #d).
+    required_validation = [
+        "schema_version == '2.1'",
+        "redirect 各 slot 为 list[str]; cooking_method_avoid 仅 9 类枚举",
+        "constrain.oil ∈ {low,normal,high,null}; price_band ∈ {cheap,normal,premium,null}",
+        "禁脑补: 没自信映射进 slot 的诉求写进 raw_understanding",
+        "schema 未覆盖的诉求 (如主食粗细) 不假装支持, 走 raw_understanding",
+        "不要回传 raw_text (用户原话由 chisha 注入)",
+    ]
+    return build_request_spec(
+        operation_kind="extract",
+        correlation_id=correlation_id,
+        output_mode="text_json",
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_msg}],
+        json_schema=_V2_INTENT_JSON_SCHEMA,
+        required_validation=required_validation,
+    )
+
+
+def apply_intent_response(
+    parsed: dict | None,
+    raw_text: str,
+) -> tuple[RefineIntentV2, dict]:
+    """D-074: 收宿主 agent extract 回传 → 全部 Faithful Refine 守卫留 chisha.
+
+    守卫 (设计 §5): required_keys 检查 + validate_v2_schema + _clean_parsed_to_v2
+    (枚举闭包 / 类型强转 / reference 清洗 / cooking_method 越界丢弃). 失败 → empty V2
+    + raw_understanding 注明原因 (永不抛, 永不瞎猜).
+
+    **关键守卫 (codex #5 / 设计 §5.2)**: raw_text 只来自 CLI 注入的原文,
+    **忽略 agent 回传里的 raw_text** — 即使 agent 伪造/漏给, raw_text 仍是真原话,
+    L3 prompt 据此二次软兜底, refine 忠实度不被 agent 破坏.
+
+    返回 (RefineIntentV2, disclosure):
+      disclosure = {status: ok|fallback, reason, raw_understanding} — chisha 把
+      raw_understanding 当**用户可见 disclosure** 弹出 (设计 §5.4 强制自报缺口).
+    """
+    raw_text = (raw_text or "").strip()
+
+    def _fb(reason: str) -> tuple[RefineIntentV2, dict]:
+        intent = RefineIntentV2(raw_text=raw_text, raw_understanding=reason)
+        return intent, {"status": "fallback", "reason": reason,
+                        "raw_understanding": reason}
+
+    if parsed is None:
+        return _fb("LLM 解析失败, refine 字段全空, 走 raw_text + L3 兜底")
+    if not isinstance(parsed, dict):
+        return _fb(f"agent 回传非 dict ({type(parsed).__name__}), refine 字段全空")
+
+    # Codex H6: schema 关键字段 LLM 必须主动给, 漏了视为"没理解 schema" → empty 兜底.
+    # 来源中立措辞: in-process (chisha 自抽) 与 AI-friendly (agent 抽) 共用此路径.
     required_keys = ("schema_version", "redirect", "constrain", "raw_understanding")
     missing = [k for k in required_keys if k not in parsed]
     if missing:
         print(f"  [refine_intent_v2] LLM 漏必填字段 {missing}, 走 empty 兜底")
-        return _empty_fallback(
-            f"LLM 漏必填字段 {missing[0]}, refine 字段全空")
+        return _fb(f"LLM 漏必填字段 {missing[0]}, refine 字段全空")
 
-    # 可选字段补默认值 (framework 控制, LLM 漏掉不算"没理解 schema")
-    parsed.setdefault("raw_text", text)
+    # Faithful Refine (codex #5): raw_text 永远是 CLI 注入的原文, 不信 agent 回传.
+    # validate 前 pop 掉, 让回传里的 raw_text **无条件被忽略** — 否则 agent 给非
+    # str raw_text 会让 validate_v2_schema 失败 → 把本来合法的 intent 误降级.
+    parsed.pop("raw_text", None)
+    # 可选字段补默认值 (framework 控制).
     parsed.setdefault("reference", None)
     parsed.setdefault("reject_previous", False)
 
     ok, errors = validate_v2_schema(parsed)
     if not ok:
-        print(f"  [refine_intent_v2] schema validate fail: {errors[:3]}, "
-              f"走 empty 兜底")
-        return _empty_fallback("LLM schema 不匹配, refine 字段全空")
+        print(f"  [refine_intent_v2] schema validate fail: {errors[:3]}, 走 empty 兜底")
+        return _fb("LLM schema 不匹配, refine 字段全空")
 
-    return _clean_parsed_to_v2(parsed, raw_text=text)
+    intent = _clean_parsed_to_v2(parsed, raw_text=raw_text)
+    return intent, {"status": "ok", "reason": None,
+                    "raw_understanding": intent.raw_understanding}
