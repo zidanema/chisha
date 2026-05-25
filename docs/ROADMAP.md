@@ -12,7 +12,7 @@
 
 **V1.0 工程里程碑收尾完成** (2026-05-20) — 推荐链路 L1/L2/L3 全跑通 + Web SPA + V1.1 反馈系统 + L1 长期反馈层 (LLM 抽取真兑现) + Sandbox Time-Travel + trace 持久化 + Debug 三模式 + FastAPI 23 端点 + Refine v2 / Faithful Refine framework (D-080~D-085) + 真兑现字段闭包 (D-094) + L2 refine 信号校准 + 死维度清理 (D-090~092, 14 维 breakdown) + Sandbox Lab 白盒时光机.
 
-**接下来**: 进入 **Phase 1 推广准备** — 自用沉淀 + 个人 agent 接入跑通 + 同事 screener.
+**接下来** (D-097 定位: 自用为主、推广随缘): 个人 agent 接入跑通 (D-074) + B-001 反馈短链路修复 (P0). 同事推广向工作 (screener / 第二份 spec) 推迟到真要推时.
 
 历史细节: [archive/DECISIONS_phase0.md](archive/DECISIONS_phase0.md) + [archive/ROADMAP_phase0.md](archive/ROADMAP_phase0.md). 活决策: [decisions.md](decisions.md). 跨文件约束: [CONTRACTS.md](CONTRACTS.md).
 
@@ -25,7 +25,7 @@ Phase 0 · 自用跑通 (✅ 工程侧完成, 2026-05-20 收尾)
   范围: 1 方法论 (harvard_plate) × 1 用户 × 2 zone
   门槛: 自己愿意每天用 + 接个人 agent 跑通
 
-Phase 1 · 同方法论同事推广 (next)
+Phase 1 · 同方法论同事推广 (D-097: 优先级降, 自用为主)
   范围: 1 方法论 × N 同事 × M zone
   准入条件: 任意一套饮食原则 (不限定 harvard_plate), 进前发 screener 探同事原则派密度, 阈值 30%
   关键工程: profile 解耦个人化 / data zone 拆包 / 本地数据闭环 / 接入外部 Agent / 必要时扩 methodology spec
@@ -39,19 +39,26 @@ Phase 2 · 双向扩展 (顺序后议)
 
 ---
 
-## Phase 1 启动前必收口 (硬门)
+## Phase 1 启动前必收口 — D-097 收窄 (自用为主, 推广随缘)
 
+> D-097 (2026-05-25) 把原 9 项按"自用是否需要"重切. 真要推广同事时回看 D-097 恢复"推迟"项.
+
+**自用刚需 (真硬门, 2 项)**:
+- **AI-friendly 接个人 agent** — D-074 active (设计定稿 2026-05-25): chisha 零 LLM + one-shot CLI, agent 的 LLM 做 context 抽取 + L3 精排 (`llm_request_spec`); Phase 0 = Claude Code reference adapter. 详细设计见下方 brief
+- **B-001 反馈短链路** (P0) — 差评当前不生效 (score.py 不读 rating), 自用留存杀手
+
+**已完成 / 实质已解**:
 - ✅ V1 refine 退役 + V2 schema 扩 4 槽 + 全栈切 V2 (D-096 / D-090.1 / D-094.1, 2026-05-24)
-- 第二份 methodology spec (验证抽象解耦)
-- screener 设计 (筛同事原则派密度)
-- 沙箱模式交互动线重设计 (推广前用户心智不能乱)
-- L1 词表扩 cuisine token (同事 cuisine 比志丹分散)
-- B-001 v2 反馈短链路全字段覆盖
-- Living/Lab router 拆分重做 (worktree 回滚后未完成项)
-- Living API agent-ready 参数化 (meal_hint + at_time 重做)
-- D-074 翻 active: AI-friendly 接入终态 = CLI + Skill 模式, `llm_request_spec` 数据契约取代 closure 注入
+- ✅ 沙箱动线: 用户视图 sandbox UI 已移除 (:5173) + 拆独立 Lab :5175 (D-093), "用户心智乱"风险消除
 
-详细 design brief: [`proposals/2026-05-16-ai-friendly-integration-v2-consensus.md`](proposals/2026-05-16-ai-friendly-integration-v2-consensus.md).
+**降级到 BACKLOG (有兜底, 触发再做)**:
+- Living/Lab router 后端拆分 (F-013) — web_api.py 沙箱逻辑缠生产路由; 有 D-077 fail-loud 护栏 + 操作纪律兜底
+- screener 设计 (F-003) — 3-5 熟人一句话判断即可
+
+**推迟 (为同事推广服务, 自用不需要)**:
+- 第二份 methodology spec (F-004) / L1 词表扩 cuisine token (F-001, 同事 cuisine 才分散)
+
+详细 design brief: [`proposals/2026-05-25-ai-friendly-integration.md`](proposals/2026-05-25-ai-friendly-integration.md).
 
 ---
 

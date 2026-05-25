@@ -140,10 +140,12 @@
 
 不要在 V1.0 工程里程碑收尾后启动以下工作 (推迟到 Phase 1 推广启动后):
 - data zone 拆包发布 PyPI
-- 外部 Agent (OpenClaw / Hermes) 接入 (待 D-074 草稿翻 active)
+- 外部多 Agent (OpenClaw / Hermes / 同事的 agent) 接入 — 仍推迟 (D-074 Phase 1 第二个 adapter)
 - screener 设计 / 同事推广前的注册流
 - 第二份 methodology spec (减脂 / 糖控变体)
 - L1 词表进一步扩 (cuisine 偏好 token 等)
 - 调试台 React 化整合
 
 如果某 PR 触及上面任一项, 先回头读 ROADMAP + decisions.md 确认是否真要提前.
+
+> **D-097 (2026-05-25, 自用为主定位)**: 上面 screener / 第二份 spec / cuisine token 进一步确认推迟 (为同事推广服务, 自用不需要). **例外**: AI-friendly 接"志丹自己的"个人 agent (D-074 **Phase 0 reference adapter**) 是自用刚需, 要做 — 与本段"外部多 agent 接入"是两件事, 别混.

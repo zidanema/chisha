@@ -62,7 +62,7 @@
 ### F-003 · screener 设计
 
 - **来源**: [CLAUDE.md](../CLAUDE.md) Phase 1 列表
-- **状态**: open, 排到 Phase 1
+- **状态**: 降级 (D-097, 2026-05-25): 自用为主不做正式 screener — 3-5 熟人一句话判断"有没有饮食原则"即可; 触发=规模化 (开源 / N>>10) 再做
 - **What**: 同事推广时需要一个"是否适合用 chisha"的筛子 (目标缺失型 vs 原则派, [D-070](archive/DECISIONS_phase0.md#d-070-产品定位收敛到原则派点餐助手--三层信号模型-v1) 边界)
 - **优先级**: P2
 
@@ -126,6 +126,28 @@
 - **触发重做条件**: Phase 1 推广有真用户连续 refine 数据 / refine latency 还要再压 / Anthropic 计费成本成为瓶颈
 - **优先级**: P3 (长尾)
 
+### F-013 · Living/Lab router 后端拆分 (架构债)
+
+- **来源**: 2026-05-25 D-097 定位 review, 从 ROADMAP "Phase 1 必收口" 降级
+- **状态**: open (降级, 自用为主下不做)
+- **What**: `web_api.py` 里生产推荐路由与 sandbox/虚拟时钟逻辑物理耦合 (242 处 sandbox 提及, 每个 prod handler 挂 `Depends(_with_sandbox_sid)`). 拆成独立 Living router + Lab router, 让沙箱实验不可能污染生产推荐
+- **现有兜底**: D-077 fail-loud 护栏 (非 default sid + sandbox disabled → 409) + 操作纪律 (验收完 disable); 自用场景低风险
+- **触发重做**: 沙箱真污染过一次生产 / 正式推广同事 (同事不懂操作纪律, 护栏不够须物理隔离)
+- **耦合点**: AI-friendly 接入 (D-074) 若也走 web_api 会把 sandbox 耦合传导给外部 agent — 做 D-074 时确认协议层是否绕开 web_api sandbox 路由
+- **优先级**: P3 (自用) / P1 (推广前)
+
+### F-014 · 反馈/理解闭环的 AI-friendly 接入 (依赖反馈 worktree)
+
+- **来源**: 2026-05-25 D-074 AI-friendly 设计讨论, 志丹拍板 #3 (本部分本 worktree 不做)
+- **状态**: open, **阻塞于 B-001 反馈短链路实现** (另一 worktree, 见 memory `chisha_b001_feedback_short_loop`)
+- **What**: D-074 Phase 0 本 worktree 的 event ledger 只记 **推荐 + 选择 (accept/skip)**, 不碰 **显式评分反馈** + `ledger → 蒸馏 → profile` 的"越来越理解用户"闭环。等反馈 worktree (B-001 + `feedback_signal.py`) 落地后, 单独设计这部分如何 AI-friendly 接入个人 agent:
+  - agent 如何把显式反馈 (好评/差评/不合时宜) 记进 chisha (CLI `feedback` 命令?)
+  - **反馈触发 UX (志丹倾向)**: piggyback — 下次点餐时 skill 查"已 accept 但没反馈"的上顿, 用 AskUserQuestion 顺带问"上顿吃得咋样", 而非要用户显式说"要反馈" (摩擦高没人主动)。本 worktree 已记 accept (带 stable card_id) 给这个铺好地基
+  - chisha 零 LLM 前提下, 反馈→profile 蒸馏由谁的 LLM 做 / 何时触发 (Claude Code 手动 vs OpenClaw 定时)
+  - agent-side event ledger 与 web 的 `feedback_store` 是否统一 (暂并存, 不强行合)
+- **依赖**: B-001 反馈短链路实现 + chisha 零 LLM 决策 (D-074)
+- **优先级**: P1 (自用留存关键, 但有依赖顺序, 排在 D-074 Phase 0 + B-001 之后)
+
 ---
 
 ## Ideas
@@ -149,3 +171,5 @@ _(待填)_
 - 2026-05-21 · D-094 落地实施完成 (T-FR-01~07, 7 task closed): refine_intent_v2.py 砍 5 字段 + 9 类枚举闭包; recall.py 加 brand_avoid (venue 整店) + cooking_method_avoid (dish-级) 硬过滤 + cuisine_candidates_expanded 进 bucket_soft; refine.py V2→V1 桥接; rerank prompt 删 unsupported 段; eval set + 18 个 recall branch 测试同步; baseline_l2_snapshot 0 diff 守门通过
 - 2026-05-21 · prompt 优化 Step 3 续收口: 🔴 refine cache bug 通过 D-095 修完 (拆 system/user + cache_system=True, latency 6-8s → 3-4s 预期); top-K 60→40 砍 (跟 D-047 矩阵实测冲突); reason 示例精简砍 0 (信号都不重复, codex 共识); 多 cache breakpoint 立 F-012 不做 (5min 连续 refine 长尾 + 9h 工程量 + 3 high-risk 文件). **prompt 优化大题 (Step 1 + 2 + 3) 全部收口** [口径修正见 2026-05-23 条]
 - 2026-05-23 · prompt 优化 Step 2 (rerank 部分) 实际落地, 推翻 2026-05-21 "全部收口" 口径 — Step 2 当时只是 BACKLOG 化, 没做. 本轮 codex 共商完拆 T-PR2-A/B/C 3 个独立 commit (`b2657f8` / `d5fcf3d` / `2e13ba8`): 计数硬约束 4 处合并 / 字段表 markdown table → P-B-3 紧凑 key:value (T2 medium risk, codex commit-前 diff review SHIP) / 顶部 HTML DEV NOTE 挪 prompts/_dev_notes.md. style guide 直接砍 (单用户 2 prompt ROI 不足). refine v2 砍例本轮不做 (`v1-retire-brief` worktree 在写 V1 refine 退役计划, 撞包), 待 V1 退役后单开 brief. Step 4 (model 切换) 仍 BACKLOG. 守门: 995 pytest pass + baseline_l2_snapshot 0 diff + 10-case L3 sanity 系统约束全 ok.
+- 2026-05-25 · D-074 AI-friendly 设计讨论: 新立 F-014 (反馈/理解闭环的 AI-friendly 接入, 依赖反馈 worktree / B-001). 本 worktree D-074 Phase 0 scope = CLI + chisha 零 LLM 内核 + 推荐/选择 ledger, 不碰反馈闭环
+- 2026-05-25 · D-097 定位收敛 (自用为主、推广随缘): ROADMAP 必收口 9 项收窄到 2 硬门 (AI-friendly 接入 D-074 + B-001 P0). F-003 screener 降级 (触发=规模化); 新立 F-013 (Living/Lab router 后端拆分, 从必收口降级); F-001 (cuisine token) / F-004 (第二份 spec) 确认推迟 (为同事服务). 同步 decisions D-097 / ROADMAP / README / CLAUDE / CONTRACTS
