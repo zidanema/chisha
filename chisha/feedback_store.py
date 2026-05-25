@@ -123,6 +123,7 @@ def record_accept(
     meal_type: str,
     restaurant_name: str,
     summary: str,
+    choice_key: str | None = None,
 ) -> None:
     with _LOCK:
         data = load_store(root)
@@ -137,11 +138,14 @@ def record_accept(
             "stopped": False,
             "skipped": False,
             "skip_reason": None,
+            # D-074 T6: choose 幂等键 (sid::card_id::accept). agent_choose 据此判重.
+            "choice_key": choice_key,
         }
         save_store(root, data)
 
 
-def record_skip(root: Path, session_id: str, reason: str | None) -> None:
+def record_skip(root: Path, session_id: str, reason: str | None,
+                choice_key: str | None = None) -> None:
     """D-054: skip 不入 acceptedQueue (用户压根没吃这餐).
 
     语义: 如果该 session 已 accept (用户先点了再说没吃) → 标 skipped + reason
@@ -162,11 +166,14 @@ def record_skip(root: Path, session_id: str, reason: str | None) -> None:
                 "stopped": True,        # 不再弹 banner
                 "skipped": True,
                 "skip_reason": reason,
+                # D-074 T6: choose 幂等键 (sid::card_id::skip).
+                "choice_key": choice_key,
             }
         else:
             item["skipped"] = True
             item["skip_reason"] = reason
             item["stopped"] = True
+            item["choice_key"] = choice_key
         save_store(root, data)
 
 

@@ -166,6 +166,23 @@ def long_term_prefs_path(
     )
 
 
+def agent_round_dir(
+    root: Optional[Path] = None,
+    session_id: Optional[str] = None,
+) -> Path:
+    """D-074 T5: AI-friendly CLI in-flight 协议 round 状态目录.
+
+    存 pending/resolved 协议 round (start→resolve-intent→apply-rerank 跨进程中间态),
+    **与 recommend_trace 的可见 round 索引隔离** (codex #2: 未完成 round 不进
+    list_traces_v3 / debug-ui). sandbox 路由与 recommend_trace 一致.
+    """
+    r = _resolve_root(root)
+    return _maybe_sandbox(
+        r, "agent_rounds", "logs/agent_rounds",
+        session_id=session_id,
+    )
+
+
 def recommend_trace_dir(
     root: Optional[Path] = None,
     session_id: Optional[str] = None,

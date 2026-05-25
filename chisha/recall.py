@@ -83,6 +83,7 @@ def append_meal_log_entry(
     accepted_rank: int | None = None,
     combo_index: int | None = None,
     candidate_id: str | None = None,
+    choice_key: str | None = None,
 ) -> dict:
     """D-078: accept 时往 meal_log.jsonl 追加一条记录, 让 diversity_filter 闭环.
 
@@ -135,10 +136,41 @@ def append_meal_log_entry(
         entry["combo_index"] = combo_index
     if candidate_id is not None:
         entry["candidate_id"] = candidate_id
+    # D-074 T6: choose 幂等键 (sid::card_id::accept). agent_choose 据此查重防重复 append.
+    if choice_key is not None:
+        entry["choice_key"] = choice_key
 
     with p.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     return entry
+
+
+def meal_log_choice_keys(root: Path) -> set[str]:
+    """D-074 T6: 读 meal_log.jsonl 里所有已写的 choice_key (幂等查重用).
+
+    低频自用单后端, 扫全量可接受 (meal_log 体量小). 损坏行跳过.
+    """
+    from chisha import data_root
+    p = data_root.meal_log_path(root)
+    if not p.exists():
+        return set()
+    keys: set[str] = set()
+    try:
+        with p.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                ck = entry.get("choice_key") if isinstance(entry, dict) else None
+                if ck:
+                    keys.add(ck)
+    except Exception:
+        pass
+    return keys
 
 
 def compute_extra_banned_restaurants(
