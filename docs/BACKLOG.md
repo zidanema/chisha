@@ -22,8 +22,8 @@
 ### B-001 · 近期反馈对推荐影响过弱 (短链路缺口)
 
 - **来源**: 2026-05-17 沙盒实测 (sandbox 8 天 / 11 顿 / 10 反馈, L1 抽取产物全空, 推荐不受任何反馈影响) + 志丹拍板"这是根本问题"
-- **状态**: ✅ **RESOLVED (a) by D-098** (2026-05-25, 反馈短链路即时生效). 残留 (b) 香菜连吃 (ingredient 粒度 cooldown, 与 rating 无关) 降级留 [F-011](#f-011) 数据缺口 + 见下"剩余". **以下为修复前根因留档.**
-- **现象**: 用户给某餐厅/菜品 👎, 7 天 hard cooldown 后系统**照样推**, 行为与 👍 完全一致。连续吃同一配料 (如香菜, 非 main_ingredient_type) 也无法 cooldown
+- **状态**: ✅ **RESOLVED (a) by D-098** (2026-05-25, 反馈短链路即时生效). 残留 (b) **连吃同一菜系无冷却** (如连推湘菜, cuisine 粒度多样性, 与 rating 无关) 拆出新立 [F-013](#f-013) — 数据现成 (cuisine 全量字段), **非**数据缺口 (2026-05-25 志丹澄清原口误"香菜"实为"湘菜", 定性翻转). **以下为修复前根因留档.**
+- **现象**: 用户给某餐厅/菜品 👎, 7 天 hard cooldown 后系统**照样推**, 行为与 👍 完全一致。连续吃同一菜系 (如湘菜, cuisine 维度) 也无法 cooldown
 - **根因**: 反馈 → 推荐路径**只有一条**, 走 L1 抽取慢路径 (`feedback_store → L1 extractor → long_term_prefs.boost/penalty`)。但:
   - L1 prompt 保守阈值: 信号弱 / 矛盾 / 样本 < 阈值 → 抽空。沙盒 9 餐实测就抽空
   - L1 抽空时 `load_prefs()` 返 None → score.taste_match_bonus = 0 → L3 prompt 也没 long_term_prefs 段
@@ -93,14 +93,6 @@
 - **触发条件**: D-081 eval set 跑出 miss 率 > 20% 再加
 - **优先级**: P3
 
-### F-008 · 反馈接口 3 维 (喜欢 / 不喜欢 / 不合时宜)
-
-- **来源**: 2026-05-18 Refine v2 讨论中 Opus 提出
-- **状态**: open, 排到 V2
-- **What**: 当前反馈只有"喜欢/不喜欢"二维; 加"不合时宜"维度区分"今天不想吃但本身爱"vs"本身不喜欢", 避免长期偏好被污染
-- **与 B-001 关系**: 同属反馈改造范畴, 应在反馈优化 session 中一起做
-- **优先级**: P2 (反馈优化专题里做)
-
 ### F-009 · Faithful Refine 真兑现 [superseded by D-094, 2026-05-21]
 
 - **状态**: **superseded** — scope 翻盘. `reference` 已在 T-P2-01 真消费; `quality_floor / delivery_only / max_distance_km / functional.*` 砍 schema (志丹单用户实际不用); 见 D-094 草稿 + `docs/proposals/2026-05-21-faithful-refine-true-fulfillment.md`
@@ -126,6 +118,16 @@
 - **触发重做条件**: Phase 1 推广有真用户连续 refine 数据 / refine latency 还要再压 / Anthropic 计费成本成为瓶颈
 - **优先级**: P3 (长尾)
 
+### F-013 · cuisine 多样性冷却 (连吃同一菜系降权/轮换)
+
+- **来源**: 2026-05-25 B-001 残留 (b) 拆出 — 志丹澄清原口误"香菜"实为"湘菜", 定性从"配料数据缺口 (F-011)"翻转为"菜系多样性"
+- **状态**: open, 推广前做
+- **What**: 连续吃/推同一菜系 (如湘菜) 无任何冷却。现状 `diversity_filter` 只有餐厅级 (7天) + 蛋白级 (3天), 无 cuisine 维度; cuisine 仅有数量 cap (每菜系 top6, D-043) 非时间冷却
+- **数据**: **不卡** — `cuisine` 字段全量打标 (湘/川/粤/日料… 14+ 类), 区别于香菜走的 [F-011](#f-011) (food_form 0/11123 数据缺口)
+- **方案预案** (codex 共商再定): `diversity_filter` 加 `no_same_cuisine_within_days` (与现有两维同构) + `meal_log` 落盘补 `cuisine` 字段 (当前只记蛋白类) + 可选 `score.py` cuisine recency 软降权。硬 cooldown vs 软降权 / 衰减天数 / 与 D-073 子类多样化的边界待定
+- **依赖**: 碰 recall/score high-risk 文件, 改前 codex 共商 + baseline_l2_snapshot 守门
+- **优先级**: P2 (推广前)
+
 ---
 
 ## Ideas
@@ -149,3 +151,5 @@ _(待填)_
 - 2026-05-21 · D-094 落地实施完成 (T-FR-01~07, 7 task closed): refine_intent_v2.py 砍 5 字段 + 9 类枚举闭包; recall.py 加 brand_avoid (venue 整店) + cooking_method_avoid (dish-级) 硬过滤 + cuisine_candidates_expanded 进 bucket_soft; refine.py V2→V1 桥接; rerank prompt 删 unsupported 段; eval set + 18 个 recall branch 测试同步; baseline_l2_snapshot 0 diff 守门通过
 - 2026-05-21 · prompt 优化 Step 3 续收口: 🔴 refine cache bug 通过 D-095 修完 (拆 system/user + cache_system=True, latency 6-8s → 3-4s 预期); top-K 60→40 砍 (跟 D-047 矩阵实测冲突); reason 示例精简砍 0 (信号都不重复, codex 共识); 多 cache breakpoint 立 F-012 不做 (5min 连续 refine 长尾 + 9h 工程量 + 3 high-risk 文件). **prompt 优化大题 (Step 1 + 2 + 3) 全部收口** [口径修正见 2026-05-23 条]
 - 2026-05-23 · prompt 优化 Step 2 (rerank 部分) 实际落地, 推翻 2026-05-21 "全部收口" 口径 — Step 2 当时只是 BACKLOG 化, 没做. 本轮 codex 共商完拆 T-PR2-A/B/C 3 个独立 commit (`b2657f8` / `d5fcf3d` / `2e13ba8`): 计数硬约束 4 处合并 / 字段表 markdown table → P-B-3 紧凑 key:value (T2 medium risk, codex commit-前 diff review SHIP) / 顶部 HTML DEV NOTE 挪 prompts/_dev_notes.md. style guide 直接砍 (单用户 2 prompt ROI 不足). refine v2 砍例本轮不做 (`v1-retire-brief` worktree 在写 V1 refine 退役计划, 撞包), 待 V1 退役后单开 brief. Step 4 (model 切换) 仍 BACKLOG. 守门: 995 pytest pass + baseline_l2_snapshot 0 diff + 10-case L3 sanity 系统约束全 ok.
+- 2026-05-25 · F-008 (反馈 3 维 "不合时宜") 移出待办池 → ROADMAP「已砍清单·反馈交互类」(志丹判定过度细节短期不做, D-098 已用 `repurchase_intent` 缓解误伤)
+- 2026-05-25 · B-001 残留 (b) 定性翻转: 志丹澄清"香菜"实为"湘菜"(语音口误) → 从 F-011 数据缺口摘出, 新立 F-013 (cuisine 多样性冷却, 数据现成非缺口). 另: 前端 e2e 验证 D-098 差评即时生效通过 (采纳→强负差评→换一组该店消失, 全链路 200 零 error)

@@ -46,7 +46,7 @@ Phase 2 · 双向扩展 (顺序后议)
 - screener 设计 (筛同事原则派密度)
 - 沙箱模式交互动线重设计 (推广前用户心智不能乱)
 - L1 词表扩 cuisine token (同事 cuisine 比志丹分散)
-- ✅ B-001 反馈短链路即时生效 (差评不生效 P0, D-098, 2026-05-25) — 残留香菜连吃 ingredient 粒度走 F-011
+- ✅ B-001 反馈短链路即时生效 (差评不生效 P0, D-098, 2026-05-25) — 残留"连吃同一菜系无冷却"(原口误"香菜"实为"湘菜", cuisine 多样性, 数据现成) 拆出 F-013
 - Living/Lab router 拆分重做 (worktree 回滚后未完成项)
 - Living API agent-ready 参数化 (meal_hint + at_time 重做)
 - D-074 翻 active: AI-friendly 接入终态 = CLI + Skill 模式, `llm_request_spec` 数据契约取代 closure 注入
@@ -158,6 +158,7 @@ Phase 2 · 双向扩展 (顺序后议)
 |---|---|---|
 | 单一"满意度"星级 | 好吃和满意是两个维度 | D-010 |
 | 文本是唯一反馈方式 | 摩擦太大, 多数人不填 | D-011 |
+| 反馈第 3 维 ("不合时宜", 原 F-008) | 过度细节, 短期不做; D-098 已用 `repurchase_intent` 缓解"本身爱但那天不想吃"误伤, 扩 schema ROI 不足 | D-098 |
 | 只用静态有反馈数据 | 样本太稀疏 | D-013 |
 | 反馈一次提交后可改 | 下游学习不稳定; 改 append-only comments | D-066 / D-067 |
 
