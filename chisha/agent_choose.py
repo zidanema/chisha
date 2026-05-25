@@ -22,8 +22,10 @@ logger = logging.getLogger(__name__)
 ChooseAction = Literal["accept", "skip"]
 
 
-def make_choice_key(sid: str, card_id: str, action: str) -> str:
-    return f"{sid}::{card_id}::{action}"
+def make_choice_key(sid: str, round_id: str, card_id: str, action: str) -> str:
+    """codex #c: 加 round_id — card_id (c_{idx}_{rid}) 无 round 成分, 跨 refine 轮可重名,
+    不带 round 会把不同轮的不同卡折叠成同一选择."""
+    return f"{sid}::{round_id}::{card_id}::{action}"
 
 
 def _lock_path(sid: str, root: Path | None) -> Path:
@@ -54,6 +56,7 @@ def record_choice(
     card_id: str,
     action: ChooseAction,
     meal_type: str,
+    round_id: str = "R1",
     restaurant_id: str = "",
     restaurant_name: str = "",
     summary: str = "",
@@ -68,13 +71,14 @@ def record_choice(
     accept: feedback_store.record_accept + meal_log append (各自按 choice_key 幂等).
     skip:   feedback_store.record_skip (按 choice_key 幂等), 不写 meal_log.
 
+    choice_key=(sid, round_id, card_id, action) — 含 round 防跨 refine 轮串卡 (codex #c).
     返回审计 dict: {choice_key, action, accept_written, skip_written,
                    meal_log_written, already_complete}.
     重跑只补缺 (已写的不重写) — 用户/agent retry 安全.
     """
     if action not in ("accept", "skip"):
         raise ValueError(f"invalid action: {action!r} (需 accept|skip)")
-    choice_key = make_choice_key(sid, card_id, action)
+    choice_key = make_choice_key(sid, round_id, card_id, action)
     out: dict[str, Any] = {
         "choice_key": choice_key, "action": action,
         "accept_written": False, "skip_written": False,

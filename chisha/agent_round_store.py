@@ -128,32 +128,36 @@ def create_pending(
 
     幂等: 已存在同 sid 的 round → 若 correlation 匹配且仍 pending 返已存 (重试),
     否则 RoundStateError (sid 已有未完成 round, 不覆盖).
+
+    codex #d: read-decide-write 全程持 lock_round (跨进程互斥).
     """
-    existing = read_round(sid, root)
-    if existing is not None:
-        if (existing.get("status") == "pending"
-                and existing.get("correlation_id") == correlation_id):
-            return existing   # 幂等重试
-        raise RoundStateError(
-            f"sid {sid} 已有未完成 round (status={existing.get('status')}), "
-            f"不可重复 start"
-        )
-    data = {
-        "__version": ROUND_STORE_VERSION,
-        "recommendation_id": sid,
-        "round_id": round_id,
-        "status": "pending",
-        "operation": "extract",          # 当前等待 agent 执行的 operation
-        "correlation_id": correlation_id,
-        "extract_spec": extract_spec,
-        "rerank_spec": None,
-        "intent": None,
-        "frozen": meta,                  # meal_type/zone/today/daily_mood/refine_input/...
-        "created_at": _now_iso(),
-        "updated_at": _now_iso(),
-    }
-    _write_round(sid, data, root)
-    return data
+    with lock_round(sid, root):
+        existing = read_round(sid, root)
+        if existing is not None:
+            if (existing.get("status") == "pending"
+                    and existing.get("correlation_id") == correlation_id):
+                return existing   # 幂等重试
+            raise RoundStateError(
+                f"sid {sid} 已有未完成 round (status={existing.get('status')}), "
+                f"不可重复 start"
+            )
+        data = {
+            "__version": ROUND_STORE_VERSION,
+            "recommendation_id": sid,
+            "round_id": round_id,
+            "status": "pending",
+            "operation": "extract",          # 当前等待 agent 执行的 operation
+            "correlation_id": correlation_id,
+            "extract_spec": extract_spec,
+            "rerank_spec": None,
+            "intent": None,
+            "prepared": None,
+            "frozen": meta,                  # meal_type/zone/today/daily_mood/refine_input/...
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+        _write_round(sid, data, root)
+        return data
 
 
 def create_resolved(
@@ -164,36 +168,43 @@ def create_resolved(
     rerank_spec: dict,
     intent: dict | None,
     frozen: dict,
+    prepared: dict | None = None,
     root: Optional[Path] = None,
 ) -> dict:
     """无 context start: 直接建 resolved round (intent 空, 已 prepare + 发 rerank spec).
 
-    幂等: 已存在同 correlation 的 resolved → 返已存.
+    prepared (codex #a): 持久化 top_k + ctx_dict + feedback_avoided_names + latencies,
+    apply-rerank 用持久化 top_k 映射 agent 回传 (不重跑 prepare_candidates → 不会因
+    meal_log/profile 在 resolve→apply 间变化而 combo_index 映射漂移).
+
+    幂等: 已存在同 correlation 的 resolved → 返已存. 全程持 lock_round.
     """
-    existing = read_round(sid, root)
-    if existing is not None:
-        if (existing.get("status") == "resolved"
-                and existing.get("correlation_id") == correlation_id):
-            return existing
-        raise RoundStateError(
-            f"sid {sid} 已有未完成 round (status={existing.get('status')})"
-        )
-    data = {
-        "__version": ROUND_STORE_VERSION,
-        "recommendation_id": sid,
-        "round_id": round_id,
-        "status": "resolved",
-        "operation": "rerank",
-        "correlation_id": correlation_id,
-        "extract_spec": None,
-        "rerank_spec": rerank_spec,
-        "intent": intent,
-        "frozen": frozen,
-        "created_at": _now_iso(),
-        "updated_at": _now_iso(),
-    }
-    _write_round(sid, data, root)
-    return data
+    with lock_round(sid, root):
+        existing = read_round(sid, root)
+        if existing is not None:
+            if (existing.get("status") == "resolved"
+                    and existing.get("correlation_id") == correlation_id):
+                return existing
+            raise RoundStateError(
+                f"sid {sid} 已有未完成 round (status={existing.get('status')})"
+            )
+        data = {
+            "__version": ROUND_STORE_VERSION,
+            "recommendation_id": sid,
+            "round_id": round_id,
+            "status": "resolved",
+            "operation": "rerank",
+            "correlation_id": correlation_id,
+            "extract_spec": None,
+            "rerank_spec": rerank_spec,
+            "intent": intent,
+            "prepared": prepared,
+            "frozen": frozen,
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+        _write_round(sid, data, root)
+        return data
 
 
 def advance_to_resolved(
@@ -202,34 +213,37 @@ def advance_to_resolved(
     correlation_id: str,
     rerank_spec: dict,
     intent: dict | None,
+    prepared: dict | None = None,
     frozen_update: dict | None = None,
     root: Optional[Path] = None,
 ) -> dict:
-    """resolve-intent: pending → resolved. 存 rerank spec + resolved intent.
+    """resolve-intent: pending → resolved. 存 rerank spec + resolved intent + prepared.
 
     幂等: 已是 resolved 且 correlation 匹配 → 返已存 (重试不重复推进).
-    非 pending 起步 → RoundStateError.
+    非 pending 起步 → RoundStateError. 全程持 lock_round (codex #d).
     """
-    cur = read_round(sid, root)
-    if cur is None:
-        raise RoundStateError(f"sid {sid} 无 in-flight round, 不能 resolve-intent")
-    if cur.get("status") == "resolved" and cur.get("correlation_id") == correlation_id:
-        return cur   # 幂等重试
-    if cur.get("status") != "pending":
-        raise RoundStateError(
-            f"sid {sid} round 状态 {cur.get('status')!r} 不可 →resolved "
-            f"(仅 pending 可推进)"
-        )
-    cur["status"] = "resolved"
-    cur["operation"] = "rerank"
-    cur["correlation_id"] = correlation_id
-    cur["rerank_spec"] = rerank_spec
-    cur["intent"] = intent
-    if frozen_update:
-        cur["frozen"] = {**(cur.get("frozen") or {}), **frozen_update}
-    cur["updated_at"] = _now_iso()
-    _write_round(sid, cur, root)
-    return cur
+    with lock_round(sid, root):
+        cur = read_round(sid, root)
+        if cur is None:
+            raise RoundStateError(f"sid {sid} 无 in-flight round, 不能 resolve-intent")
+        if cur.get("status") == "resolved" and cur.get("correlation_id") == correlation_id:
+            return cur   # 幂等重试
+        if cur.get("status") != "pending":
+            raise RoundStateError(
+                f"sid {sid} round 状态 {cur.get('status')!r} 不可 →resolved "
+                f"(仅 pending 可推进)"
+            )
+        cur["status"] = "resolved"
+        cur["operation"] = "rerank"
+        cur["correlation_id"] = correlation_id
+        cur["rerank_spec"] = rerank_spec
+        cur["intent"] = intent
+        cur["prepared"] = prepared
+        if frozen_update:
+            cur["frozen"] = {**(cur.get("frozen") or {}), **frozen_update}
+        cur["updated_at"] = _now_iso()
+        _write_round(sid, cur, root)
+        return cur
 
 
 def require_resolved(sid: str, root: Optional[Path] = None) -> dict:

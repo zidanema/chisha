@@ -233,3 +233,50 @@ def test_at_time_injects_today(cli_env):
     """--at-time 注入 today, 不碰 sandbox."""
     d = _run(["start", "--meal", "dinner", "--at-time", "2026-01-15"])
     assert d["ok"] and d["status"] == "resolved"
+
+
+# ─────────────────────── codex review 修复点回归 ───────────────────────
+
+def test_codex_a_apply_uses_persisted_topk(cli_env, monkeypatch):
+    """codex #a: resolve 后 meal_log/profile 变化, apply 仍用持久化 top_k 映射,
+    combo_index 不漂移到错 combo."""
+    d = _run(["start", "--meal", "lunch", "--context", "辣"])
+    rid = d["recommendation_id"]
+    d = _run(["resolve-intent", "--id", rid, "--intent", _valid_intent()])
+    # resolve 后篡改 recall 返回 (模拟数据漂移) — apply 应忽略, 用持久化 top_k
+    monkeypatch.setattr(orch, "recall", lambda *a, **kw: [])  # 漂移成空
+    d = _run(["apply-rerank", "--id", rid, "--response", _valid_rerank(n_explore=0)])
+    assert d["ok"] and d["status"] == "ready"
+    assert len(d["cards"]) == 5    # 持久化 top_k 仍在, 没因 recall 漂移变空
+
+
+def test_codex_c_choice_key_includes_round(cli_env):
+    """codex #c: 跨 refine 轮同 card_id 不串台 (choice_key 含 round)."""
+    from chisha import feedback_store
+    d = _run(["start", "--meal", "lunch"])
+    rid = d["recommendation_id"]
+    d = _run(["apply-rerank", "--id", rid, "--response", _valid_rerank()])
+    cid = d["cards"][0]["id"]
+    _run(["choose", "--id", rid, "--card", cid, "--action", "accept"])
+    store = feedback_store.load_store(cli_env)
+    ck = store["accepted"][rid]["choice_key"]
+    assert "::R1::" in ck    # 含 round 成分
+
+
+def test_codex_d_resolve_idempotent_replay(cli_env):
+    """codex #d: 经 extract 的 resolved round 再 resolve-intent → 幂等重发, 不报错."""
+    d = _run(["start", "--meal", "lunch", "--context", "辣"])
+    rid = d["recommendation_id"]
+    _run(["resolve-intent", "--id", rid, "--intent", _valid_intent()])
+    d2 = _run(["resolve-intent", "--id", rid, "--intent", _valid_intent()])
+    assert d2["ok"] is True
+    assert d2.get("idempotent_replay") is True
+    assert d2["llm_request_spec"]["operation_kind"] == "rerank"
+
+
+def test_codex_f_rejects_path_traversal_id(cli_env):
+    """codex #f: 非法 id (path traversal) 在拼路径前被拒."""
+    d = _run(["resolve-intent", "--id", "../etc/passwd", "--intent", _valid_intent()])
+    assert d["ok"] is False and d["error"]["code"] == "BAD_ID"
+    d = _run(["choose", "--id", "ok_sid", "--card", "../../x", "--action", "skip"])
+    assert d["ok"] is False and d["error"]["code"] == "BAD_ID"

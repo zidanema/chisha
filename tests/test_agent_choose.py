@@ -41,11 +41,11 @@ def test_accept_writes_both(root):
     store = feedback_store.load_store(root)
     acc = store["accepted"]["s1"]
     assert acc["accepted_rank"] == 1
-    assert acc["choice_key"] == "s1::c_0_r1::accept"
+    assert acc["choice_key"] == "s1::R1::c_0_r1::accept"
     # meal_log
     lines = _meal_log_lines(root)
     assert len(lines) == 1
-    assert lines[0]["choice_key"] == "s1::c_0_r1::accept"
+    assert lines[0]["choice_key"] == "s1::R1::c_0_r1::accept"
     assert lines[0]["candidate_id"] == "c_0_r1"
 
 
@@ -65,7 +65,7 @@ def test_accept_partial_failure_rerun_fills_gap(root):
     # 先只写 feedback (模拟 meal_log 写失败前中断)
     feedback_store.record_accept(root, "s2", candidate_rank=1, meal_type="lunch",
                                  restaurant_name="店2", summary="x",
-                                 choice_key="s2::c_0_r2::accept")
+                                 choice_key="s2::R1::c_0_r2::accept")
     assert len(_meal_log_lines(root)) == 0
     # 重跑 record_choice: feedback 已有 choice_key → 跳过; meal_log 缺 → 补写
     out = agent_choose.record_choice(
@@ -100,7 +100,7 @@ def test_skip_writes_feedback_only(root):
     store = feedback_store.load_store(root)
     acc = store["accepted"]["s3"]
     assert acc["skipped"] is True
-    assert acc["choice_key"] == "s3::c_0_r1::skip"
+    assert acc["choice_key"] == "s3::R1::c_0_r1::skip"
     # skip 不写 meal_log
     assert len(_meal_log_lines(root)) == 0
 

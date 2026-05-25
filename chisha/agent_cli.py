@@ -50,6 +50,26 @@ def _emit_error(code: str, message: str, **extra: Any) -> int:
     return 1
 
 
+def _validate_id(value: str, label: str) -> None:
+    """codex #f: 用户给的 id 在拼任何路径前先校验, 防 path traversal / 注入.
+
+    Raises: RuntimeError (caller 转 JSON error).
+    """
+    if not value or "/" in value or ".." in value or "\\" in value or "\x00" in value:
+        raise RuntimeError(f"非法 {label}: {value!r}")
+
+
+def _prepared_blob(prep) -> dict:
+    """codex #a: 持久化 apply-rerank 映射所需 (top_k 精确), 不靠重跑."""
+    return {
+        "top_k": prep.top_k,
+        "ctx_dict": prep.ctx.to_llm_dict(),
+        "feedback_avoided_names": prep.feedback_avoided_names,
+        "latencies": {"ctx": prep.ctx_latency_ms, "recall": prep.recall_latency_ms,
+                      "score": prep.score_latency_ms},
+    }
+
+
 # ─────────────────────── scope / 输入 ───────────────────────
 
 def _guard_scope(root: Path, scope: str) -> None:
@@ -143,24 +163,26 @@ def _write_cards(sid: str, round_id: str, cards: list[dict], root: Path) -> None
     p.write_text(json.dumps(existing, ensure_ascii=False), encoding="utf-8")
 
 
-def _find_card(sid: str, card_id: str, root: Path) -> dict | None:
-    """choose: 从 cards 文件按 card_id 找 (扫所有 round, 最新优先)."""
+def _find_card(sid: str, card_id: str, root: Path) -> tuple[dict | None, str | None]:
+    """choose: 从 cards 文件**最新一轮**按 card_id 找 (codex #c: 只查 __latest 轮,
+    不跨轮 — 用户永远从当前呈现里选; card_id 无 round 成分跨轮可重名).
+
+    返回 (card, round_id) 或 (None, latest_round).
+    """
     p = _cards_path(sid, root)
     if not p.exists():
-        return None
+        return None, None
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
     except Exception:
-        return None
+        return None, None
     latest = data.get("__latest")
-    round_order = ([latest] if latest else []) + [
-        k for k in data if k not in (latest, "__latest")
-    ]
-    for rk in round_order:
-        for card in data.get(rk) or []:
-            if card.get("id") == card_id:
-                return card
-    return None
+    if not latest:
+        return None, None
+    for card in data.get(latest) or []:
+        if card.get("id") == card_id:
+            return card, latest
+    return None, latest
 
 
 # ─────────────────────── 共享: prepare → rerank spec ───────────────────────
@@ -216,6 +238,8 @@ def cmd_start(args) -> int:
     root = _root()
     try:
         _guard_scope(root, args.scope)
+        if args.from_id:
+            _validate_id(args.from_id, "--from id")
         today = _parse_at_time(args.at_time, root)
     except RuntimeError as e:
         return _emit_error("SCOPE_OR_TIME", str(e))
@@ -287,7 +311,8 @@ def cmd_start(args) -> int:
     try:
         agent_round_store.create_resolved(
             sid, round_id=round_id, correlation_id=cid.encode(),
-            rerank_spec=spec, intent=None, frozen=frozen, root=root,
+            rerank_spec=spec, intent=None, frozen=frozen,
+            prepared=_prepared_blob(prep), root=root,
         )
     except agent_round_store.RoundStateError as e:
         return _emit_error("ROUND_STATE", str(e))
@@ -310,17 +335,35 @@ def cmd_resolve_intent(args) -> int:
     except RuntimeError as e:
         return _emit_error("SCOPE_OR_TIME", str(e))
 
+    try:
+        _validate_id(args.id, "--id")
+    except RuntimeError as e:
+        return _emit_error("BAD_ID", str(e))
+
     from chisha import agent_round_store
     from chisha.refine_intent_v2 import apply_intent_response
 
     cur = agent_round_store.read_round(args.id, root)
-    if cur is None or cur.get("status") != "pending":
+    if cur is None:
+        return _emit_error("ROUND_STATE", f"sid {args.id} 无 in-flight round")
+    round_id = cur.get("round_id", "R1")
+    # codex #d: 幂等重试 — 经 extract 阶段的 resolved round (extract_spec 非 None) 再
+    # resolve-intent → 重发已存 rerank spec, 不报错不重算. 无 context 的 resolved round
+    # (extract_spec=None, 没经 extract) 不属此情形 → 落 ROUND_STATE.
+    if cur.get("status") == "resolved" and cur.get("extract_spec") is not None:
+        _emit({
+            "ok": True, "recommendation_id": args.id, "round": round_id,
+            "status": "resolved", "operation": "rerank", "idempotent_replay": True,
+            "llm_request_spec": cur.get("rerank_spec"),
+            "next": "apply-rerank --id <rid> --response <json>",
+        })
+        return 0
+    if cur.get("status") != "pending":
         return _emit_error(
             "ROUND_STATE",
-            f"sid {args.id} 无 pending round (status={cur.get('status') if cur else None})",
+            f"sid {args.id} round 状态 {cur.get('status')!r}, 需 pending 才能 resolve-intent",
         )
     frozen = cur.get("frozen") or {}
-    round_id = cur.get("round_id", "R1")
 
     # 解析 agent 回传的 intent JSON
     try:
@@ -358,7 +401,7 @@ def cmd_resolve_intent(args) -> int:
     try:
         agent_round_store.advance_to_resolved(
             args.id, correlation_id=cid.encode(), rerank_spec=spec,
-            intent=intent.to_log_dict(),
+            intent=intent.to_log_dict(), prepared=_prepared_blob(prep),
             frozen_update={"intent": intent.to_log_dict(),
                            "n_explore": _n_explore_for(round_id)},
             root=root,
@@ -385,6 +428,11 @@ def cmd_apply_rerank(args) -> int:
     except RuntimeError as e:
         return _emit_error("SCOPE_OR_TIME", str(e))
 
+    try:
+        _validate_id(args.id, "--id")
+    except RuntimeError as e:
+        return _emit_error("BAD_ID", str(e))
+
     from chisha import agent_round_store
     from chisha.api import _format_v2_candidate
     from chisha.rerank import apply_rerank_response, fallback_rerank
@@ -396,6 +444,15 @@ def cmd_apply_rerank(args) -> int:
     frozen = cur.get("frozen") or {}
     round_id = cur.get("round_id", "R1")
     n_explore = int(frozen.get("n_explore", _n_explore_for(round_id)))
+
+    # codex #a: 用 resolve 时持久化的 top_k 映射 agent 回传 (不重跑 prepare_candidates
+    # → combo_index 永远映射到 agent 当时看到的同一 combo, 不受 meal_log/profile 在
+    # resolve→apply 间变化影响).
+    prepared = cur.get("prepared") or {}
+    persisted_top_k = prepared.get("top_k")
+    if not persisted_top_k:
+        return _emit_error("NO_PREPARED",
+                           f"sid {args.id} resolved round 缺持久化 top_k, 无法 apply")
 
     try:
         resp_payload = json.loads(args.response)
@@ -411,39 +468,26 @@ def cmd_apply_rerank(args) -> int:
     else:
         payload = resp_payload
 
-    # 重跑确定性编排 (冻结 today + fb_signal + intent → 确定性重建 top_k + trace 输入)
     today = dt.date.fromisoformat(frozen["today"])
-    intent = _intent_from_dict(frozen.get("intent"))
-    try:
-        from chisha.agent_orchestration import prepare_candidates
-        profile, zone, rests, tagged, meal_log = _load_inputs(frozen["meal_type"], root)
-        prep = prepare_candidates(
-            profile=profile, rests=rests, tagged=tagged, meal_log=meal_log,
-            meal_type=frozen["meal_type"], today=today, root=root,
-            refine_input=frozen.get("refine_input"), intent=intent,
-            fb_signal=frozen.get("fb_signal"),
-        )
-    except Exception as e:
-        return _emit_error("PREPARE", f"{type(e).__name__}: {e}")
 
-    # 校验 + 映射 (确定性守卫留 chisha); 失败 → chisha_l2 fallback
-    mapped, meta = apply_rerank_response(payload, prep.top_k, n=5, n_explore=n_explore)
+    # 校验 + 映射 (确定性守卫留 chisha, 对持久化 top_k); 失败 → chisha_l2 fallback
+    mapped, meta = apply_rerank_response(payload, persisted_top_k, n=5,
+                                         n_explore=n_explore)
     used_fallback = mapped is None
     if used_fallback:
-        mapped = fallback_rerank(prep.top_k, n=5, n_explore=n_explore,
-                                 meal_log=meal_log, today=today)
+        mapped = fallback_rerank(persisted_top_k, n=5, n_explore=n_explore,
+                                 today=today)
     narrative = meta.get("narrative") or ""
 
     cards = [_format_v2_candidate(i + 1, c) for i, c in enumerate(mapped)]
     _write_cards(args.id, round_id, cards, root)
 
-    # 发布 trace (best-effort, 同 recommend_meal 失败不阻断). R1 走 write_trace.
+    # 发布 trace (best-effort, 失败不阻断 cards). 内部重跑 prepare_candidates 取 l1/l2
+    # debug 上下文 (drift 只影响 debug 面板, 用户面 cards 走持久化 top_k 永远正确).
     _publish_trace_best_effort(
-        sid=args.id, round_id=round_id, prep=prep, mapped=mapped,
-        profile=profile, rests=rests, tagged=tagged, meal_log=meal_log,
-        meal_type=frozen["meal_type"], zone=zone, today=today,
-        narrative=narrative, used_fallback=used_fallback,
-        fallback_reason=meta.get("detail"), root=root,
+        sid=args.id, round_id=round_id, frozen=frozen, persisted=prepared,
+        mapped=mapped, today=today, narrative=narrative,
+        used_fallback=used_fallback, fallback_reason=meta.get("detail"), root=root,
     )
 
     agent_round_store.clear_round(args.id, root)
@@ -458,15 +502,27 @@ def cmd_apply_rerank(args) -> int:
     return 0
 
 
-def _publish_trace_best_effort(*, sid, round_id, prep, mapped, profile, rests,
-                                tagged, meal_log, meal_type, zone, today,
+def _publish_trace_best_effort(*, sid, round_id, frozen, persisted, mapped, today,
                                 narrative, used_fallback, fallback_reason, root) -> None:
-    """复用 api._build_trace 写 R1 trace; refine 轮 best-effort append_round.
-    失败仅吞掉 (trace 是派生证据, 不阻断 cards 返回)."""
+    """发布 debug trace (best-effort, 失败吞掉不阻断 cards).
+
+    内部重跑 prepare_candidates 取 l1/l2 + combos/ranked debug 上下文; 用户面 final
+    走持久化 top_k + mapped (与返回的 cards 一致). 重跑漂移只影响 debug 面板, 不影响
+    cards 正确性 (codex #a). 重跑/build 任一失败 → 跳过 trace.
+    """
     try:
         from chisha import clock, trace_store
+        from chisha.agent_orchestration import prepare_candidates
         from chisha.api import _build_trace
-        # 合成 l3_collector (agent 执行了 LLM, chisha 记录其产出)
+
+        profile, zone, rests, tagged, meal_log = _load_inputs(frozen["meal_type"], root)
+        intent = _intent_from_dict(frozen.get("intent"))
+        prep = prepare_candidates(
+            profile=profile, rests=rests, tagged=tagged, meal_log=meal_log,
+            meal_type=frozen["meal_type"], today=today, root=root,
+            refine_input=frozen.get("refine_input"), intent=intent,
+            fb_signal=frozen.get("fb_signal"),
+        )
         l3_collector = {
             "llm_called": not used_fallback,
             "status": "fallback" if used_fallback else "ok",
@@ -476,30 +532,28 @@ def _publish_trace_best_effort(*, sid, round_id, prep, mapped, profile, rests,
             "used_fallback": used_fallback,
             "fallback_reason": fallback_reason,
         }
-        started = clock.now_utc(root)
+        lat = persisted.get("latencies") or {}
         trace = _build_trace(
-            session_id=sid, started_at=started, total_latency_ms=0,
-            ctx_latency_ms=prep.ctx_latency_ms, recall_latency_ms=prep.recall_latency_ms,
-            score_latency_ms=prep.score_latency_ms, rerank_latency_ms=0,
-            meal_type=meal_type, zone=zone, today=today, profile=profile,
+            session_id=sid, started_at=clock.now_utc(root), total_latency_ms=0,
+            ctx_latency_ms=lat.get("ctx", 0), recall_latency_ms=lat.get("recall", 0),
+            score_latency_ms=lat.get("score", 0), rerank_latency_ms=0,
+            meal_type=frozen["meal_type"], zone=zone, today=today, profile=profile,
             rests=rests, tagged=tagged, meal_log=meal_log, combos=prep.combos,
             ctx=prep.ctx, daily_mood=None, ranked_raw=prep.ranked_raw,
-            ranked=prep.ranked, top_k=prep.top_k, reranked=mapped,
+            ranked=prep.ranked, top_k=persisted.get("top_k"), reranked=mapped,
             l3_collector=l3_collector, use_llm_rerank=True, root=root,
-            feedback_signal=prep.fb_signal,
-            feedback_avoided_names=prep.feedback_avoided_names,
+            feedback_signal=frozen.get("fb_signal"),
+            feedback_avoided_names=persisted.get("feedback_avoided_names"),
         )
         trace["__source"] = "agent_cli"
         if round_id == "R1":
             trace_store.write_trace(sid, trace, root=root)
         else:
-            # refine 轮: 把 R1-shape trace 折成 round payload append
             round_payload = {
-                "user_input": prep.ctx.to_llm_dict().get("refine_input"),
-                "intent_v2": (prep.ctx.to_llm_dict().get("refine_intent")),
+                "user_input": frozen.get("refine_input"),
+                "intent_v2": frozen.get("intent"),
                 "narrative": narrative,
-                "kpi": {"combos": len(prep.combos), "top1": "",
-                        "latency_ms": 0},
+                "kpi": {"combos": len(prep.combos), "top1": "", "latency_ms": 0},
                 "l1": trace.get("l1"), "l2": trace.get("l2"),
                 "l3": trace.get("l3"), "final": trace.get("final"),
                 "__frozen": trace.get("__frozen"),
@@ -521,19 +575,26 @@ def cmd_choose(args) -> int:
         return _emit_error("SCOPE_OR_TIME", str(e))
     if args.action not in ("accept", "skip"):
         return _emit_error("BAD_ACTION", f"--action 需 accept|skip (got {args.action!r})")
+    try:
+        _validate_id(args.id, "--id")
+        _validate_id(args.card, "--card")
+    except RuntimeError as e:
+        return _emit_error("BAD_ID", str(e))
 
     from chisha import agent_choose
 
-    card = _find_card(args.id, args.card, root)
+    # codex #c: 只在最新一轮的 cards 里找 (用户从当前呈现选), round_id 进 choice_key.
+    card, round_id = _find_card(args.id, args.card, root)
     if card is None and args.action == "accept":
         return _emit_error(
             "CARD_NOT_FOUND",
-            f"card {args.card!r} 不在 {args.id} 的 final cards 里 (accept 需卡片明细)",
+            f"card {args.card!r} 不在 {args.id} 最新一轮的 final cards 里 (accept 需卡片明细)",
         )
     rest = (card or {}).get("restaurant") or {}
     dishes = (card or {}).get("dishes") or []
     out = agent_choose.record_choice(
         root, sid=args.id, card_id=args.card, action=args.action,
+        round_id=round_id or "R1",
         meal_type=(card or {}).get("meal_type") or _card_meal_type(args.id, root),
         restaurant_id=rest.get("id", ""), restaurant_name=rest.get("name", ""),
         summary=(card or {}).get("summary", ""), dishes=dishes,
