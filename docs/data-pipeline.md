@@ -13,9 +13,15 @@
 
 ```bash
 # 1. 消费/归一化: 美团 output → restaurants.json + dishes_raw.json
-#    (解析月售/距离/时长、抽品牌、按位置分配 id、空 category 待回填)
+#    (解析月售/距离/时长、抽品牌、稳定哈希 id (D-099)、同店去重、空 category 待回填)
+#    冲突未确认会 block (退出非0, 写 dish_id_conflicts.json + _staged/), 审阅后把 key
+#    加进 data/<zone>/conflicts_ack.json 再重跑。
 uv run python -m chisha.loader ~/waimai_data/output/office_restaurants.json shenzhen-bay
 uv run python -m chisha.loader ~/waimai_data/output/home_restaurants.json   home
+
+# 1b. (一次性迁移, 仅 id 算法/归一化版本变时) 旧标签按 (新rid,新dish_id) 重映射免重打:
+#     先单跑第 1 步看冲突报告并 ack, 再跑迁移 (快照旧数据 + 发布 active raw + 预填 tagged)
+uv run python -m scripts.migrate_stable_ids all    # 之后第 2 步增量补 needs_tagging
 
 # 2. LLM 打标: dishes_raw.json → dishes_tagged.json (营养画像 + cuisine)
 #    默认 deepseek-v4-flash / batch 30 / 16 workers (见 scripts/tag_via_api.py)
@@ -33,9 +39,10 @@ uv run python -m scripts.validate_data
 
 ## 全量重消费的红线坑 (踩过, 别再踩)
 
-1. **id 按文件位置分配** (`r_{i}` / `d_{i}_{j}`, 见 `loader.normalize`)。新采集顺序/数量一变, id 整体重映射, 与旧数据**不对应**。后果与对策:
-   - **打标缓存撞车**: 全量重打前先清 `.claude/v3_tagging/<version>/<zone>/` batch 缓存 + 用 `--force-version`/`--no-resume`, 否则旧 `batch_NNNN` 索引会复用到错的菜。(merge 用 dish_id 幂等覆盖, 同 delta 集合内 resume 安全。)
-   - **历史反馈/偏好污染** (重消费后**必处理**, 否则下次推荐错投): `logs/feedback/store.json` 的 sessions 冷存 + `logs/meal_log.jsonl` 存的是旧 restaurant_id/dish_id。新旧都用 `r_NNN` 格式 → 偶然撞 id → D-098 反馈短链路(`feedback_signal`)和 `long_term_prefs` 的 boost/penalty 错投到新店。两条路: 清空这些 runtime log (干净但丢历史反馈) / 按店名重映射旧 id (保住反馈, 店还在才行)。这两个文件被 gitignore, 不进 commit, 但运行时仍读。
+1. **~~id 按文件位置分配~~ → 稳定哈希 id (D-099 已解, 2026-05-26)**: id 现在 = `r_+sha1(归一店名)` / `d_+rid+sha1(归一菜名)`, 重采→同店/同菜 id 不变, 历史反馈/标签永远映射得上。残留注意:
+   - **打标缓存**: 缓存绑**有序 dish-id 清单** (D-099.3), 重采后批内菜变了会自动重跑, 无需手清; 但 id 算法本身变 (归一化版本 bump) 时建议清 `.claude/v3_tagging/<version>/<zone>/` 免堆陈旧批文件。
+   - **历史反馈/偏好**: 同店同菜 id 稳定 → `logs/feedback/store.json` + `logs/meal_log.jsonl` 的旧 id 跨重采仍对得上, 不再错投 (这正是 D-099 的目的)。店**改名**会换 rid → 靠 `data/aliases.json` 人工绑旧名兜底 (D-099.2)。
+   - **同名异价 SKU**: 同店同归一菜名但价格不同 (截断名 / 促销) = 真冲突, loader 隔离不发布直到 `conflicts_ack.json` 确认 (D-099.1); 已知 office 5 个, 见 `data/shenzhen-bay/dish_id_conflicts.json`。
 
 2. **LLM 偶发枚举越界值** (~0.3%): deepseek 会输出词表外值 (cooking_method 如 卤/焗/干煸、cuisine 如 杭州/台湾菜、protein 如 `'60+'` 字符串)。`validate_data` 是 hard fail 且逐字段只报第一个 → 必须全量扫 `DishTagged` 收齐再确定性映射到 enum (改 cuisine 后要重跑第 3 步)。建议: 把归一化沉淀进 `tag_via_api` merge 前的后处理 (已知值映射、未知值 log warn 不 crash), 免得每次手 patch。
 
@@ -50,5 +57,6 @@ uv run python -m scripts.validate_data
 ## 验收清单
 
 - `validate_data`: 两 zone tagged 覆盖率 = 100% of raw; DishTagged 0 违规 (空菜单店的 ✗ 属既有, 非新增)。
-- 重消费后: 已处理 `logs/feedback/store.json` + `logs/meal_log.jsonl` 旧 id (清空或重映射)。
+- 冲突报告 `data/<zone>/dish_id_conflicts.json` 已审阅, 未确认冲突清零 (否则 loader 不发布)。
+- (稳定 id 后) `logs/feedback/store.json` + `logs/meal_log.jsonl` 旧 id 跨重采自动对齐, **无需迁移**; 仅店改名需在 `data/aliases.json` 补 alias。
 - `restaurants.json.category` 已回填 (空菜单店除外)。

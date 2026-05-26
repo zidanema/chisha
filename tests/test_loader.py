@@ -5,6 +5,8 @@ from chisha.loader import (
     parse_eta_min,
     normalize,
     extract_brand,
+    restaurant_rid,
+    dish_id_for,
 )
 
 
@@ -68,19 +70,22 @@ def test_normalize_basic():
             }
         ]
     }
-    rests, dishes = normalize(raw, office_zone="test-zone")
+    rests, dishes, conflicts = normalize(raw, office_zone="test-zone")
     assert len(rests) == 1
-    assert rests[0]["id"] == "r_001"
+    rid = restaurant_rid("测试餐厅")
+    assert rests[0]["id"] == rid          # 稳定哈希 id (D-099), 不再是 r_001
+    assert rid.startswith("r_") and len(rid) == 12
     assert rests[0]["monthly_orders"] == 500
     assert rests[0]["distance_m"] == 800
     assert rests[0]["delivery_eta_min"] == 25
     assert rests[0]["office_zone"] == "test-zone"
     assert rests[0]["category"] == ""  # 待回填
+    assert conflicts == []
     assert len(dishes) == 2
-    assert dishes[0]["dish_id"] == "d_001_001"
-    assert dishes[0]["restaurant_id"] == "r_001"
-    assert dishes[0]["raw_name"] == "白菜水饺"
-    assert dishes[0]["price"] == 15.1
-    assert dishes[0]["monthly_sales"] == 200
-    assert dishes[1]["dish_id"] == "d_001_002"
-    assert dishes[1]["monthly_sales"] == 27
+    by_name = {d["raw_name"]: d for d in dishes}
+    assert by_name["白菜水饺"]["dish_id"] == dish_id_for(rid, "白菜水饺")
+    assert by_name["白菜水饺"]["restaurant_id"] == rid
+    assert by_name["白菜水饺"]["price"] == 15.1
+    assert by_name["白菜水饺"]["monthly_sales"] == 200
+    assert by_name["辣椒炒肉"]["dish_id"] == dish_id_for(rid, "辣椒炒肉")
+    assert by_name["辣椒炒肉"]["monthly_sales"] == 27

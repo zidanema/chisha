@@ -398,6 +398,14 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     zones = _resolve_zones(args.zone)
 
+    if args.cmd in ("prepare", "merge"):  # D-099 BLOCK#3: 读 raw+restaurants 前查 ingest 锁
+        from chisha.loader import ingest_in_progress
+        for z in zones:
+            if ingest_in_progress(_zone_data_dir(z)):
+                print(f"[{z}] .ingest_lock 存在 (loader 发布中/未完成), 先重跑 chisha.loader 收尾",
+                      file=sys.stderr)
+                return 3
+
     if args.cmd == "prepare":
         for z in zones:
             m = prepare_zone(

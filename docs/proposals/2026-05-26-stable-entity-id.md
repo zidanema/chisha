@@ -1,8 +1,7 @@
 # 提案: 稳定实体 id (跨重采不漂移)
 
-> 状态: **方案定稿, 待落地** (Opus 提案 + Codex pressure-test 收敛, 2026-05-26)。
-> 落地在**新 worktree/session** 做; 落地时把下方 D-099~D-099.3 追加进 `docs/decisions.md`。
-> 相关: [docs/data-pipeline.md](../data-pipeline.md) (落地后把"位置 id 漂移"坑改成"稳定 id 已解")。
+> 状态: **已落地** (2026-05-26, worktree `d099-stable-entity-id`)。决策入 `docs/decisions.md` D-099~D-099.3, 流水线坑已改 `docs/data-pipeline.md`。
+> 落地差异 (vs 提案): 数据已重采 (office 409→429raw→395unique); Codex pressure-test 加了**原子发布 ack 状态机** (未确认冲突 block 不发布) + **dedup 内容指纹 tie-break** (不用输入顺序) + 迁移**ingest 前快照** + 多源旧标签冲突判 ambiguous; 同名冲突签名只看价格不看销量。以下为定稿时提案原文, 留作溯源。
 
 ## 问题
 `chisha/loader.py::normalize()` 按**文件位置**发 id (`r_{i:03d}` / `d_{i:03d}_{j:03d}`)。collector 每双周/月重采一次, 餐厅顺序/数量一变 → id 整体洗牌 → `logs/feedback/store.json`(冷存 sessions)、`logs/meal_log.jsonl`、`long_term_prefs`、D-098 `feedback_signal` 全部错位 (旧 id 偶然撞新店, boost/penalty 错投)。

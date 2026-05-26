@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "note": "人工确认的旧名→canonical rid 映射 (D-099.2). key=归一化后的旧店名, value=\"r_<10hex>\"。店改名时把旧名绑到现 rid, 保住历史反馈/标签。loader + migrate_stable_ids 都会应用。初始空。",
+  "aliases": {}
+}
