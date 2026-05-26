@@ -9,7 +9,17 @@
   - `office_restaurants.json` → zone `shenzhen-bay`; `home_restaurants.json` → zone `home`。
 - **输出** (推荐链路真正消费的): `data/<zone>/{restaurants.json, dishes_raw.json, dishes_tagged.json}`。
 
-## 四步流水线 (全用现成工具, 不要新写脚本)
+## 推荐入口: `scripts/refresh_from_collector.py` (D-100)
+
+重采后整轮重消费**走这个编排器**, 不要手敲下面四步 (除非 debug / 部分重跑):
+
+```bash
+uv run python -m scripts.refresh_from_collector   # 串: preflight 契约校验 → 跨zone指纹哨兵 → loader 发布(全zone) → tag → backfill → validate
+```
+
+它在裸四步之上加了三道 fail-loud 护栏 (D-100): ①`collector_contract` 入口契约校验 (envelope shape/类型/`schema_version==1`/`normalized_name_version==SHOP_NAME_VERSION`, 无 grandfather); ②跨 zone **指纹哨兵** (共享 rid≥30 + 共享率≥80% + distance 逐字相同率≥80% + label 不同 → hard-fail, 抓 G 式采址污染); ③**publish 全 zone 后才 tag** (防单 zone 哨兵误判后白烧 LLM)。`ZONE_MAP` (office→shenzhen-bay / home→home) 在脚本常量里 (消费端语义)。任一步非 0 退出。
+
+## 底层四步 (orchestrator 内部就是这四步, 手动 debug / 部分重跑时直接调)
 
 ```bash
 # 1. 消费/归一化: 美团 output → restaurants.json + dishes_raw.json
