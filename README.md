@@ -67,6 +67,7 @@ cd apps/sandbox-lab && npm install && npm run dev   # :5175
 | [docs/CONTRACTS.md](docs/CONTRACTS.md) | 跨文件隐含约束 + 反直觉规则 |
 | [docs/api.md](docs/api.md) | 前后端 API 契约 |
 | [docs/style-guide.md](docs/style-guide.md) | `apps/web/` UI 规范 + 反模式清单 |
+| [docs/data-pipeline.md](docs/data-pipeline.md) | 采集后加工流水线 (collector → chisha): 消费/打标/回填/验收 + 坑 |
 | [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md) | 文档维护准则 (改任何文档前必读) |
 
 **草稿 / 历史**: [docs/proposals/](docs/proposals/) 未落地的提案; [docs/archive/](docs/archive/) Phase 0 归档不维护。
