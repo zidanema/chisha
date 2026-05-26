@@ -1,0 +1,92 @@
+{
+  "zone": "shenzhen-bay",
+  "total": 5,
+  "unacknowledged": 0,
+  "conflicts": [
+    {
+      "type": "dish_name_price",
+      "key": "dish:r_85bc01310d:慢烤牛胸配阿拉伯熏米饭(小份米饭)#e326adf1",
+      "rid": "r_85bc01310d",
+      "restaurant_name": "Hot Stone 炎岩·地中海菜系（科",
+      "norm_name": "慢烤牛胸配阿拉伯熏米饭(小份米饭)",
+      "detail": {
+        "prices": [
+          62.0,
+          109.0
+        ],
+        "raw_names": [
+          "慢烤牛胸配阿拉伯熏米饭(小份米饭)",
+          "慢烤牛胸配阿拉伯熏米饭（小份米饭）"
+        ]
+      }
+    },
+    {
+      "type": "dish_name_price",
+      "key": "dish:r_9d935c60c2:慢烤牛胸配阿拉伯熏米饭(小份米饭)#e326adf1",
+      "rid": "r_9d935c60c2",
+      "restaurant_name": "Hot Stone 炎岩·地中海菜系（科技园店）",
+      "norm_name": "慢烤牛胸配阿拉伯熏米饭(小份米饭)",
+      "detail": {
+        "prices": [
+          62.0,
+          109.0
+        ],
+        "raw_names": [
+          "慢烤牛胸配阿拉伯熏米饭(小份米饭)",
+          "慢烤牛胸配阿拉伯熏米饭（小份米饭）"
+        ]
+      }
+    },
+    {
+      "type": "dish_name_price",
+      "key": "dish:r_9d935c60c2:果木烤鸡胸配阿拉伯熏米饭(小份米饭)#f50a4283",
+      "rid": "r_9d935c60c2",
+      "restaurant_name": "Hot Stone 炎岩·地中海菜系（科技园店）",
+      "norm_name": "果木烤鸡胸配阿拉伯熏米饭(小份米饭)",
+      "detail": {
+        "prices": [
+          47.8,
+          71.0
+        ],
+        "raw_names": [
+          "果木烤鸡胸配阿拉伯熏米饭(小份米饭)",
+          "果木烤鸡胸配阿拉伯熏米饭（小份米饭）"
+        ]
+      }
+    },
+    {
+      "type": "dish_name_price",
+      "key": "dish:r_b96d79bbbf:【我选我味】畅选桶 7-8 件套(商品券)#26092c37",
+      "rid": "r_b96d79bbbf",
+      "restaurant_name": "汉堡王（深圳中科纳能餐厅 28687 店）",
+      "norm_name": "【我选我味】畅选桶 7-8 件套(商品券)",
+      "detail": {
+        "prices": [
+          39.9,
+          89.0
+        ],
+        "raw_names": [
+          "【我选我味】畅选桶 7-8 件套(商品券)",
+          "【我选我味】畅选桶 7-8 件套（商品券）"
+        ]
+      }
+    },
+    {
+      "type": "dish_name_price",
+      "key": "dish:r_b96d79bbbf:汉堡小食随心选 9-10 件套(商品券)#e1bae09e",
+      "rid": "r_b96d79bbbf",
+      "restaurant_name": "汉堡王（深圳中科纳能餐厅 28687 店）",
+      "norm_name": "汉堡小食随心选 9-10 件套(商品券)",
+      "detail": {
+        "prices": [
+          111.0,
+          120.0
+        ],
+        "raw_names": [
+          "汉堡小食随心选 9-10 件套(商品券)",
+          "汉堡小食随心选 9-10 件套（商品券）"
+        ]
+      }
+    }
+  ]
+}

@@ -7,7 +7,7 @@
 ## 索引
 
 **产品定位 / 形态**: [D-001](#d-001) · [D-021](#d-021) · [D-051](#d-051) · [D-070](#d-070)
-**数据层**: [D-002+D-030](#d-002--d-030) · [D-008](#d-008) · [D-037](#d-037)
+**数据层**: [D-002+D-030](#d-002--d-030) · [D-008](#d-008) · [D-037](#d-037) · [D-099~D-099.3](#d-099--d-0991--d-0992--d-0993)
 **推荐链路架构**: [D-005](#d-005) · [D-041+D-006+D-040](#d-041--d-006--d-040) · [D-043~D-045](#d-043--d-042--d-044--d-0441--d-045) · [D-046](#d-046) · [D-035+D-047A](#d-035--d-047a) · [D-049](#d-049) · [D-050](#d-050) · [D-038+D-047B+D-048](#d-038--d-047b--d-048)
 **Profile / 学习**: [D-025](#d-025) · [D-026](#d-026) · [D-014](#d-014)
 **Context / Mood**: [D-034](#d-034) · [D-071](#d-071) · [D-015](#d-015)
@@ -232,3 +232,20 @@ Phase 1 启动前原 9 项必收口按"自用是否需要"重切 (清单见 [ROA
 ## D-098
 **Responsive Feedback — 反馈短链路即时生效 (差评不生效 B-001 P0 修复).** (2026-05-25) · 第一原则: 用户每次 👍/👎 必须在下次推荐被可感知响应, "差评不生效"=信任崩塌
 新增短链路 (实时 / 餐厅·菜品级 / 带衰减) 补 L1 慢链路缺口, 二者独立互补 (L1 仍负责泛化成长期口味). 新核心模块 `chisha/feedback_signal.py` 从 `feedback_store` **自包含**取数 (accepted_rank→cold-store session combo→restaurant_id+dish_id; 弃 meal_log JOIN 因落盘丢 dish_id). **信号源**=组合C+Q-B 冲突规则 (强负=rating==-1且repurchase==0 / boost=rating==1且repurchase==2 / repurchase 优先于 rating). **三注入**: ① score.py 第 15 维 `feedback_recency` (餐厅级主+菜品级辅弱累积, weight 1.5 由 top5 cutoff margin 法标定) ② recall.py 强负 30 天剔除 (放 combo/价格/intent 全部过滤之后, 捕获 with/without-feedback 最终集差集 → narrative 忠实) ③ L3 narrative `[FEEDBACK_AVOIDED]` 段只列真剔除店 (D-085 忠实). 线性衰减 (差评 0-30d 强/30-60d 衰减; 好评 7-30d 弱boost). **§8.1 单次构建**: api/refine 起点 build 一个对象, recall/score/L3/trace 共享同一引用, rank_combos 自身不读 store (防 standalone L1/L2 不一致). What-if 零 runtime read: trace `__frozen` 加 `feedback_signal_snapshot`+`feedback_avoided_names`, `TRACE_SCHEMA_VERSION` 3→4 (v3 仍 accepted). 守门: pytest 979 pass + baseline_l2_snapshot 0-diff (无反馈 gating) + snapshot 标定测试 (真实数据强负压出 top5) + codex BLOCK×4 修复 (narrative 真实归因 / refine R2 一致 / version bump / 白名单). 详见 `docs/proposals/2026-05-25-feedback-short-loop-b001.md`.
+
+## D-099 + D-099.1 + D-099.2 + D-099.3
+**稳定实体 id — 跨重采不漂移.** (2026-05-26) · 推翻 loader 按文件位置发号 (`r_{i}`/`d_{i}_{j}`); 修「重采→id 洗牌→历史反馈/标签错投」根因. Opus 提案 + Codex pressure-test 收敛, 提案存档 `docs/proposals/2026-05-26-stable-entity-id.md`.
+- **D-099 公式**: `rid = "r_"+sha1(normalize_shop_name_v1(name))[:10]` (逐字复现采集端 `text_norm.py` v1, 字节对拍 571/571 一致); `dish_id = "d_"+rid+"_"+sha1(normalize_dish_name_v1(raw_name))[:8]` (restaurant-scoped). 归一化只动空白/零宽/全角括号, 显式不动大小写/标点/价格/规格.
+- **D-099.1 唯一性 + 冲突 fail-loud**: 价/销变化不改 id. 同店同归一菜名但**价格不同**=真冲突 → 隔离不进 active (不加后缀/不混 price 进 key); 同名同价仅销量差 → 折叠. 8-hex 碰撞 / 餐厅级歧义 (同 status+count 内容不同) 同样隔离. 餐厅去重取**单一权威记录** (`status ok>early_ok>partial>failed>None` → menu_count → 内容指纹, 不取并集, 不用输入顺序). **原子发布状态机**: 未确认冲突 → 只写 staged + `dish_id_conflicts.json` 报告, active 不动, 退出非0; 冲突进 `conflicts_ack.json` 后才发布.
+- **D-099.2 改名/跨 zone 身份**: rid=全局门店身份, zone 仅配送上下文 (同 rid 反馈跨 zone 生效). 店改名→新 rid, 靠人工 `data/aliases.json` 把旧名绑 canonical rid 兜底 (loader+迁移都应用). 归一化版本变=迁移事件.
+- **D-099.3 增量打标**: 仅新 dish_id / tag_version 变才调 LLM. 每次 ingest **重建活动集** (复用旧标签 + 刷新 price/sales/raw + 删 raw 中消失的菜); batch 缓存绑**有序 dish-id 清单** (非批号/长度). recall/score/feedback_signal 对 id 只做字符串相等/映射 (无 `r_\d+` 数字假设, `r_<hex>` 兼容).
+- **落地**: office 429→395 唯一店 (5 同名异价 SKU acked 隔离), home 142 (100% ⊆ office, 采集侧问题待查). 旧标签按 (新rid,新dish_id) 重映射: szbay 19934 复用 + 1762 旧重复店标签不一致判 ambiguous 重打 + ~992 新菜, home 8088 全复用. 一次性迁移 `scripts/migrate_stable_ids.py` (ingest 前快照旧数据). 守门: pytest 全绿 + 字节对拍采集端 + codex 设计触点×1 + diff review×4 (8 blocking 全纳: 碰撞双隔离/歧义整店隔离/原子成对写/迁移刷新上架/schema失败不污染live/conflict-key带价格指纹/exit非零/离线tagger查锁).
+- **已知残留 (志丹拍板接受)**: ingest 锁是 check-then-read, 对**并发** loader+tagger 有 TOCTOU (单人顺序工作流不触发). 现有防护 (锁marker防崩溃残留 + live文件最后翻 + dishes_raw仅离线消费 + 4 tagger入口查锁) 覆盖真实失败; 若将来多人/并行再上 `fcntl.flock` 真互斥.
+
+## D-100
+**collector↔chisha 接口契约硬化 — 防字段漂移 / id 漂移 / 采址污染.** (2026-05-26) · 触发=断裂点 G (home 采到深圳湾, 标签对地址错从产物无法自检). 两 repo 间隐式契约零防护 → 把"静默出错"变"响亮报错". Opus 实现 + Codex 设计 review + commit review 收敛. 提案 `docs/proposals/2026-05-26-collector-chisha-contract.md`.
+- **Batch A (生产端 waimai_data)**: output envelope 加 `schema_version=1` + `normalized_name_version` + `location.observed_*` 软地址 provenance; `build_output` 加 location 护栏 (name==label 即 fail, 防手搓 location 把 name 静默降级成 label —— 实证一次 ad-hoc regeneration 把 office 的 name 降级了); 弃用发散 envelope 的 `tools/aggregate.py` (hard-fail 指向 collector.main); 软地址观测 (采前主动读美团实际配送地址文本, 软版只记录不判定). 契约落档 `OUTPUT_CONTRACT.md`.
+- **Batch B (消费端 chisha)**: 新 `chisha/collector_contract.py` 窄契约校验 (pydantic `strict=True` + `extra="allow"`, provenance 字段 required-nullable, status 锁 `Literal[observed/unobserved]`); `loader.load_raw` 入口 fail-loud 校验 + 断言 `normalized_name_version==SHOP_NAME_VERSION` (**无 grandfather**); 新 `scripts/refresh_from_collector.py` 编排 preflight→哨兵→loader→tag→backfill→validate (publish 全 zone 后才 tag) + 跨 zone 指纹哨兵 + `ZONE_MAP` (D5).
+- **设计决策锁定 (D1-D5)**: schema_version=int; grandfather 选重导出不留放行口; 哨兵 hard-fail=共享≥30 且 rid 共享率≥80% 且 distance 相同率≥80% 且 label 不同; zone 映射放消费端; 自用阶段不抽共享归一化包 (触发=第 3 个消费者).
+- **守门**: chisha pytest 1023 pass + 真 A4 office 文件过契约 (strict 抓到 menu `image` 实为 bool → 移出契约) + Codex commit review SHIP-WITH-FIXES (S-1 status→Literal / S-2 publish-then-tag 分两轮, 已修). `collector_contract.py` **不进 high-risk 白名单** (纯边界校验器, D4).
+- **未落地 (待周末重采居住区)**: A3 `observed_address_text` 非 null 需真机验; B3 全链路 (tag/validate) + 跨 zone 哨兵需重采两 zone 真数据才能真跑 (home 现已 purge, 单 zone 哨兵自动跳过).

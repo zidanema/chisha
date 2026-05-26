@@ -92,7 +92,11 @@
 
 - **打标 LLM 必须看到价格** (D-008). 改 `tag_dishes.md` prompt 不要为了省 token 砍价格字段.
 - **生产打标默认 = `deepseek-v4-flash` (via OpenRouter)** (D-037). 想换模型先在 `eval/dish_tagging_eval/` 跑双模型对比.
-- **数据按 office_zone 拆, 不混合** (`data/shenzhen-bay/` ≠ `data/home/`).
+- **数据按 office_zone 拆, 不混合** (`data/shenzhen-bay/` ≠ `data/home/`). 但 **rid 是全局门店身份**, zone 仅配送上下文 → 同店跨 zone 同 rid, 反馈/近期消费跨 zone 生效 (D-099.2).
+- **实体 id 是稳定哈希 (D-099), 全程当不透明字符串**: `r_<10hex>` / `d_<rid>_<8hex>`. recall/score/feedback_signal 只做字符串相等/映射查询, **严禁** `int(rid[2:])` 之类数字格式解析 (会破坏稳定 id + 撞旧 `r_NNN` 假设). 改 `loader.normalize` id 公式 / `normalize_*_name_v1` 归一化规则 = 迁移事件 → 走 `scripts/migrate_stable_ids.py` + 重打标, 不可悄改.
+- **重采后冲突要 ack 才发布** (D-099.1): loader 遇同名异价/哈希碰撞/餐厅歧义 → 写 `dish_id_conflicts.json` + block, 进 `conflicts_ack.json` 才发布; conflict key 带价格指纹, 价格集变 → 旧 ack 失效需重审.
+- **collector 输入窄契约校验 (D-100)**: `loader.load_raw` 入口调 `chisha/collector_contract.py::validate_collector_output` **fail-loud** — 校验 envelope shape + 类型 (pydantic `strict=True`, `extra="allow"` 容 producer 新增字段) + `schema_version==1` + `normalized_name_version==SHOP_NAME_VERSION`. 喂旧无版本/字段漂移/版本不匹配文件 → `ContractViolation`, **无 grandfather 放行口**. `collector_contract.py` **不进 high-risk 白名单** (纯边界校验器). 改 collector envelope = 跨 repo 事件, 见 waimai `OUTPUT_CONTRACT.md`.
+- **重消费编排走 `scripts/refresh_from_collector.py` (D-100)**: 串 preflight(契约校验)→指纹哨兵→loader 发布→tag→backfill→validate, 任一步非 0 退出 (publish 全 zone 后才 tag, 防白烧 LLM). `ZONE_MAP` (office→shenzhen-bay / home→home) 在此 (消费端语义, D5). 跨 zone **指纹哨兵** (D3): 共享 rid≥30 + rid 共享率≥80% + distance 逐字相同率≥80% + label 不同 → hard-fail (抓 G 式采址污染/全量克隆).
 
 ---
 
