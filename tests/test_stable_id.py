@@ -214,9 +214,23 @@ def test_alias_rejects_bad_rid(tmp_path):
 
 # ---------------- 原子发布 + ack 状态机 ----------------
 
+def _envelope(restaurants, *, norm_version=SHOP_NAME_VERSION):
+    """包合法 collector envelope (B2: load_raw 现在窄契约校验, 裸 {restaurants} 会被拒)。"""
+    return {
+        "schema_version": 1,
+        "app": "meituan",
+        "collected_at": "2026-05-26T20:00:00+08:00",
+        "normalized_name_version": norm_version,
+        "location": {"name": "测试点", "label": "test",
+                     "observed_address_text": None, "address_observed_at": None,
+                     "address_observation_status": "unobserved"},
+        "restaurants": restaurants,
+    }
+
+
 def _write_raw(tmp_path, restaurants):
     p = tmp_path / "raw.json"
-    p.write_text(json.dumps({"restaurants": restaurants}, ensure_ascii=False),
+    p.write_text(json.dumps(_envelope(restaurants), ensure_ascii=False),
                  encoding="utf-8")
     return p
 
@@ -260,8 +274,8 @@ def test_ack_invalidated_when_conflict_payload_changes(tmp_path):
     assert write_normalized(raw1, out, "z")["published"] is True
     # 价格集变化 (89→150) → 新 key, 旧 ack 不命中 → 不发布
     raw2 = (out.parent / "raw2.json")
-    raw2.write_text(json.dumps({"restaurants": [_rest(
-        "店", menu=[_dish("套餐", 39.9), _dish("套餐", 150.0)])]}, ensure_ascii=False),
+    raw2.write_text(json.dumps(_envelope([_rest(
+        "店", menu=[_dish("套餐", 39.9), _dish("套餐", 150.0)])]), ensure_ascii=False),
         encoding="utf-8")
     assert write_normalized(raw2, out, "z")["published"] is False
 
@@ -275,6 +289,39 @@ def test_ingest_lock_cleared_on_success_and_blocks_tagging(tmp_path):
     assert not ingest_in_progress(out)          # 成功后 marker 清除
     ingest_lock_path(out).write_text("z")        # 模拟崩溃残留
     assert ingest_in_progress(out) is True
+
+
+# ---------------- B2: load_raw 窄契约校验 (无 grandfather) ----------------
+
+def test_load_raw_rejects_old_no_version_envelope(tmp_path):
+    """旧裸壳 {restaurants:[...]} (无 schema_version/normalized_name_version) → fail-loud."""
+    from chisha.collector_contract import ContractViolation
+    from chisha.loader import load_raw
+    p = tmp_path / "old.json"
+    p.write_text(json.dumps({"restaurants": [_rest("店", menu=[_dish("菜", 10)])]}),
+                 encoding="utf-8")
+    with pytest.raises(ContractViolation):
+        load_raw(p)
+
+
+def test_load_raw_rejects_norm_version_mismatch(tmp_path):
+    """normalized_name_version != chisha SHOP_NAME_VERSION → fail-loud (防 id 漂移)."""
+    from chisha.collector_contract import ContractViolation
+    from chisha.loader import load_raw
+    p = tmp_path / "mism.json"
+    p.write_text(json.dumps(_envelope([_rest("店", menu=[_dish("菜", 10)])],
+                                      norm_version=SHOP_NAME_VERSION + 1)),
+                 encoding="utf-8")
+    with pytest.raises(ContractViolation, match="normalized_name_version"):
+        load_raw(p)
+
+
+def test_load_raw_accepts_valid_envelope(tmp_path):
+    """合法 Batch A 新 envelope → 通过, 返回 dict."""
+    from chisha.loader import load_raw
+    p = _write_raw(tmp_path, [_rest("店", menu=[_dish("菜", 10)])])
+    raw = load_raw(p)
+    assert raw["schema_version"] == 1 and len(raw["restaurants"]) == 1
 
 
 # ---------------- tag_via_api 活动集重建 ----------------

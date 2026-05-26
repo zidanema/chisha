@@ -18,6 +18,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from chisha.collector_contract import validate_collector_output
+
 
 # ============================================================
 # 稳定实体 id (D-099)
@@ -155,9 +157,16 @@ def parse_eta_min(s: str | None) -> int:
 
 
 def load_raw(raw_path: str | Path) -> dict[str, Any]:
-    """读 collector 原始 JSON."""
+    """读 collector 原始 JSON + 窄契约校验 (B2, fail-loud, 无 grandfather).
+
+    校验 envelope shape/类型/版本, 并断言 normalized_name_version == SHOP_NAME_VERSION
+    (归一化单边漂移 → 稳定 id 全面 mis-join, D-099)。喂旧无版本/字段漂移/版本不匹配文件
+    → ContractViolation, 不静默吞。契约定义见 chisha/collector_contract.py。
+    """
     with open(raw_path, encoding="utf-8") as f:
-        return json.load(f)
+        raw = json.load(f)
+    validate_collector_output(raw, expected_norm_version=SHOP_NAME_VERSION)
+    return raw
 
 
 _BRAND_SUFFIX_TOKENS = ("馆", "店", "店铺", "餐厅", "食堂", "总店", "分店",

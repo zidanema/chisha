@@ -1,6 +1,6 @@
 # 提案: collector↔chisha 接口契约硬化 (防字段漂移 / id 漂移 / 采址污染)
 
-> 状态: **待落地** (2026-05-26 定稿, Opus 梳理 + Codex 二审收敛, 无未对齐项)。
+> 状态: **已落地** (2026-05-26, D-100)。Batch A (生产端 waimai) + Batch B (消费端 chisha) 均完成, 见 decisions.md D-100。残留真机/全链路验收待周末重采居住区。
 > 背景: 端到端数据流 review 见 `docs/data-flow.md`; 触发事件 = 断裂点 G (home 采址污染, home 已 purge 待重采)。
 > 落地方式: 独立 session (建议 worktree, 见 [[chisha_worktree_sync_pitfall]])。分两批 —— **Batch A 赶志丹周末重采前**, Batch B 重采后 ingest 前。
 
