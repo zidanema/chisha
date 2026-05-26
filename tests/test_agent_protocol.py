@@ -129,18 +129,20 @@ def test_parse_response_correlation_mismatch():
         )
 
 
-def test_parse_response_missing_correlation_is_allowed():
-    """correlation_id 缺省时不强校验 (agent 可能省略), 但 payload 必须在."""
+def test_parse_response_missing_correlation_rejected():
+    """F4 (推翻旧"缺省允许"): correlation_id 必填, 缺 → ValueError (防 stale/串轮)."""
     cid = CorrelationId("sid_x", "R1", "extract")
-    resp = parse_agent_response({"payload": {"redirect": {}}}, expected=cid)
-    assert resp.correlation_id == cid
-    assert resp.payload == {"redirect": {}}
+    with pytest.raises(ValueError, match="缺 correlation_id"):
+        parse_agent_response({"payload": {"redirect": {}}}, expected=cid)
 
 
 def test_parse_response_bad_payload():
     cid = CorrelationId("sid_x", "R1", "extract")
+    # F4: correlation 必填且先校验 → 带上正确 correlation 才能触达 payload 校验
     with pytest.raises(ValueError, match="payload must be dict"):
-        parse_agent_response({"payload": "not a dict"}, expected=cid)
+        parse_agent_response(
+            {"correlation_id": cid.encode(), "payload": "not a dict"}, expected=cid
+        )
 
 
 def test_parse_response_non_dict():

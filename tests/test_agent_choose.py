@@ -79,13 +79,102 @@ def test_accept_partial_failure_rerun_fills_gap(root):
     assert len(_meal_log_lines(root)) == 1
 
 
-def test_different_card_id_not_deduped(root):
-    """不同 card_id = 不同 choice_key → 各自独立写 (改主意选另一张卡)."""
+def test_same_sid_rechoose_supersedes(root):
+    """F3: 同 sid 改选另一张卡 → 覆盖 (一餐至多一条 accept, 以最后选的为准).
+
+    旧行为 (D-074 T6 初版) 是各自独立双写 → 一餐两条 meal_log 污染 diversity
+    cooldown. F3 改为 upsert: 改选覆盖, meal_log 单条反映用户最终吃的.
+    """
     _accept(root, card_id="c_0_r1", rank=1)
     out2 = _accept(root, card_id="c_1_r2", rank=2)
     assert out2["accept_written"] is True
-    # 注意: feedback accepted[sid] 被覆盖 (按 sid), 但 meal_log 应有 2 行
-    assert len(_meal_log_lines(root)) == 2
+    assert out2["superseded"] is False
+    lines = _meal_log_lines(root)
+    assert len(lines) == 1                          # 覆盖, 不双写
+    assert lines[0]["candidate_id"] == "c_1_r2"     # 最新选择
+    # feedback accepted[sid] 也是最新卡
+    store = feedback_store.load_store(root)
+    assert store["accepted"]["s1"]["choice_key"] == "s1::R1::c_1_r2::accept"
+
+
+def test_stale_round_accept_rejected(root):
+    """F3 顺序保护 (codex): 旧轮 accept 延迟到达, 不覆盖已写的更高轮选择."""
+    # R2 先 accept (更高轮 = 用户最终在 refine 后的选择)
+    agent_choose.record_choice(
+        root, sid="s9", card_id="cB", action="accept", round_id="R2",
+        meal_type="lunch", restaurant_id="rB", restaurant_name="B店",
+        dishes=[{"main_ingredient_type": "鸡肉"}], accepted_rank=1,
+        zone="z", combo_index=0,
+    )
+    # R1 旧轮 accept 延迟到达 → 拒绝回写 (meal_log + feedback 都不动)
+    out = agent_choose.record_choice(
+        root, sid="s9", card_id="cA", action="accept", round_id="R1",
+        meal_type="lunch", restaurant_id="rA", restaurant_name="A店",
+        dishes=[{"main_ingredient_type": "牛肉"}], accepted_rank=1,
+        zone="z", combo_index=0,
+    )
+    assert out["superseded"] is True
+    assert out["meal_log_written"] is False
+    assert out["accept_written"] is False           # feedback 也不回写翻转
+    lines = _meal_log_lines(root)
+    assert len(lines) == 1
+    assert lines[0]["candidate_id"] == "cB"          # 保留更高轮
+    store = feedback_store.load_store(root)
+    assert store["accepted"]["s9"]["choice_key"] == "s9::R2::cB::accept"
+
+
+def test_stale_round_retry_does_not_flip_feedback(root):
+    """F3 顺序保护 (codex diff review): R1 accept → R2 skip → R1 accept retry
+    不能把 R2 skip 翻转回 R1 accept (meal_log 幂等挡不住 feedback 翻转, 故守护下沉)."""
+    agent_choose.record_choice(
+        root, sid="s10", card_id="cA", action="accept", round_id="R1",
+        meal_type="lunch", restaurant_id="rA", restaurant_name="A店",
+        dishes=[{"main_ingredient_type": "牛肉"}], accepted_rank=1, zone="z",
+        combo_index=0,
+    )
+    # R2 skip: 用户改主意说这餐不吃了
+    agent_choose.record_choice(
+        root, sid="s10", card_id="cB", action="skip", round_id="R2",
+        meal_type="lunch", skip_reason="不吃了",
+    )
+    store = feedback_store.load_store(root)
+    assert store["accepted"]["s10"]["skipped"] is True
+    # R1 accept retry (旧轮延迟到达) → 拒绝, 不翻转 skip
+    out = agent_choose.record_choice(
+        root, sid="s10", card_id="cA", action="accept", round_id="R1",
+        meal_type="lunch", restaurant_id="rA", restaurant_name="A店",
+        dishes=[{"main_ingredient_type": "牛肉"}], accepted_rank=1, zone="z",
+        combo_index=0,
+    )
+    assert out["superseded"] is True
+    assert out["accept_written"] is False
+    store = feedback_store.load_store(root)
+    assert store["accepted"]["s10"]["skipped"] is True            # R2 skip 保留
+    assert store["accepted"]["s10"]["choice_key"] == "s10::R2::cB::skip"
+
+
+def test_meal_log_seq_blocks_stale_skip_after_partial_write(root):
+    """F3 (codex diff review): accept 两步写间崩溃 — meal_log 写了 R2, feedback 还停
+    在 R1. 随后旧轮 R1 skip 到达, stale 守护锚定 meal_log 最高轮 (非只看 feedback),
+    拒绝翻转."""
+    from chisha.recall import upsert_meal_log_accept
+    _accept(root, sid="s11", card_id="cA", rank=1)   # R1 accept (meal_log + feedback)
+    # 模拟 R2 accept 部分写: 只落 meal_log (feedback 写前崩溃)
+    upsert_meal_log_accept(
+        root, "s11", round_id="R2", meal_type="lunch", restaurant_id="rB",
+        restaurant_name="B店", dishes=[], accepted_rank=1, zone="z",
+        combo_index=0, choice_key="s11::R2::cB::accept",
+    )
+    # 旧轮 R1 skip 到达 → meal_log 最高 R2 > R1 → stale, 不翻转 feedback
+    out = agent_choose.record_choice(
+        root, sid="s11", card_id="cA", action="skip", round_id="R1",
+        meal_type="lunch", skip_reason="x",
+    )
+    assert out["superseded"] is True
+    assert out["skip_written"] is False
+    store = feedback_store.load_store(root)
+    assert store["accepted"]["s11"]["choice_key"] == "s11::R1::cA::accept"
+    assert store["accepted"]["s11"].get("skipped") in (False, None)
 
 
 # ─────────────────────── skip ───────────────────────

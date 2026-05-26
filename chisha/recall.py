@@ -10,7 +10,11 @@ from itertools import product
 from pathlib import Path
 from typing import Any
 
+import contextlib
 import json
+import os
+import secrets
+
 import yaml
 
 
@@ -102,9 +106,38 @@ def append_meal_log_entry(
     并发: append 模式无锁, 与 recommend_log.jsonl 同等约束 (单进程单后端). 多 tab
     高频 accept 在同一秒内的极端情况下可能行交错, 当前 V1 自用单后端不补锁.
     """
-    from chisha import clock, data_root
+    from chisha import data_root
     p = data_root.meal_log_path(root)
     p.parent.mkdir(parents=True, exist_ok=True)
+    entry = _build_meal_log_entry(
+        root, session_id, meal_type=meal_type, restaurant_id=restaurant_id,
+        restaurant_name=restaurant_name, dishes=dishes, zone=zone,
+        accepted_rank=accepted_rank, combo_index=combo_index,
+        candidate_id=candidate_id, choice_key=choice_key,
+    )
+    # F3: 与 upsert_meal_log_accept 共用写锁 — 防 in-process append 与 CLI 全量重写竞态.
+    with _meal_log_lock(root):
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return entry
+
+
+def _build_meal_log_entry(
+    root: Path,
+    session_id: str,
+    *,
+    meal_type: str,
+    restaurant_id: str,
+    restaurant_name: str,
+    dishes: list[dict] | None,
+    zone: str | None = None,
+    accepted_rank: int | None = None,
+    combo_index: int | None = None,
+    candidate_id: str | None = None,
+    choice_key: str | None = None,
+) -> dict:
+    """纯构造一条 meal_log entry dict (不落盘). append / upsert 共用单一源."""
+    from chisha import clock
 
     flat_dishes: list[dict] = []
     for d in dishes or []:
@@ -136,13 +169,138 @@ def append_meal_log_entry(
         entry["combo_index"] = combo_index
     if candidate_id is not None:
         entry["candidate_id"] = candidate_id
-    # D-074 T6: choose 幂等键 (sid::card_id::accept). agent_choose 据此查重防重复 append.
+    # D-074 T6: choose 幂等键 (sid::round::card::accept). agent_choose 据此查重.
     if choice_key is not None:
         entry["choice_key"] = choice_key
-
-    with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     return entry
+
+
+def _round_seq_from_choice_key(choice_key: str | None) -> int:
+    """F3: 从 choice_key (sid::R{n}::card::action) 解析 round 序号 n. 解析失败 → 0."""
+    if not choice_key:
+        return 0
+    parts = choice_key.split("::")
+    if len(parts) >= 2 and parts[1].startswith("R"):
+        try:
+            return int(parts[1][1:])
+        except ValueError:
+            return 0
+    return 0
+
+
+@contextlib.contextmanager
+def _meal_log_lock(root: Path):
+    """F3: meal_log.jsonl 写锁 (append + upsert 共用, 跨进程 flock).
+
+    引入 upsert 全量重写后, append (web in-process accept) 与 upsert (CLI accept)
+    若不互斥, 重写会用旧快照覆盖并发 append 的新行 (codex diff review BLOCK).
+    一把锁包住所有 meal_log 写路径.
+    """
+    import fcntl
+    from chisha import data_root
+    p = data_root.meal_log_path(root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    lp = p.with_suffix(".jsonl.lock")
+    with open(lp, "a+") as fp:
+        fcntl.flock(fp, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fp, fcntl.LOCK_UN)
+
+
+def _read_meal_log_rows(p: Path) -> tuple[list[dict], bool]:
+    """读 meal_log 全量 rows. 坏行跳过 (read_ok=True); 整体 IO 异常 → read_ok=False.
+
+    read_ok=False 时调用方**绝不可全量重写** (会清空历史 — codex diff review).
+    """
+    rows: list[dict] = []
+    if not p.exists():
+        return rows, True
+    try:
+        with p.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue  # 坏行跳过 (重写即清理)
+        return rows, True
+    except Exception:
+        return rows, False
+
+
+def upsert_meal_log_accept(
+    root: Path,
+    session_id: str,
+    *,
+    round_id: str,
+    meal_type: str,
+    restaurant_id: str,
+    restaurant_name: str,
+    dishes: list[dict] | None,
+    zone: str | None = None,
+    accepted_rank: int | None = None,
+    combo_index: int | None = None,
+    candidate_id: str | None = None,
+    choice_key: str | None = None,
+) -> dict:
+    """F3 (D-074): 一个 sid (一餐) 在 meal_log 至多一条 accept; 跨 refine 轮改选 = 覆盖
+    (以最高轮为准, 反映用户最终吃的). 全量重写 (自用 meal_log 体量小, 与 feedback_store
+    rewrite 同级). diversity_filter 只消费 timestamp + restaurant_id, 单 sid 保留最新
+    accept 不破坏其读取.
+
+    顺序保护 (codex): 旧轮 accept 延迟到达**不覆盖**已写的更高轮选择.
+    幂等: 同 choice_key 已存在 → 跳过.
+
+    返回 {written, already, superseded}.
+    """
+    from chisha import data_root
+    p = data_root.meal_log_path(root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    new_entry = _build_meal_log_entry(
+        root, session_id, meal_type=meal_type, restaurant_id=restaurant_id,
+        restaurant_name=restaurant_name, dishes=dishes, zone=zone,
+        accepted_rank=accepted_rank, combo_index=combo_index,
+        candidate_id=candidate_id, choice_key=choice_key,
+    )
+
+    with _meal_log_lock(root):
+        rows, read_ok = _read_meal_log_rows(p)
+        if not read_ok:
+            # 读失败 (IO error): 绝不全量重写 (会清空历史 — codex diff review).
+            # 降级为 append 新行 (至少不丢历史 + 本次 accept 落盘).
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(new_entry, ensure_ascii=False) + "\n")
+            return {"written": True, "already": False, "superseded": False,
+                    "degraded_append": True}
+
+        same_sid = [r for r in rows if isinstance(r, dict)
+                    and r.get("session_id") == session_id]
+        if same_sid:
+            # 幂等: 同 choice_key 已写
+            if choice_key and any(r.get("choice_key") == choice_key for r in same_sid):
+                return {"written": False, "already": True, "superseded": False}
+            # 顺序保护: 新轮序号 < 已写最高轮 → 旧轮延迟到达, 拒绝回写 (注: 同 choice_key
+            # 重试已在上一分支命中幂等, 故合法的同轮改选 seq==existing 不会落进此拒绝).
+            existing_seq = max(_round_seq_from_choice_key(r.get("choice_key"))
+                               for r in same_sid)
+            if _round_seq_from_choice_key(choice_key) < existing_seq:
+                return {"written": False, "already": False, "superseded": True}
+
+        # 移除同 sid 旧 accept, append 新条目, 原子重写 (tmp + rename)
+        kept = [r for r in rows if not (isinstance(r, dict)
+                and r.get("session_id") == session_id)]
+        kept.append(new_entry)
+        tmp = p.with_suffix(f".jsonl.tmp.{os.getpid()}.{secrets.token_hex(4)}")
+        with tmp.open("w", encoding="utf-8") as f:
+            for r in kept:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        tmp.replace(p)
+    return {"written": True, "already": False, "superseded": False}
 
 
 def meal_log_choice_keys(root: Path) -> set[str]:
@@ -171,6 +329,21 @@ def meal_log_choice_keys(root: Path) -> set[str]:
     except Exception:
         pass
     return keys
+
+
+def meal_log_max_accept_round_seq(root: Path, session_id: str) -> int:
+    """F3 (codex diff review): 该 sid 在 meal_log 已写 accept 的最高 round 序号 (无→0).
+
+    meal_log 是顺序真源 (D-078); choose 的 stale 守护锚定 max(此值, feedback 轮),
+    而非只看 feedback — 防 accept 两步写 (meal_log→feedback) 间崩溃后, feedback 落后
+    导致旧轮 skip 被误判非 stale 而翻转. 损坏行跳过 (read_ok 失败保守返 0).
+    """
+    from chisha import data_root
+    p = data_root.meal_log_path(root)
+    rows, _ok = _read_meal_log_rows(p)
+    seqs = [_round_seq_from_choice_key(r.get("choice_key"))
+            for r in rows if isinstance(r, dict) and r.get("session_id") == session_id]
+    return max(seqs) if seqs else 0
 
 
 def compute_extra_banned_restaurants(

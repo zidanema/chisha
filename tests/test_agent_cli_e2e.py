@@ -60,15 +60,25 @@ def _run(argv) -> dict:
     return last
 
 
-def _valid_rerank(n_explore=2):
+def _cid(d) -> str:
+    """从 verb 返回的 llm_request_spec 取 correlation_id (agent 回传时回显, F4)."""
+    return d["llm_request_spec"]["correlation_id"]
+
+
+def _valid_rerank(correlation_id=None, n_explore=2):
+    # correlation_id=None → 占位 (仅供 correlation 校验前就返回的错误路径测试用)
+    correlation_id = correlation_id or "x::R1::rerank"
     cands = [{"rank": i + 1, "is_explore": i >= (5 - n_explore), "combo_index": i,
               "fit_score": 0.8, "taste_match": 0.7, "risk_flags": [],
               "one_line_reason": f"r{i}"} for i in range(5)]
-    return json.dumps({"candidates": cands, "narrative": "测试"})
+    # F4: agent 回传须为信封 {correlation_id, payload}
+    return json.dumps({"correlation_id": correlation_id,
+                       "payload": {"candidates": cands, "narrative": "测试"}})
 
 
-def _valid_intent():
-    return json.dumps({
+def _valid_intent(correlation_id=None):
+    correlation_id = correlation_id or "x::R1::extract"
+    payload = {
         "redirect": {"cuisine_want": [], "cuisine_avoid": [],
                      "cuisine_candidates_expanded": ["川菜"], "ingredient_want": [],
                      "ingredient_avoid": [], "brand_avoid": [],
@@ -77,7 +87,8 @@ def _valid_intent():
                       "wants_soup": False},
         "reference": None, "reject_previous": False,
         "raw_understanding": "想吃辣推断川菜, 预算30", "schema_version": "2.1",
-    })
+    }
+    return json.dumps({"correlation_id": correlation_id, "payload": payload})
 
 
 # ─────────────────────── 链路 1: 无 context ───────────────────────
@@ -88,7 +99,7 @@ def test_chain_no_context(cli_env):
     rid = d["recommendation_id"]
     assert d["llm_request_spec"]["operation_kind"] == "rerank"
 
-    d = _run(["apply-rerank", "--id", rid, "--response", _valid_rerank()])
+    d = _run(["apply-rerank", "--id", rid, "--response", _valid_rerank(_cid(d))])
     assert d["ok"] and d["status"] == "ready"
     assert d["fallback"] is False
     assert len(d["cards"]) == 5
@@ -107,12 +118,12 @@ def test_chain_with_context(cli_env):
     assert d["llm_request_spec"]["output_mode"] == "text_json"
     rid = d["recommendation_id"]
 
-    d = _run(["resolve-intent", "--id", rid, "--intent", _valid_intent()])
+    d = _run(["resolve-intent", "--id", rid, "--intent", _valid_intent(_cid(d))])
     assert d["status"] == "resolved"
     assert d["intent_disclosure"]["status"] == "ok"
     assert d["llm_request_spec"]["operation_kind"] == "rerank"
 
-    d = _run(["apply-rerank", "--id", rid, "--response", _valid_rerank()])
+    d = _run(["apply-rerank", "--id", rid, "--response", _valid_rerank(_cid(d))])
     assert d["status"] == "ready" and len(d["cards"]) == 5
 
 
@@ -122,16 +133,16 @@ def test_chain_refine_round(cli_env, monkeypatch):
     # R1
     d = _run(["start", "--meal", "lunch"])
     rid = d["recommendation_id"]
-    _run(["apply-rerank", "--id", rid, "--response", _valid_rerank()])
+    _run(["apply-rerank", "--id", rid, "--response", _valid_rerank(_cid(d))])
     # refine 轮: --from 同 rid, 应为 R2, n_explore=0 (全 exploit)
     d = _run(["start", "--meal", "lunch", "--context", "再辣点", "--from", rid])
     assert d["recommendation_id"] == rid
     assert d["round"] == "R2"
     assert d["status"] == "pending"
-    d = _run(["resolve-intent", "--id", rid, "--intent", _valid_intent()])
+    d = _run(["resolve-intent", "--id", rid, "--intent", _valid_intent(_cid(d))])
     assert d["round"] == "R2" and d["status"] == "resolved"
     # refine 轮 n_explore=0 → 提供全 exploit response
-    d = _run(["apply-rerank", "--id", rid, "--response", _valid_rerank(n_explore=0)])
+    d = _run(["apply-rerank", "--id", rid, "--response", _valid_rerank(_cid(d), n_explore=0)])
     assert d["status"] == "ready"
 
 
@@ -141,19 +152,45 @@ def test_chain_apply_fallback_on_bad_response(cli_env):
     """agent 给越界 combo_index → 校验失败 → chisha_l2 fallback (确定性守卫)."""
     d = _run(["start", "--meal", "lunch"])
     rid = d["recommendation_id"]
-    bad = json.dumps({"candidates": [
+    # F4: bad response 仍须包信封 (否则先撞 correlation 缺失而非校验失败)
+    bad = json.dumps({"correlation_id": _cid(d), "payload": {"candidates": [
         {"rank": 1, "is_explore": False, "combo_index": 999, "fit_score": 0.8,
-         "taste_match": 0.7, "risk_flags": [], "one_line_reason": "x"}]})
+         "taste_match": 0.7, "risk_flags": [], "one_line_reason": "x"}],
+        "narrative": "已为你挑出低油湘菜"}})
     d = _run(["apply-rerank", "--id", rid, "--response", bad])
     assert d["ok"] and d["status"] == "ready"
     assert d["fallback"] is True            # 走了规则兜底
     assert len(d["cards"]) == 5             # fallback 仍出 5 条
+    # F1 (Faithful): fallback 时 agent narrative 不传播 (cards 是规则排的, 叙述会撒谎)
+    assert d["narrative"] == ""
+
+
+def test_apply_rejects_missing_correlation(cli_env):
+    """F4: agent 回传裸 JSON (缺 correlation_id) → CORRELATION 错, 不静默接受."""
+    d = _run(["start", "--meal", "lunch"])
+    rid = d["recommendation_id"]
+    bare = json.dumps({"candidates": [
+        {"rank": i + 1, "is_explore": False, "combo_index": i, "fit_score": 0.8,
+         "taste_match": 0.7, "risk_flags": [], "one_line_reason": "x"}
+        for i in range(5)], "narrative": "x"})
+    d = _run(["apply-rerank", "--id", rid, "--response", bare])
+    assert d["ok"] is False and d["error"]["code"] == "CORRELATION"
+
+
+def test_apply_rejects_stale_correlation(cli_env):
+    """F4: 错 round/op 的 correlation (stale/串轮 payload) 投到当前轮 → 拒绝."""
+    d = _run(["start", "--meal", "lunch"])
+    rid = d["recommendation_id"]
+    stale = json.dumps({"correlation_id": f"{rid}::R9::rerank",
+                        "payload": {"candidates": [], "narrative": ""}})
+    d = _run(["apply-rerank", "--id", rid, "--response", stale])
+    assert d["ok"] is False and d["error"]["code"] == "CORRELATION"
 
 
 def test_chain_choose_idempotent_rerun(cli_env):
     d = _run(["start", "--meal", "lunch"])
     rid = d["recommendation_id"]
-    d = _run(["apply-rerank", "--id", rid, "--response", _valid_rerank()])
+    d = _run(["apply-rerank", "--id", rid, "--response", _valid_rerank(_cid(d))])
     cid = d["cards"][0]["id"]
     _run(["choose", "--id", rid, "--card", cid, "--action", "accept"])
     d2 = _run(["choose", "--id", rid, "--card", cid, "--action", "accept"])
@@ -196,7 +233,7 @@ def test_apply_publishes_then_clears_inflight(cli_env):
     from chisha import agent_round_store
     d = _run(["start", "--meal", "lunch"])
     rid = d["recommendation_id"]
-    _run(["apply-rerank", "--id", rid, "--response", _valid_rerank()])
+    _run(["apply-rerank", "--id", rid, "--response", _valid_rerank(_cid(d))])
     assert agent_round_store.read_round(rid, cli_env) is None   # 已 clear
 
 
@@ -242,10 +279,10 @@ def test_codex_a_apply_uses_persisted_topk(cli_env, monkeypatch):
     combo_index 不漂移到错 combo."""
     d = _run(["start", "--meal", "lunch", "--context", "辣"])
     rid = d["recommendation_id"]
-    d = _run(["resolve-intent", "--id", rid, "--intent", _valid_intent()])
+    d = _run(["resolve-intent", "--id", rid, "--intent", _valid_intent(_cid(d))])
     # resolve 后篡改 recall 返回 (模拟数据漂移) — apply 应忽略, 用持久化 top_k
     monkeypatch.setattr(orch, "recall", lambda *a, **kw: [])  # 漂移成空
-    d = _run(["apply-rerank", "--id", rid, "--response", _valid_rerank(n_explore=0)])
+    d = _run(["apply-rerank", "--id", rid, "--response", _valid_rerank(_cid(d), n_explore=0)])
     assert d["ok"] and d["status"] == "ready"
     assert len(d["cards"]) == 5    # 持久化 top_k 仍在, 没因 recall 漂移变空
 
@@ -255,7 +292,7 @@ def test_codex_c_choice_key_includes_round(cli_env):
     from chisha import feedback_store
     d = _run(["start", "--meal", "lunch"])
     rid = d["recommendation_id"]
-    d = _run(["apply-rerank", "--id", rid, "--response", _valid_rerank()])
+    d = _run(["apply-rerank", "--id", rid, "--response", _valid_rerank(_cid(d))])
     cid = d["cards"][0]["id"]
     _run(["choose", "--id", rid, "--card", cid, "--action", "accept"])
     store = feedback_store.load_store(cli_env)
@@ -267,8 +304,8 @@ def test_codex_d_resolve_idempotent_replay(cli_env):
     """codex #d: 经 extract 的 resolved round 再 resolve-intent → 幂等重发, 不报错."""
     d = _run(["start", "--meal", "lunch", "--context", "辣"])
     rid = d["recommendation_id"]
-    _run(["resolve-intent", "--id", rid, "--intent", _valid_intent()])
-    d2 = _run(["resolve-intent", "--id", rid, "--intent", _valid_intent()])
+    _run(["resolve-intent", "--id", rid, "--intent", _valid_intent(_cid(d))])
+    d2 = _run(["resolve-intent", "--id", rid, "--intent", _valid_intent(_cid(d))])
     assert d2["ok"] is True
     assert d2.get("idempotent_replay") is True
     assert d2["llm_request_spec"]["operation_kind"] == "rerank"

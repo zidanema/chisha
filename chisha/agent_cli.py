@@ -370,16 +370,13 @@ def cmd_resolve_intent(args) -> int:
         intent_payload = json.loads(args.intent)
     except json.JSONDecodeError as e:
         return _emit_error("BAD_JSON", f"--intent 非合法 JSON: {e}")
-    # agent 回传可能是裸 intent dict, 也可能是 {payload: {...}} 信封
-    if isinstance(intent_payload, dict) and "payload" in intent_payload:
-        try:
-            expected = CorrelationId(args.id, round_id, "extract")
-            resp = parse_agent_response(intent_payload, expected=expected)
-            parsed_intent = resp.payload
-        except ValueError as e:
-            return _emit_error("CORRELATION", str(e))
-    else:
-        parsed_intent = intent_payload
+    # F4: agent 回传必须是信封 {correlation_id, payload} (correlation 必填, 防 stale/串轮).
+    expected = CorrelationId(args.id, round_id, "extract")
+    try:
+        resp = parse_agent_response(intent_payload, expected=expected)
+        parsed_intent = resp.payload
+    except ValueError as e:
+        return _emit_error("CORRELATION", str(e))
 
     # Faithful Refine 守卫 (raw_text 用 frozen 原文, 忽略 agent 回传 raw_text)
     intent, disclosure = apply_intent_response(
@@ -458,15 +455,13 @@ def cmd_apply_rerank(args) -> int:
         resp_payload = json.loads(args.response)
     except json.JSONDecodeError as e:
         return _emit_error("BAD_JSON", f"--response 非合法 JSON: {e}")
-    if isinstance(resp_payload, dict) and "payload" in resp_payload:
-        try:
-            expected = CorrelationId(args.id, round_id, "rerank")
-            resp = parse_agent_response(resp_payload, expected=expected)
-            payload = resp.payload
-        except ValueError as e:
-            return _emit_error("CORRELATION", str(e))
-    else:
-        payload = resp_payload
+    # F4: agent 回传必须是信封 {correlation_id, payload} (correlation 必填, 防 stale/串轮).
+    expected = CorrelationId(args.id, round_id, "rerank")
+    try:
+        resp = parse_agent_response(resp_payload, expected=expected)
+        payload = resp.payload
+    except ValueError as e:
+        return _emit_error("CORRELATION", str(e))
 
     today = dt.date.fromisoformat(frozen["today"])
 
@@ -477,7 +472,10 @@ def cmd_apply_rerank(args) -> int:
     if used_fallback:
         mapped = fallback_rerank(persisted_top_k, n=5, n_explore=n_explore,
                                  today=today)
-    narrative = meta.get("narrative") or ""
+    # F1 (Faithful D-085): fallback 时 cards 是规则兜底排的, agent 的 narrative 描述的
+    # 不是实际排出来的 5 条 → 置空, 绝不把未经校验的叙述套到规则 cards 上 (信任放大器
+    # 不能编). adapter 靠 fallback=true + fallback_reason 如实告知"本轮按规则排".
+    narrative = "" if used_fallback else (meta.get("narrative") or "")
 
     cards = [_format_v2_candidate(i + 1, c) for i, c in enumerate(mapped)]
     _write_cards(args.id, round_id, cards, root)

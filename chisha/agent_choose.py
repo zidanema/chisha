@@ -15,7 +15,11 @@ from pathlib import Path
 from typing import Any, Iterator, Literal
 
 from chisha import feedback_store
-from chisha.recall import append_meal_log_entry, meal_log_choice_keys
+from chisha.recall import (
+    _round_seq_from_choice_key,
+    meal_log_max_accept_round_seq,
+    upsert_meal_log_accept,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +86,7 @@ def record_choice(
     out: dict[str, Any] = {
         "choice_key": choice_key, "action": action,
         "accept_written": False, "skip_written": False,
-        "meal_log_written": False, "already_complete": False,
+        "meal_log_written": False, "superseded": False, "already_complete": False,
     }
 
     with _choose_lock(sid, root):
@@ -91,35 +95,57 @@ def record_choice(
         # feedback_store 幂等: 同一 choice_key 已记录 → 跳过该写
         fb_done = existing.get("choice_key") == choice_key
 
+        # 顺序保护 (codex diff review): meal_log 幂等只挡 meal_log 重写, feedback 写路径
+        # 须同等守护. 否则 `R1 accept → R2 skip → R1 accept retry` 会因 fb_done=False 把
+        # R2 skip 翻转回 R1 accept. 锚定 max(meal_log 最高 accept 轮, feedback 轮) —
+        # meal_log 是顺序真源 (D-078), 且 accept 两步写 (meal_log→feedback) 间崩溃后
+        # feedback 会落后, 只看 feedback 会漏判. 当前轮 < 已记录最高轮 → 旧轮, 拒绝回写.
+        cur_seq = _round_seq_from_choice_key(choice_key)
+        existing_fb_key = existing.get("choice_key")
+        fb_seq = _round_seq_from_choice_key(existing_fb_key) if existing_fb_key else 0
+        prior_seq = max(fb_seq, meal_log_max_accept_round_seq(root, sid))
+        stale_round = prior_seq > 0 and not fb_done and cur_seq < prior_seq
+
         if action == "accept":
-            if not fb_done:
-                feedback_store.record_accept(
-                    root, sid,
-                    candidate_rank=accepted_rank if accepted_rank is not None else -1,
-                    meal_type=meal_type, restaurant_name=restaurant_name,
-                    summary=summary, choice_key=choice_key,
-                )
-                out["accept_written"] = True
-            # meal_log 幂等: 扫已写 choice_key (D-078: meal_log 是 diversity cooldown
-            # source-of-truth, accept 必写; 与 record_accept 同等级别).
-            ml_keys = meal_log_choice_keys(root)
-            if choice_key not in ml_keys:
-                append_meal_log_entry(
-                    root, sid, meal_type=meal_type,
-                    restaurant_id=restaurant_id, restaurant_name=restaurant_name,
-                    dishes=dishes or [], zone=zone, accepted_rank=accepted_rank,
-                    combo_index=combo_index, candidate_id=card_id,
-                    choice_key=choice_key,
-                )
-                out["meal_log_written"] = True
-            out["already_complete"] = (
-                not out["accept_written"] and not out["meal_log_written"]
+            if stale_round:
+                # 旧轮 accept 延迟到达, 已有更高轮选择 — meal_log + feedback 都不动.
+                out["superseded"] = True
+                out["already_complete"] = False
+                return out
+            # F3: meal_log 是顺序真源 (D-078: diversity cooldown source-of-truth).
+            # upsert 做"一 sid 一 accept + 跨轮覆盖 + 旧轮延迟到达拒绝回写"的顺序保护.
+            ml_res = upsert_meal_log_accept(
+                root, sid, round_id=round_id, meal_type=meal_type,
+                restaurant_id=restaurant_id, restaurant_name=restaurant_name,
+                dishes=dishes or [], zone=zone, accepted_rank=accepted_rank,
+                combo_index=combo_index, candidate_id=card_id, choice_key=choice_key,
             )
+            out["meal_log_written"] = ml_res["written"]
+            out["superseded"] = ml_res["superseded"]
+            if ml_res["superseded"]:
+                out["already_complete"] = False
+            else:
+                if not fb_done:
+                    feedback_store.record_accept(
+                        root, sid,
+                        candidate_rank=accepted_rank if accepted_rank is not None else -1,
+                        meal_type=meal_type, restaurant_name=restaurant_name,
+                        summary=summary, choice_key=choice_key,
+                    )
+                    out["accept_written"] = True
+                out["already_complete"] = (
+                    not out["accept_written"] and not out["meal_log_written"]
+                )
         else:  # skip
-            if not fb_done:
+            if stale_round:
+                out["superseded"] = True
+                out["already_complete"] = False
+            elif not fb_done:
                 feedback_store.record_skip(root, sid, reason=skip_reason,
                                            choice_key=choice_key)
                 out["skip_written"] = True
-            out["already_complete"] = not out["skip_written"]
+                out["already_complete"] = False
+            else:
+                out["already_complete"] = True
 
     return out

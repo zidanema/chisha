@@ -196,19 +196,25 @@ def parse_agent_response(
          "payload": {...},                  # extract→intent dict / rerank→{candidates,...}
          "disclosure": {...}}               # 可选; extract 的未映射诉求 / rerank 校验状态
 
-    correlation_id 必须与 expected 完全一致 (防错配 round / operation 串台).
+    correlation_id **必填** (F4) 且必须与 expected 完全一致 (防错配 round / operation
+    串台 + stale payload 套到当前轮). agent 直接回显 llm_request_spec.correlation_id 即可.
     payload 缺失或非 dict → ValueError (调用方决定 fallback).
     """
     if not isinstance(raw, dict):
         raise ValueError(f"agent response must be dict, got {type(raw).__name__}")
     cid_raw = raw.get("correlation_id")
-    if cid_raw is not None:
-        got = CorrelationId.decode(cid_raw)
-        if got != expected:
-            raise ValueError(
-                f"correlation_id mismatch: got {got.encode()!r}, "
-                f"expected {expected.encode()!r}"
-            )
+    if cid_raw is None:
+        raise ValueError(
+            "agent response 缺 correlation_id (F4: 必填, 防旧轮/stale payload 套到"
+            "当前 round). 回传须为信封 {correlation_id, payload}, "
+            "correlation_id 直接抄 llm_request_spec.correlation_id."
+        )
+    got = CorrelationId.decode(cid_raw)
+    if got != expected:
+        raise ValueError(
+            f"correlation_id mismatch: got {got.encode()!r}, "
+            f"expected {expected.encode()!r}"
+        )
     payload = raw.get("payload")
     if not isinstance(payload, dict):
         raise ValueError(

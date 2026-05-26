@@ -289,6 +289,11 @@ _REQUIRED_FIELDS = {
     "risk_flags", "one_line_reason",
 }
 
+# F2 (Faithful D-074): _map_validated_candidates 合并时, LLM/agent candidate 只允许
+# 覆盖这些字段 (排序 + 说明 + 规则补的 health_flags); restaurant/dishes/score 等
+# 确定性事实由 top_combos 保持, 绝不被回传覆盖.
+_AGENT_OUTPUT_FIELDS = _REQUIRED_FIELDS | {"health_flags"}
+
 
 # D-049 (Codex review 反馈): validator 给结构化 error code, 让 retry 路由 +
 # 测试 fixture 不再依赖人类可读中文字符串. 文案改一下不会静默漏触发 retry.
@@ -1713,7 +1718,14 @@ def _map_validated_candidates(
             continue
         # health_flags 由规则补齐 (D-046: LLM 不再输出此字段)
         cand["health_flags"] = _compute_health_flags(top_combos[idx])
-        merged = {**top_combos[idx], **cand}
+        # F2 (Faithful D-074): combo 确定性事实打底; LLM/agent candidate 只能贡献排序/
+        # 说明白名单字段 (_REQUIRED_FIELDS + 规则补的 health_flags). 旧 {**combo,**cand}
+        # 让回传 restaurant/dishes/score 覆盖确定性候选 — 守卫只在 chisha, 不在 agent
+        # 输出上补偿. in-process tool_use 受 schema 约束本只产这些字段 → baseline 0-diff.
+        merged = dict(top_combos[idx])
+        for _k in _AGENT_OUTPUT_FIELDS:
+            if _k in cand:
+                merged[_k] = cand[_k]
         mapped.append(merged)
     return _enforce_brand_unique(mapped, top_combos, n=n)
 
