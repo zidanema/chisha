@@ -37,7 +37,10 @@ _GRAIN_TYPE_VALUES = {"白米", "糙米杂粮", "精制面", "全麦面",
 
 def load_data(zone: str) -> tuple[dict, list]:
     """读 restaurants + dishes_raw, 返回 (rest_by_id, dishes_raw)."""
+    from chisha.loader import ingest_in_progress
     base = ROOT / "data" / zone
+    if ingest_in_progress(base):  # D-099 BLOCK#3: loader 发布中可能跨代混合, 拒绝读
+        raise RuntimeError(f"[{zone}] .ingest_lock 存在, 先重跑 chisha.loader 收尾再打标")
     rests = json.loads((base / "restaurants.json").read_text(encoding="utf-8"))
     dishes = json.loads((base / "dishes_raw.json").read_text(encoding="utf-8"))
     return {r["id"]: r for r in rests}, dishes
@@ -193,7 +196,11 @@ def main():
                     help="输出文件名 (默认 dishes_tagged.json 或 _sample.json)")
     args = ap.parse_args()
 
-    rest_by_id, dishes_raw = load_data(args.zone)
+    try:  # ingest 锁命中 → 受控拒绝 + 非零退出 (对齐 tag_via_subagent, 非裸 traceback)
+        rest_by_id, dishes_raw = load_data(args.zone)
+    except RuntimeError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(3)
     raw_idx = {d["dish_id"]: d for d in dishes_raw}
     prompt_template = PROMPT_PATH.read_text(encoding="utf-8")
 

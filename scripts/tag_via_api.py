@@ -29,6 +29,7 @@ from chisha.llm_client_openrouter import (
     DEFAULT_AUDIT_MODEL,
     call_text,
 )
+from chisha.loader import ingest_in_progress
 from scripts.tag_dishes import (
     build_input_payload,
     extract_json_array,
@@ -209,6 +210,80 @@ def _make_batches(items: list[dict], size: int) -> list[list[dict]]:
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
+# raw 侧字段 (价格/销量/原名), 复用旧标签时刷新这些; cuisine/nutrition_profile 是 LLM 标签不动
+_RAW_REFRESH_FIELDS = ("raw_name", "price", "monthly_sales")
+
+
+def _rebuild_active(existing_tagged: list[dict],
+                    raw_idx: dict[str, dict]) -> dict[str, dict]:
+    """以当前 raw 重建活动 tagged (D-099.3):
+    - 删 raw 中已消失的 dish_id (下架菜)
+    - 复用旧营养/菜系标签, 但刷新 price/sales/raw_name 等 raw 字段
+    返回 {dish_id: record}, 仅含 raw 里还存在的菜。
+    """
+    active: dict[str, dict] = {}
+    for t in existing_tagged:
+        did = t.get("dish_id")
+        rd = raw_idx.get(did)
+        if rd is None:
+            continue  # prune: raw 里已没有这道菜
+        rec = dict(t)
+        for f in _RAW_REFRESH_FIELDS:
+            if f in rd:
+                rec[f] = rd[f]
+        active[did] = rec
+    return active
+
+
+def _validate_records(zone: str, all_records: list[dict],
+                      version_label: str) -> bool:
+    """全量 DishTagged schema 校验 (schema 已含 v3 五字段, 旧"未升级"回落已废).
+    任何违规 (cuisine/cooking_method/数值越界/缺字段) → 逐条列出全部 (非仅第一个) 响亮告警,
+    返回 False. 不静默放行 (codex BLOCK#5). 数据仍写盘 (沿用既有 cache+validate_data 硬门+人工修
+    工作流, 不因单条 LLM 越界丢弃整批已打标), 但绝不悄悄吞掉无效记录。"""
+    from chisha.schemas import validate_dishes_tagged, DishTagged
+    try:
+        validate_dishes_tagged(all_records)
+        return True
+    except Exception:
+        bad: list[tuple[str, str]] = []
+        for rec in all_records:
+            try:
+                DishTagged.model_validate(rec)
+            except Exception as e:
+                first = next((ln for ln in str(e).splitlines()[1:] if ln.strip()),
+                             type(e).__name__)
+                bad.append((rec.get("dish_id", "<no-id>"), first.strip()))
+        print(f"[{zone}] ✗ DishTagged 校验失败: {len(bad)} 条无效:",
+              file=sys.stderr, flush=True)
+        for did, err in bad[:50]:
+            print(f"    {did}: {err}", file=sys.stderr, flush=True)
+        if len(bad) > 50:
+            print(f"    ... 另有 {len(bad)-50} 条", file=sys.stderr, flush=True)
+        return False
+
+
+def _finalize_write(zone: str, all_records: list[dict], version_label: str,
+                    tagged_path: Path,
+                    out_path_override: Path | None) -> tuple[bool, Path]:
+    """校验 + 写盘. schema 失败时**不覆盖 active tagged**, 改写 `.staged.json` (codex BLOCK#5):
+    live recall 读 active dishes_tagged.json, 不能让校验失败的脏数据进 live 消费路径。
+    batch cache 保留 (resume), 修好枚举/缺字段后重跑即覆盖 active。返回 (schema_validated, 实际写入路径)."""
+    schema_validated = _validate_records(zone, all_records, version_label)
+    if out_path_override:  # spike 模式: 写到指定位置 (不动 active)
+        _write_json(out_path_override, all_records)
+        return schema_validated, out_path_override
+    staged = tagged_path.with_suffix(".staged.json")
+    if schema_validated:
+        _write_json(tagged_path, all_records)
+        staged.unlink(missing_ok=True)  # 清掉上次失败留下的过期 staged, 防误读
+        return True, tagged_path
+    _write_json(staged, all_records)
+    print(f"[{zone}] ✗ schema 失败 → 写 {staged.name}, active dishes_tagged.json 未动 "
+          f"(不污染 live recall); 修后重跑覆盖 active。", file=sys.stderr, flush=True)
+    return False, staged
+
+
 def run_zone(
     zone: str,
     *,
@@ -226,6 +301,11 @@ def run_zone(
     out_path_override: Path | None = None,
 ) -> dict:
     base = _zone_data_dir(zone)
+    if ingest_in_progress(base):
+        raise RuntimeError(
+            f"[{zone}] 检测到 .ingest_lock (loader 发布中或上次未完成): "
+            f"restaurants.json/dishes_raw.json 可能跨代混合, 拒绝打标。"
+            f"请重跑 `python -m chisha.loader` 完成发布后再 tag。")
     raw = _read_json(base / "dishes_raw.json")
     rest_by_id = {r["id"]: r for r in _read_json(base / "restaurants.json")}
 
@@ -249,9 +329,18 @@ def run_zone(
                 "batches": len(batches)}
 
     if not delta:
-        print(f"[{zone}] nothing to tag", flush=True)
-        return {"zone": zone, "tagged_total": len(existing_tagged),
-                "newly_tagged": 0, "failed": 0}
+        # 无新菜也要重建活动集: 删消失菜 + 刷新 raw 字段 (D-099.3), 不能直接 bail
+        active = _rebuild_active(existing_tagged, raw_idx)
+        all_records = list(active.values())
+        pruned = sum(1 for t in existing_tagged if t.get("dish_id") not in raw_idx)
+        schema_validated, out_target = _finalize_write(
+            zone, all_records, version_label, tagged_path, out_path_override)
+        print(f"[{zone}] 无新菜; 已重建活动集 (prune {pruned} 下架菜 + 刷新 raw 字段)",
+              flush=True)
+        return {"zone": zone, "tagged_total": len(all_records),
+                "newly_tagged": 0, "pruned": pruned, "failed": 0,
+                "schema_validated": schema_validated,
+                "out_path": str(out_target)}
 
     prompt_template = prompt_path.read_text(encoding="utf-8")
 
@@ -263,7 +352,10 @@ def run_zone(
         if not no_resume and out_path.exists():
             try:
                 cached = _read_json(out_path)
-                if isinstance(cached, list) and len(cached) == len(batch):
+                # 缓存复用须绑精确有序 dish_id 清单 (非仅长度): 重采后批内菜变了就重跑 (D-099.3)
+                if (isinstance(cached, list)
+                        and [r.get("dish_id") for r in cached]
+                        == [d["dish_id"] for d in batch]):
                     done_count += 1
                     continue
             except Exception:
@@ -306,11 +398,11 @@ def run_zone(
                 print(f"  ✗ batch {idx} failed: {err[:160]}",
                       file=sys.stderr, flush=True)
 
-    # ---- 合并所有 batch + kept existing → dishes_tagged.json ----
+    # ---- 重建活动集 (prune 下架菜 + 刷新 raw) + 合并新 batch → dishes_tagged.json ----
     if force_version:
         combined: dict[str, dict] = {}
     else:
-        combined = {t["dish_id"]: t for t in existing_tagged}
+        combined = _rebuild_active(existing_tagged, raw_idx)
 
     merged_count = 0
     for idx, batch in enumerate(batches, start=1):
@@ -325,32 +417,8 @@ def run_zone(
             merged_count += 1
 
     all_records = list(combined.values())
-
-    # 尝试用 schemas.DishTagged 校验; schema 还没升级时 5 新字段会撞 extra=forbid
-    # → 回落到 v3 record-level 校验
-    try:
-        from chisha.schemas import validate_dishes_tagged
-        validate_dishes_tagged(all_records)
-        schema_validated = True
-    except Exception as e:
-        schema_validated = False
-        # 至少保证 v3 字段都在 (上面 _call_one_batch 阶段已校过, 这里复核)
-        for rec in all_records:
-            if rec.get("metadata", {}).get("tag_version") == version_label:
-                np_ = rec.get("nutrition_profile", {})
-                # 复核 5 新字段存在性
-                for k in ("dish_role", "processed_meat_flag",
-                          "sweet_sauce_level", "wetness", "grain_type"):
-                    if k not in np_:
-                        raise RuntimeError(
-                            f"rec {rec['dish_id']} missing nutrition_profile.{k}"
-                        ) from e
-        print(f"[{zone}] schemas.DishTagged 校验未通过 ({type(e).__name__}); "
-              f"v3 字段层手动校验已过. (schema 升级后请重跑校验)",
-              file=sys.stderr, flush=True)
-
-    out_target = out_path_override or tagged_path
-    _write_json(out_target, all_records)
+    schema_validated, out_target = _finalize_write(
+        zone, all_records, version_label, tagged_path, out_path_override)
 
     elapsed = time.time() - started
     stats = {
@@ -431,7 +499,9 @@ def main(argv: list[str] | None = None) -> int:
             out_path_override=out_override,
         )
         print("\n" + json.dumps(stats, ensure_ascii=False, indent=2))
-        if stats.get("batches_failed"):
+        # schema 校验失败也必须让调用方感知 (非零退出), 否则无效 active 数据可能在
+        # validate_data 跑之前被消费 (codex BLOCK#5)
+        if stats.get("batches_failed") or stats.get("schema_validated") is False:
             rc = 1
     return rc
 

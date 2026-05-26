@@ -35,6 +35,11 @@ eval/dish_tagging_eval/.cache/
 
 # D-043 P3 反馈历史 (用户运行时状态, 同 logs/, 不进版本库)
 data/feedback_history.jsonl
+# D-099 迁移快照 + 未发布 staged + ingest 锁 + schema 失败 staged tagged (本地运行时产物)
+data/_migration_snapshot_*/
+data/*/_staged/
+data/*/.ingest_lock
+data/*/dishes_tagged.staged.json
 
 # Web 前端 (apps/web)
 apps/web/node_modules/
