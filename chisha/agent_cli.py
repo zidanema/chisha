@@ -675,17 +675,36 @@ def cmd_doctor(args) -> int:
                 for rel_src, _ in _MIGRATE_MAP)
     )
 
+    # D-102 Step3: 数据产物 ↔ 引擎 manifest 兼容闸门 (install_root 上的 data/manifest.json)
+    from chisha import manifest as _manifest
+    manifest_status, manifest_note = "ok", ""
+    try:
+        mst = _manifest.check_compatibility(install_root)
+        manifest_status = mst.status   # ok | missing
+        if manifest_status == "missing":
+            manifest_note = (
+                "data/manifest.json 缺失 — 未版本化 bundle, 未达分发就绪 "
+                "(跑 `uv run python -m scripts.build_manifest` 生成)."
+            )
+    except _manifest.IncompatibleManifestError as e:
+        manifest_status, manifest_note = "incompatible", str(e)
+
     info = {
-        # Q-B: 未迁的旧 repo state 视为"未就绪" — 否则生产会静默读空 state_root.
-        "ok": not sb and writable and not legacy_pending,
+        # Q-B: 未迁的旧 repo state 视为"未就绪"; manifest 非 ok (缺/不兼容) 也视为未达
+        # 分发就绪 (Step3 Codex review: doctor 是分发就绪检查, 缺 manifest=未版本化=未就绪;
+        # runtime warn 放行与 doctor gate 不冲突).
+        "ok": (not sb and writable and not legacy_pending
+               and manifest_status == "ok"),
         "protocol_version": PROTOCOL_VERSION,
         "candidate_schema_version": CANDIDATE_SCHEMA_VERSION,
+        "engine_version": _manifest.ENGINE_VERSION,
         "root": str(root),
         "install_root": str(install_root),
         "state_root": str(sroot),
         "state_root_writable": writable,
         "state_migrated": migrated,
         "legacy_state_pending_migration": legacy_pending,
+        "data_manifest_status": manifest_status,   # ok | missing | incompatible
         "sandbox_enabled": sb,
         "scope_ready": not sb,
         "notes": [],
@@ -701,6 +720,8 @@ def cmd_doctor(args) -> int:
             "检测到 repo 内旧 state 未迁到 state_root (未就绪) — 跑 "
             "`uv run python -m scripts.migrate_state` 一次性迁移 (复制保留 repo 作回滚)."
         )
+    if manifest_note:
+        info["notes"].append(manifest_note)
     _emit(info)
     return 0 if info["ok"] else 1
 

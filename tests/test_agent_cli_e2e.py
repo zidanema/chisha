@@ -46,6 +46,17 @@ def cli_env(tmp_path, monkeypatch):
             return {"meal_type": "lunch", "refine_input": self._ri,
                     "refine_intent": None}
     monkeypatch.setattr(orch, "build_context", lambda **kw: _Ctx(kw.get("refine_input")))
+    # D-102 Step3: 写一份兼容 manifest 让 doctor 视为分发就绪 (否则缺 manifest→ok=false)
+    from chisha import manifest as _m
+    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    _m.manifest_path(tmp_path).write_text(json.dumps({
+        "manifest_schema_version": _m.MANIFEST_SCHEMA_VERSION,
+        "artifact_version": 1, "data_schema_version": 1,
+        "min_engine_version": _m.ENGINE_VERSION,
+        "engine_capabilities_required": sorted(_m.SUPPORTED_ENGINE_CAPABILITIES),
+        "normalized_name_version": 1, "zones": ["test"],
+        "generated_at": "2026-05-28T00:00:00+00:00", "integrity": None,
+    }), encoding="utf-8")
     return tmp_path
 
 

@@ -51,7 +51,13 @@ def load_profile(
 
 
 def load_zone_data(zone: str, root: Path) -> tuple[list[dict], list[dict]]:
-    """读 restaurants + dishes_tagged."""
+    """读 restaurants + dishes_tagged.
+
+    D-102 Step3: 消费 bundle 前先过 manifest 兼容闸门 (引擎↔产物边界) — 不兼容 hard-fail
+    (D-100 fail-loud); 缺 manifest = 过渡期未版本化 bundle, warn 放行 (per install_root 只检一次).
+    """
+    from chisha import manifest
+    manifest.ensure_compatible_once(root)
     base = root / "data" / zone
     rests = json.loads((base / "restaurants.json").read_text(encoding="utf-8"))
     tagged = json.loads((base / "dishes_tagged.json").read_text(encoding="utf-8"))

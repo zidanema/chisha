@@ -15,9 +15,11 @@ def _isolate_state_root(tmp_path, monkeypatch):
     - 同时 delenv 防真实环境 CHISHA_STATE_ROOT 泄漏进测试。
     要验"默认解析到 ~/.chisha"的测试可自行 monkeypatch.setattr 复原或走 env。
     """
-    from chisha import state_root
+    from chisha import manifest, state_root
     monkeypatch.delenv("CHISHA_STATE_ROOT", raising=False)
     monkeypatch.setattr(state_root, "default_state_root", lambda: tmp_path)
+    # D-102 Step3: 清 manifest per-root compat 缓存, 防测试间复用 root 时跳过新 manifest 校验。
+    manifest._checked.clear()
 
 
 def make_dish(

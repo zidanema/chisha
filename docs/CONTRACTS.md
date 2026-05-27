@@ -119,6 +119,14 @@
 - **迁移 = 一次性显式 (`scripts.migrate_state` / `state_migrate.migrate_state`), 复制不删源 (repo 作回滚) + 目录逐文件原子合并 (不丢/不 clobber) + 校验 + 原子 marker + 幂等.** 未迁的旧 repo state → `doctor` 报 `legacy_state_pending_migration` + `ok=false` (未就绪, 不静默读空 state)。
 - **测试隔离铁律**: conftest autouse `_isolate_state_root` monkeypatch `state_root.default_state_root→tmp_path` + delenv → 任何 None/包目录 root 解析落 tmp, **绝不污染真实 `~/.chisha/`**; 不动 env/不覆盖显式 root (多 root 隔离测试不破)。
 
+## 数据产物 ↔ 引擎 manifest 闸门 (D-102.3)
+
+- **只读 bundle 消费入口 (`recall.load_zone_data`) 必过 `manifest.ensure_compatible_once(install_root)`.** 不在 `loader.load_raw` (那是 collector ingest 入口, 推荐链路不走) / 不在 `data_root` (那管 state 不管只读 bundle)。
+- **兼容判定用 capability flags 不用单调 version** (§C): 产物 `data/manifest.json` 声明 `engine_capabilities_required`, 引擎 `manifest.SUPPORTED_ENGINE_CAPABILITIES` 比对, 缺能力 = 破坏性变更 `IncompatibleManifestError` hard-fail; 同时校验 `manifest_schema_version` ≤ 引擎上限 / `min_engine_version` ≤ `chisha.__version__` (SemVer 下限) / `normalized_name_version == loader.SHOP_NAME_VERSION`。任一不满足 hard-fail, **绝不尽力解析** (D-100)。
+- **缺 manifest ≠ incompatible**: 过渡期未版本化 bundle → warn 放行 (无版本信息可断言), doctor 标 `data_manifest_status=missing` 未达分发就绪; present-but-incompatible 才 hard-fail。
+- **manifest 只管"数据产物↔引擎"边界**, 不取代 PROTOCOL_VERSION / CANDIDATE_SCHEMA_VERSION / TRACE_SCHEMA_VERSION (各管各). `chisha.__version__` 必须 == pyproject version (一致性守门测试)。
+- **本期留位不定型** (范围红线): `integrity=null` (hash/签名/来源证明) + plugin marketplace 打包 (先内部 git transport)。`build_manifest` 发布产物时跑 (`--bump` artifact_version)。
+
 ## Sandbox Time-Travel (D-077 / D-078)
 
 - **sandbox = user web 一个 mode, 不是 CLI 替代或 fixture batch.** 行为完全一致 prod (禁 fake LLM / 跳 cooldown), 仅时钟 + 数据落盘根隔离.
