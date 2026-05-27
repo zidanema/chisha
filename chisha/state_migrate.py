@@ -1,0 +1,183 @@
+"""D-102 Step2 (Commit B): 把 install 内的旧 user state 一次性迁到 state_root (~/.chisha/).
+
+提案 §B + §已知坑 3: state 默认翻到 `~/.chisha/` 后, 旧 repo 内的 profile / logs /
+反馈历史必须搬过去, 否则 app 看不到。安全策略 (接 D-099 "ingest 前快照" + Codex Step2
+建议): **复制而非移动** (repo 原数据保留作回滚) → 校验文件数 → 原子写 manifest marker。
+非幂等重跑安全 (marker 存在直接 already)。
+
+迁移项 (install_root → state_root):
+- profile.yaml                         → profile.yaml
+- logs/ 整子树 (meal_log/sessions/feedback/recommend_trace/agent_rounds/sandbox/…) → logs/
+- data/feedback_history.jsonl          → feedback_history.jsonl   (D-102 迁出 data/)
+- data/long_term_prefs.json            → long_term_prefs.json     (D-102 迁出 data/)
+
+不迁 (install 只读, 留 repo): data/{zone}/ 餐厅菜品库 / profiles/ 方法论 / prompts/ / 代码。
+
+并发边界 (志丹拍板接受, 接 D-099 TOCTOU 先例 + 提案 §已知坑 2): 迁移是**一次性**显式操作
+(首次启动 / migrate_state CLI), 单用户顺序工作流下无并发写同一 target。`target.exists()`
+检查与 `replace` 之间的 TOCTOU 窗口在此前提下不触发; 真要多进程/多实例并发再上文件锁。
+"""
+from __future__ import annotations
+
+import datetime as dt
+import json
+import shutil
+from dataclasses import dataclass, field
+from pathlib import Path
+
+MANIFEST_NAME = ".state_manifest.json"
+MIGRATE_VERSION = 1
+
+# (install 相对路径, state 相对路径). 目录项以 "/" 结尾。
+_MIGRATE_MAP: list[tuple[str, str]] = [
+    ("profile.yaml", "profile.yaml"),
+    ("logs/", "logs/"),
+    ("data/feedback_history.jsonl", "feedback_history.jsonl"),
+    ("data/long_term_prefs.json", "long_term_prefs.json"),
+]
+
+
+@dataclass
+class MigrateResult:
+    status: str                       # already / migrated / nothing_to_migrate / dry_run
+    state_root: Path
+    copied: list[str] = field(default_factory=list)
+    skipped_existing: list[str] = field(default_factory=list)
+    file_count: int = 0
+
+
+def _count_files(p: Path) -> int:
+    if p.is_file():
+        return 1
+    return sum(1 for x in p.rglob("*") if x.is_file())
+
+
+def _merge_copy_dir(src: Path, dst: Path) -> int:
+    """把 src 子树里 dst 缺失的文件拷过去, **不覆盖** dst 已有的。返回新拷文件数。
+
+    用于 dst 目录已存在的合并迁移 (防整目录 skip 丢旧日志, 也防 clobber 用户新数据)。
+    每文件 staging + 原子 rename: 中途中断只留 `.migrating.*` 孤儿 (非 target) → 重跑因
+    target 不存在重拷 → 永不把半文件当迁完 (Codex review: copy2 直写 target 无原子保护)。
+    rename 本身即"完整或不存在"保证, 不做 size 校验 (空文件如 feedback_history.jsonl 合法 0 字节)。
+    """
+    import uuid as _uuid
+    copied = 0
+    for item in src.rglob("*"):
+        if not item.is_file():
+            continue
+        target = dst / item.relative_to(src)
+        if target.exists():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(f"{target.name}.migrating.{_uuid.uuid4().hex}")
+        shutil.copy2(item, tmp)
+        tmp.replace(target)        # 同目录 → 同盘原子
+        copied += 1
+    return copied
+
+
+def _manifest_path(state_root: Path) -> Path:
+    return state_root / MANIFEST_NAME
+
+
+def is_migrated(state_root: Path) -> bool:
+    return _manifest_path(state_root).exists()
+
+
+def migrate_state(
+    install_root: Path,
+    state_root: Path,
+    *,
+    dry_run: bool = False,
+) -> MigrateResult:
+    """install_root 内旧 state → state_root。复制 (不删源), 校验, 写 marker。幂等。
+
+    - state_root 已有 manifest → status=already (不重复迁)。
+    - 已存在的目标项**不覆盖** (skipped_existing), 防二次迁覆盖用户在 state_root 的新数据。
+    """
+    install_root = Path(install_root)
+    state_root = Path(state_root)
+
+    if is_migrated(state_root):
+        return MigrateResult(status="already", state_root=state_root)
+
+    plan: list[tuple[Path, Path, bool]] = []   # (src, dst, is_dir)
+    for rel_src, rel_dst in _MIGRATE_MAP:
+        is_dir = rel_src.endswith("/")
+        src = install_root / rel_src.rstrip("/")
+        dst = state_root / rel_dst.rstrip("/")
+        if not src.exists():
+            continue
+        plan.append((src, dst, is_dir))
+
+    if not plan:
+        return MigrateResult(status="nothing_to_migrate", state_root=state_root)
+
+    result = MigrateResult(status="dry_run" if dry_run else "migrated",
+                           state_root=state_root)
+    if dry_run:
+        for src, dst, is_dir in plan:
+            (result.skipped_existing if dst.exists() else result.copied).append(
+                f"{src} → {dst}"
+            )
+            if not dst.exists():
+                result.file_count += _count_files(src)
+        return result
+
+    state_root.mkdir(parents=True, exist_ok=True)
+    for src, dst, is_dir in plan:
+        if is_dir:
+            if dst.exists():
+                # 目录已存在 (如 ~/.chisha/logs 被先前运行创建): **逐文件合并** — 只拷 dst
+                # 缺失的, 绝不覆盖已有 → 旧 repo 日志不丢, 用户在 state_root 的新数据也不被
+                # clobber (Codex review 新 BLOCKING: 整目录 skip 会静默丢旧日志).
+                merged = _merge_copy_dir(src, dst)
+                if merged:
+                    result.copied.append(f"{src} → {dst} (merged {merged} 文件)")
+                else:
+                    result.skipped_existing.append(f"{src.name}/ (已全在, 无缺失)")
+                result.file_count += merged
+                continue
+            # dst 不存在: staging + 原子 rename + 文件数校验 (中断只留 .migrating 残件,
+            # 重跑先清再拷 → 永不把半拷贝当成功; 不符则 fail-loud 不写 marker, Q-A).
+            staging = dst.with_name(dst.name + ".migrating")
+            if staging.exists():
+                shutil.rmtree(staging)
+            shutil.copytree(src, staging)
+            src_n, dst_n = _count_files(src), _count_files(staging)
+            if src_n != dst_n:
+                shutil.rmtree(staging)
+                raise RuntimeError(
+                    f"迁移校验失败 {src} → {dst}: 源 {src_n} vs 拷贝 {dst_n}; "
+                    "已清理残件, 未写 marker. 重跑迁移."
+                )
+            staging.replace(dst)        # staging/dst 同在 state_root → 同盘原子
+            result.copied.append(f"{src} → {dst}")
+            result.file_count += dst_n
+        else:
+            if dst.exists():
+                result.skipped_existing.append(f"{src.name} (state_root 已存在, 不覆盖)")
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            staging = dst.with_name(dst.name + ".migrating")
+            if staging.exists():
+                staging.unlink()
+            shutil.copy2(src, staging)
+            staging.replace(dst)
+            result.copied.append(f"{src} → {dst}")
+            result.file_count += 1
+
+    # 原子写 manifest marker (最后, 复制+校验通过后才落 → 中断不会误判已迁)
+    manifest = {
+        "version": MIGRATE_VERSION,
+        "migrated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "source_install_root": str(install_root.resolve()),
+        "copied": result.copied,
+        "skipped_existing": result.skipped_existing,
+        "file_count": result.file_count,
+    }
+    tmp = _manifest_path(state_root).with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
+                   encoding="utf-8")
+    tmp.replace(_manifest_path(state_root))
+    return result

@@ -251,6 +251,24 @@ def test_doctor_ok_when_no_sandbox(cli_env):
     d = _run(["doctor"])
     assert d["ok"] is True and d["sandbox_enabled"] is False
     assert d["protocol_version"] == "1.0"
+    # D-102 Step2: doctor 报 install/state 二分 + 迁移状态
+    assert "install_root" in d and "state_root" in d
+    assert d["state_migrated"] in (True, False)
+    assert d["legacy_state_pending_migration"] is False   # cli_env install==state
+
+
+def test_doctor_flags_pending_migration(cli_env, monkeypatch, tmp_path):
+    """D-102 Step2 (Codex review Q-B/Q-D): install 有旧 state (含 data/ 反馈) 但 state_root
+    未迁 → legacy_state_pending_migration=True + ok=False (未就绪, 不静默读空 state)."""
+    install = tmp_path / "install_repo"
+    (install / "data").mkdir(parents=True)
+    (install / "data" / "feedback_history.jsonl").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(agent_cli, "_root", lambda: install)
+    state_dir = tmp_path / "fresh_state"          # 未迁 (无 marker)
+    monkeypatch.setenv("CHISHA_STATE_ROOT", str(state_dir))
+    d = _run(["doctor"])
+    assert d["legacy_state_pending_migration"] is True   # Q-D: data/ 反馈也算迁移输入
+    assert d["ok"] is False                              # Q-B: 未迁 = 未就绪
 
 
 def test_doctor_flags_sandbox(cli_env, monkeypatch):

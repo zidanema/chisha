@@ -43,7 +43,7 @@ Phase 2 · 双向扩展 (顺序后议)
 
 > D-097 (2026-05-25) 把原 9 项按"自用是否需要"重切. 真要推广同事时回看 D-097 恢复"推迟"项.
 >
-> **D-102 (2026-05-28) 重激活 Phase 1 工程主线 = 可分发共享核心** (不推翻 D-097 自用心态, 把"真要推广时恢复"那一刻落地). 分步: Step1 焊大脑 (统一 plan contract / FallbackPlan, **已落地 D-102.1**) → Step2 root 拆分 →`~/.chisha/` → Step3 manifest+doctor+plugin. 提案 `docs/proposals/2026-05-28-distributable-shared-core.md`.
+> **D-102 (2026-05-28) 重激活 Phase 1 工程主线 = 可分发共享核心** (不推翻 D-097 自用心态, 把"真要推广时恢复"那一刻落地). 分步: Step1 焊大脑 (FallbackPlan, **已落地 D-102.1**) → Step2 root 拆分 →`~/.chisha/` (**已落地 D-102.2**, install/state 二分 + 迁移 + doctor) → Step3 manifest+capability gate+plugin 打包 (**待做**). 提案 `docs/proposals/2026-05-28-distributable-shared-core.md`.
 
 **自用刚需 (真硬门, 2 项)**:
 - **AI-friendly 接个人 agent** — D-074 **Phase 0 已落地 (2026-05-25)**: chisha 零 LLM + one-shot CLI (`python -m chisha.agent_cli` verb 链 start/resolve-intent/apply-rerank/choose/init/doctor) + Claude Code reference adapter skill (`init` 生成); agent 的 LLM 做 context 抽取 + L3 精排 (`llm_request_spec` 信封). 自用一周收 bug → 稳定后 Phase 1 接 OpenClaw. 实现见 [decisions D-074](decisions.md) + [CONTRACTS「Agent CLI 协议」](CONTRACTS.md)

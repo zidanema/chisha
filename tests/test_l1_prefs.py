@@ -144,8 +144,7 @@ def test_load_empty_prefs_returns_none(tmp_path: Path):
 
 def test_load_corrupt_backups_and_returns_none(tmp_path: Path):
     """损坏文件 → 改名 .corrupt.{ts}.bak + 返回 None (派生数据 fail-open)."""
-    prefs_path = tmp_path / "data" / "long_term_prefs.json"
-    prefs_path.parent.mkdir(parents=True)
+    prefs_path = tmp_path / "long_term_prefs.json"  # D-102 Step2: 迁出 data/
     prefs_path.write_text("{ this is not valid json", encoding="utf-8")
     assert load_prefs(root=tmp_path) is None
     # 验证 backup

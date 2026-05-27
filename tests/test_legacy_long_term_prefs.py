@@ -29,7 +29,7 @@ from chisha.long_term_prefs import (
 
 @pytest.fixture
 def tmp_root(tmp_path):
-    """临时项目根, 反馈落 tmp_path/data/feedback_history.jsonl."""
+    """临时项目根, 反馈落 tmp_path/feedback_history.jsonl (D-102 Step2: 迁出 data/)."""
     (tmp_path / "data").mkdir(parents=True, exist_ok=True)
     return tmp_path
 
@@ -44,7 +44,7 @@ def test_append_feedback_writes_jsonl(tmp_root):
         timestamp=dt.datetime(2026, 5, 13, 12, 0),
         root=tmp_root,
     )
-    path = tmp_root / "data" / "feedback_history.jsonl"
+    path = tmp_root / "feedback_history.jsonl"
     assert path.exists()
     lines = path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
@@ -57,7 +57,7 @@ def test_append_feedback_writes_jsonl(tmp_root):
 def test_append_feedback_empty_skipped(tmp_root):
     """空反馈不落盘."""
     append_feedback(chips=[], rating_taste=None, want_again=None, root=tmp_root)
-    path = tmp_root / "data" / "feedback_history.jsonl"
+    path = tmp_root / "feedback_history.jsonl"
     assert not path.exists()
 
 
@@ -68,7 +68,7 @@ def test_append_feedback_appends_multiple(tmp_root):
             timestamp=dt.datetime(2026, 5, 13 - i, 12, 0),
             root=tmp_root,
         )
-    path = tmp_root / "data" / "feedback_history.jsonl"
+    path = tmp_root / "feedback_history.jsonl"
     lines = path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 3
 
@@ -233,7 +233,7 @@ def test_append_and_load_share_root(tmp_root):
             root=tmp_root,
         )
     # 验证文件落盘 + 内容
-    path = tmp_root / "data" / "feedback_history.jsonl"
+    path = tmp_root / "feedback_history.jsonl"
     assert path.exists()
     lines = path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 3

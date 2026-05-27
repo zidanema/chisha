@@ -29,10 +29,11 @@ def test_prod_paths_when_sandbox_off(tmp_root: Path):
         tmp_root / "logs" / "feedback" / "store.json"
     assert data_root.recommend_log_path(tmp_root) == \
         tmp_root / "logs" / "recommend_log.jsonl"
+    # D-102 Step2: feedback_history / long_term_prefs 迁出 data/ → state_root 顶层
     assert data_root.feedback_history_path(tmp_root) == \
-        tmp_root / "data" / "feedback_history.jsonl"
+        tmp_root / "feedback_history.jsonl"
     assert data_root.long_term_prefs_path(tmp_root) == \
-        tmp_root / "data" / "long_term_prefs.json"
+        tmp_root / "long_term_prefs.json"
     assert data_root.profile_path(tmp_root) == tmp_root / "profile.yaml"
 
 
@@ -90,7 +91,7 @@ def test_sandbox_l1_prefs_isolated(tmp_root: Path):
     """sandbox 启用时 save_prefs 落 sandbox, prod prefs.json 不动."""
     from chisha.l1_prefs import save_prefs
     # prod 先放一份 prefs
-    prod_prefs = tmp_root / "data" / "long_term_prefs.json"
+    prod_prefs = tmp_root / "long_term_prefs.json"  # D-102 Step2: 迁出 data/
     prod_prefs.parent.mkdir(parents=True, exist_ok=True)
     prod_prefs.write_text(
         '{"boost": ["wetness"], "penalty": [], "version": 1}',

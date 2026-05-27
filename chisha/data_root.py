@@ -151,10 +151,14 @@ def feedback_history_path(
     root: Optional[Path] = None,
     session_id: Optional[str] = None,
 ) -> Path:
-    """D-043 deprecated jsonl, 但 bootstrap 脚本仍读. sandbox 也支持."""
+    """D-043 deprecated jsonl, 但 bootstrap 脚本仍读. sandbox 也支持.
+
+    D-102 Step2 (Commit B): 从 `data/` (install 只读区) 迁出到 state_root 顶层 — user
+    state 不能与引擎只读数据同住 data/, 否则 update 整体覆盖 install 抹掉同事反馈历史.
+    """
     r = _resolve_root(root)
     return _maybe_sandbox(
-        r, "feedback_history.jsonl", "data/feedback_history.jsonl",
+        r, "feedback_history.jsonl", "feedback_history.jsonl",
         session_id=session_id,
     )
 
@@ -163,9 +167,11 @@ def long_term_prefs_path(
     root: Optional[Path] = None,
     session_id: Optional[str] = None,
 ) -> Path:
+    # D-102 Step2 (Commit B): long_term_prefs 是 L1 学到的 user state, 从 data/ 迁出到
+    # state_root 顶层 (同 feedback_history), 防 update 覆盖 install 抹掉同事长期偏好.
     r = _resolve_root(root)
     return _maybe_sandbox(
-        r, "long_term_prefs.json", "data/long_term_prefs.json",
+        r, "long_term_prefs.json", "long_term_prefs.json",
         session_id=session_id,
     )
 

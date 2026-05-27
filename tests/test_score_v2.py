@@ -1103,7 +1103,7 @@ def test_rank_combos_merges_explicit_static_runtime_hints(basic_profile, tmp_pat
     from chisha import l1_prefs as lp
     monkeypatch.setattr(
         lp, "_prefs_path",
-        lambda root=None: tmp_path / "data" / "long_term_prefs.json"
+        lambda root=None: tmp_path / "long_term_prefs.json"  # D-102 Step2: 迁出 data/
     )
     basic_profile.pop("taste_description", None)  # 排除 static 干扰
     # 显式 hints 不含 wetness (只含 spicy penalty, 与 wetness 无关)

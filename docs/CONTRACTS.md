@@ -111,6 +111,14 @@
 
 ---
 
+## install / state root 二分 (D-102.2)
+
+- **所有 user state 路径经 `state_root.resolve(root)` 解析 (单一权威源), 绝不裸拼 `root/"logs"...`.** data_root 8 落盘函数 + sandbox 路径基底 (`_state_base`) + web_api sandbox 路由 (`_sb_bucket`/`_validate_and_route_sid`/桶校验/`_copy_real_data`) + sandbox_migration 全收口经它, 否则 enable 写一处读另一处 split-brain。新增写 state 的路径加进来, 别再开第二条解析。
+- **`resolve` 三规则 (优先级)**: env `CHISHA_STATE_ROOT` > 显式非包目录 root (测试/worktree 隔离) > `default_state_root()`(=`~/.chisha/`)。"root==包目录"=生产信号 (web_api 把包目录当 root 下传) → 落 default。
+- **install_root (引擎+只读数据: data/{zone} / profiles/methodologies / prompts) 留包目录; state_root (profile / logs / 反馈 / sandbox / 迁移记录) → `~/.chisha/`.** update 整体覆盖 install, 永不碰 state。`feedback_history` / `long_term_prefs` 是 user state, 住 state_root 顶层, **不在 `data/`** (那是 install 只读区)。
+- **迁移 = 一次性显式 (`scripts.migrate_state` / `state_migrate.migrate_state`), 复制不删源 (repo 作回滚) + 目录逐文件原子合并 (不丢/不 clobber) + 校验 + 原子 marker + 幂等.** 未迁的旧 repo state → `doctor` 报 `legacy_state_pending_migration` + `ok=false` (未就绪, 不静默读空 state)。
+- **测试隔离铁律**: conftest autouse `_isolate_state_root` monkeypatch `state_root.default_state_root→tmp_path` + delenv → 任何 None/包目录 root 解析落 tmp, **绝不污染真实 `~/.chisha/`**; 不动 env/不覆盖显式 root (多 root 隔离测试不破)。
+
 ## Sandbox Time-Travel (D-077 / D-078)
 
 - **sandbox = user web 一个 mode, 不是 CLI 替代或 fixture batch.** 行为完全一致 prod (禁 fake LLM / 跳 cooldown), 仅时钟 + 数据落盘根隔离.

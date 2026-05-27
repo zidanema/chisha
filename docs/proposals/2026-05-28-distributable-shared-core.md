@@ -1,7 +1,7 @@
 # 提案: 可分发的共享核心 — chisha 从单用户工具到"类 feishu-cli 可分发物"
 
 > 状态: **志丹拍板入库, 分步落地中** (2026-05-28)。Opus + 志丹 多轮收敛 → Codex 架构 review 两轮: 一轮过 5 大支柱; 二轮复核**确认 5 支柱忠实** + 提 3 个分歧 (#1 Step1 0-diff 范围 / #2 meal_log 归属 vs sandbox / #3 版本分层), 经核码后**三项全部以澄清收敛**。已入 `docs/decisions.md` D-102 系列。
-> **落地进度**: ✅ **Step 1 焊大脑 (D-102.1, 2026-05-28)** — FallbackPlan 统一兜底契约 + 根治 meal_log drift, Codex 设计+commit 双触点, pytest 1155 pass + baseline 0-diff。⏳ Step 2 root 拆分 / Step 3 分发 待做。
+> **落地进度**: ✅ **Step 1 焊大脑 (D-102.1)** — FallbackPlan 统一兜底契约 + 根治 meal_log drift。✅ **Step 2 搬文件 (D-102.2)** — install/state root 二分, state→~/.chisha (分两 commit: 管道 0-diff + 翻默认+迁移), 真迁移已跑, doctor 扩 compat。均经 Codex 设计+commit 双触点, pytest 1167 pass + baseline 0-diff。⏳ Step 3 分发 (manifest+plugin) 待做。
 > 关系: 重新激活 ROADMAP **Phase 1 (同方法论同事推广)** 的工程主线 (D-097 当时降级为"随缘", 现志丹把分发拉回主目标)。不推翻 D-097 的"自用为主"心态, 而是把"真要推广时回看恢复"的那一刻落地。
 
 ## 目标 (志丹拍板)

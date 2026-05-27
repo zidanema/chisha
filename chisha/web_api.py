@@ -424,10 +424,13 @@ def _write_profile_preserving_comments(new_profile: dict) -> None:
     # D-077 PR-1c: 走 sandbox 副本 (启用时) 或 prod profile.yaml
     target = _profile_path()
     # 如果 sandbox 启用但副本不存在, 先拷一份 (init 时也会拷, 这里兜底)
-    from chisha import sandbox as _sb
-    if _sb.is_enabled(ROOT) and not target.exists() and PROFILE_PATH.exists():
+    # D-102 Step2: seed 源用 state_root 的 prod profile (非 install 旧位置), 翻默认后
+    # 不读 repo 内的 stale profile (Codex commit review Q-C).
+    from chisha import sandbox as _sb, state_root as _sr
+    prod_profile = _sr.resolve(ROOT) / "profile.yaml"
+    if _sb.is_enabled(ROOT) and not target.exists() and prod_profile.exists():
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(PROFILE_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+        target.write_text(prod_profile.read_text(encoding="utf-8"), encoding="utf-8")
 
     if target.exists():
         with target.open("r", encoding="utf-8") as f:
@@ -888,11 +891,12 @@ def _copy_real_data_to_sandbox(root: Path) -> None:
         (sandbox_dir / "feedback").mkdir(parents=True, exist_ok=True)
         shutil.copy2(prod_feedback_store, sandbox_dir / "feedback" / "store.json")
 
-    prod_history = base / "data" / "feedback_history.jsonl"
+    # D-102 Step2 (Commit B): feedback_history / long_term_prefs 已迁出 data/ → state_root 顶层
+    prod_history = base / "feedback_history.jsonl"
     if prod_history.exists():
         shutil.copy2(prod_history, sandbox_dir / "feedback_history.jsonl")
 
-    prod_prefs = base / "data" / "long_term_prefs.json"
+    prod_prefs = base / "long_term_prefs.json"
     if prod_prefs.exists():
         shutil.copy2(prod_prefs, sandbox_dir / "long_term_prefs.json")
 

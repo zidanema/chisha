@@ -28,15 +28,16 @@ def project_root() -> Path:
 
 
 def default_state_root() -> Path:
-    """无显式 root 时 state 的落点。
+    """无显式 root 时 state 的落点 = `~/.chisha/` (host-agnostic, 活过 plugin update)。
 
-    D-102 Step2 Commit A (本提交): 仍 = 包目录 → 行为保持 (0-diff plumbing)。
-    Commit B 翻成 `~/.chisha/` (host-agnostic) 并配套迁移。env 永远最高优先。
+    D-102 Step2 Commit B: 从包目录翻到 `~/.chisha/`。配套 `state_migrate` 把 repo 内旧
+    state 一次性搬过来 (复制保留 repo 作回滚)。env `CHISHA_STATE_ROOT` 永远最高优先
+    (测试 / 多 worktree 隔离)。
     """
     env = os.environ.get("CHISHA_STATE_ROOT")
     if env:
         return Path(env).expanduser()
-    return project_root()
+    return Path.home() / ".chisha"
 
 
 def resolve(root: "Path | str | None") -> Path:

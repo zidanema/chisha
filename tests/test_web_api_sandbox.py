@@ -70,9 +70,8 @@ def test_init_explicit_start_date(app_with_sandbox):
 
 def test_init_copy_real_data(app_with_sandbox):
     app, root = app_with_sandbox
-    # prod 准备数据
-    (root / "data").mkdir(parents=True, exist_ok=True)
-    (root / "data" / "long_term_prefs.json").write_text(
+    # prod 准备数据 (D-102 Step2: long_term_prefs 迁出 data/ → state_root 顶层)
+    (root / "long_term_prefs.json").write_text(
         '{"boost": ["wetness"], "penalty": [], "version": 1}',
         encoding="utf-8",
     )

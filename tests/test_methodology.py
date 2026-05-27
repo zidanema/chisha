@@ -404,9 +404,8 @@ def test_profile_block_injects_l1_prefs_when_available(tmp_path):
     import json
     from chisha.rerank import _profile_block
 
-    # 在 tmp_path 写 long_term_prefs.json (默认 prod 路径 data/long_term_prefs.json)
-    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "data" / "long_term_prefs.json").write_text(json.dumps({
+    # 在 tmp_path 写 long_term_prefs.json (D-102 Step2: prod 路径 state_root 顶层)
+    (tmp_path / "long_term_prefs.json").write_text(json.dumps({
         "boost": ["low_oil"],
         "penalty": [],
         "evidence": [{

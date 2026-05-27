@@ -636,14 +636,56 @@ def _card_meal_type(sid: str, root: Path) -> str:
 
 def cmd_doctor(args) -> int:
     root = _root()
-    from chisha import sandbox
+    from chisha import sandbox, state_migrate, state_root
     from chisha.agent_protocol import CANDIDATE_SCHEMA_VERSION
     sb = sandbox.is_enabled(root)
+
+    # D-102 Step2: install/state root 二分 + 迁移状态 + state_root 可写性
+    import uuid as _uuid
+
+    from chisha.state_migrate import _MIGRATE_MAP
+    # install_root = 本次运行的 root (生产 = 包目录; 测试/worktree = 传入 root), 而非永远
+    # 真包目录 — 否则测试 root=tmp 时 doctor 误报真 repo 的旧 state 待迁 (Codex review).
+    install_root = root
+    sroot = state_root.resolve(root)
+    migrated = state_migrate.is_migrated(sroot)
+
+    # 写探针: 唯一名 (不 clobber 同名文件) + best-effort 清理; 只在 sroot 已存在时探内部,
+    # 否则探 parent 可写 (不为 doctor 副作用创建 state_root) (Codex review Q-E).
+    writable, write_err = True, ""
+    probe_dir = sroot if sroot.exists() else sroot.parent
+    probe = probe_dir / f".doctor_write_probe.{_uuid.uuid4().hex}"
+    try:
+        probe.write_text("ok", encoding="utf-8")
+    except Exception as e:
+        writable, write_err = False, f"{type(e).__name__}: {e}"
+    # 清理探针 best-effort (写成功但 unlink 失败不该误报不可写, 也不该留残件 — Codex Q-E)
+    try:
+        if probe.exists():
+            probe.unlink()
+    except Exception:
+        pass
+
+    # repo 内还有未迁 state? 检全部迁移输入 (profile/logs + data/ 反馈历史/偏好), 不只 profile/logs
+    # (Codex review Q-D). install==state (无二分场景) 不算 pending.
+    legacy_pending = (
+        not migrated
+        and install_root.resolve() != sroot.resolve()
+        and any((install_root / rel_src.rstrip("/")).exists()
+                for rel_src, _ in _MIGRATE_MAP)
+    )
+
     info = {
-        "ok": not sb,
+        # Q-B: 未迁的旧 repo state 视为"未就绪" — 否则生产会静默读空 state_root.
+        "ok": not sb and writable and not legacy_pending,
         "protocol_version": PROTOCOL_VERSION,
         "candidate_schema_version": CANDIDATE_SCHEMA_VERSION,
         "root": str(root),
+        "install_root": str(install_root),
+        "state_root": str(sroot),
+        "state_root_writable": writable,
+        "state_migrated": migrated,
+        "legacy_state_pending_migration": legacy_pending,
         "sandbox_enabled": sb,
         "scope_ready": not sb,
         "notes": [],
@@ -652,8 +694,15 @@ def cmd_doctor(args) -> int:
         info["notes"].append(
             "sandbox 全局启用中 — CLI production scope 会被拒绝. 先 disable sandbox."
         )
+    if not writable:
+        info["notes"].append(f"state_root 不可写: {write_err}")
+    if legacy_pending:
+        info["notes"].append(
+            "检测到 repo 内旧 state 未迁到 state_root (未就绪) — 跑 "
+            "`uv run python -m scripts.migrate_state` 一次性迁移 (复制保留 repo 作回滚)."
+        )
     _emit(info)
-    return 0 if not sb else 1
+    return 0 if info["ok"] else 1
 
 
 def cmd_init(args) -> int:
