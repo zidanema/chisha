@@ -70,7 +70,7 @@ def test_normalize_basic():
             }
         ]
     }
-    rests, dishes, conflicts = normalize(raw, office_zone="test-zone")
+    rests, dishes, conflicts, _nd = normalize(raw, office_zone="test-zone")
     assert len(rests) == 1
     rid = restaurant_rid("测试餐厅")
     assert rests[0]["id"] == rid          # 稳定哈希 id (D-099), 不再是 r_001

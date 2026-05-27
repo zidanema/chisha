@@ -97,6 +97,7 @@
 - **重采后冲突要 ack 才发布** (D-099.1): loader 遇同名异价/哈希碰撞/餐厅歧义 → 写 `dish_id_conflicts.json` + block, 进 `conflicts_ack.json` 才发布; conflict key 带价格指纹, 价格集变 → 旧 ack 失效需重审.
 - **collector 输入窄契约校验 (D-100)**: `loader.load_raw` 入口调 `chisha/collector_contract.py::validate_collector_output` **fail-loud** — 校验 envelope shape + 类型 (pydantic `strict=True`, `extra="allow"` 容 producer 新增字段) + `schema_version==1` + `normalized_name_version==SHOP_NAME_VERSION`. 喂旧无版本/字段漂移/版本不匹配文件 → `ContractViolation`, **无 grandfather 放行口**. `collector_contract.py` **不进 high-risk 白名单** (纯边界校验器). 改 collector envelope = 跨 repo 事件, 见 waimai `OUTPUT_CONTRACT.md`.
 - **重消费编排走 `scripts/refresh_from_collector.py` (D-100)**: 串 preflight(契约校验)→指纹哨兵→loader 发布→tag→backfill→validate, 任一步非 0 退出 (publish 全 zone 后才 tag, 防白烧 LLM). `ZONE_MAP` (office→shenzhen-bay / home→home) 在此 (消费端语义, D5). 跨 zone **指纹哨兵** (D3): 共享 rid≥30 + rid 共享率≥80% + distance 逐字相同率≥80% + label 不同 → hard-fail (抓 G 式采址污染/全量克隆).
+- **非菜品两层隔离 (D-101)**: ① loader `_build_dishes` 调 `chisha/non_dish_rules.py::is_non_dish` 在冲突检测**前**剔餐具/包装/营销项, **non-blocking** (不进 conflicts → 不阻塞 publish), 写 `non_dish_quarantine.json`. ② `tag_via_api._finalize_write` **记录级隔离**: 单条 schema 越界写 `dishes_tagged.quarantine.json`, valid 照进 active (退役旧 all-or-nothing `.staged`); active 恒 schema-valid 不变 (BLOCK#5). `non_dish_rules.py` **不进 high-risk 白名单** (纯函数). 改 `is_non_dish` 规则 = 精度优先, 改前看 `tests/test_non_dish_rules.py` 负例 (神枪手套餐/配手套/筷子鸡/餐包不可误杀). `COOKING_METHODS` 保持严格不加'其他'. deepseek 打标用 `--batch 15 --workers 8` (batch=30/16w 实测截断+限流).
 
 ---
 

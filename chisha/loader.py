@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from chisha.collector_contract import validate_collector_output
+from chisha.non_dish_rules import is_non_dish
 
 
 # ============================================================
@@ -258,19 +259,32 @@ def _conflict_digest(payload: Any) -> str:
     旧 ack 不再命中 → 强制重新人工复审 (codex 防"旧 ack 覆盖新冲突")。"""
     blob = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:8]
-def _build_dishes(rid: str, auth: dict) -> tuple[list[dict], list[dict]]:
-    """从权威餐厅记录建 active dishes + dish 级 conflicts.
+def _build_dishes(rid: str, auth: dict) -> tuple[list[dict], list[dict], list[dict]]:
+    """从权威餐厅记录建 active dishes + dish 级 conflicts + 非菜品隔离项.
 
     冲突 (隔离, 不进 active):
     - 同归一菜名 → 多个不同 price (真不同 SKU, 截断同名): dish_name_price
     - 不同归一菜名 → 同 8-hex (哈希碰撞): dish_hash_collision
     - 归一后空菜名: empty_dish_name
     销量(monthly_sales)差异不算冲突 (D-099.1: 价/销变化不改 id; 销量是噪声).
+
+    非菜品 (餐具/包装/营销, is_non_dish 命中) → **non-blocking 隔离**: 在冲突检测**之前**
+    剔除 (不参与同名异价/哈希碰撞判定, 防两条"需要餐具"异价被误判成阻塞冲突), 不进 active、
+    不进 conflicts (不阻塞发布), 单独返回供报告. 第三个返回值 = 非菜品记录.
     """
     menu = auth.get("menu", []) or []
     by_name: dict[str, list[dict]] = defaultdict(list)
     empty_conflicts: list[dict] = []
+    non_dishes: list[dict] = []
     for j, m in enumerate(menu):
+        if is_non_dish(m.get("name", "")):
+            non_dishes.append({
+                "rid": rid,
+                "restaurant_name": auth.get("name", ""),
+                "raw_name": m.get("name", ""),
+                "index": j,
+            })
+            continue
         norm = normalize_dish_name_v1(m.get("name", ""))
         if not norm:
             empty_conflicts.append({
@@ -336,7 +350,7 @@ def _build_dishes(rid: str, auth: dict) -> tuple[list[dict], list[dict]]:
             "monthly_sales": parse_monthly_sales(best.get("monthly_sales")),
             "category_raw": best.get("category"),  # 商家自定义分组，仅参考
         })
-    return dishes, conflicts
+    return dishes, conflicts, non_dishes
 
 
 def normalize(
@@ -345,11 +359,12 @@ def normalize(
     city: str = "深圳",
     *,
     aliases: dict[str, str] | None = None,
-) -> tuple[list[dict], list[dict], list[dict]]:
-    """raw → (restaurants_normalized, dishes_raw_flat, conflicts).
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+    """raw → (restaurants_normalized, dishes_raw_flat, conflicts, non_dishes).
 
     稳定哈希 id + 同 rid 去重 (权威记录) + 菜品冲突隔离.
     冲突 dish/餐厅不进 active 输出, 全部汇总进第三个返回值待人工裁决.
+    非菜品 (餐具/包装) non-blocking 隔离, 汇总进第四个返回值供报告 (不阻塞发布).
     restaurants[i].category 暂留空，由 LLM 打标后 majority vote 回填。
     """
     aliases = aliases or {}
@@ -371,6 +386,7 @@ def normalize(
     restaurants_out: list[dict] = []
     dishes_out: list[dict] = []
     conflicts: list[dict] = list(rest_conflicts)
+    non_dishes_out: list[dict] = []
     for rid in sorted(by_rid):  # 确定性顺序
         rows = by_rid[rid]
         auth, amb = _pick_authoritative(rid, rows)
@@ -395,10 +411,11 @@ def normalize(
             "raw_menu_count": auth.get("menu_count", 0),
             "raw_menu_status": auth.get("menu_status", "unknown"),
         })
-        dishes, dconf = _build_dishes(rid, auth)
+        dishes, dconf, ndish = _build_dishes(rid, auth)
         dishes_out.extend(dishes)
         conflicts.extend(dconf)
-    return restaurants_out, dishes_out, conflicts
+        non_dishes_out.extend(ndish)
+    return restaurants_out, dishes_out, conflicts, non_dishes_out
 
 
 # ============================================================
@@ -469,7 +486,7 @@ def write_normalized(
     aliases = load_aliases(aliases_path) if aliases_path else (
         load_aliases(out_dir.parent / "aliases.json"))
     raw = load_raw(raw_path)
-    restaurants, dishes, conflicts = normalize(
+    restaurants, dishes, conflicts, non_dishes = normalize(
         raw, office_zone=office_zone, city=city, aliases=aliases)
 
     ack = load_conflict_acks(out_dir / "conflicts_ack.json")
@@ -481,6 +498,12 @@ def write_normalized(
         "total": len(conflicts),
         "unacknowledged": len(unacked),
         "conflicts": conflicts,
+    })
+    # 非菜品隔离报告 (non-blocking: 不入 conflicts/unacked, 不影响 published 判定).
+    _atomic_write_json(out_dir / "non_dish_quarantine.json", {
+        "zone": office_zone,
+        "total": len(non_dishes),
+        "non_dishes": non_dishes,
     })
 
     rest_path = out_dir / "restaurants.json"
@@ -497,6 +520,7 @@ def write_normalized(
             "conflicts_total": len(conflicts),
             "unacknowledged": len(unacked),
             "unacked_keys": [c["key"] for c in unacked][:50],
+            "non_dish": len(non_dishes),
             "staged_dir": str(staged),
         }
 
@@ -514,6 +538,7 @@ def write_normalized(
         "dishes": len(dishes),
         "conflicts_total": len(conflicts),
         "quarantined": len(conflicts),
+        "non_dish": len(non_dishes),
         "rest_path": str(rest_path),
         "dish_path": str(dish_path),
     }

@@ -108,7 +108,7 @@ def test_dedup_picks_higher_status():
         _rest("店A", menu_status="failed", menu=[_dish("菜x", 5)]),
         _rest("店A", menu_status="ok", menu=[_dish("菜y", 9), _dish("菜z", 12)]),
     ]}
-    rests, dishes, conflicts = normalize(raw, office_zone="z")
+    rests, dishes, conflicts, _nd = normalize(raw, office_zone="z")
     assert len(rests) == 1                       # 归并
     assert rests[0]["raw_menu_status"] == "ok"   # 取权威 (status 高者)
     assert {d["raw_name"] for d in dishes} == {"菜y", "菜z"}  # 不取并集
@@ -128,7 +128,7 @@ def test_dedup_status_priority_order():
 def test_dedup_tie_same_content_no_conflict():
     """status+count 相同且内容一致 → 折叠, 无歧义 (确定性)."""
     row = _rest("店C", menu_status="ok", menu=[_dish("菜", 10)])
-    rests, dishes, conflicts = normalize(
+    rests, dishes, conflicts, _nd = normalize(
         {"restaurants": [dict(row), dict(row)]}, office_zone="z")
     assert len(rests) == 1
     assert [c for c in conflicts if c["type"] == "restaurant_ambiguity"] == []
@@ -140,7 +140,7 @@ def test_dedup_tie_diff_content_is_ambiguity():
         _rest("店D", menu_status="ok", menu_count=1, menu=[_dish("甲", 10)]),
         _rest("店D", menu_status="ok", menu_count=1, menu=[_dish("乙", 20)]),
     ]}
-    rests, dishes, conflicts = normalize(raw, office_zone="z")
+    rests, dishes, conflicts, _nd = normalize(raw, office_zone="z")
     amb = [c for c in conflicts if c["type"] == "restaurant_ambiguity"]
     assert len(amb) == 1
     assert rests == [] and dishes == []  # 歧义店整体隔离, 不发布任一捕获
@@ -154,7 +154,7 @@ def test_dish_name_price_conflict_quarantined():
         _dish("套餐", 39.9), _dish("套餐", 89.0),  # 同名异价 → 冲突
         _dish("正常菜", 20),
     ])]}
-    rests, dishes, conflicts = normalize(raw, office_zone="z")
+    rests, dishes, conflicts, _nd = normalize(raw, office_zone="z")
     names = {d["raw_name"] for d in dishes}
     assert names == {"正常菜"}                       # 冲突菜被剔除
     dc = [c for c in conflicts if c["type"] == "dish_name_price"]
@@ -166,7 +166,7 @@ def test_dish_same_name_same_price_collapses():
     raw = {"restaurants": [_rest("店F", menu=[
         _dish("菜", 30, "月售1"), _dish("菜", 30, "月售500"),
     ])]}
-    rests, dishes, conflicts = normalize(raw, office_zone="z")
+    rests, dishes, conflicts, _nd = normalize(raw, office_zone="z")
     assert len(dishes) == 1
     assert dishes[0]["monthly_sales"] == 500
     assert [c for c in conflicts if c["type"] == "dish_name_price"] == []
@@ -183,7 +183,7 @@ def test_hash_collision_fail_loud(monkeypatch):
     monkeypatch.setattr(L, "dish_id_for", fake)
     raw = {"restaurants": [_rest("碰撞店", menu=[
         _dish("甲", 1), _dish("乙", 2), _dish("丙", 3)])]}
-    dishes, conflicts = L.normalize(raw, office_zone="z")[1:]
+    dishes, conflicts = L.normalize(raw, office_zone="z")[1:3]
     hc = [c for c in conflicts if c["type"] == "dish_hash_collision"]
     assert len(hc) == 1
     assert set(hc[0]["detail"]["names"]) == {"甲", "乙"}

@@ -129,7 +129,8 @@ def migrate_zone(zone: str, snapshot_root: Path, *, dry_run: bool) -> dict:
                 ("office_restaurants.json" if zone == "shenzhen-bay"
                  else "home_restaurants.json"))
     raw = load_raw(raw_path)
-    _, new_raw, _conflicts = normalize(raw, office_zone=zone, aliases=aliases)
+    _, new_raw, _conflicts, _non_dish = normalize(
+        raw, office_zone=zone, aliases=aliases)
     new_raw_idx = {d["dish_id"]: d for d in new_raw}
     new_ids = set(new_raw_idx)
     if not dry_run:

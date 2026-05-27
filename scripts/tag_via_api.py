@@ -41,8 +41,11 @@ DEFAULT_PROMPT_PATH = ROOT / "prompts" / "tag_dishes.md"
 JOBS_ROOT = ROOT / ".claude" / "v3_tagging"
 FAILURES_LOG = ROOT / "logs" / "tag_failures.jsonl"
 
-DEFAULT_BATCH_SIZE = 30
-DEFAULT_WORKERS = 16
+# batch=30/workers=16 实测对 deepseek-flash 会截断 (输出超 8192 token) + 限流 (空响应),
+# home 重采实测 24/28 batch 挂; 降到 15/8 后 56 batch 0 失败 (D-101). refresh_from_collector
+# 不显式传参, 依赖这两个默认 → 默认必须是稳定值。
+DEFAULT_BATCH_SIZE = 15
+DEFAULT_WORKERS = 8
 DEFAULT_VERSION_LABEL = "v3"
 DEFAULT_MAX_ATTEMPTS = 3
 
@@ -192,6 +195,7 @@ def _select_dishes_to_tag(
     version_label: str,
     force_version: bool,
     limit: int | None,
+    skip_ids: set[str] | None = None,
 ) -> list[dict]:
     if force_version:
         delta = list(raw)
@@ -200,7 +204,11 @@ def _select_dishes_to_tag(
             d["dish_id"] for d in existing_tagged
             if d.get("metadata", {}).get("tag_version") == version_label
         }
-        delta = [d for d in raw if d["dish_id"] not in existing_ids]
+        # skip_ids = 上次被 schema 越界隔离的 dish_id: temperature=0 重打多半同样越界,
+        # 不重选可省 LLM + 破"重选→重隔离"循环 (Codex P1-A). --force-version 强制全打则不跳。
+        skip_ids = skip_ids or set()
+        delta = [d for d in raw
+                 if d["dish_id"] not in existing_ids and d["dish_id"] not in skip_ids]
     if limit:
         delta = delta[:limit]
     return delta
@@ -235,53 +243,76 @@ def _rebuild_active(existing_tagged: list[dict],
     return active
 
 
-def _validate_records(zone: str, all_records: list[dict],
-                      version_label: str) -> bool:
-    """全量 DishTagged schema 校验 (schema 已含 v3 五字段, 旧"未升级"回落已废).
-    任何违规 (cuisine/cooking_method/数值越界/缺字段) → 逐条列出全部 (非仅第一个) 响亮告警,
-    返回 False. 不静默放行 (codex BLOCK#5). 数据仍写盘 (沿用既有 cache+validate_data 硬门+人工修
-    工作流, 不因单条 LLM 越界丢弃整批已打标), 但绝不悄悄吞掉无效记录。"""
-    from chisha.schemas import validate_dishes_tagged, DishTagged
-    try:
-        validate_dishes_tagged(all_records)
-        return True
-    except Exception:
-        bad: list[tuple[str, str]] = []
-        for rec in all_records:
-            try:
-                DishTagged.model_validate(rec)
-            except Exception as e:
-                first = next((ln for ln in str(e).splitlines()[1:] if ln.strip()),
-                             type(e).__name__)
-                bad.append((rec.get("dish_id", "<no-id>"), first.strip()))
-        print(f"[{zone}] ✗ DishTagged 校验失败: {len(bad)} 条无效:",
+def _partition_valid(
+    zone: str, all_records: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """逐条 DishTagged 校验, 拆成 (valid, bad). validate_dishes_tagged 纯 per-record,
+    所以按单条 model_validate 拆分等价无遗漏。
+
+    bad 记录 = 单条违规 (LLM 越界, 如非菜品漏网 → cooking_method='其他'). 全部逐条响亮告警,
+    绝不静默吞 (codex BLOCK#5). 调用方把 valid 写 active、bad 写 quarantine: 一条越界不再
+    阻塞整 zone 发布 (Codex 设计 review C), 但脏数据绝不进 live recall。"""
+    from chisha.schemas import DishTagged
+    valid: list[dict] = []
+    bad: list[dict] = []
+    for rec in all_records:
+        try:
+            DishTagged.model_validate(rec)
+            valid.append(rec)
+        except Exception as e:
+            first = next((ln for ln in str(e).splitlines()[1:] if ln.strip()),
+                         type(e).__name__)
+            rec = dict(rec)
+            rec["_quarantine_reason"] = first.strip()
+            bad.append(rec)
+    if bad:
+        print(f"[{zone}] ✗ DishTagged 越界 {len(bad)} 条 → 隔离 (active 不收, valid {len(valid)} 条照发):",
               file=sys.stderr, flush=True)
-        for did, err in bad[:50]:
-            print(f"    {did}: {err}", file=sys.stderr, flush=True)
+        for rec in bad[:50]:
+            print(f"    {rec.get('dish_id','<no-id>')} ({rec.get('raw_name','')!r}): "
+                  f"{rec['_quarantine_reason']}", file=sys.stderr, flush=True)
         if len(bad) > 50:
             print(f"    ... 另有 {len(bad)-50} 条", file=sys.stderr, flush=True)
-        return False
+    return valid, bad
 
 
 def _finalize_write(zone: str, all_records: list[dict], version_label: str,
-                    tagged_path: Path,
-                    out_path_override: Path | None) -> tuple[bool, Path]:
-    """校验 + 写盘. schema 失败时**不覆盖 active tagged**, 改写 `.staged.json` (codex BLOCK#5):
-    live recall 读 active dishes_tagged.json, 不能让校验失败的脏数据进 live 消费路径。
-    batch cache 保留 (resume), 修好枚举/缺字段后重跑即覆盖 active。返回 (schema_validated, 实际写入路径)."""
-    schema_validated = _validate_records(zone, all_records, version_label)
-    if out_path_override:  # spike 模式: 写到指定位置 (不动 active)
+                    tagged_path: Path, out_path_override: Path | None,
+                    raw_idx: dict) -> tuple[Path, int, int]:
+    """记录级隔离写盘 (Codex 设计 review C): valid → active dishes_tagged.json,
+    越界 bad → `dishes_tagged.quarantine.json` (具名 + reason, 供人工/重打), 不静默丢。
+    一条 LLM 越界不再 stage 整 zone (旧 all-or-nothing 会让 1 道脏菜阻塞全部发布);
+    active 仍恒为 schema-valid (脏数据不进 live recall, 守住 BLOCK#5 安全不变量)。
+
+    quarantine 文件**持久化合并** (Codex P1-A): 本轮 bad ∪ 旧隔离中 dish_id 仍在 raw 的条目
+    (被 _select skip 不重打 → 本轮 all_records 不含它们, 不能因此从 quarantine 消失 → 否则
+    下轮又重选成循环)。dish_id 不在 raw 的旧隔离 (已下架) 则清掉。
+    返回 (写入路径, active 写入数, 当前隔离总数)."""
+    valid, bad = _partition_valid(zone, all_records)
+    if out_path_override:  # spike 模式: 写全集到指定位置 (供检视, 不动 active/不隔离)
         _write_json(out_path_override, all_records)
-        return schema_validated, out_path_override
-    staged = tagged_path.with_suffix(".staged.json")
-    if schema_validated:
-        _write_json(tagged_path, all_records)
-        staged.unlink(missing_ok=True)  # 清掉上次失败留下的过期 staged, 防误读
-        return True, tagged_path
-    _write_json(staged, all_records)
-    print(f"[{zone}] ✗ schema 失败 → 写 {staged.name}, active dishes_tagged.json 未动 "
-          f"(不污染 live recall); 修后重跑覆盖 active。", file=sys.stderr, flush=True)
-    return False, staged
+        return out_path_override, len(all_records), len(bad)
+    _write_json(tagged_path, valid)
+    valid_ids = {r["dish_id"] for r in valid}
+    quarantine = tagged_path.with_suffix(".quarantine.json")
+    merged: dict[str, dict] = {}
+    if quarantine.exists():  # 留住仍在 raw 的旧隔离 (本轮被 skip 不重打的)
+        for r in _read_json(quarantine):
+            if r.get("dish_id") in raw_idx:
+                merged[r["dish_id"]] = r
+    for r in bad:  # 本轮新越界覆盖
+        merged[r["dish_id"]] = r
+    # 本轮成功进 active 的 (如 --force-version 重打后过校验) 必须出隔离, 否则既在 active 又在
+    # quarantine + 下轮被 skip_ids 误跳 (Codex re-review Issue 1)。
+    merged = {did: rec for did, rec in merged.items() if did not in valid_ids}
+    if merged:
+        _write_json(quarantine, list(merged.values()))
+        print(f"[{zone}] 隔离共 {len(merged)} 条 (本轮新增 {len(bad)}) 写 {quarantine.name}; "
+              f"active 收 {len(valid)} 条 valid。", file=sys.stderr, flush=True)
+    else:
+        quarantine.unlink(missing_ok=True)  # 无任何隔离 → 清掉过期文件, 防误读
+    tagged_path.with_suffix(".staged.json").unlink(missing_ok=True)  # 退役旧 all-or-nothing staged
+    return tagged_path, len(valid), len(merged)
 
 
 def run_zone(
@@ -313,8 +344,12 @@ def run_zone(
     existing_tagged = _read_json(tagged_path) if tagged_path.exists() else []
     raw_idx = {d["dish_id"]: d for d in raw}
 
+    # 上次隔离的越界菜 (非菜漏网): 默认不重选 (省 LLM + 破重隔离循环, Codex P1-A); force 时仍打。
+    q_path = tagged_path.with_suffix(".quarantine.json")
+    quarantined_ids = ({d["dish_id"] for d in _read_json(q_path)}
+                       if q_path.exists() else set())
     delta = _select_dishes_to_tag(raw, existing_tagged, version_label,
-                                  force_version, limit)
+                                  force_version, limit, skip_ids=quarantined_ids)
     batches = _make_batches(delta, batch_size)
     jobs_dir = _zone_jobs_dir(zone, version_label)
     jobs_dir.mkdir(parents=True, exist_ok=True)
@@ -333,13 +368,14 @@ def run_zone(
         active = _rebuild_active(existing_tagged, raw_idx)
         all_records = list(active.values())
         pruned = sum(1 for t in existing_tagged if t.get("dish_id") not in raw_idx)
-        schema_validated, out_target = _finalize_write(
-            zone, all_records, version_label, tagged_path, out_path_override)
+        out_target, active_count, quarantined = _finalize_write(
+            zone, all_records, version_label, tagged_path, out_path_override, raw_idx)
         print(f"[{zone}] 无新菜; 已重建活动集 (prune {pruned} 下架菜 + 刷新 raw 字段)",
               flush=True)
-        return {"zone": zone, "tagged_total": len(all_records),
+        return {"zone": zone, "tagged_total": active_count,
                 "newly_tagged": 0, "pruned": pruned, "failed": 0,
-                "schema_validated": schema_validated,
+                "quarantined_invalid": quarantined,
+                "schema_validated": quarantined == 0,
                 "out_path": str(out_target)}
 
     prompt_template = prompt_path.read_text(encoding="utf-8")
@@ -417,13 +453,13 @@ def run_zone(
             merged_count += 1
 
     all_records = list(combined.values())
-    schema_validated, out_target = _finalize_write(
-        zone, all_records, version_label, tagged_path, out_path_override)
+    out_target, active_count, quarantined = _finalize_write(
+        zone, all_records, version_label, tagged_path, out_path_override, raw_idx)
 
     elapsed = time.time() - started
     stats = {
         "zone": zone,
-        "tagged_total": len(all_records),
+        "tagged_total": active_count,  # 实际进 active 的 valid 数
         "newly_tagged": merged_count,
         "kept_existing": len(all_records) - merged_count,
         "batches_total": len(batches),
@@ -431,7 +467,8 @@ def run_zone(
         "batches_done_this_run": completed,
         "batches_failed": len(failed_batches),
         "failed_dish_ids": [did for _, dids, _ in failed_batches for did in dids],
-        "schema_validated": schema_validated,
+        "quarantined_invalid": quarantined,
+        "schema_validated": quarantined == 0,  # active 恒 valid; 此标=零越界隔离
         "elapsed_sec": round(elapsed, 1),
         "out_path": (str(out_target.relative_to(ROOT))
                      if out_target.is_relative_to(ROOT)
@@ -499,9 +536,11 @@ def main(argv: list[str] | None = None) -> int:
             out_path_override=out_override,
         )
         print("\n" + json.dumps(stats, ensure_ascii=False, indent=2))
-        # schema 校验失败也必须让调用方感知 (非零退出), 否则无效 active 数据可能在
-        # validate_data 跑之前被消费 (codex BLOCK#5)
-        if stats.get("batches_failed") or stats.get("schema_validated") is False:
+        # 非零退出**仅**给真·batch 失败 (LLM 空/截断 → 需重试, 上层应 halt 重跑)。
+        # quarantine (单条 schema 越界, 多是非菜漏网) 是 **degraded-success**: active 恒 valid,
+        # 越界菜已写 quarantine 文件 + 跳过下次 delta (见 _select_dishes_to_tag), 不该阻塞编排器
+        # 后续 backfill/validate (D-101 "一条越界不阻塞整 zone" 的编排器层兑现, Codex diff review P1-A)。
+        if stats.get("batches_failed"):
             rc = 1
     return rc
 
