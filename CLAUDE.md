@@ -1,7 +1,7 @@
 # chisha · 项目级指令
 
 > 项目名: 今天吃点啥 (chisha) · 个人 AI **原则派点餐执行外包**工具 (L0 方法论 spec / L1 数据 / L2 打分 / L3 LLM 精排)
-> 当前阶段: **V1.0 工程里程碑收尾完成** (2026-05-20). 推荐链路 L1/L2/L3 + Web SPA + V1.1 反馈 + L1 真兑现 + sandbox time-travel + trace 持久化 + Debug 三模式 + FastAPI 23 端点 + Refine V2-only (V1 退役 D-096) / Faithful Refine framework (D-080~D-085) + 字段闭包 (D-094.1, V2.1 13 槽) + L2 信号校准 (D-090~092 + D-090.1, 14 维) + Sandbox Lab + 反馈短链路即时生效 (D-098, 差评下次推荐就降权/剔除, score 第 15 维 feedback_recency). 当前定位 **自用为主、推广随缘** (D-097): AI-friendly 接个人 agent (D-074 **Phase 0 已落地**: chisha 零 LLM + one-shot CLI `chisha.agent_cli` + Claude Code reference adapter skill, 智能外置给宿主 agent 的 LLM) + B-001 反馈短链路 (已 D-098 落地), 同事推广向工作推迟. 路线见 [docs/ROADMAP.md](docs/ROADMAP.md).
+> 当前阶段: **V1.0 工程里程碑收尾完成** (2026-05-20). 推荐链路 L1/L2/L3 + Web SPA + V1.1 反馈 + L1 真兑现 + sandbox time-travel + trace 持久化 + Debug 三模式 + FastAPI 23 端点 + Refine V2-only (V1 退役 D-096) / Faithful Refine framework (D-080~D-085) + 字段闭包 (D-094.1, V2.1 13 槽) + L2 信号校准 (D-090~092 + D-090.1, 14 维) + Sandbox Lab + 反馈短链路即时生效 (D-098, 差评下次推荐就降权/剔除, score 第 15 维 feedback_recency). 当前定位 **自用为主、推广随缘** (D-097): AI-friendly 接个人 agent (D-074 **Phase 0 已落地**: chisha 零 LLM + one-shot CLI `chisha.agent_cli` + Claude Code reference adapter skill, 智能外置给宿主 agent 的 LLM) + B-001 反馈短链路 (已 D-098 落地). **D-102 (2026-05-28) 可分发共享核心三步落地**: FallbackPlan 统一兜底 (D-102.1) + install/state root 二分 state→`~/.chisha/`+迁移 (D-102.2) + bundle manifest/capability-compat 闸门 (D-102.3); plugin marketplace 打包 + 产物签名留位. 路线见 [docs/ROADMAP.md](docs/ROADMAP.md).
 > 主语言: Python (后端) + TypeScript (前端) · 包管理: uv / npm · 测试: pytest
 
 ## 必读(首次接触本项目)
@@ -65,8 +65,9 @@ uv run python -m scripts.compare_traces                                         
 
 **high-risk 文件白名单** (单一权威源, 下方「工作流 § Codex 双触点」引用这份):
 
-后端 14 模块 — 改任一 → `regression_risk = high`:
-- `chisha/{api,recall,score,rerank,refine,l1_extractor,sandbox,clock,data_root,trace_store,debug_what_if,web_api,feedback_signal,agent_orchestration}.py`
+后端 16 模块 — 改任一 → `regression_risk = high`:
+- `chisha/{api,recall,score,rerank,refine,l1_extractor,sandbox,clock,data_root,trace_store,debug_what_if,web_api,feedback_signal,agent_orchestration,state_root,manifest}.py`
+- (D-102: `state_root` = install/state 路径解析单一权威源 (改前读 CONTRACTS「install/state root 二分」段); `manifest` = 数据产物↔引擎兼容闸门 (CONTRACTS「数据产物↔引擎 manifest 闸门」段). `state_migrate` 是一次性迁移器, **不进**白名单 (同 collector_contract/non_dish_rules 先例: 非热路径))
 - (D-074 agent 面 `agent_{cli,protocol,round_store,choose,skill_init}.py` = chisha 零 LLM 协议层, 改前读 CONTRACTS「Agent CLI 协议」段; 单独改不进 baseline 严格回归网, 与 prepare_candidates/recall/score 同时改 → high)
 
 前端 — 改 `apps/{web,debug-ui}/src/**` 任意 .tsx / .css / vite.config.ts:
@@ -75,7 +76,7 @@ uv run python -m scripts.compare_traces                                         
 
 stuck override 护栏: `high` (含 unknown 默认) 严禁 override; `low/medium` 允许过度谨慎通过 → `done_with_disagreement`。改了文件名 / 加新核心模块只改这一处。
 
-**V1.0 后 Phase 1 推广前不做** (scope creep 防护): data zone 拆包发布 / OpenClaw 接入 (待 D-074 翻 active) / screener 设计 / 第二份 methodology spec / L1 词表扩 / 调试台进一步 React 化整合 — 详见 CONTRACTS.md「范围红线」.
+**V1.0 后仍不做** (scope creep 防护): OpenClaw 接入 (下一步) / screener 设计 / 第二份 methodology spec / L1 词表扩 / 调试台进一步 React 化整合 / 产物签名完整性体系定型 / plugin marketplace 打包 — 详见 CONTRACTS.md「范围红线」. (data zone 可分发已由 **D-102 落地**: install/state 二分 + bundle manifest/compat 闸门, 见 decisions D-102 系列)
 
 ## 前端自测(强制,改 apps/web 或 apps/debug-ui 或 apps/sandbox-lab 必走)
 
@@ -96,11 +97,11 @@ stuck override 护栏: `high` (含 unknown 默认) 严禁 override; `low/medium`
 默认走 Claude Code 原生 TaskCreate todolist + Agent subagent. 两个关键点强制拉 Codex 共商:
 
 1. **方案设计敲定前** → 调 `codex:rescue` skill 一起讨论
-   - 触发: design plan / 架构选型 / **改 high-risk 12 文件白名单前**
+   - 触发: design plan / 架构选型 / **改 high-risk 16 文件白名单前**
 2. **git commit 前** → 调 `codex:rescue` 做 diff review
-   - 触发: 改 high-risk 12 文件白名单时强制; 其他场景志丹可说"跳过 codex review"
+   - 触发: 改 high-risk 16 文件白名单时强制; 其他场景志丹可说"跳过 codex review"
 
-high-risk 12 文件白名单 + 前端高风险条件单一权威源在 § 推荐链路改动红线.
+high-risk 16 文件白名单 + 前端高风险条件单一权威源在 § 推荐链路改动红线.
 
 ## 提醒
 

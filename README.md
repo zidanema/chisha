@@ -16,11 +16,11 @@
 
 **V1.0 工程里程碑完成** (2026-05-20) · **自用阶段, 非开源 ready**
 
-跑通了: 推荐链路 L1/L2/L3 / Web SPA 用户视图 / 反馈系统 / L1 长期偏好 LLM 抽取 / 反馈短链路即时生效 (D-098, 差评下次推荐就降权/剔除) / Sandbox time-travel / trace 持久化 + Debug 三模式 / Faithful Refine framework / L2 信号校准。
+跑通了: 推荐链路 L1/L2/L3 / Web SPA 用户视图 / 反馈系统 / L1 长期偏好 LLM 抽取 / 反馈短链路即时生效 (D-098, 差评下次推荐就降权/剔除) / Sandbox time-travel / trace 持久化 + Debug 三模式 / Faithful Refine framework / L2 信号校准 / **可分发共享核心 (D-102: 统一兜底契约 + install/state root 二分 state→`~/.chisha/` + bundle manifest/compat 闸门)**。
 
-还没做的: 第二份方法论 spec (验证抽象解耦) / 数据按工区拆包 / Agent 接入 CLI 形态正式落地 / 同事推广前的 screener — 详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+还没做的: 第二份方法论 spec (验证抽象解耦) / 同事推广前的 screener / plugin marketplace 打包 + 产物签名 (D-102 留位) / OpenClaw 接入 — 详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
-**接下来** (D-097, 2026-05-25 定位调整): **自用为主、推广随缘** — 个人 agent 接入 (D-074 **Phase 0 已落地**: chisha 零 LLM + one-shot CLI `python -m chisha.agent_cli` + Claude Code reference adapter skill) + 反馈短链路修复 (B-001, 已 D-098 落地)。同事推广向工作 (screener / 第二份 spec) 推迟到真要推时。
+**接下来** (D-097 定位: 自用为主、推广随缘; D-102 已把可分发工程主线落地): 真分发给同事时走内部 git transport 验流程 → 看反馈再决定 marketplace。同事推广向工作 (screener / 第二份 spec) 推迟到真要推时。
 
 ---
 
