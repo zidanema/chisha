@@ -34,7 +34,8 @@ uv run python -m chisha.loader ~/waimai_data/output/home_restaurants.json   home
 uv run python -m scripts.migrate_stable_ids all    # 之后第 2 步增量补 needs_tagging
 
 # 2. LLM 打标: dishes_raw.json → dishes_tagged.json (营养画像 + cuisine)
-#    默认 deepseek-v4-flash / batch 30 / 16 workers (见 scripts/tag_via_api.py)
+#    默认 deepseek-v4-flash / batch 15 / 8 workers (D-101: 30/16 实测截断超 8192 token
+#    + 并发限流空响应, home 重采 24/28 batch 挂; 15/8 后 56 batch 0 失败)
 #    增量: 默认只打 tagged 里缺的; 全量重打加 --force-version
 uv run python -m scripts.tag_via_api all
 
@@ -54,13 +55,13 @@ uv run python -m scripts.validate_data
    - **历史反馈/偏好**: 同店同菜 id 稳定 → `logs/feedback/store.json` + `logs/meal_log.jsonl` 的旧 id 跨重采仍对得上, 不再错投 (这正是 D-099 的目的)。店**改名**会换 rid → 靠 `data/aliases.json` 人工绑旧名兜底 (D-099.2)。
    - **同名异价 SKU**: 同店同归一菜名但价格不同 (截断名 / 促销) = 真冲突, loader 隔离不发布直到 `conflicts_ack.json` 确认 (D-099.1); 已知 office 5 个, 见 `data/shenzhen-bay/dish_id_conflicts.json`。
 
-2. **LLM 偶发枚举越界值** (~0.3%): deepseek 会输出词表外值 (cooking_method 如 卤/焗/干煸、cuisine 如 杭州/台湾菜、protein 如 `'60+'` 字符串)。`validate_data` 是 hard fail 且逐字段只报第一个 → 必须全量扫 `DishTagged` 收齐再确定性映射到 enum (改 cuisine 后要重跑第 3 步)。建议: 把归一化沉淀进 `tag_via_api` merge 前的后处理 (已知值映射、未知值 log warn 不 crash), 免得每次手 patch。
+2. **LLM 偶发枚举越界值** (~0.3%): deepseek 会输出词表外值 (cooking_method 如 卤/焗/干煸、cuisine 如 杭州/台湾菜、protein 如 `'60+'` 字符串)。**D-101 已止血**: tag_via_api `_finalize_write` **记录级隔离** — 单条越界写 `dishes_tagged.quarantine.json` (不再 hard fail 整 zone 写 _staged), valid 照进 active; 非菜品 (餐具/包装/营销 → `cooking_method='其他'`) 由 `non_dish_rules` 在 loader 打标前 (Layer1) + tagger (Layer2) 两层隔离。**残留 TODO**: 隔离对"非菜"和"真菜罕见做法 (卤/焗/干煸 是合法做法只是不在 9 值枚举)"一视同仁 → 后者会被**误隔离丢失**这道真菜。确定性 enum 归一 (卤→炖/煮 之类映射后保留) 仍未做 —— 当前隔离是"安全网"非"修复"。临时全量重打补漏: `--force-version` (绕过 quarantine skip)。
 
 3. **空菜单店** (collector failed/partial → 0 菜餐厅): 会 ingest 成无菜的 restaurant 行, `validate_data` 标 ✗。属既有可容忍状态 — `recall` 从菜品出发分桶, 空店天然不出候选, 主链路无害; 只在直接遍历 restaurants 的视图 (debug UI 列表) 露脸。要不要过滤是产品选择, 默认留存 (不偏离历史行为)。
 
 ## 并发与成本 guidance
 
-- 瓶颈是**单请求生成延迟** (~30 菜/批的 JSON ≈ 120s), 非限流。吞吐 ≈ 并发/延迟, 加 worker 近似线性。`--workers 48` 实测对 16 拿到干净 3× (无 429)。
+- 默认 `batch=15 / workers=8` (D-101 收口稳定值)。**别盲目调高**: `batch=30` 的 JSON 输出会超 `max_tokens=8192` 截断 (JSONDecodeError); `workers=16` 两 zone 背靠背会把 endpoint 打到限流空响应 (home 重采实测 24/28 batch 挂)。`_call_one_batch` 有 3 次指数 backoff, 但截断/限流持续时救不回。要提吞吐先确认单批输出不撞 token 顶 + 分 zone 错峰。
 - OpenRouter 撞月额度会 403 雪崩 → 提额后清缓存 resume 增量续打补齐。
 - 用 deepseek-v4-flash 时全量 ~3 万菜成本可忽略 (几分钱~$1 级)。
 
