@@ -45,6 +45,7 @@ class PreparedCandidates:
     ranked_raw: list[dict]        # cap 前 (trace cap 前后多样性对比用)
     ranked: list[dict]            # cap + reference + subtype 后
     top_k: list[dict]             # ranked[:L3_INPUT_TOP_K], 给 rerank
+    meal_log: list[dict]          # D-102 Step1: 本轮用的 meal_log (cli 冻进 FallbackPlan blob)
     fb_signal: dict | None        # B-001/D-098 单次构建的短链路反馈信号 (§8.1)
     feedback_avoided_names: list[str]   # 本 zone 真剔除店名 (narrative 忠实)
     feedback_evicted_rids: set[str]
@@ -169,6 +170,7 @@ def prepare_candidates(
 
     return PreparedCandidates(
         ctx=ctx, combos=combos, ranked_raw=ranked_raw, ranked=ranked, top_k=top_k,
+        meal_log=meal_log,
         fb_signal=fb_signal, feedback_avoided_names=feedback_avoided_names,
         feedback_evicted_rids=feedback_evicted_rids,
         recall_fallback_events=recall_fallback_events,

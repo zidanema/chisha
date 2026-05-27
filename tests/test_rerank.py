@@ -58,12 +58,12 @@ def basic_profile_v2():
 
 # ─────────────────────── fallback
 def test_fallback_returns_n(top_30_combos):
-    out = fallback_rerank(top_30_combos, n=5, n_explore=2)
+    out = fallback_rerank(top_30_combos, n=5, n_explore=2, meal_log=[])
     assert len(out) == 5
 
 
 def test_fallback_explore_count(top_30_combos):
-    out = fallback_rerank(top_30_combos, n=5, n_explore=2)
+    out = fallback_rerank(top_30_combos, n=5, n_explore=2, meal_log=[])
     explore = [c for c in out if c["is_explore"]]
     exploit = [c for c in out if not c["is_explore"]]
     assert len(explore) == 2
@@ -71,19 +71,19 @@ def test_fallback_explore_count(top_30_combos):
 
 
 def test_fallback_required_fields_complete(top_30_combos):
-    out = fallback_rerank(top_30_combos, n=3, n_explore=1)
+    out = fallback_rerank(top_30_combos, n=3, n_explore=1, meal_log=[])
     for c in out:
         missing = _REQUIRED_FIELDS - set(c)
         assert not missing, f"缺字段: {missing}"
 
 
 def test_fallback_rank_continuous(top_30_combos):
-    out = fallback_rerank(top_30_combos, n=5, n_explore=2)
+    out = fallback_rerank(top_30_combos, n=5, n_explore=2, meal_log=[])
     assert [c["rank"] for c in out] == [1, 2, 3, 4, 5]
 
 
 def test_fallback_empty_input():
-    assert fallback_rerank([], n=5) == []
+    assert fallback_rerank([], n=5, meal_log=[]) == []
 
 
 def test_fallback_health_flags_correct():
@@ -94,7 +94,7 @@ def test_fallback_health_flags_correct():
                      "oil_level": 2,
                      "wetness": 3,
                      "processed_meat_flag": False}])
-    out = fallback_rerank([combo], n=1, n_explore=0)
+    out = fallback_rerank([combo], n=1, n_explore=0, meal_log=[])
     flags = out[0]["health_flags"]
     assert flags["protein_ok"] is True
     assert flags["oil_ok"] is True
@@ -105,7 +105,7 @@ def test_fallback_health_flags_correct():
 def test_fallback_processed_meat_detected():
     combo = _combo([{"processed_meat_flag": True,
                      "canonical_name": "蟹柳饭团"}])
-    out = fallback_rerank([combo], n=1, n_explore=0)
+    out = fallback_rerank([combo], n=1, n_explore=0, meal_log=[])
     assert out[0]["health_flags"]["processed_meat"] is True
 
 
@@ -113,7 +113,7 @@ def test_fallback_explore_score_lower():
     """explore 的 fit_score 应低于 exploit (打分中段 + 0.8 衰减)."""
     combos = [_combo([{}], score=3.0 - i * 0.1, rest_id=f"r{i}")
               for i in range(10)]
-    out = fallback_rerank(combos, n=4, n_explore=2)
+    out = fallback_rerank(combos, n=4, n_explore=2, meal_log=[])
     exploit_scores = [c["fit_score"] for c in out if not c["is_explore"]]
     explore_scores = [c["fit_score"] for c in out if c["is_explore"]]
     assert max(explore_scores) < max(exploit_scores)

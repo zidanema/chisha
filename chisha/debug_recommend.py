@@ -37,8 +37,8 @@ from chisha.rerank import (
     L3_INPUT_TOP_K,
     _compute_health_flags,
     _enforce_brand_unique,
+    build_fallback_plan,
     build_payload,
-    fallback_rerank,
 )
 from chisha.score import (
     apply_caps, combo_food_form, rank_combos, resolve_caps,
@@ -721,9 +721,9 @@ def debug_recommend(
             final_candidates = mapped
     if not final_candidates:
         fallback_used = True
-        final_candidates = fallback_rerank(
-            topk, n=n_return, n_explore=n_explore, meal_log=meal_log
-        )
+        final_candidates = build_fallback_plan(
+            topk, meal_log=meal_log, n=n_return, n_explore=n_explore, today=today,
+        ).execute()
 
     # ---- 终选格式化 ----
     final_view = [

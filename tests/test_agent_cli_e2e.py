@@ -6,6 +6,7 @@ codex #6 要求覆盖: 有 context / 无 context / refine round / retry-幂等 /
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 import io
 import json
 
@@ -317,3 +318,125 @@ def test_codex_f_rejects_path_traversal_id(cli_env):
     assert d["ok"] is False and d["error"]["code"] == "BAD_ID"
     d = _run(["choose", "--id", "ok_sid", "--card", "../../x", "--action", "skip"])
     assert d["ok"] is False and d["error"]["code"] == "BAD_ID"
+
+
+# ─────────────────────── D-102 Step1: meal_log 冻结进 FallbackPlan ───────────
+
+_MEAL_LOG_FROZEN = [{"timestamp": "2026-05-27T12:00:00", "meal_type": "lunch",
+                     "dishes": [{"cuisine": "粤菜"}]}]
+
+
+def _read_blob(sid, root) -> dict:
+    from chisha import agent_round_store
+    return (agent_round_store.read_round(sid, root) or {}).get("prepared") or {}
+
+
+def test_d102_meal_log_frozen_no_context(cli_env, monkeypatch):
+    """无 context start: resolve 时 meal_log 必须冻进 fallback_plan blob (病根根治)."""
+    profile = {"basics": {"office_zone": "test"}, "taste_description": "",
+               "preferences": {"liked_cuisines": [], "disliked_cuisines": [],
+                               "avoid_dishes": [], "spicy_tolerance": 2}}
+    monkeypatch.setattr(agent_cli, "_load_inputs",
+                        lambda meal, root: (profile, "test", [], [], _MEAL_LOG_FROZEN))
+    d = _run(["start", "--meal", "lunch"])
+    blob = _read_blob(d["recommendation_id"], cli_env)
+    # blob 只冻 meal_log + version (n_explore 走 frozen 单源, 不在 blob — D-102.1 Codex review)
+    assert blob["fallback_plan"]["meal_log"] == _MEAL_LOG_FROZEN
+    assert "n_explore" not in blob["fallback_plan"]
+
+
+def test_d102_meal_log_frozen_context_resolve(cli_env, monkeypatch):
+    """有 context (resolve-intent) 路径同样冻 meal_log (refine 轮 n_explore=0)."""
+    profile = {"basics": {"office_zone": "test"}, "taste_description": "",
+               "preferences": {"liked_cuisines": [], "disliked_cuisines": [],
+                               "avoid_dishes": [], "spicy_tolerance": 2}}
+    monkeypatch.setattr(agent_cli, "_load_inputs",
+                        lambda meal, root: (profile, "test", [], [], _MEAL_LOG_FROZEN))
+    d = _run(["start", "--meal", "lunch", "--context", "辣"])
+    rid = d["recommendation_id"]
+    d = _run(["resolve-intent", "--id", rid, "--intent", _valid_intent(_cid(d))])
+    blob = _read_blob(rid, cli_env)
+    assert blob["fallback_plan"]["meal_log"] == _MEAL_LOG_FROZEN
+
+
+def _varied_combos() -> list[dict]:
+    """cuisine/method 多样的 10 combo, 让 meal_log 真能改变 explore (与单元测试同构):
+    exploit=湘/川/鲁×烤/炖/焖; combo3=粤菜·烤. 粤菜 meal_log → explore 从 {r3,r4} 变 {r4,r5}.
+    """
+    from tests.conftest import make_dish, make_restaurant
+    spec = [("r0", "湘菜", "烤", 5.0), ("r1", "川菜", "炖", 4.9), ("r2", "鲁菜", "焖", 4.8),
+            ("r3", "粤菜", "烤", 4.7), ("r4", "日料", "煎", 4.6), ("r5", "泰菜", "炒", 4.5),
+            ("r6", "韩餐", "蒸", 4.4), ("r7", "西餐", "拌", 4.3), ("r8", "云南菜", "卤", 4.2),
+            ("r9", "新疆菜", "烩", 4.1)]
+    return [{"restaurant": make_restaurant(rid=r, name=f"店_{r}", category=c),
+             "dishes": [make_dish(dish_id=f"{r}_d", restaurant_id=r,
+                                  canonical_name=f"菜_{r}", cuisine=c,
+                                  cooking_method=m)],
+             "score": s} for r, c, m, s in spec]
+
+
+def _explore_rids_from_cards(cards: list[dict]) -> set[str]:
+    """card.id = c_{combo_idx}_{rest_id}; 取 explore 卡的 rest_id."""
+    return {c["id"].split("_", 2)[2] for c in cards if c.get("is_explore")}
+
+
+def test_d102_apply_fallback_frozen_meal_log_has_teeth(cli_env, monkeypatch):
+    """真 cmd_apply_rerank 兜底路径有牙: resolve 冻的 粤菜 meal_log 必须改变 explore 选择.
+
+    若 cli 回归成旧 bug (apply 漏传 meal_log), explore 会落回 {r3,r4} → 本测试失败.
+    同时交叉验证 web rerank(use_llm=False) 同输入 explore 一致 (web/cli 单源同构).
+    """
+    profile = {"basics": {"office_zone": "test"}, "taste_description": "",
+               "preferences": {"liked_cuisines": [], "disliked_cuisines": [],
+                               "avoid_dishes": [], "spicy_tolerance": 2}}
+    combos = _varied_combos()
+    # at_time 远离 wall-clock + meal_log 紧贴 at_time (1 天前): 这样**漏传 today**
+    # (降级 wall-clock 2026 年中) 会让粤菜条目超出 7 天窗口失效 → explore 落回 {r3,r4},
+    # 测试同时给 meal_log 和 today 两条状态加牙 (Codex commit re-review).
+    at_time = "2026-01-15"
+    teeth_log = [{"timestamp": "2026-01-14T12:00:00", "meal_type": "lunch",
+                  "dishes": [{"cuisine": "粤菜"}]}]
+    monkeypatch.setattr(agent_cli, "_load_inputs",
+                        lambda meal, root: (profile, "test", [], [], teeth_log))
+    monkeypatch.setattr(orch, "recall", lambda *a, **kw: [dict(c) for c in combos])
+    monkeypatch.setattr(orch, "rank_combos", lambda *a, **kw: [dict(c) for c in combos])
+    monkeypatch.setattr(orch, "apply_caps", lambda ranked, *a, **kw: ranked)
+
+    d = _run(["start", "--meal", "lunch", "--at-time", at_time])
+    rid = d["recommendation_id"]
+    bad = json.dumps({"correlation_id": _cid(d), "payload": {"candidates": [
+        {"rank": 1, "is_explore": False, "combo_index": 999, "fit_score": 0.8,
+         "taste_match": 0.7, "risk_flags": [], "one_line_reason": "x"}],
+        "narrative": "x"}})
+    d = _run(["apply-rerank", "--id", rid, "--response", bad])
+    assert d["ok"] and d["fallback"] is True and len(d["cards"]) == 5
+    cli_explore = _explore_rids_from_cards(d["cards"])
+    assert cli_explore == {"r4", "r5"}        # 牙: 粤菜 meal_log 生效 (非漏传的 {r3,r4})
+
+    # 交叉验证: web rerank fallback 同输入 (同 meal_log + 同 today) → 同 explore (单源同构)
+    from chisha.rerank import rerank
+    web = rerank([dict(c) for c in combos], profile, context=None,
+                 meal_log=teeth_log, n=5, n_explore=2, use_llm=False,
+                 today=dt.date.fromisoformat(at_time))
+    web_explore = {(c.get("restaurant") or {}).get("id")
+                   for c in web if c.get("is_explore")}
+    assert web_explore == cli_explore
+
+
+def test_d102_apply_missing_fallback_plan_fails_loud(cli_env, monkeypatch):
+    """旧 in-flight round (无 fallback_plan blob) 走兜底 → NO_FALLBACK_PLAN (不静默)."""
+    real_blob = agent_cli._prepared_blob
+
+    def _blob_without_plan(prep, **kw):
+        b = real_blob(prep, **kw)
+        b.pop("fallback_plan", None)   # 模拟 D-102 前的旧 round
+        return b
+    monkeypatch.setattr(agent_cli, "_prepared_blob", _blob_without_plan)
+    d = _run(["start", "--meal", "lunch"])
+    rid = d["recommendation_id"]
+    bad = json.dumps({"correlation_id": _cid(d), "payload": {"candidates": [
+        {"rank": 1, "is_explore": False, "combo_index": 999, "fit_score": 0.8,
+         "taste_match": 0.7, "risk_flags": [], "one_line_reason": "x"}],
+        "narrative": "x"}})
+    d = _run(["apply-rerank", "--id", rid, "--response", bad])
+    assert d["ok"] is False and d["error"]["code"] == "NO_FALLBACK_PLAN"

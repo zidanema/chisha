@@ -222,7 +222,7 @@ def what_if_rerun(
 
     # 3. 重跑 L3 (fallback / LLM)
     from chisha.rerank import (
-        L3_INPUT_TOP_K, fallback_rerank, rerank as v2_rerank,
+        L3_INPUT_TOP_K, build_fallback_plan, rerank as v2_rerank,
     )
     top_k = ranked[:L3_INPUT_TOP_K]
     llm_called = False
@@ -253,10 +253,10 @@ def what_if_rerun(
             # v2_rerank 自身不应抛 (内部已 fallback), 这里是 defense-in-depth
             fallback_reason = f"llm raised {type(e).__name__}: {e}"
             logger.warning("what_if LLM rerank failed, fallback: %s", fallback_reason)
-            reranked = fallback_rerank(
-                top_k, n=n_return, n_explore=n_explore,
-                meal_log=l2_meal_log_view, today=today,
-            )
+            reranked = build_fallback_plan(
+                top_k, meal_log=l2_meal_log_view, n=n_return,
+                n_explore=n_explore, today=today,
+            ).execute()
             rerank_collector = {
                 "llm_attempted": True, "llm_called": False,
                 "used_fallback": True, "status": "fallback",
@@ -267,10 +267,10 @@ def what_if_rerun(
         if not fallback_reason:
             fallback_reason = rerank_collector.get("fallback_reason", "") or ""
     else:
-        reranked = fallback_rerank(
-            top_k, n=n_return, n_explore=n_explore,
-            meal_log=l2_meal_log_view, today=today,
-        )
+        reranked = build_fallback_plan(
+            top_k, meal_log=l2_meal_log_view, n=n_return,
+            n_explore=n_explore, today=today,
+        ).execute()
 
     # 4. 组装 What-if response trace
     return _build_what_if_trace(

@@ -59,14 +59,24 @@ def _validate_id(value: str, label: str) -> None:
         raise RuntimeError(f"非法 {label}: {value!r}")
 
 
-def _prepared_blob(prep) -> dict:
-    """codex #a: 持久化 apply-rerank 映射所需 (top_k 精确), 不靠重跑."""
+def _prepared_blob(prep, *, n_explore: int, today: dt.date) -> dict:
+    """codex #a: 持久化 apply-rerank 映射所需 (top_k 精确), 不靠重跑.
+
+    D-102 Step1: 同时冻结 FallbackPlan blob (含 meal_log 只读快照 + 兜底参数), apply
+    若走规则兜底就从此 blob 重建 → 不再像旧 cli 那样漏 meal_log (病根根治). 候选集 =
+    top_k (单源), 不在 fallback_plan 里重复.
+    """
+    from chisha.rerank import build_fallback_plan
+    plan = build_fallback_plan(
+        prep.top_k, meal_log=prep.meal_log, n=5, n_explore=n_explore, today=today,
+    )
     return {
         "top_k": prep.top_k,
         "ctx_dict": prep.ctx.to_llm_dict(),
         "feedback_avoided_names": prep.feedback_avoided_names,
         "latencies": {"ctx": prep.ctx_latency_ms, "recall": prep.recall_latency_ms,
                       "score": prep.score_latency_ms},
+        "fallback_plan": plan.to_blob(),
     }
 
 
@@ -312,7 +322,9 @@ def cmd_start(args) -> int:
         agent_round_store.create_resolved(
             sid, round_id=round_id, correlation_id=cid.encode(),
             rerank_spec=spec, intent=None, frozen=frozen,
-            prepared=_prepared_blob(prep), root=root,
+            prepared=_prepared_blob(prep, n_explore=_n_explore_for(round_id),
+                                    today=today),
+            root=root,
         )
     except agent_round_store.RoundStateError as e:
         return _emit_error("ROUND_STATE", str(e))
@@ -398,7 +410,9 @@ def cmd_resolve_intent(args) -> int:
     try:
         agent_round_store.advance_to_resolved(
             args.id, correlation_id=cid.encode(), rerank_spec=spec,
-            intent=intent.to_log_dict(), prepared=_prepared_blob(prep),
+            intent=intent.to_log_dict(),
+            prepared=_prepared_blob(prep, n_explore=_n_explore_for(round_id),
+                                    today=today),
             frozen_update={"intent": intent.to_log_dict(),
                            "n_explore": _n_explore_for(round_id)},
             root=root,
@@ -432,7 +446,7 @@ def cmd_apply_rerank(args) -> int:
 
     from chisha import agent_round_store
     from chisha.api import _format_v2_candidate
-    from chisha.rerank import apply_rerank_response, fallback_rerank
+    from chisha.rerank import FallbackPlan, apply_rerank_response
 
     try:
         cur = agent_round_store.require_resolved(args.id, root)
@@ -470,8 +484,18 @@ def cmd_apply_rerank(args) -> int:
                                          n_explore=n_explore)
     used_fallback = mapped is None
     if used_fallback:
-        mapped = fallback_rerank(persisted_top_k, n=5, n_explore=n_explore,
-                                 today=today)
+        # D-102 Step1: 从 resolve 时冻结的 FallbackPlan blob (meal_log 只读快照) +
+        # round 单源 (持久化 top_k / frozen n_explore / frozen today) 重建并执行 —
+        # 不再像旧 cli 漏 meal_log. n_explore/today 与成功路径同源 (frozen, 无双持久化
+        # 漂移). blob 缺失/版本不符 → fail-loud (NO_FALLBACK_PLAN).
+        try:
+            plan = FallbackPlan.from_blob(
+                prepared.get("fallback_plan"), top_combos=persisted_top_k,
+                n=5, n_explore=n_explore, today=today,
+            )
+        except ValueError as e:
+            return _emit_error("NO_FALLBACK_PLAN", str(e))
+        mapped = plan.execute()
     # F1 (Faithful D-085): fallback 时 cards 是规则兜底排的, agent 的 narrative 描述的
     # 不是实际排出来的 5 条 → 置空, 绝不把未经校验的叙述套到规则 cards 上 (信任放大器
     # 不能编). adapter 靠 fallback=true + fallback_reason 如实告知"本轮按规则排".

@@ -45,6 +45,7 @@
 - **`_patch_system_prompt_for_cli` 找不到 `# 输出方式` 段必须 ValueError.** 防 prompt 改标题层级后 CLI 静默继续用 tool_use schema (CLI 不支持, 会全失败).
 - **L3 一次性 retry-with-feedback, 二次失败立刻走规则 fallback** (D-050). CLI 成本敏感.
 - **`enforce_brand_unique` 在 L3 出口保留兜底**: 同 brand 不同分店不能同时出现在最终 5 条.
+- **(D-102.1) 规则兜底必须经 `FallbackPlan` / `build_fallback_plan` (meal_log 关键字必填)** — web / cli / what-if / debug 四路单源同构, 不许任何 adapter 在调用点裸调 `fallback_rerank` 漏 `meal_log` (病根: explore 段丢"避开最近吃过"偏置). `fallback_rerank` 本体 meal_log 已改必填 (无默认), 拔掉隐式漏传温床. FallbackPlan = 三件套里"封装兜底全部状态"的那件 (候选集+meal_log 只读快照+n/n_explore/today+version); PromptPlan=`build_rerank_spec`/ValidationSpec=`apply_rerank_response` 经核已单源, 未形式化成对象 (Codex scope 共识, 推迟).
 
 ### Provider 抽象
 - **CLI provider 不支持 tool_use.** rerank 层做分流: `anthropic / openrouter` 走 tool_use forced schema; `claude_code_cli` 走 prompt + JSON 解析. 不要试图统一 schema (D-038/D-048).
@@ -159,6 +160,7 @@
 - **Faithful Refine: `raw_text` 只来自 CLI 注入, 忽略 agent 回传** (`apply_intent_response` validate 前 `pop("raw_text")`). agent 漏抽/伪造 raw_text 都不破坏二次软兜底.
 - **round 协议状态 (pending/resolved) 存 `agent_round_store` (logs/agent_rounds/), 与 trace_store 可见 round 索引隔离** (codex #2). 绝不让未完成 round 进 `round_ids/latest_round` (污染 list_traces_v3 + debug-ui). 只有 apply-rerank 成功后才走 write_trace/append_round 发布 ready round.
 - **apply-rerank 用 resolved round 持久化的 `top_k` 映射 agent 回传, 不重跑 prepare_candidates** (codex #a). 重跑会因 meal_log/profile 在 resolve→apply 间变化让 combo_index 映射到错 combo. trace 重跑是 best-effort debug-only.
+- **(D-102.1) resolve 时把 `FallbackPlan` 冻进 `prepared.fallback_plan` blob (含 meal_log 只读快照), apply 兜底从 blob `from_blob` 重建执行, 不重读运行时数据** (D-098 单次构建/零 runtime re-read 范式). blob 缺失 (旧 round 跨 D-102 升级) / version 不符 → `NO_FALLBACK_PLAN` fail-loud, 不静默降级空历史 (会重现 drift, D-100 无 grandfather). 候选集走共享 `top_k` 单源, 不在 fallback_plan 里重复序列化.
 - **choice_key = `(sid, round_id, card_id, action)`, 同一 flock 内幂等, choose 可重跑补缺不回滚** (codex #c/#4). round_id 必带 (card_id 跨 refine 轮可重名). **(F3) 一个 sid 一餐至多一条 accept**: meal_log 走 `recall.upsert_meal_log_accept` 全量重写 (改选覆盖, 不再双写污染 diversity cooldown), 旧轮 accept 延迟到达 (round 序号 < 已写最高轮) **拒绝回写** feedback+meal_log.
 - **(F4) agent 回传必须是信封 `{correlation_id, payload}`, correlation_id 必填且严格校验** (resolve-intent / apply-rerank, `parse_agent_response`). 防旧轮 / stale payload 套到当前 round — 持久化 top_k 只防 combo_index 漂移, 不防旧轮 narrative / 排序逻辑串台. 裸 JSON 回传被拒 (CORRELATION). adapter 回显 `llm_request_spec.correlation_id` 即可.
 - **CLI 默认 production scope; sandbox 全局启用时拒绝运行** (codex #5). 不假设直 import = production (data_root/clock 按全局 sandbox marker 路由). `--at-time` 走 today 注入不碰 sandbox.

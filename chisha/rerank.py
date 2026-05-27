@@ -22,6 +22,7 @@ refine=True 时 n_explore=0 (D-015).
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -647,17 +648,114 @@ def build_payload(
     return payload
 
 
+# ═══════════════════════ D-102 Step1: FallbackPlan (统一兜底契约) ═══════════
+# 病根 (提案 §病根): web 与 cli 两形态靠"手工把状态穿进各自的调用"而非"核心拥有
+# 并打包状态" → meal_log 在 cli 兜底路径漏传, explore 段丢失"避开最近吃过"偏置.
+# FallbackPlan 把兜底判定所需的全部状态打成一个对象, build_fallback_plan 是唯一
+# 构造入口 (meal_log 关键字必填), 两条链路共用 → adapter 物理上漏不掉/改不动状态.
+
+# 兜底策略版本: blob 跨进程 (cli resolve→apply) 复用时的兼容闸门. 策略算法变 → bump,
+# 旧 blob fail-loud (D-100 无 grandfather). 也供 §已知坑 5 可复现性追溯.
+FALLBACK_STRATEGY_VERSION = 1
+
+
+@dataclass
+class FallbackPlan:
+    """核心打包的兜底状态快照 — adapter 执行 (execute) 但不能漏传/改写 (D-102 Step1).
+
+    封装规则兜底判定所需的全部状态: 候选集 + meal_log 只读快照 + 策略参数 + version.
+    - in-process (web/refine/what-if): 同进程 build → execute, 不落盘.
+    - cross-process (cli): resolve 时 to_blob 冻结进 round (D-098 单次构建/零 runtime
+      re-read 范式), apply 时 from_blob 重建并 execute. 候选集走共享 top_k 不重复序列化.
+    """
+    top_combos: list[dict]
+    meal_log: list[dict]            # 只读快照 (None 视同空历史, _pick_explore 内 `or []`)
+    n: int
+    n_explore: int
+    today: "dt.date | None" = None
+    version: int = FALLBACK_STRATEGY_VERSION
+
+    def execute(self) -> list[dict[str, Any]]:
+        """跑规则兜底. 全部状态来自 plan, 调用方无从漏传 meal_log."""
+        return fallback_rerank(
+            self.top_combos, n=self.n, n_explore=self.n_explore,
+            meal_log=self.meal_log, today=self.today,
+        )
+
+    def to_blob(self) -> dict:
+        """cli 跨进程持久化 (resolve→apply) 的**兜底专属**状态: meal_log 只读快照 + version.
+
+        单源纪律 (D-102.1 Codex commit review): 候选集走 round 共享 `top_k`、`n/n_explore/
+        today` 走 round `frozen` —— 它们各自只有一处权威源, **不在此重复序列化** (防两份
+        漂移). from_blob 重建时由调用方从那些单源回传. version 仅闸守 meal_log 快照格式.
+        """
+        return {
+            "meal_log": self.meal_log,
+            "version": self.version,
+        }
+
+    @classmethod
+    def from_blob(
+        cls, blob: Any, *, top_combos: list[dict],
+        n: int, n_explore: int, today: "dt.date | None",
+    ) -> "FallbackPlan":
+        """从持久化 blob (meal_log 快照) + 共享单源 (top_combos/n/n_explore/today) 重建.
+
+        blob 缺失/无 meal_log/版本不符 → fail-loud (D-100 无 grandfather): in-flight
+        round 不向后兼容, 旧 round 跨 D-102 升级需重 start. n/n_explore/today 来自 round
+        frozen 单源 (非 blob), 故不会 KeyError、也无双持久化漂移.
+        """
+        if not isinstance(blob, dict) or "meal_log" not in blob:
+            raise ValueError(
+                "FallbackPlan blob 缺失或无 meal_log 快照 "
+                "(旧 in-flight round 跨 D-102 升级?). 该轮不可兜底, 请重新 start 一轮."
+            )
+        ver = blob.get("version")
+        if ver != FALLBACK_STRATEGY_VERSION:
+            raise ValueError(
+                f"FallbackPlan blob version {ver!r} != {FALLBACK_STRATEGY_VERSION} "
+                "(兜底策略已变), 该轮快照失效, 请重新 start 一轮."
+            )
+        return cls(
+            top_combos=top_combos, meal_log=blob["meal_log"],
+            n=n, n_explore=n_explore, today=today, version=ver,
+        )
+
+
+def build_fallback_plan(
+    top_combos: list[dict],
+    *,
+    meal_log: list[dict] | None,
+    n: int,
+    n_explore: int,
+    today: "dt.date | None" = None,
+) -> FallbackPlan:
+    """唯一 FallbackPlan 构造入口 (meal_log 关键字**必填**, None 视同空历史).
+
+    web / cli / what-if 三条链路都经此构造 → 没人能在调用点"忘记穿 meal_log"
+    (病根: 默认 None 的隐式漏传). 持有=打包, 执行交 .execute().
+    """
+    return FallbackPlan(
+        top_combos=top_combos, meal_log=meal_log if meal_log is not None else [],
+        n=n, n_explore=n_explore, today=today,
+    )
+
+
 def fallback_rerank(
     top_combos: list[dict],
     n: int = 5,
     *,
+    meal_log: list[dict] | None,
     today: "dt.date | None" = None,
     n_explore: int = 2,
-    meal_log: list[dict] | None = None,
 ) -> list[dict[str, Any]]:
     """规则 fallback: 取打分 top (n - n_explore) 当 exploit (品牌+菜系多样性去重),
     在剩余里挑"最近未吃过的菜系/做法"做 explore.
     每条用最简结构化字段填占位, 不调 LLM.
+
+    D-102 Step1: meal_log 改**关键字必填** (无默认) — 拔掉"默认 None 隐式漏传"温床
+    (提案 §病根). 生产路径一律经 build_fallback_plan/FallbackPlan 构造; 直调本函数
+    (单测/debug) 必须显式传 meal_log (空历史传 []).
     """
     if not top_combos:
         return []
@@ -1522,8 +1620,11 @@ def rerank(
         reason=(trace_collector or {}).get("fallback_reason")
                  or ("use_llm=False" if not use_llm else "llm result unusable"),
     )
-    return fallback_rerank(top_combos, n=n, n_explore=n_explore,
-                            meal_log=meal_log, today=today)
+    # D-102 Step1: 经统一 FallbackPlan 构造入口 (meal_log 必填) → 与 cli 兜底单源同构,
+    # in-process 同进程 build→execute (不落盘). 行为对 web 主路径 0-diff (meal_log 本就传).
+    return build_fallback_plan(
+        top_combos, meal_log=meal_log, n=n, n_explore=n_explore, today=today,
+    ).execute()
 
 
 # ═══════════════════════ D-074 AI-friendly: 外置 LLM 调用 ═══════════════════════
