@@ -35,7 +35,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from chisha import sandbox
+from chisha import sandbox, state_root
 from chisha.sandbox_context import (
     _DEFAULT_SID,
     _validate_sid,
@@ -44,11 +44,15 @@ from chisha.sandbox_context import (
 
 
 def _project_root() -> Path:
-    return Path(__file__).resolve().parent.parent
+    return state_root.project_root()
 
 
 def _resolve_root(root: Optional[Path]) -> Path:
-    return root or _project_root()
+    """D-102 Step2: data_root 全部是 user state → 经 state_root 解析 (install/state 二分).
+
+    Commit A: state_root.default 仍 = 包目录 → 行为保持 (0-diff). Commit B 翻 ~/.chisha.
+    """
+    return state_root.resolve(root)
 
 
 def _resolve_sid(session_id: Optional[str]) -> str:

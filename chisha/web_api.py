@@ -100,8 +100,9 @@ def _with_sandbox_sid(
             f"sandbox layout disabled; cannot route session_id={raw!r}. "
             "POST /api/sandbox/init or /api/sandbox/<advance|reset> first.",
         )
-    # 3. 桶存在
-    bucket = ROOT / "logs" / "sandbox" / "sessions" / raw
+    # 3. 桶存在 (D-102 Step2: 经 state_root 解析基底, 与 sandbox/data_root 同源)
+    from chisha import state_root
+    bucket = state_root.resolve(ROOT) / "logs" / "sandbox" / "sessions" / raw
     if not bucket.is_dir():
         raise HTTPException(404, f"unknown sandbox session_id={raw!r}")
     # 4. 返合法 sid (handler 用 with set_sandbox_session(sid) 包)
@@ -861,36 +862,41 @@ def _require_localhost(request: Request) -> None:
 
 
 def _copy_real_data_to_sandbox(root: Path) -> None:
-    """init(copy_real_data=True) 时把 prod 业务数据复制到 sandbox 子树."""
-    import shutil
-    from chisha import data_root
+    """init(copy_real_data=True) 时把 prod 业务数据复制到 sandbox 子树.
 
-    sandbox_dir = root / "logs" / "sandbox"
+    D-102 Step2: prod 源 + sandbox 目标都以 state_root 解析的基底拼 (与 data_root/sandbox
+    同源), 防 env/翻默认后从 install root 找不到 prod 数据 (Codex commit review BLOCKING).
+    """
+    import shutil
+    from chisha import state_root
+
+    base = state_root.resolve(root)
+    sandbox_dir = base / "logs" / "sandbox"
     sandbox_dir.mkdir(parents=True, exist_ok=True)
 
     # profile.yaml
-    if (root / "profile.yaml").exists():
-        shutil.copy2(root / "profile.yaml", sandbox_dir / "profile.yaml")
+    if (base / "profile.yaml").exists():
+        shutil.copy2(base / "profile.yaml", sandbox_dir / "profile.yaml")
 
     # meal_log / feedback_store / feedback_history / long_term_prefs / recommend_log
-    prod_meal_log = root / "logs" / "meal_log.jsonl"
+    prod_meal_log = base / "logs" / "meal_log.jsonl"
     if prod_meal_log.exists():
         shutil.copy2(prod_meal_log, sandbox_dir / "meal_log.jsonl")
 
-    prod_feedback_store = root / "logs" / "feedback" / "store.json"
+    prod_feedback_store = base / "logs" / "feedback" / "store.json"
     if prod_feedback_store.exists():
         (sandbox_dir / "feedback").mkdir(parents=True, exist_ok=True)
         shutil.copy2(prod_feedback_store, sandbox_dir / "feedback" / "store.json")
 
-    prod_history = root / "data" / "feedback_history.jsonl"
+    prod_history = base / "data" / "feedback_history.jsonl"
     if prod_history.exists():
         shutil.copy2(prod_history, sandbox_dir / "feedback_history.jsonl")
 
-    prod_prefs = root / "data" / "long_term_prefs.json"
+    prod_prefs = base / "data" / "long_term_prefs.json"
     if prod_prefs.exists():
         shutil.copy2(prod_prefs, sandbox_dir / "long_term_prefs.json")
 
-    prod_recommend_log = root / "logs" / "recommend_log.jsonl"
+    prod_recommend_log = base / "logs" / "recommend_log.jsonl"
     if prod_recommend_log.exists():
         shutil.copy2(prod_recommend_log, sandbox_dir / "recommend_log.jsonl")
 
@@ -1099,10 +1105,16 @@ def _atomic_write_json(path: Path, data: Any) -> None:
 
 
 def _sb_bucket(sid: str | None, root: Path) -> Path:
-    """sandbox 桶根目录: default → logs/sandbox/, 非 default → logs/sandbox/sessions/{sid}/."""
+    """sandbox 桶根目录: default → logs/sandbox/, 非 default → logs/sandbox/sessions/{sid}/.
+
+    D-102 Step2: 经 state_root 解析基底 (与 data_root/sandbox 同源), 防 env/翻默认后
+    sandbox state 写一处、web bucket 读另一处 split-brain (Codex commit review BLOCKING).
+    """
+    from chisha import state_root
+    base = state_root.resolve(root)
     if sid is None or sid == _DEFAULT_SID_C:
-        return root / "logs" / "sandbox"
-    return root / "logs" / "sandbox" / "sessions" / sid
+        return base / "logs" / "sandbox"
+    return base / "logs" / "sandbox" / "sessions" / sid
 
 
 def _last_recs_path(sid: str | None, root: Path) -> Path:
@@ -1188,7 +1200,9 @@ def _validate_and_route_sid(sid: str) -> str | None:
             409,
             f"sandbox layout disabled; cannot route session_id={sid!r}",
         )
-    bucket = ROOT / "logs" / "sandbox" / "sessions" / sid
+    # D-102 Step2: 经 state_root 解析基底 (与 sandbox/data_root 同源, 防 split-brain)
+    from chisha import state_root
+    bucket = state_root.resolve(ROOT) / "logs" / "sandbox" / "sessions" / sid
     if not bucket.is_dir():
         raise HTTPException(404, f"unknown sandbox session_id={sid!r}")
     return sid

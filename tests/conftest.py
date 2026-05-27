@@ -3,6 +3,23 @@ import datetime as dt
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolate_state_root(tmp_path, monkeypatch):
+    """D-102 Step2: 测试里把 state_root 的**默认落点**钉到本测试 tmp_path。
+
+    机制 = monkeypatch `state_root.default_state_root` (只在 root=None / root==包目录
+    时命中), **不动** env、**不覆盖**显式传入的 root —— 所以:
+    - 传 root=tmp_path / 多 root 隔离测试: 各自显式 root 仍被尊重 (隔离不变);
+    - None-root / 包目录-root (如 clock(None) / 生产式调用): 落 tmp_path, **绝不污染
+      真实 ~/.chisha/ 或 repo** (Commit B 翻默认后尤其关键);
+    - 同时 delenv 防真实环境 CHISHA_STATE_ROOT 泄漏进测试。
+    要验"默认解析到 ~/.chisha"的测试可自行 monkeypatch.setattr 复原或走 env。
+    """
+    from chisha import state_root
+    monkeypatch.delenv("CHISHA_STATE_ROOT", raising=False)
+    monkeypatch.setattr(state_root, "default_state_root", lambda: tmp_path)
+
+
 def make_dish(
     dish_id: str = "d_001_001",
     restaurant_id: str = "r_001",

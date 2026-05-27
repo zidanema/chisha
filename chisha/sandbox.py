@@ -65,15 +65,26 @@ def _reject_nondefault_sid(api: str, sid: object) -> None:
 
 
 def _project_root() -> Path:
-    return Path(__file__).resolve().parent.parent
+    from chisha import state_root
+    return state_root.project_root()
+
+
+def _state_base(root: Path | None = None) -> Path:
+    """D-102 Step2: sandbox 也是 user state → 经 state_root 解析 (与 data_root 同源).
+
+    Commit A: state_root.default 仍 = 包目录 → 0-diff. Commit B 翻 ~/.chisha + 迁移.
+    保证 sandbox marker / 数据与 data_root 落盘点同根 (否则 enable 写一处、读另一处 split brain).
+    """
+    from chisha import state_root
+    return state_root.resolve(root)
 
 
 def _state_path(root: Path | None = None) -> Path:
-    return (root or _project_root()) / _STATE_REL
+    return _state_base(root) / _STATE_REL
 
 
 def _sandbox_dir(root: Path | None = None) -> Path:
-    return (root or _project_root()) / _SANDBOX_DIR_REL
+    return _state_base(root) / _SANDBOX_DIR_REL
 
 
 def has_sandbox_meta(root: Path | None = None) -> bool:
@@ -82,7 +93,7 @@ def has_sandbox_meta(root: Path | None = None) -> bool:
     本任务内仅给 test + future S-06a 用, **不进 path 决策链**.
     ``is_enabled()`` 仍走 ``state.json`` (D-077 语义).
     """
-    return ((root or _project_root()) / _META_REL).exists()
+    return (_state_base(root) / _META_REL).exists()
 
 
 def state(
@@ -218,9 +229,9 @@ def init(
         # (POST /sessions, /sandbox/inspect 三态) 看到 coherent v2 layout.
         # 幂等: 若 migration 已写 schema_version=2 则不覆盖.
         from chisha import sandbox_migration as _sm
-        if not _sm.read_meta(root or _project_root()):
+        if not _sm.read_meta(_state_base(root)):
             _sm._atomic_write_meta(
-                root or _project_root(),
+                _state_base(root),
                 {
                     "schema_version": _sm.SCHEMA_VERSION,
                     "created_at": _now_real_iso(),
@@ -235,7 +246,7 @@ def init(
 # ---------- S-06a: sessions CRUD (module-level helpers) ----------
 
 def _sessions_root(root: Path | None = None) -> Path:
-    return (root or _project_root()) / _SESSIONS_DIR_REL
+    return _state_base(root) / _SESSIONS_DIR_REL
 
 
 def list_sessions(root: Path | None = None) -> list[dict]:
@@ -263,7 +274,7 @@ def list_sessions(root: Path | None = None) -> list[dict]:
     if default_created is None:
         # fall back to _meta.json created_at
         from chisha import sandbox_migration as _sm
-        m = _sm.read_meta(root or _project_root())
+        m = _sm.read_meta(_state_base(root))
         if m:
             default_created = m.get("created_at")
     default_size = _dir_size_safe(_sandbox_dir(root), exclude_subdir="sessions")

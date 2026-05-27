@@ -101,7 +101,13 @@ def migrate_to_v2(
     - 已 migrated (schema_v2) + 请求 ``relocate=True`` 但 meta.relocated_legacy=False:
       ``relocate_only`` (跑 relocate, 更新 meta.relocated_legacy)
     - 未 migrated: write meta (+ 可选 relocate)
+
+    D-102 Step2: root 经 state_root 解析 (与 data_root/sandbox 同源), 防 env/翻默认后
+    迁移操作到错根 (本函数当前仅测试调用, 路由保审计完整 + 幂等). resolve 幂等:
+    传已解析 base 再 resolve 仍是它本身.
     """
+    from chisha import state_root
+    root = state_root.resolve(root)
     sandbox_dir = root / "logs" / "sandbox"
     if not sandbox_dir.exists():
         return {
