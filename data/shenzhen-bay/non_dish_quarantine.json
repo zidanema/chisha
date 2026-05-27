@@ -1,0 +1,936 @@
+{
+  "zone": "shenzhen-bay",
+  "total": 155,
+  "non_dishes": [
+    {
+      "rid": "r_026166bc4b",
+      "restaurant_name": "老碗会•陕西手工面（欢乐海岸店）",
+      "raw_name": "☀️需要餐具（按主食匹配，多点不送）",
+      "index": 55
+    },
+    {
+      "rid": "r_026166bc4b",
+      "restaurant_name": "老碗会•陕西手工面（欢乐海岸店）",
+      "raw_name": "☀️不需要餐具",
+      "index": 56
+    },
+    {
+      "rid": "r_0400f82099",
+      "restaurant_name": "清潮·潮菜(南山创投大厦店)",
+      "raw_name": "不需要餐具（支持环保）",
+      "index": 57
+    },
+    {
+      "rid": "r_0400f82099",
+      "restaurant_name": "清潮·潮菜(南山创投大厦店)",
+      "raw_name": "餐具包（按需要选择）",
+      "index": 58
+    },
+    {
+      "rid": "r_04717e906a",
+      "restaurant_name": "农耕记·湘菜小炒·盖码饭（深大",
+      "raw_name": "不需要餐具（不给筷子）",
+      "index": 70
+    },
+    {
+      "rid": "r_04717e906a",
+      "restaurant_name": "农耕记·湘菜小炒·盖码饭（深大",
+      "raw_name": "需要餐具（几人点几）",
+      "index": 71
+    },
+    {
+      "rid": "r_080875e86d",
+      "restaurant_name": "1 号油条豆浆(广式肠粉-科技园",
+      "raw_name": "需要餐具（凑单多点不配送）",
+      "index": 140
+    },
+    {
+      "rid": "r_099757ca71",
+      "restaurant_name": "肯德基宅急送（卓越后海店）",
+      "raw_name": "不需要一次性餐具",
+      "index": 12
+    },
+    {
+      "rid": "r_099757ca71",
+      "restaurant_name": "肯德基宅急送（卓越后海店）",
+      "raw_name": "需要一次性叉勺(每单仅需点一份)",
+      "index": 13
+    },
+    {
+      "rid": "r_0bb3071e10",
+      "restaurant_name": "越小品·越南餐厅（海岸城店）",
+      "raw_name": "餐具（请按照主食数量购买餐具哦）",
+      "index": 62
+    },
+    {
+      "rid": "r_0bb3071e10",
+      "restaurant_name": "越小品·越南餐厅（海岸城店）",
+      "raw_name": "无需餐具（不配餐具，备注了也不送的哦）",
+      "index": 63
+    },
+    {
+      "rid": "r_0cc9f2dc4c",
+      "restaurant_name": "青蓬海上捞(潮粤菜·刺身·海岸",
+      "raw_name": "餐具（一人份）",
+      "index": 52
+    },
+    {
+      "rid": "r_0cc9f2dc4c",
+      "restaurant_name": "青蓬海上捞(潮粤菜·刺身·海岸",
+      "raw_name": "无需餐具（环保用餐）",
+      "index": 53
+    },
+    {
+      "rid": "r_0d3a2cc780",
+      "restaurant_name": "绿茶餐厅(深圳欢乐海岸店)",
+      "raw_name": "不用餐具",
+      "index": 85
+    },
+    {
+      "rid": "r_0dc61dadd2",
+      "restaurant_name": "食野 SAYYEAH 创意轻食（科技园",
+      "raw_name": "环保不需要餐具",
+      "index": 81
+    },
+    {
+      "rid": "r_174c087fd0",
+      "restaurant_name": "BAKER&amp;SPICE by Wagas（深圳金地威新店）",
+      "raw_name": "需要保温袋",
+      "index": 195
+    },
+    {
+      "rid": "r_1b2a73c343",
+      "restaurant_name": "维小饭（供港健康餐·阿里中心店）",
+      "raw_name": "需要餐具只有筷子【多点单点不送】",
+      "index": 115
+    },
+    {
+      "rid": "r_1d84556152",
+      "restaurant_name": "木屋烧烤（深康店）",
+      "raw_name": "加热盘（一次性) HeatingPlate",
+      "index": 77
+    },
+    {
+      "rid": "r_1d84556152",
+      "restaurant_name": "木屋烧烤（深康店）",
+      "raw_name": "【必选】保温袋 1 个，多拍不送",
+      "index": 84
+    },
+    {
+      "rid": "r_1d84556152",
+      "restaurant_name": "木屋烧烤（深康店）",
+      "raw_name": "不要餐具 NoUtensils",
+      "index": 85
+    },
+    {
+      "rid": "r_1d84556152",
+      "restaurant_name": "木屋烧烤（深康店）",
+      "raw_name": "纸巾 Handkerchief",
+      "index": 86
+    },
+    {
+      "rid": "r_1d84556152",
+      "restaurant_name": "木屋烧烤（深康店）",
+      "raw_name": "4 合一餐具包 Tableware",
+      "index": 92
+    },
+    {
+      "rid": "r_1d84556152",
+      "restaurant_name": "木屋烧烤（深康店）",
+      "raw_name": "勺子 Spoon",
+      "index": 93
+    },
+    {
+      "rid": "r_20bf4aa164",
+      "restaurant_name": "元古（万象天地店）",
+      "raw_name": "一次性餐具包",
+      "index": 32
+    },
+    {
+      "rid": "r_20bf4aa164",
+      "restaurant_name": "元古（万象天地店）",
+      "raw_name": "竹木餐具包",
+      "index": 33
+    },
+    {
+      "rid": "r_20bf4aa164",
+      "restaurant_name": "元古（万象天地店）",
+      "raw_name": "一次性甜品木勺",
+      "index": 34
+    },
+    {
+      "rid": "r_244161a3e4",
+      "restaurant_name": "黔味坐标·贵州铁板烧（南山店）",
+      "raw_name": "精致打包餐具一套【边烤边吃】",
+      "index": 14
+    },
+    {
+      "rid": "r_2c54b9425e",
+      "restaurant_name": "麦稻中式健康菜（南山科技园店）",
+      "raw_name": "No.我不需要餐具",
+      "index": 51
+    },
+    {
+      "rid": "r_36c1c7a4a7",
+      "restaurant_name": "董太婆老妈蹄花川菜馆（南山店）",
+      "raw_name": "需要餐具-依照用餐人数下单",
+      "index": 22
+    },
+    {
+      "rid": "r_36c1c7a4a7",
+      "restaurant_name": "董太婆老妈蹄花川菜馆（南山店）",
+      "raw_name": "不要餐具-提倡环保",
+      "index": 23
+    },
+    {
+      "rid": "r_386fcfaab6",
+      "restaurant_name": "信哥哥茶餐厅(大沖店)",
+      "raw_name": "需要餐具（多拍不送）",
+      "index": 197
+    },
+    {
+      "rid": "r_386fcfaab6",
+      "restaurant_name": "信哥哥茶餐厅(大沖店)",
+      "raw_name": "无需餐具（环保达人）",
+      "index": 198
+    },
+    {
+      "rid": "r_3fe721ff7b",
+      "restaurant_name": "元古(深圳湾万象城店)",
+      "raw_name": "竹木餐具包",
+      "index": 31
+    },
+    {
+      "rid": "r_3fe721ff7b",
+      "restaurant_name": "元古(深圳湾万象城店)",
+      "raw_name": "一次性餐具包",
+      "index": 32
+    },
+    {
+      "rid": "r_3fe721ff7b",
+      "restaurant_name": "元古(深圳湾万象城店)",
+      "raw_name": "一次性甜品木勺",
+      "index": 33
+    },
+    {
+      "rid": "r_433deeb480",
+      "restaurant_name": "霸碗盖码饭（深圳朗科大厦店）",
+      "raw_name": "需要餐具",
+      "index": 58
+    },
+    {
+      "rid": "r_4454e279fe",
+      "restaurant_name": "江南厨子（海岸城店）",
+      "raw_name": "一次性餐具",
+      "index": 73
+    },
+    {
+      "rid": "r_46021c2f92",
+      "restaurant_name": "老碗会•陕西手工面（万利达大厦",
+      "raw_name": "☀️需要餐具（按主食匹配，多点不送）",
+      "index": 53
+    },
+    {
+      "rid": "r_46021c2f92",
+      "restaurant_name": "老碗会•陕西手工面（万利达大厦",
+      "raw_name": "☀️不需要餐具",
+      "index": 54
+    },
+    {
+      "rid": "r_4752cb221f",
+      "restaurant_name": "小炳胜(海岸城店)",
+      "raw_name": "不需餐具包",
+      "index": 103
+    },
+    {
+      "rid": "r_4752cb221f",
+      "restaurant_name": "小炳胜(海岸城店)",
+      "raw_name": "餐具包(需要几份点几份)",
+      "index": 104
+    },
+    {
+      "rid": "r_49c272ef37",
+      "restaurant_name": "老乡鸡（深圳汉京金融中心店）",
+      "raw_name": "需要一次性餐具（每单仅需点一份，多点不送）",
+      "index": 56
+    },
+    {
+      "rid": "r_49c272ef37",
+      "restaurant_name": "老乡鸡（深圳汉京金融中心店）",
+      "raw_name": "不需要一次性餐具",
+      "index": 57
+    },
+    {
+      "rid": "r_4a5e072394",
+      "restaurant_name": "La Roja 美式墨西哥餐吧",
+      "raw_name": "需要餐具 Need Utensils",
+      "index": 36
+    },
+    {
+      "rid": "r_4a5e072394",
+      "restaurant_name": "La Roja 美式墨西哥餐吧",
+      "raw_name": "无需餐具 no utensils",
+      "index": 37
+    },
+    {
+      "rid": "r_4bb65a1632",
+      "restaurant_name": "曼玲粥(学府路店·茶点）",
+      "raw_name": "不需要餐具（环保单默认不送餐具）",
+      "index": 144
+    },
+    {
+      "rid": "r_53189f9879",
+      "restaurant_name": "面点王(桃园分店)",
+      "raw_name": "需要一次性餐具",
+      "index": 3
+    },
+    {
+      "rid": "r_53189f9879",
+      "restaurant_name": "面点王(桃园分店)",
+      "raw_name": "不需要一次性餐具",
+      "index": 4
+    },
+    {
+      "rid": "r_564c3166b6",
+      "restaurant_name": "珍香鹅.烧腊（软件基地店）",
+      "raw_name": "餐具/套（一餐一筷）",
+      "index": 122
+    },
+    {
+      "rid": "r_57c3cb29bc",
+      "restaurant_name": "绿茶餐厅(深圳益田假日里店)",
+      "raw_name": "不用餐具",
+      "index": 59
+    },
+    {
+      "rid": "r_5af26a19a4",
+      "restaurant_name": "摩打食堂（海岸城店）",
+      "raw_name": "需要餐具（需要几份点几份）",
+      "index": 77
+    },
+    {
+      "rid": "r_5c3fa3b830",
+      "restaurant_name": "窑鸡王（科苑店）",
+      "raw_name": "需要吃鸡餐具（手套）【多点不送】",
+      "index": 68
+    },
+    {
+      "rid": "r_5c3fa3b830",
+      "restaurant_name": "窑鸡王（科苑店）",
+      "raw_name": "需要汤饭餐具（筷子/勺子）【多点不送】",
+      "index": 69
+    },
+    {
+      "rid": "r_5c3fa3b830",
+      "restaurant_name": "窑鸡王（科苑店）",
+      "raw_name": "保温袋-让美食温暖到家！（单点不送）",
+      "index": 70
+    },
+    {
+      "rid": "r_5d267b8283",
+      "restaurant_name": "金光鸽王·粤菜·点心（凯德店）",
+      "raw_name": "一次性餐具包（多点不送）",
+      "index": 51
+    },
+    {
+      "rid": "r_5d3d8afb52",
+      "restaurant_name": "大榕树下顺德菜（海岸城店）",
+      "raw_name": "外卖餐具（按餐下单·多点不送）",
+      "index": 39
+    },
+    {
+      "rid": "r_5d3d8afb52",
+      "restaurant_name": "大榕树下顺德菜（海岸城店）",
+      "raw_name": "无需餐具请点我",
+      "index": 40
+    },
+    {
+      "rid": "r_5d3d8afb52",
+      "restaurant_name": "大榕树下顺德菜（海岸城店）",
+      "raw_name": "多点或备注仅按实际菜品份量配餐具",
+      "index": 42
+    },
+    {
+      "rid": "r_6293e83c60",
+      "restaurant_name": "和府捞面（深圳立侨城店）",
+      "raw_name": "和府餐具包",
+      "index": 44
+    },
+    {
+      "rid": "r_6293e83c60",
+      "restaurant_name": "和府捞面（深圳立侨城店）",
+      "raw_name": "环保无需餐具",
+      "index": 45
+    },
+    {
+      "rid": "r_64a5aaece9",
+      "restaurant_name": "维小饭（供港健康餐·大冲店）",
+      "raw_name": "需要餐具只有筷子【多点单点不送】",
+      "index": 91
+    },
+    {
+      "rid": "r_6ba714f6e2",
+      "restaurant_name": "雁舍·湖南菜（深圳湾万象城店）",
+      "raw_name": "餐具包",
+      "index": 42
+    },
+    {
+      "rid": "r_6ba714f6e2",
+      "restaurant_name": "雁舍·湖南菜（深圳湾万象城店）",
+      "raw_name": "不需要餐具包",
+      "index": 43
+    },
+    {
+      "rid": "r_70fd3142f6",
+      "restaurant_name": "渝月·川渝人的家常菜（金地威新中心店）",
+      "raw_name": "四件套餐具",
+      "index": 52
+    },
+    {
+      "rid": "r_761b6c07fa",
+      "restaurant_name": "农耕记·现炒外卖（白石洲店）",
+      "raw_name": "不需要餐具（不给筷子）",
+      "index": 70
+    },
+    {
+      "rid": "r_761b6c07fa",
+      "restaurant_name": "农耕记·现炒外卖（白石洲店）",
+      "raw_name": "需要餐具（几人点几）",
+      "index": 71
+    },
+    {
+      "rid": "r_7656a8cef4",
+      "restaurant_name": "绿茶餐厅（海雅缤纷城店）",
+      "raw_name": "不用餐具",
+      "index": 82
+    },
+    {
+      "rid": "r_77da50e46b",
+      "restaurant_name": "徐记海鲜（南油永新汇店）",
+      "raw_name": "一次性餐具包（按所点餐具数量提供）",
+      "index": 87
+    },
+    {
+      "rid": "r_78fff265b4",
+      "restaurant_name": "越小品·越南餐厅（来福士店）",
+      "raw_name": "餐具（请按照主食数量购买餐具哦）",
+      "index": 64
+    },
+    {
+      "rid": "r_78fff265b4",
+      "restaurant_name": "越小品·越南餐厅（来福士店）",
+      "raw_name": "无需餐具（不配餐具，备注了也不送的哦）",
+      "index": 65
+    },
+    {
+      "rid": "r_79c69fcb34",
+      "restaurant_name": "甬府小鲜（深圳湾万象城店）",
+      "raw_name": "一次性餐具",
+      "index": 39
+    },
+    {
+      "rid": "r_7b748ac7a0",
+      "restaurant_name": "客语-山河之鲜（万象天地店）",
+      "raw_name": "一次性餐具【请按需下单】",
+      "index": 36
+    },
+    {
+      "rid": "r_7b748ac7a0",
+      "restaurant_name": "客语-山河之鲜（万象天地店）",
+      "raw_name": "无需餐具，支持环保",
+      "index": 37
+    },
+    {
+      "rid": "r_7cc220ed3f",
+      "restaurant_name": "景记客家菜",
+      "raw_name": "需要餐具，餐具",
+      "index": 116
+    },
+    {
+      "rid": "r_7e26e71a6b",
+      "restaurant_name": "海底捞·拌饭（深圳南山京基百纳店）",
+      "raw_name": "餐具（四件套）",
+      "index": 54
+    },
+    {
+      "rid": "r_812fa37f1b",
+      "restaurant_name": "狂麦计·轻食（科技园店）",
+      "raw_name": "需要餐具（凑单不多送）",
+      "index": 50
+    },
+    {
+      "rid": "r_81d20769db",
+      "restaurant_name": "牧炙•Moozeal 轻食（科技园店）",
+      "raw_name": "无需餐具（环保单）",
+      "index": 65
+    },
+    {
+      "rid": "r_836be763cb",
+      "restaurant_name": "农耕记·湘菜小炒·盖码饭（白石",
+      "raw_name": "不需要餐具（不给筷子）",
+      "index": 80
+    },
+    {
+      "rid": "r_836be763cb",
+      "restaurant_name": "农耕记·湘菜小炒·盖码饭（白石",
+      "raw_name": "需要餐具（几人点几）",
+      "index": 81
+    },
+    {
+      "rid": "r_83cf4e07ba",
+      "restaurant_name": "桂满陇（深圳南山来福士店）",
+      "raw_name": "简易餐具（需要几份点几份）",
+      "index": 75
+    },
+    {
+      "rid": "r_87ef393702",
+      "restaurant_name": "农耕记·湘菜小炒·盖码饭（软件",
+      "raw_name": "不需要餐具（不给筷子）",
+      "index": 60
+    },
+    {
+      "rid": "r_87ef393702",
+      "restaurant_name": "农耕记·湘菜小炒·盖码饭（软件",
+      "raw_name": "需要餐具（几人点几）",
+      "index": 61
+    },
+    {
+      "rid": "r_87f1e616f1",
+      "restaurant_name": "牛丰盛潮汕牛肉店·牛肉粿条（学府路店）",
+      "raw_name": "需要餐具（按餐量提供，请勿多点）",
+      "index": 63
+    },
+    {
+      "rid": "r_89fe424afd",
+      "restaurant_name": "三两粉（深圳软基店）",
+      "raw_name": "餐具包 1 个",
+      "index": 64
+    },
+    {
+      "rid": "r_8ac817644b",
+      "restaurant_name": "肯德基宅急送（康泰大厦店）",
+      "raw_name": "不需要一次性餐具",
+      "index": 4
+    },
+    {
+      "rid": "r_8ac817644b",
+      "restaurant_name": "肯德基宅急送（康泰大厦店）",
+      "raw_name": "需要一次性叉勺(每单仅需点一份)",
+      "index": 5
+    },
+    {
+      "rid": "r_8b5656c34d",
+      "restaurant_name": "和府捞面（深圳中科纳能店）",
+      "raw_name": "和府餐具包",
+      "index": 44
+    },
+    {
+      "rid": "r_8b5656c34d",
+      "restaurant_name": "和府捞面（深圳中科纳能店）",
+      "raw_name": "环保无需餐具",
+      "index": 45
+    },
+    {
+      "rid": "r_8b8197cec1",
+      "restaurant_name": "窑鸡王（大冲店）",
+      "raw_name": "需要吃鸡餐具（手套）【多点不送】",
+      "index": 72
+    },
+    {
+      "rid": "r_8b8197cec1",
+      "restaurant_name": "窑鸡王（大冲店）",
+      "raw_name": "需要汤饭餐具（筷子/勺子）【多点不送】",
+      "index": 73
+    },
+    {
+      "rid": "r_8b908fcdbf",
+      "restaurant_name": "老碗会•陕西手工面（南山阿里店）",
+      "raw_name": "☀️需要餐具（按主食匹配，多点不送）",
+      "index": 51
+    },
+    {
+      "rid": "r_8b908fcdbf",
+      "restaurant_name": "老碗会•陕西手工面（南山阿里店）",
+      "raw_name": "☀️不需要餐具",
+      "index": 52
+    },
+    {
+      "rid": "r_8bfbdfa194",
+      "restaurant_name": "米仓食堂（深圳湾万象城店）",
+      "raw_name": "需要餐具（配送以此下单数量为准）",
+      "index": 20
+    },
+    {
+      "rid": "r_8bfbdfa194",
+      "restaurant_name": "米仓食堂（深圳湾万象城店）",
+      "raw_name": "不需要餐具(真不给哦，请慎重选择）",
+      "index": 21
+    },
+    {
+      "rid": "r_8e20df230c",
+      "restaurant_name": "农畉 LONFOOD(万象天地店)",
+      "raw_name": "我不需要餐具（真不给哦）",
+      "index": 66
+    },
+    {
+      "rid": "r_8e20df230c",
+      "restaurant_name": "农畉 LONFOOD(万象天地店)",
+      "raw_name": "我需要餐具（按需加购）",
+      "index": 67
+    },
+    {
+      "rid": "r_9014b393a5",
+      "restaurant_name": "肯德基宅急送（创科中心店）",
+      "raw_name": "不需要一次性餐具",
+      "index": 4
+    },
+    {
+      "rid": "r_9014b393a5",
+      "restaurant_name": "肯德基宅急送（创科中心店）",
+      "raw_name": "需要一次性叉勺(每单仅需点一份)",
+      "index": 5
+    },
+    {
+      "rid": "r_978c7b08e2",
+      "restaurant_name": "窑鸡王（桂庙店）",
+      "raw_name": "不需要餐具（手套/筷子/勺子都不需要）",
+      "index": 76
+    },
+    {
+      "rid": "r_978c7b08e2",
+      "restaurant_name": "窑鸡王（桂庙店）",
+      "raw_name": "需要吃鸡餐具（手套）【多点不送】",
+      "index": 77
+    },
+    {
+      "rid": "r_978c7b08e2",
+      "restaurant_name": "窑鸡王（桂庙店）",
+      "raw_name": "需要汤饭餐具（筷子/勺子）【多点不送】",
+      "index": 79
+    },
+    {
+      "rid": "r_978c7b08e2",
+      "restaurant_name": "窑鸡王（桂庙店）",
+      "raw_name": "保温袋-让美食温暖到家！（单点不送）",
+      "index": 80
+    },
+    {
+      "rid": "r_9d935c60c2",
+      "restaurant_name": "Hot Stone 炎岩·地中海菜系（科技园店）",
+      "raw_name": "环保单 不需要餐具 No Cutlery",
+      "index": 40
+    },
+    {
+      "rid": "r_9d935c60c2",
+      "restaurant_name": "Hot Stone 炎岩·地中海菜系（科技园店）",
+      "raw_name": "需要餐具 Need Cutlery",
+      "index": 41
+    },
+    {
+      "rid": "r_a2c9729c6c",
+      "restaurant_name": "杭州小笼包·鲜粥·炒粉（科技园店）",
+      "raw_name": "不需要餐具，家中自备！",
+      "index": 59
+    },
+    {
+      "rid": "r_a63c2a5bbf",
+      "restaurant_name": "麦当劳＆麦咖啡（深圳生态园店）",
+      "raw_name": "一次性餐具（每单仅需点一份）",
+      "index": 162
+    },
+    {
+      "rid": "r_a63c2a5bbf",
+      "restaurant_name": "麦当劳＆麦咖啡（深圳生态园店）",
+      "raw_name": "不需要一次性餐具",
+      "index": 163
+    },
+    {
+      "rid": "r_a80bb0fdfd",
+      "restaurant_name": "正宗福鼎肉片·虾滑·热卤·小吃（",
+      "raw_name": "额外加份餐具",
+      "index": 97
+    },
+    {
+      "rid": "r_aa41647533",
+      "restaurant_name": "西贝（深圳南山欢乐颂店）",
+      "raw_name": "不要餐具-环保",
+      "index": 79
+    },
+    {
+      "rid": "r_aa41647533",
+      "restaurant_name": "西贝（深圳南山欢乐颂店）",
+      "raw_name": "需要餐具包",
+      "index": 80
+    },
+    {
+      "rid": "r_abc88f672c",
+      "restaurant_name": "一肴·牛肉粿条（万象天地店）",
+      "raw_name": "无需餐具(不给餐具哦)",
+      "index": 64
+    },
+    {
+      "rid": "r_b0d53dec0f",
+      "restaurant_name": "居竹·潮汕菜（海岸城店）",
+      "raw_name": "需要餐具（1 份）",
+      "index": 45
+    },
+    {
+      "rid": "r_b3ef36cdea",
+      "restaurant_name": "蔡澜点心·粤菜(深圳南山万象天",
+      "raw_name": "需要餐具【按需下单，限五份，多点不送】",
+      "index": 56
+    },
+    {
+      "rid": "r_b3ef36cdea",
+      "restaurant_name": "蔡澜点心·粤菜(深圳南山万象天",
+      "raw_name": "不需要餐具【不配餐具，备注了也不送的哦～】",
+      "index": 57
+    },
+    {
+      "rid": "r_b479b506b0",
+      "restaurant_name": "天怡興·百年蒸饺(万豪广场店)",
+      "raw_name": "需要一次性外卖餐具（标配蘸料：醋包）",
+      "index": 88
+    },
+    {
+      "rid": "r_b479b506b0",
+      "restaurant_name": "天怡興·百年蒸饺(万豪广场店)",
+      "raw_name": "不需要餐具（标配蘸料：醋包）",
+      "index": 89
+    },
+    {
+      "rid": "r_b52a368fb1",
+      "restaurant_name": "和府捞面（科兴科技园店）",
+      "raw_name": "和府餐具包",
+      "index": 44
+    },
+    {
+      "rid": "r_b52a368fb1",
+      "restaurant_name": "和府捞面（科兴科技园店）",
+      "raw_name": "环保无需餐具",
+      "index": 45
+    },
+    {
+      "rid": "r_b63e20ac7b",
+      "restaurant_name": "绿茶餐厅(深圳欢乐颂店)",
+      "raw_name": "不用餐具",
+      "index": 83
+    },
+    {
+      "rid": "r_b942ed9cb2",
+      "restaurant_name": "美·大董（万象城店）",
+      "raw_name": "不需要餐具（烤鸭需要提前 2 小时下单，即时单无法制作）",
+      "index": 52
+    },
+    {
+      "rid": "r_b96d79bbbf",
+      "restaurant_name": "汉堡王（深圳中科纳能餐厅 28687 店）",
+      "raw_name": "不需要一次性餐具",
+      "index": 136
+    },
+    {
+      "rid": "r_b96d79bbbf",
+      "restaurant_name": "汉堡王（深圳中科纳能餐厅 28687 店）",
+      "raw_name": "需要一次性餐具（每单仅需点一份，单点不送。）",
+      "index": 137
+    },
+    {
+      "rid": "r_ba01b8a722",
+      "restaurant_name": "唐宫（万象店）",
+      "raw_name": "需要餐具(备注无效)",
+      "index": 83
+    },
+    {
+      "rid": "r_ba01b8a722",
+      "restaurant_name": "唐宫（万象店）",
+      "raw_name": "无需餐具（默认不放餐具包）",
+      "index": 84
+    },
+    {
+      "rid": "r_caee9390c6",
+      "restaurant_name": "窑鸡王（白石洲店）",
+      "raw_name": "不需要餐具（手套/筷子/勺子都不需要）",
+      "index": 70
+    },
+    {
+      "rid": "r_caee9390c6",
+      "restaurant_name": "窑鸡王（白石洲店）",
+      "raw_name": "需要汤饭餐具（筷子/勺子）【多点不送】",
+      "index": 71
+    },
+    {
+      "rid": "r_caee9390c6",
+      "restaurant_name": "窑鸡王（白石洲店）",
+      "raw_name": "保温袋-让美食温暖到家！（单点不送）",
+      "index": 72
+    },
+    {
+      "rid": "r_caee9390c6",
+      "restaurant_name": "窑鸡王（白石洲店）",
+      "raw_name": "需要吃鸡餐具（手套）【其中防烫手套限一双多点不送】",
+      "index": 73
+    },
+    {
+      "rid": "r_cf0ffb356e",
+      "restaurant_name": "非尝鲜·广式白切（科兴店）",
+      "raw_name": "非尝鲜餐具包（限购一餐一具，多点不送）",
+      "index": 42
+    },
+    {
+      "rid": "r_cf0ffb356e",
+      "restaurant_name": "非尝鲜·广式白切（科兴店）",
+      "raw_name": "无需餐具~环保单",
+      "index": 43
+    },
+    {
+      "rid": "r_d0327469ff",
+      "restaurant_name": "段记小龙虾（民治店）",
+      "raw_name": "一次性桌布（单点不送）",
+      "index": 48
+    },
+    {
+      "rid": "r_d3afa026e1",
+      "restaurant_name": "新太二·鲜料川菜（深圳来福士店）",
+      "raw_name": "需要餐具（需要几份点几份）",
+      "index": 37
+    },
+    {
+      "rid": "r_d59a370704",
+      "restaurant_name": "亚参鸡饭（华润城店）",
+      "raw_name": "支持环保，无需餐具",
+      "index": 60
+    },
+    {
+      "rid": "r_d59a370704",
+      "restaurant_name": "亚参鸡饭（华润城店）",
+      "raw_name": "一次性餐具包",
+      "index": 61
+    },
+    {
+      "rid": "r_d7ff2bc099",
+      "restaurant_name": "超级碗 FOODBOWL(深圳湾万象城店)",
+      "raw_name": "需要餐具【按餐量点选】",
+      "index": 46
+    },
+    {
+      "rid": "r_d7ff2bc099",
+      "restaurant_name": "超级碗 FOODBOWL(深圳湾万象城店)",
+      "raw_name": "不要餐具【环保单】",
+      "index": 47
+    },
+    {
+      "rid": "r_d8a5e04ed6",
+      "restaurant_name": "老碗会•陕西手工面（讯美科技广",
+      "raw_name": "☀️需要餐具（按主食匹配，多点不送）",
+      "index": 55
+    },
+    {
+      "rid": "r_d8a5e04ed6",
+      "restaurant_name": "老碗会•陕西手工面（讯美科技广",
+      "raw_name": "☀️不需要餐具",
+      "index": 56
+    },
+    {
+      "rid": "r_ddc34d0502",
+      "restaurant_name": "陶陶居酒家(万象天地店)",
+      "raw_name": "餐具(需要几份点几份)",
+      "index": 93
+    },
+    {
+      "rid": "r_ddc34d0502",
+      "restaurant_name": "陶陶居酒家(万象天地店)",
+      "raw_name": "一次性手套",
+      "index": 94
+    },
+    {
+      "rid": "r_de15e9b71c",
+      "restaurant_name": "清荷私厨健康餐（蛇口店）",
+      "raw_name": "便携不锈钢餐具【款式随机】",
+      "index": 61
+    },
+    {
+      "rid": "r_de9cd1af31",
+      "restaurant_name": "茂发潮汕牛肉店（南光九分店）",
+      "raw_name": "要要要需要餐具",
+      "index": 112
+    },
+    {
+      "rid": "r_de9cd1af31",
+      "restaurant_name": "茂发潮汕牛肉店（南光九分店）",
+      "raw_name": "不不不不要餐具",
+      "index": 113
+    },
+    {
+      "rid": "r_ea89a746bc",
+      "restaurant_name": "CURRY YA （熟成咖喱饭·深圳湾",
+      "raw_name": "需要餐具（请按用餐人数选择下单哦～）",
+      "index": 40
+    },
+    {
+      "rid": "r_ea89a746bc",
+      "restaurant_name": "CURRY YA （熟成咖喱饭·深圳湾",
+      "raw_name": "不要餐具(环保单)",
+      "index": 41
+    },
+    {
+      "rid": "r_eaccb17222",
+      "restaurant_name": "辣可可·现炒黄牛肉(生态园店)",
+      "raw_name": "四件套餐具包 （按需选购，爱护环境）",
+      "index": 22
+    },
+    {
+      "rid": "r_eb1a811504",
+      "restaurant_name": "西贝（深圳印力中心店）",
+      "raw_name": "需要餐具包",
+      "index": 70
+    },
+    {
+      "rid": "r_edf3b0c003",
+      "restaurant_name": "荆九爷桥头三嫩（南山田厦店）",
+      "raw_name": "餐具随米饭数量赠送，需要请备注",
+      "index": 42
+    },
+    {
+      "rid": "r_f1a5f70573",
+      "restaurant_name": "西贝(深圳益田假日广场店)",
+      "raw_name": "不要餐具-环保",
+      "index": 78
+    },
+    {
+      "rid": "r_f1a5f70573",
+      "restaurant_name": "西贝(深圳益田假日广场店)",
+      "raw_name": "需要餐具包",
+      "index": 79
+    },
+    {
+      "rid": "r_f1e2e998fc",
+      "restaurant_name": "徐记海鲜（科技园店）",
+      "raw_name": "一次性餐具包（按所点餐具数量提供）",
+      "index": 121
+    },
+    {
+      "rid": "r_fc8d1f15b8",
+      "restaurant_name": "辣田田·小炒黄牛肉（阿里中心店）",
+      "raw_name": "四件套餐具(凑单不送哦)",
+      "index": 21
+    },
+    {
+      "rid": "r_fc8d1f15b8",
+      "restaurant_name": "辣田田·小炒黄牛肉（阿里中心店）",
+      "raw_name": "不需要餐具(不配餐具 请慎重选择)",
+      "index": 22
+    },
+    {
+      "rid": "r_fcd618044d",
+      "restaurant_name": "小吊梨汤（海岸城店）",
+      "raw_name": "无需餐具包",
+      "index": 64
+    },
+    {
+      "rid": "r_fcd618044d",
+      "restaurant_name": "小吊梨汤（海岸城店）",
+      "raw_name": "餐具包",
+      "index": 65
+    }
+  ]
+}
