@@ -88,14 +88,114 @@ def cmd_install_skill(args) -> int:
 # ─────────────────────────────── onboard (B.5 stub) ───────────────────
 
 def cmd_onboard(args) -> int:
-    """T-DIST-01 B.5a/b/c: 待 B.5 PR 填充."""
-    _emit({
-        "ok": False,
-        "error": "NOT_IMPLEMENTED",
-        "message": "chisha onboard 由 T-DIST-01 B.5 落地, 当前 B.2 仅占位",
-        "next": "B.5a/b/c 实施后 enable",
-    })
-    return 1
+    """T-DIST-01 B.5a: 初始化 ~/.chisha/profile.yaml + 装 skill + doctor 自检.
+
+    步骤:
+      1. profile: 从 install_root/profile.yaml template 复制到 state_root/profile.yaml,
+         替换 zone 占位 (<YOUR_LUNCH_ZONE> / <YOUR_DINNER_ZONE> → --zone arg).
+         已存在 + 无 --force → skip (非错误).
+      2. install skill: 落 ~/.claude/skills/chisha-meal/SKILL.md.
+      3. doctor: 自检并把 doctor payload 合并进 onboard summary.
+
+    输出: 单条 JSON (machine-readable summary). 人类提示走 stderr.
+
+    B.5b (user-level loader) / B.5c (ephemeral dry start) 在后续 PR 加.
+    """
+    import contextlib
+    import io
+    from chisha import agent_cli, state_root
+    from chisha.agent_skill_init import init_skill
+    from chisha.install_root import install_root
+
+    zone = getattr(args, "zone", "shenzhen-bay")
+    methodology_name = getattr(args, "methodology", "harvard_plate")
+    force = getattr(args, "force", False)
+
+    install_root_p = install_root()
+    state_root_p = state_root.resolve(install_root_p)
+    state_root_p.mkdir(parents=True, exist_ok=True)
+
+    summary: dict = {"ok": True, "steps": {}}
+
+    # ─ Step 1: profile ─
+    profile_target = state_root_p / "profile.yaml"
+    template_path = install_root_p / "profile.yaml"
+    if not template_path.exists():
+        _emit({
+            "ok": False,
+            "error": "PROFILE_TEMPLATE_MISSING",
+            "message": f"install_root 内缺 profile.yaml template: {template_path}",
+        })
+        return 1
+    if profile_target.exists() and not force:
+        summary["steps"]["profile"] = {
+            "status": "exists",
+            "path": str(profile_target),
+            "hint": "已存在, 跳过写入 (用 --force 覆盖)",
+        }
+        _stderr(f"[onboard] profile 已存在 → {profile_target} (跳过, --force 覆盖)")
+    else:
+        template = template_path.read_text(encoding="utf-8")
+        rendered = (
+            template
+            .replace("<YOUR_LUNCH_ZONE>", zone)
+            .replace("<YOUR_DINNER_ZONE>", zone)
+        )
+        if methodology_name != "harvard_plate":
+            rendered = rendered.replace(
+                "methodology: harvard_plate", f"methodology: {methodology_name}"
+            )
+        profile_target.write_text(rendered, encoding="utf-8")
+        summary["steps"]["profile"] = {
+            "status": "written",
+            "path": str(profile_target),
+            "zone": zone,
+            "methodology": methodology_name,
+        }
+        _stderr(f"[onboard] profile 写入 → {profile_target} (zone={zone}, methodology={methodology_name})")
+
+    # ─ Step 2: install skill ─ (capture stdout JSON, 合并进 summary)
+    skill_buf = io.StringIO()
+    with contextlib.redirect_stdout(skill_buf):
+        skill_rc = init_skill("claude-code", install_root_p, force=force)
+    try:
+        skill_payload = json.loads(skill_buf.getvalue().strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        skill_payload = {"ok": False, "stdout": skill_buf.getvalue()}
+    summary["steps"]["skill"] = skill_payload
+    if skill_rc != 0:
+        # EXISTS 也算 skill_rc != 0, 但不是致命 (用户可以自行选择 --force 重跑); 标 warn 不阻塞 onboard.
+        if skill_payload.get("error", {}).get("code") != "EXISTS":
+            summary["ok"] = False
+        _stderr(f"[onboard] skill 状态: {skill_payload.get('error', {}).get('code', 'unknown')}")
+    else:
+        _stderr(f"[onboard] skill 写入 → {skill_payload.get('path')}")
+
+    # ─ Step 3: doctor ─ (capture stdout JSON)
+    doctor_buf = io.StringIO()
+    with contextlib.redirect_stdout(doctor_buf):
+        doctor_ns = argparse.Namespace(scope="production")
+        doctor_rc = agent_cli.cmd_doctor(doctor_ns)
+    try:
+        doctor_payload = json.loads(doctor_buf.getvalue().strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        doctor_payload = {"ok": False, "stdout": doctor_buf.getvalue()}
+    summary["steps"]["doctor"] = doctor_payload
+    if doctor_rc != 0 or not doctor_payload.get("ok"):
+        summary["ok"] = False
+        _stderr(f"[onboard] doctor 红 — notes: {doctor_payload.get('notes')}")
+    else:
+        _stderr("[onboard] doctor 绿")
+
+    # ─ 最终 summary ─
+    if summary["ok"]:
+        summary["next"] = "Onboarding 完成. 任意目录 Claude Code 说 '今天中午吃啥' 即可."
+        _stderr("[onboard] ✓ Onboarding 完成. 任意目录 Claude Code 说 '今天中午吃啥' 即可.")
+    else:
+        summary["next"] = "Onboarding 未全绿, 看 steps 详情排错."
+        _stderr("[onboard] ✗ Onboarding 未全绿, 看 stdout JSON.steps 排错.")
+    _emit(summary)
+    return 0 if summary["ok"] else 1
 
 
 # ─────────────────────────────── methodology (T-DIST-02 占位) ─────────
