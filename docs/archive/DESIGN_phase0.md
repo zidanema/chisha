@@ -478,9 +478,9 @@ methodology: harvard_plate
 
 basics:
   name: <YOUR_NAME>
-  city: 深圳
-  office_zone: 科技园
-  goal: 减脂增肌期
+  city: <YOUR_CITY>
+  office_zone: <YOUR_ZONE>
+  goal: <YOUR_GOAL>
 
 # 弱约束三件套：控油 + 有蔬菜 + 有蛋白
 # 不再要求"严格 1/2-1/4-1/4 比例"——见 D-023
