@@ -1,0 +1,134 @@
+# chisha-meal · 用户画像 template
+#
+# 这是默认模板. 首次 `chisha onboard` 会复制到 ~/.chisha/profile.yaml,
+# 再由你按口味/zone 修改. 这里所有 <PLACEHOLDER> 字段都需替换.
+#
+# 字段语义见 docs/CONTRACTS.md「Profile 字段闭包 (D-094.1)」段.
+
+# ===== L0 方法论 (D-072) =====
+# 引用 profiles/methodologies/{name}.yaml. load_profile 时 merge spec defaults,
+# 此处 profile 显式字段 (plate_rule / scoring_weights / recall) override spec.
+# 缺此字段时 fallback harvard_plate 并 logger.info (D-072.1 + Codex M-1).
+methodology: harvard_plate
+
+# ===== LLM 调用配置 (D-047 + D-048) =====
+#
+# provider 选择: auto | claude_code_cli | anthropic | openrouter
+# auto-detect 优先级: ANTHROPIC_API_KEY > claude_code_cli 订阅 > OPENROUTER_API_KEY
+# 环境变量 CHISHA_LLM_PROVIDER 可强制覆盖 (空白当 unset)
+#
+# 配置错误 (未知 provider / provider 不可用) hard-fail, 不再静默 fallback (D-048).
+llm:
+  provider: openrouter
+  model:
+    claude_code_cli: opus
+    anthropic: claude-sonnet-4-6
+    openrouter: anthropic/claude-sonnet-4.6
+
+basics:
+  name: <YOUR_NAME>                # e.g. 张三
+  city: <YOUR_CITY>                # e.g. 深圳
+  goal: <YOUR_GOAL>                # e.g. "体重控制 + 力量训练期"; 或 "增肌期"; 或 "无目标"
+  zones:
+    lunch: <YOUR_LUNCH_ZONE>       # 现支持 shenzhen-bay / home (或自建 zone, 见 docs/data-pipeline.md)
+    dinner: <YOUR_DINNER_ZONE>
+  office_zone: <YOUR_LUNCH_ZONE>   # 旧字段, 向后兼容; 与 zones.lunch 同值
+
+# 弱约束三件套: 控油 + 有蔬菜 + 有蛋白 (D-023 不再强求 1/2-1/4-1/4 比例)
+plate_rule:
+  must_have_vegetable: true
+  min_vegetable_dishes: 1            # combo 至少 1 道 vegetable_ratio_estimate ≥ 0.6
+  min_protein_g: 40                  # 单餐蛋白下限 (按体重×单餐目标蛋白反推, 70kg+力训日常 40g/餐)
+  prefer_oil_level_at_most: 3        # 软上限 (> 此值扣分)
+  hard_max_oil_level: 4              # 硬上限 (> 此值召回过滤; 5=不卡, 4=ban 最油)
+
+taste_description: |
+  # ===== 在这里写自然语言口味描述, 给 L3 LLM 看 =====
+  # 替换为你自己的偏好. 例:
+  #
+  # === 健康目标 ===
+  # 体重控制 + 力量训练. 哈佛餐盘法 (1/2 蔬菜 + 1/4 蛋白 + 1/4 复合碳水).
+  # 关键失败模式: 极致清淡 → 当顿满足感弱 → 半夜反弹宵夜.
+  # 不是 "这一顿热量最低", 而是 "这一顿能撑到下一顿".
+  #
+  # === 真实口味偏好 (不考虑健康约束) ===
+  # - 喜欢有锅气的炒菜 / 味道重的下饭菜
+  # - 主蛋白: 牛肉 / 猪肉 / 鸡腿 / 鱼
+  # - 主食: 米饭 / 米粉 / 河粉
+  # - 形态: 完整套餐 > 单点凑菜
+  #
+  # === 不喜欢 ===
+  # - 干煸 / 纯凉拌 / 海鲜
+  #
+  # === 历史行为 ≠ 偏好 ===
+  # 过去若有"为了健康主动妥协选清淡款", 这是妥协不是口味. 让 LLM 看到 spec
+  # 里的真实偏好, 不要只学历史日志.
+
+preferences:
+  # 喜爱菜系 (软加分, 打分阶段 cuisine_preference 维度)
+  liked_cuisines: []                 # e.g. [湘菜, 川菜, 潮汕, 粤菜, 日式, 轻食健康]
+  # 不喜欢菜系 (软扣分)
+  disliked_cuisines: []              # e.g. [饮品甜品, 烧烤]
+  # 硬过滤 (召回阶段直接 ban). cuisine 取值: 粤菜/湘菜/潮汕/川菜/日式/江浙/韩式/西式/快餐/小吃/西北/东北/汤粥/东南亚/饮品甜品/其他
+  banned_cuisines: []
+  # D-043 三档处理: banned_*=true → L1 硬过滤; false → L2 软扣 (有数据); 缺失 → UNKNOWN 不扣
+  banned_processed_meat: false       # true 后含火腿/培根/腊味等的菜 ban
+  banned_sweet_sauce_level_3: false  # true 后糖醋/拔丝等重甜菜 ban
+  avoid_dishes: []                   # 菜名 substring 黑名单 (慎用, 优先用属性维度 oil/sweet/processed_meat)
+  avoid_main_ingredients: []         # 主蛋白黑名单, 取值: 红肉/白肉/海鲜/蛋/豆制品/纯素/主食
+  avoid_cooking_methods: []          # 烹饪方式黑名单, 取值: 煮/炒/烤/蒸/生/炖/油炸/凉拌/煎
+  avoid_restaurants: []              # 餐厅名/品牌 substring 模糊 ban, e.g. ["烧烤", "麦当劳"]
+  spicy_tolerance: 2                 # 0=不辣 1=微辣 2=中辣 3=重辣 (D-029 整数化)
+
+# 履约约束 (V2 双层: hard=召回硬过滤, prefer=打分软扣)
+delivery_constraints:
+  hard_max_eta_min: 45
+  prefer_max_eta_min: 30
+
+# 价格约束 (V2 双层)
+price_range:
+  hard_max_lunch: 150
+  hard_max_dinner: 150
+  prefer_max_lunch: 120
+  prefer_max_dinner: 120
+
+diversity:
+  no_same_restaurant_within_days: 7
+  no_same_main_ingredient_within_days: 3
+
+meal_trigger_time:
+  lunch: "11:25"
+  dinner: "18:00"
+  weekend: false
+
+# 召回 / 打分参数 (一般不改, 跟 methodology spec 配套)
+recall:
+  per_restaurant_max: 20             # 单餐厅最多保留 combo 数
+  per_restaurant_top_k: 3            # L2 后单店 top K (D-042)
+  per_brand_top_k: 2                 # 单品牌 top K, 防连锁多分店刷屏 (D-045)
+  per_cuisine_top_k: 6               # 单菜系 top K (D-043)
+  per_food_form_top_k: 8             # 单 food_form (粥/汤/拌) top K (D-043)
+  min_monthly_sales: 0               # 0=关闭硬过滤, 由 popularity 维度打分
+  max_dishes_per_combo: 4
+  max_protein_per_combo: 2
+  max_veg_per_combo: 2
+  max_carb_per_combo: 1
+
+scoring_weights:
+  # 11 维活权重 (D-092 删了 5 死维度: vegetable_floor_pass / protein_floor_pass /
+  # distance / wetness / context_boost)
+  low_oil: 0.5
+  popularity: 0.4                    # D-043 改活成 rank-based
+  cuisine_preference: 0.3
+  variety_bonus: 0.5                 # D-043 连续函数
+  carb_quality: 0.6
+  processed_meat: 1.0                # 取负
+  sweet_sauce: 0.7                   # 取负
+  dish_role_match: 0.3
+  eta: 0.4                           # 取负
+  price: 0.5                         # 取负
+  taste_match: 0.4                   # D-043 启用, P2 按实测 std 校准
+  # refine 意图三档 (D-073 + D-090)
+  intent_cuisine: 1.00               # D-090: 0.50→1.00 cuisine 命中 (exact 1.0 / soft 0.6)
+  intent_ingredient: 0.50            # D-090: 0.20→0.50 ingredient/portion/staple 命中
+  intent_flavor: 0.40                # D-090: 0.10→0.40 flavor_tags 命中 (spicy/heavy/light)
