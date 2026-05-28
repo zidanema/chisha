@@ -1582,7 +1582,7 @@ V1-V2 期间 profile.yaml 一直是 mock 数据 (goal=减脂增肌, 价格 35/50
 #### B. profile 字段按真实需求校准
 - `basics.goal`: 减脂增肌期 → 体重控制+力量训练期 (保饱腹感)
 - `basics.zones.dinner`: home → shenzhen-bay (工作日晚餐其实也在公司)
-- `plate_rule.min_protein_g`: 25 → **40** (朋友A 25g 验证不饱; 按 标准体重 + 力量训练
+- `plate_rule.min_protein_g`: 25 → **40** (朋友A 25g 验证不饱; 按标准体重 + 力量训练
   4 次/周 日蛋白 115-140g 反推, 单餐 35-45g 是甜区. 80g 不可行——单餐 80g 蛋白
   需 ~300g 净肉, 外卖几乎达不到, 会锁死召回池)
 - `preferences.liked_cuisines`: 删"东北"(口述无), 加"粤菜"
