@@ -36,10 +36,27 @@ _MIGRATE_MAP: list[tuple[str, str]] = [
     ("data/long_term_prefs.json", "long_term_prefs.json"),
 ]
 
-# T-DIST-01 B.7 跟修: doctor 用的"是否真有 legacy state"判定 — profile.yaml 在 wheel 模式
-# 作为 onboard 模板被 ship 进 install_root, 不能再单独作 legacy marker (会误报"待迁移").
-# 用更强信号: logs/ 子目录有内容 OR feedback_history.jsonl 非空 OR long_term_prefs.json 存在.
-# (profile.yaml 在 wheel = 模板; 在 dev = 旧个人 profile, 但 dev 用户已迁 → migrated=True 拦)
+# T-DIST-01 B.7 跟修 (codex final review P1#1): doctor 用的"是否真有 legacy state"判定.
+#
+# 起因: B.7 把 profile.yaml 加进 wheel force-include 作 onboard 模板. 早期实现把它单独
+# 作 _MIGRATE_MAP 的 marker → 在 wheel 模式 doctor 必然误报"profile.yaml 待迁移" (因为
+# install_root/profile.yaml 永远存在). 改成更严信号集.
+#
+# Marker 集 (任一命中即 legacy):
+#   1. logs/ 子目录非空 (运行过 chisha 必生成 recommend_log / agent_rounds / sandbox)
+#   2. data/feedback_history.jsonl 非空 (用过反馈 ≥ 1 次)
+#   3. data/long_term_prefs.json 存在 (L1 抽取过偏好)
+#   4. profile.yaml 存在且**内容非 template** (含 PII 占位 `<YOUR_NAME>` = 模板; 缺即真数据)
+#
+# Rule 4 关键: pre-A.2 dev checkout 里 profile.yaml 是用户真实数据 (含名字/zone/口味),
+# 不含 `<YOUR_NAME>` 占位. A.2 commit (bd007be) 之后 repo 内 profile.yaml = 占位模板.
+# Wheel ship 的 chisha/profile.yaml 也来自 repo (源 = 模板). 所以 "profile.yaml 内容含
+# <YOUR_NAME> 占位 = 模板, 不算 legacy; 内容无占位 = 真个人数据, 算 legacy 触发迁移".
+# 反例 (codex 提): pre-A.2 dev 用户拉过 repo, profile.yaml 是真数据 + 从未跑过 chisha
+# (无 logs/feedback/prefs) — 单靠 1-3 漏判, Rule 4 兜底.
+_PROFILE_TEMPLATE_MARKER = "<YOUR_NAME>"   # A.2 占位字段 (与 profile.yaml 顶层一致)
+
+
 def has_legacy_state(install_root: Path) -> bool:
     """更严的 legacy 判定 (doctor 用): 至少一个 non-trivial state 标志才算 legacy."""
     logs_dir = install_root / "logs"
@@ -50,6 +67,15 @@ def has_legacy_state(install_root: Path) -> bool:
         return True
     if (install_root / "data" / "long_term_prefs.json").is_file():
         return True
+    # Rule 4: profile.yaml 内容非 template = 真个人数据未迁 (codex P1#1 反例兜底).
+    profile = install_root / "profile.yaml"
+    if profile.is_file():
+        try:
+            content = profile.read_text(encoding="utf-8")
+        except OSError:
+            return False  # 读不了视作不存在, 不当 legacy
+        if _PROFILE_TEMPLATE_MARKER not in content:
+            return True
     return False
 
 
