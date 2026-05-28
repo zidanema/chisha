@@ -9,6 +9,7 @@ import contextlib
 import datetime as dt
 import io
 import json
+from pathlib import Path
 
 import pytest
 
@@ -21,6 +22,8 @@ from tests.conftest import make_dish, make_restaurant
 def cli_env(tmp_path, monkeypatch):
     """CLI 跑在 tmp root, recall/score/ctx 全 mock (不依赖真数据/LLM)."""
     monkeypatch.setattr(agent_cli, "_root", lambda: tmp_path)
+    # T-DIST-01 B.4: init_skill 默认 dest = Path.home()/.claude/, 防 e2e 测试写真 HOME.
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     fake_combos = [
         {"restaurant": make_restaurant(rid=f"r{i}", name=f"店{i}"),
