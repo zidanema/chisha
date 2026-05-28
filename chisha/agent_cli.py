@@ -797,4 +797,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # T-DIST-01 B.2: legacy entry compat — 推 `chisha agent <verb>`, stderr 一行 tip,
+    # 绝不污染 stdout JSON (machine-readable 协议). Env CHISHA_SUPPRESS_LEGACY_TIP=1 可关.
+    import os
+    if not os.environ.get("CHISHA_SUPPRESS_LEGACY_TIP"):
+        print(
+            "[chisha] tip: `python -m chisha.agent_cli` 是 legacy 路径, "
+            "推荐改用 `chisha agent <verb>` (T-DIST-01 B.2).",
+            file=sys.stderr,
+        )
     sys.exit(main())

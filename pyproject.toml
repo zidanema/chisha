@@ -16,6 +16,9 @@ dependencies = [
     "ruamel-yaml>=0.19.1",
 ]
 
+[project.scripts]
+chisha = "chisha.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
