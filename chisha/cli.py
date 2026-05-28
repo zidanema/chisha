@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 
 def _emit(obj: dict) -> None:
@@ -186,6 +187,66 @@ def cmd_onboard(args) -> int:
         _stderr(f"[onboard] doctor 红 — notes: {doctor_payload.get('notes')}")
     else:
         _stderr("[onboard] doctor 绿")
+
+    # ─ Step 4: B.5c ephemeral dry start ─
+    # 跑 cmd_start(meal=lunch, context=None) 验链路通 (recall→score→rerank spec).
+    # CHISHA_STATE_ROOT 临时钉 tmp 目录: 所有 state (agent_rounds / trace / 任何写入) 落 tmp,
+    # 跑完即删, 绝不污染真实 state_root 的 logs/. 复制真 profile.yaml 到 tmp 让 _load_inputs
+    # 能读 (zone data 走 install_root 不受影响).
+    import os
+    import shutil
+    import tempfile
+
+    dry_status = "skipped"
+    dry_note = ""
+    if summary["steps"]["profile"]["status"] in ("written", "exists"):
+        with tempfile.TemporaryDirectory(prefix="chisha-dry-") as tmpdir:
+            tmp_state = Path(tmpdir)
+            try:
+                shutil.copy(profile_target, tmp_state / "profile.yaml")
+            except OSError as e:
+                dry_status = "error"
+                dry_note = f"copy profile to tmp failed: {e}"
+            else:
+                env_backup = os.environ.get("CHISHA_STATE_ROOT")
+                os.environ["CHISHA_STATE_ROOT"] = str(tmp_state)
+                try:
+                    start_ns = argparse.Namespace(
+                        scope="ephemeral", meal="lunch", context=None,
+                        from_id=None, at_time=None,
+                    )
+                    start_buf = io.StringIO()
+                    with contextlib.redirect_stdout(start_buf):
+                        start_rc = agent_cli.cmd_start(start_ns)
+                    try:
+                        start_payload = json.loads(start_buf.getvalue().strip().splitlines()[-1])
+                    except (json.JSONDecodeError, IndexError):
+                        start_payload = {"ok": False, "stdout": start_buf.getvalue()}
+                    # 期望 status=resolved (无 context 直接 rerank spec)
+                    if start_rc == 0 and start_payload.get("status") == "resolved":
+                        dry_status = "ok"
+                        dry_note = "start → resolved (rerank spec 已生成)"
+                    else:
+                        dry_status = "failed"
+                        dry_note = (
+                            f"rc={start_rc}, status={start_payload.get('status')}, "
+                            f"error={start_payload.get('error')}"
+                        )
+                finally:
+                    if env_backup is not None:
+                        os.environ["CHISHA_STATE_ROOT"] = env_backup
+                    else:
+                        os.environ.pop("CHISHA_STATE_ROOT", None)
+    else:
+        dry_note = "profile 写入异常, 跳过 dry start"
+
+    summary["steps"]["dry_start"] = {"status": dry_status, "note": dry_note}
+    if dry_status != "ok":
+        # dry_start 失败也标红 (recall→rerank 链路不通 = 用户用不了)
+        summary["ok"] = False
+        _stderr(f"[onboard] dry start: {dry_status} — {dry_note}")
+    else:
+        _stderr(f"[onboard] dry start ✓ ({dry_note})")
 
     # ─ 最终 summary ─
     if summary["ok"]:

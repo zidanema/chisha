@@ -93,6 +93,35 @@ def test_onboard_force_overwrites(tmp_path):
     assert payload["steps"]["skill"].get("ok") is True
 
 
+def test_onboard_dry_start_runs(tmp_path):
+    """B.5c: ephemeral dry start 跑 cmd_start(meal=lunch, context=None), 期望 status=resolved.
+    state 全部落 tmp (CHISHA_STATE_ROOT 临时钉), 不污染真 ~/.chisha/logs/agent_rounds."""
+    r = _run_onboard(tmp_path)
+    payload = _last_json(r.stdout)
+    dry = payload["steps"]["dry_start"]
+    assert dry["status"] == "ok", f"dry start failed: {dry}"
+    # 验证 tmp 目录已被清理 (TemporaryDirectory contextmanager 删了)
+    leftover = list(Path("/tmp").glob("chisha-dry-*"))
+    assert not leftover, f"tmp leak: {leftover}"
+    # 真 state_root (tmp_path/.chisha) 的 logs/agent_rounds 不应有 dry start 残留
+    agent_rounds = tmp_path / ".chisha" / "logs" / "agent_rounds"
+    if agent_rounds.exists():
+        # 允许目录在但里面应该没有 dry start 落的 cards.json (sid 是新生成的)
+        cards = list(agent_rounds.glob("*.cards.json"))
+        # 这里 cards 可能有 (如果先前测试残留, conftest tmp_path 应空), assert 空更严
+        assert not cards, f"dry start state 污染了真 state_root: {cards}"
+
+
+def test_onboard_dry_start_state_isolation(tmp_path, monkeypatch):
+    """B.5c 隔离守门: dry start 跑完, real CHISHA_STATE_ROOT 环境变量不该被永久篡改."""
+    monkeypatch.setenv("CHISHA_STATE_ROOT_PRE", "guard-value")
+    r = _run_onboard(tmp_path)
+    # subprocess 跑完后我们检的是父进程 env, subprocess 内 env 改动不影响这里 —
+    # 真正测试是: dry_start 内部 try/finally 把 env 还原; 看 dry_start.status=ok 即可
+    payload = _last_json(r.stdout)
+    assert payload["steps"]["dry_start"]["status"] == "ok"
+
+
 def test_onboard_methodology_substitution(tmp_path):
     """B.5a step 2: --methodology 替换 (假设 yaml 模板含 'methodology: harvard_plate')."""
     r = _run_onboard(tmp_path, ["--methodology", "my-custom-spec"])

@@ -84,20 +84,27 @@ def _prepared_blob(prep, *, n_explore: int, today: dt.date) -> dict:
 
 # ─────────────────────── scope / 输入 ───────────────────────
 
+_ALLOWED_SCOPES = ("production", "ephemeral")  # T-DIST-01 B.5c 加 ephemeral
+
+
 def _guard_scope(root: Path, scope: str) -> None:
     """codex #5: 默认 production 必须显式. sandbox 全局启用 → 拒绝 (防误路由).
 
+    T-DIST-01 B.5c: 新增 ephemeral scope, 行为同 production (sandbox 启用一样拒),
+    区别仅在调用方 (cmd_onboard ephemeral dry start) 已先把 CHISHA_STATE_ROOT 钉到
+    tmp 目录, 让所有 state 写落 tmp 跑完即删, 不污染真实 state_root 的 logs/agent_rounds.
+
     Raises: RuntimeError 让 caller 转成 JSON error.
     """
-    if scope != "production":
+    if scope not in _ALLOWED_SCOPES:
         raise RuntimeError(
-            f"Phase 0 CLI 仅支持 --scope production (got {scope!r}); "
+            f"Phase 0 CLI 仅支持 --scope {'/'.join(_ALLOWED_SCOPES)} (got {scope!r}); "
             f"sandbox / time-travel 走 sandbox-lab"
         )
     from chisha import sandbox
     if sandbox.is_enabled(root):
         raise RuntimeError(
-            "sandbox 全局启用中, CLI 拒绝在 production scope 运行 "
+            f"sandbox 全局启用中, CLI 拒绝在 {scope} scope 运行 "
             "(避免误路由到沙盒数据 / 虚拟时钟). 先在 sandbox-lab disable, 再跑 CLI."
         )
 
