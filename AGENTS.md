@@ -73,8 +73,16 @@ scope_limitations:
 | OS | macOS / Linux (Windows 仅 WSL) | early-exit, 告知用户当前 OS 不支持 |
 | Python | ≥ 3.11 | ASK USER 装 Python 3.11+, 退出 |
 | Package manager | `uv` (preferred) / `pip` | uv 不在 → 提示 `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| LLM provider | host agent 已配 OR `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` 之一 | §2 Step 5 Q2 ASK USER |
+| LLM provider | **host 就是 LLM** (你, 当前 agent). chisha CLI 不直接调 LLM, 不需要 `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` 在 env / `~/.chisha/.env` | 见下方注释; 不要 ASK USER |
 | Host agent | **Claude Code** | 用下方 NOT_SUPPORTED 模板回话 |
+
+> **关于 LLM key (反直觉, 必读)**: §0 `host_provides_llm: true` 是字面意思 — **你 (host agent)** 用自己的 LLM 跑 chisha 发的 `llm_request_spec`, 然后把结果 POST 回 `chisha agent` CLI. chisha 自己零 LLM (D-074), CLI 把自己标记为 `resolved_provider=agent_external`. 所以:
+> - 安装 / onboard / smoke test 全程**不需要任何 key**.
+> - `chisha agent start/resolve-intent/apply-rerank/choose` 全程**不需要任何 key**.
+> - Claude Code 通过订阅/OAuth 用模型, env 里本来就没 key — 这是正常的, **不要**因为探测不到 key 而 ASK USER.
+> - 唯一会用到 key 的场景: 用户自己跑 dev 脚本 (`scripts/tag_via_api.py` 打标) — 与本安装协议无关.
+>
+> 若旧版 AGENTS.md / cached SKILL.md 提示要 key, 以本节为准, 跳过该提示继续 §2.
 
 ### NOT_SUPPORTED 回话模板 (host 不是 Claude Code 时用)
 
@@ -136,21 +144,17 @@ scope_limitations:
   - `install_data_manifest_status == "incompatible"` (bundle 与引擎不兼容, 抛 `IncompatibleManifestError`): Step 2 with `--force` 重装; 仍失败上报 https://github.com/zidanema/chisha/issues
   - `install_data_manifest_status == "missing"` (bundle 没装好): Step 2 重装
 
-### Step 5 — ⚠ ASK USER (3 questions, 必问, 不要假设)
+### Step 5 — ⚠ ASK USER (1 question, 必问, 不要假设)
 
 ```
 Q1 — 你在哪个城市 / 工区?
      Default: shenzhen-bay (深圳湾)
      If 答非深圳湾: 套 scope_limitations.zone 模板回话, 询问是否仍想装 (能跑但推不到本地店).
-
-Q2 — 你的 host agent 已配 LLM API key 吗? (Claude Code 一般有)
-     If yes: chisha 自动复用宿主 env → 跳过
-     If no: ASK provider (anthropic / openrouter / deepseek) + 写入 ~/.chisha/.env
-
-Q3 — 主要点中午还是晚上外卖?
-     Options: lunch / dinner
-     Default: 不问也行, 默认两餐都能跑 (chisha 不持久化 daypart 默认; 每轮 --meal 显式指定)
 ```
+
+**不要问 LLM key** — 见 §1 注释. chisha CLI 不调 LLM, 你 (Claude Code) 就是 LLM. `~/.chisha/.env` 不需要任何 key. 若之前已问过, 告诉用户"看错了 spec, 这步跳过, 继续 onboard".
+
+**不要问 daypart** — 每轮 `chisha agent start --meal {lunch|dinner}` 显式传, 不持久化默认.
 
 ### Step 6 — Run onboard
 
@@ -304,7 +308,7 @@ chisha agent choose --id <rid> --card X --action accept
 | `state_root` | `~/.chisha/` | env `CHISHA_STATE_ROOT` | 仅 Step 3 写不进时 |
 | `zone` | shenzhen-bay | `chisha onboard --zone <x> --force` 重跑 | 装好后不可换 zone (T-DIST-02 才支持), 不问 |
 | `methodology` | harvard_plate | `chisha onboard --methodology <x> --force` 重跑 | 不问, refine 兜底 |
-| LLM provider | auto-detect from env | `~/.chisha/.env` 或 host env (ANTHROPIC_API_KEY / OPENROUTER_API_KEY) | Step 5 Q2 |
+| LLM provider | **host agent 自己跑** (`agent_external`) — chisha CLI 不调 LLM | 不可配, 也不需要 | **不问** |
 | 反馈记录 | on | edit `~/.chisha/profile.yaml` | 不问, 默认开 |
 
 ---
