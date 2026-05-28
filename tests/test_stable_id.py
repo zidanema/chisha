@@ -5,6 +5,7 @@
 归一化逐字复现采集端 / tag_via_api 活动集重建.
 """
 import json
+import os
 import sys
 
 import pytest
@@ -37,7 +38,7 @@ def _dish(name, price, sales="月售1", category=None):
 
 def test_norm_matches_collector():
     """字节级对拍采集端 collector/text_norm.py (Q1 条件)."""
-    sys.path.insert(0, "~/waimai_data")
+    sys.path.insert(0, os.path.expanduser("~/waimai_data"))
     try:
         from collector.text_norm import (
             normalize_shop_name as c_norm, NORMALIZED_NAME_VERSION)

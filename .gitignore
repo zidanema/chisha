@@ -55,3 +55,15 @@ design/
 
 # prompts/ 本地阅读用 PDF (从 .md 导出, 不进版本库)
 prompts/*.pdf
+
+# Keys / credentials (public repo hygiene)
+*.pem
+*.key
+id_rsa
+id_ed25519
+credentials
+secrets
+*.token
+
+# 备份 (A.1 history rewrite 留下的, 不进版本库)
+*.preA1.bak
