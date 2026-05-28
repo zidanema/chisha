@@ -26,7 +26,24 @@
 
 ---
 
-## Quickstart
+## 装 (Claude Code agent 接入路径, T-DIST-01 起)
+
+`chisha` V1.0 走 `uv tool install` 一行装上, 配 Claude Code skill 后任意目录触发"今天中午吃啥":
+
+```bash
+uv tool install git+https://github.com/zidanema/chisha.git
+chisha onboard --zone shenzhen-bay     # 写 ~/.chisha/profile.yaml + 装 skill + dry start 自检
+chisha doctor                          # 自检 install/state root + manifest + scope
+# → 之后 Claude Code 里说"今天中午吃啥"即触发 chisha-meal skill
+```
+
+`chisha doctor` 输出 JSON 含 `install_root` (包资源 / 数据 bundle), `state_root` (`~/.chisha/` 用户 state), `install_data_manifest_status` (bundle 闸门), `user_resource_status` (user-level zone/methodology 列表)。
+
+> ⚠️ `manifest.integrity=null` 留位 (D-102 范围红线). 走内部 git transport 时 git commit hash 兜底; 外部 transport (S3 / 镜像) 起来前需自验 hash + 签名。
+
+升级: `uv tool upgrade chisha-meal` (state 永远住 `~/.chisha/`, 不被覆盖)。
+
+## Dev (改代码 / 跑 Web 调试台 / 改前端)
 
 ```bash
 # 1. 装依赖 (需要 Python 3.11+, uv, Node 18+)

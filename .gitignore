@@ -47,6 +47,10 @@ apps/web/dist/
 apps/web/.vite/
 apps/web/tsconfig.tsbuildinfo
 
+# T-DIST-01 B.6: hatch wheel build 产物 (chisha_meal-*.whl + .tar.gz + .sha256).
+# 不进版本库 — release 走 git tag + GitHub Release 附件 (本期不做, 见 ROADMAP).
+dist/
+
 # claude.ai/design 原型上传包 (D-051 输入材料, 不进版本库)
 chisha-user.zip
 
