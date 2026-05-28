@@ -35,7 +35,8 @@ from chisha.sandbox_context import (
     set_sandbox_session,
 )
 
-ROOT = Path(__file__).resolve().parent.parent
+from chisha.install_root import install_root as _install_root  # T-DIST-01 B.1
+ROOT = _install_root()
 PROFILE_PATH = ROOT / "profile.yaml"  # prod default (legacy 兼容, refresh test 引用)
 
 

@@ -86,12 +86,17 @@ def main():
     ap.add_argument("--today", default="2026-05-15")
     args = ap.parse_args()
 
-    root = Path(".").resolve()
-    out_dir = root / args.out_dir
+    # T-DIST-01 B.1: 用 install_root (data/prompts/profiles 资源) 喂 recall;
+    # profile 从 state_root (~/.chisha/profile.yaml) 读, 因 A.2 PII 占位化后 repo 内
+    # profile.yaml 已是 <YOUR_NAME> 模板 (placeholder), 不能跑实际推荐.
+    from chisha.install_root import install_root
+    from chisha import data_root
+    root = install_root()
+    out_dir = Path(".").resolve() / args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     today = dt.date.fromisoformat(args.today)
 
-    profile = load_profile(root / "profile.yaml")
+    profile = load_profile(data_root.profile_path(root), root=root)
     zones = profile.get("basics", {}).get("zones") or {}
 
     # 跑 (lunch, dinner) × (None, want_soup) — profile.basics.zones 当前两餐

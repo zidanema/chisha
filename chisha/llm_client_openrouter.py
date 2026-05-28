@@ -19,8 +19,9 @@ from typing import Optional
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# tag_via_api 脚本 cwd 一般是 repo 根, .env 也在根
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+# dev: repo root .env; wheel: chisha/ 包内无 .env, load_dotenv 静默 no-op (走环境变量).
+from chisha.install_root import install_root as _install_root  # T-DIST-01 B.1
+_REPO_ROOT = _install_root()
 load_dotenv(_REPO_ROOT / ".env")
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"

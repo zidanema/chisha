@@ -1161,7 +1161,8 @@ def _apply_intent_buckets(
 
 if __name__ == "__main__":
     import sys
-    root = Path(__file__).resolve().parent.parent
+    from chisha.install_root import install_root  # T-DIST-01 B.1
+    root = install_root()
     profile = load_profile(root / "profile.yaml")
     meal = sys.argv[1] if len(sys.argv) > 1 else "lunch"
     zones = profile.get("basics", {}).get("zones") or {}

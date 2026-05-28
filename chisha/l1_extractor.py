@@ -198,7 +198,11 @@ def _load_system_prompt(prompt_path: Path | str | None = None) -> str:
     """加载 system prompt. 默认读 prompts/l1_extract.md."""
     if isinstance(prompt_path, str):
         prompt_path = Path(prompt_path)
-    p = prompt_path or (Path(__file__).resolve().parent.parent / DEFAULT_PROMPT_PATH)
+    if prompt_path is None:
+        from chisha.install_root import install_root  # T-DIST-01 B.1
+        p = install_root() / DEFAULT_PROMPT_PATH
+    else:
+        p = prompt_path
     return p.read_text(encoding="utf-8")
 
 

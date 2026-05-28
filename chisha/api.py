@@ -91,7 +91,9 @@ def _resolve_zone(profile: dict, meal_type: str) -> str:
 
 
 def _default_root() -> Path:
-    return Path(__file__).resolve().parent.parent
+    """T-DIST-01 B.1: install_root 单一权威源 (dev=repo root, wheel=chisha/ 包目录)."""
+    from chisha.install_root import install_root
+    return install_root()
 
 
 def recommend_meal(

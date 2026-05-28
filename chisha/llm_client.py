@@ -26,7 +26,9 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+from chisha.install_root import install_root as _install_root  # T-DIST-01 B.1
+_REPO_ROOT = _install_root()
+# dev: repo root .env; wheel: chisha/ 包内无 .env, load_dotenv 静默 no-op (走环境变量).
 load_dotenv(_REPO_ROOT / ".env")
 
 from chisha.llm_providers import anthropic_api, claude_code_cli, openrouter

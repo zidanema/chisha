@@ -14,7 +14,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent.parent
+from chisha.install_root import install_root as _install_root  # T-DIST-01 B.1
+ROOT = _install_root()
 PROMPT_PATH = ROOT / "prompts" / "parse_feedback.md"
 
 

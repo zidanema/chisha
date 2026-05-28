@@ -29,9 +29,10 @@ from chisha.debug_recommend import compare_moods, debug_recommend
 from chisha.web_api import router as web_router
 
 
-ROOT = Path(__file__).resolve().parent.parent
+from chisha.install_root import install_root as _install_root  # T-DIST-01 B.1
+ROOT = _install_root()
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-WEB_DIST = ROOT / "apps" / "web" / "dist"
+WEB_DIST = ROOT / "apps" / "web" / "dist"  # dev only — wheel 不含 apps/
 PROFILE_PATH = ROOT / "profile.yaml"
 
 

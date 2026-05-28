@@ -70,7 +70,7 @@ wheels = [
 ]
 
 [[package]]
-name = "chisha"
+name = "chisha-meal"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

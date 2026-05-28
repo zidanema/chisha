@@ -1,7 +1,7 @@
 [project]
-name = "chisha"
+name = "chisha-meal"
 version = "0.1.0"
-description = "今天吃点啥 - L2 推荐引擎"
+description = "今天吃点啥 - 个人 AI 原则派点餐执行外包"
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.40.0",
@@ -37,3 +37,32 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["chisha"]
+# T-DIST-01 B.0: 标准 wheel 排除 (force-include 旁路, 但留作 source dist 守门).
+exclude = [
+    "apps/",
+    "plans/",
+    "docs/",
+    "tmp/",
+    "logs/",
+    "eval/",
+    "tests/",
+    "scripts/",
+    ".claude/",
+    "design/",
+    "specs/",
+    "integrations/",
+]
+
+# T-DIST-01 B.0: force-include 把 chisha/ 包外的资源进 wheel.
+# 形态: 源 = repo root 相对路径; 目标 = `chisha/<name>` (与包同根, 让 install_root() / "prompts" 等命中).
+# 注意: hatch force-include 旁路 exclude — 必须 per-file 枚举 runtime 真正消费的数据,
+# 否则 data/*/dishes_raw.json (4.7MB 离线打标中间产物) / review_sample.* / conflicts_ack.json 等会污染 wheel.
+# Runtime 消费 (recall.py grep): restaurants.json + dishes_tagged.json (两 zone 文件).
+# aliases.json (D-099.2 别名表) / data/manifest.json (D-102.3 bundle 闸门) 顶层两份.
+[tool.hatch.build.targets.wheel.force-include]
+"prompts" = "chisha/prompts"
+"profiles/methodologies" = "chisha/profiles/methodologies"
+"data/manifest.json" = "chisha/data/manifest.json"
+"data/aliases.json" = "chisha/data/aliases.json"
+"data/shenzhen-bay/restaurants.json" = "chisha/data/shenzhen-bay/restaurants.json"
+"data/shenzhen-bay/dishes_tagged.json" = "chisha/data/shenzhen-bay/dishes_tagged.json"

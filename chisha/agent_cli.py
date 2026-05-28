@@ -36,8 +36,10 @@ from chisha.agent_protocol import (
 
 
 def _root() -> Path:
-    """仓库根 (agent_cli.py 在 chisha/ 下)."""
-    return Path(__file__).resolve().parent.parent
+    """T-DIST-01 B.1: install_root 单一权威源 (dev=repo root, wheel=chisha/ 包目录).
+    传给下游作 install_root; state 自动经 state_root.resolve(root) 路由到 ~/.chisha/."""
+    from chisha.install_root import install_root
+    return install_root()
 
 
 def _emit(obj: dict) -> None:
