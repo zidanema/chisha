@@ -119,22 +119,74 @@ def _validate_spec(spec: dict[str, Any]) -> None:
     # name 与文件名一致是约定, 但不在此校验 (load_methodology 才知道文件名)
 
 
+USER_METHODOLOGIES_DIRNAME = "methodologies"  # state_root/methodologies/ (T-DIST-01 B.5b)
+
+
+def _list_user_methodologies(state_root_p: Path) -> set[str]:
+    d = state_root_p / USER_METHODOLOGIES_DIRNAME
+    if not d.is_dir():
+        return set()
+    return {p.stem for p in d.iterdir() if p.is_file() and p.suffix == ".yaml"}
+
+
+def _list_install_methodologies(install_root_p: Path) -> set[str]:
+    d = install_root_p / METHODOLOGIES_DIRNAME
+    if not d.is_dir():
+        return set()
+    return {p.stem for p in d.iterdir() if p.is_file() and p.suffix == ".yaml"}
+
+
 def _methodology_path(name: str, root: Path) -> Path:
-    return root / METHODOLOGIES_DIRNAME / f"{name}.yaml"
+    """T-DIST-01 B.5b: user→install lookup with collision fail-loud.
+
+    返回 user-level (state_root/methodologies/{name}.yaml) 或 install bundle
+    (install_root/profiles/methodologies/{name}.yaml) 中存在的那一份.
+
+    1. user 命中 → 返用户
+    2. install 命中 → 返 install
+    3. 同时存在 → ResourceNameCollisionError (不可 grandfather)
+    4. 都不存在 → FileNotFoundError (列已知 methodologies)
+    """
+    from chisha import state_root as _sr
+    from chisha.recall import ResourceNameCollisionError
+    state_root_p = _sr.resolve(root)
+    user_path = state_root_p / USER_METHODOLOGIES_DIRNAME / f"{name}.yaml"
+    install_path = root / METHODOLOGIES_DIRNAME / f"{name}.yaml"
+    user_has = user_path.exists()
+    install_has = install_path.exists()
+    # 同物理路径时不视为 collision (state_root 与 install_root 单根布局)
+    same_path = user_has and install_has and user_path.resolve() == install_path.resolve()
+    if user_has and install_has and not same_path:
+        raise ResourceNameCollisionError(
+            f"methodology {name!r} 在 user ({user_path}) 和 install ({install_path}) "
+            "同时存在 — 不可 grandfather (重命名 user spec 或删一份)."
+        )
+    if user_has and not same_path:
+        return user_path
+    if install_has:
+        return install_path
+    if user_has:
+        return user_path
+    known_user = _list_user_methodologies(state_root_p)
+    known_install = _list_install_methodologies(root)
+    raise FileNotFoundError(
+        f"methodology spec not found: {name!r} (name={name!r}); "
+        f"已知 user methodologies={sorted(known_user) or '(none)'}, "
+        f"install methodologies={sorted(known_install) or '(none)'}."
+    )
 
 
 @lru_cache(maxsize=8)
 def _load_methodology_cached(
     name: str,
-    root_str: str,
+    path_str: str,
     mtime_ns: int,
 ) -> dict[str, Any]:
-    """带 LRU cache 的实际加载. cache key 包含 yaml 文件 mtime_ns (Codex Round 3 M-3):
-    yaml 改了后 mtime_ns 变, cache 自然 miss → reload, 不会读旧值.
+    """带 LRU cache 的实际加载. cache key = (name, 已解析 path, mtime_ns):
+    yaml 改 → mtime_ns 变 → cache miss reload (Codex Round 3 M-3);
+    user 区新增/删除同名 spec → resolved path 变 → cache miss (T-DIST-01 B.5b).
     """
-    root = Path(root_str)
-    path = _methodology_path(name, root)
-    # 这里 mtime_ns 入参仅用于 cache key 区分, 不重新 stat
+    path = Path(path_str)
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     _validate_spec(raw)
     if raw.get("name") != name:
@@ -157,20 +209,58 @@ def _load_methodology_cached(
 
 def load_methodology(name: str, root: Path) -> dict[str, Any]:
     """加载并校验 methodology spec. 不存在 raise FileNotFoundError; 校验失败 raise
-    MethodologyValidationError. 缓存命中后返回深拷贝 (防调用方就地改污染缓存).
+    MethodologyValidationError; 同名撞 raise ResourceNameCollisionError (T-DIST-01 B.5b).
+    缓存命中后返回深拷贝 (防调用方就地改污染缓存).
 
-    Codex Round 3 M-3: cache key 包含 yaml mtime_ns, yaml 改后自动失效.
+    User-level override (T-DIST-01 B.5b): state_root/methodologies/{name}.yaml 优先于
+    install bundle 的 profiles/methodologies/{name}.yaml; 同时存在则撞名 fail-loud.
     """
     root_resolved = root.resolve()
+    # _methodology_path: user > install lookup; 撞名 / 都缺都在内部 raise.
     path = _methodology_path(name, root_resolved)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"methodology spec not found: {path} "
-            f"(name={name!r}, dir={root_resolved / METHODOLOGIES_DIRNAME})"
-        )
     mtime_ns = path.stat().st_mtime_ns
-    cached = _load_methodology_cached(name, str(root_resolved), mtime_ns)
+    cached = _load_methodology_cached(name, str(path), mtime_ns)
     return copy.deepcopy(cached)
+
+
+# ─── T-DIST-01 B.5b 留位 loader API (T-DIST-02 CLI 用) ───
+
+def get_schema_keyset() -> dict[str, set[str]]:
+    """T-DIST-02 留位: methodology spec 各段有效字段集.
+
+    返回 dict 含:
+      - top: 顶层字段集 (REQUIRED + OPTIONAL)
+      - plate_rule / score_weights / cap_rules: 子段字段集
+    """
+    return {
+        "top": set(_REQUIRED_TOP_KEYS) | set(_OPTIONAL_TOP_KEYS),
+        "plate_rule": set(_PLATE_RULE_KEYS),
+        "score_weights": set(_SCORE_WEIGHT_KEYS),
+        "cap_rules": set(_CAP_RULES_KEYS),
+    }
+
+
+def get_template() -> dict[str, Any]:
+    """T-DIST-02 留位: 返回起步 methodology spec template (用户可拿来填字段)."""
+    return {
+        "name": "<your-spec-name>",
+        "display_name": "<显示名>",
+        "version": "0.1",
+        "rationale": "<一段话说明你的方法论原则>",
+        "plate_rule": {k: None for k in _PLATE_RULE_KEYS},
+        "score_weights": {k: 0.0 for k in _SCORE_WEIGHT_KEYS},
+        "cap_rules": {k: None for k in _CAP_RULES_KEYS},
+    }
+
+
+def validate_spec(path: Path) -> None:
+    """T-DIST-02 留位: 校验 yaml spec 文件结构. 不符 raise MethodologyValidationError.
+
+    与 load_methodology 共用 _validate_spec 内部规则, 但不要求 name 匹配文件名
+    (B.5b: 通用校验 API; T-DIST-02 CLI 想加 name-vs-file 守门可再叠一层).
+    """
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    _validate_spec(raw)
 
 
 def resolve_methodology(profile: dict[str, Any], root: Path) -> dict[str, Any]:

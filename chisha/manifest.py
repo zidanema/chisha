@@ -90,21 +90,10 @@ def read_manifest(install_root: Path) -> dict | None:
     return data
 
 
-def check_compatibility(install_root: Path) -> ManifestStatus:
-    """读 manifest 比对引擎兼容性。present-incompatible → raise; 缺 → status=missing (warn)。
-
-    比对项 (任一不满足即 IncompatibleManifestError):
-    - manifest_schema_version > 引擎支持上限 (引擎太旧, 看不懂新 manifest 结构)
-    - min_engine_version > 引擎版本 (引擎太旧, 用不了该 bundle)
-    - engine_capabilities_required ⊄ SUPPORTED_ENGINE_CAPABILITIES (引擎缺能力)
-    - normalized_name_version != loader.SHOP_NAME_VERSION (D-099 归一化单边漂移)
-    """
+def _validate_manifest_payload(data: dict, mpath: Path) -> ManifestStatus:
+    """T-DIST-01 B.5b: 抽出 check_compatibility 内部校验体, 让 user-level resource manifest
+    复用同一套 capability flags 比对 (D-102.3 单一权威源)."""
     from chisha.loader import SHOP_NAME_VERSION
-    mpath = manifest_path(install_root)
-    data = read_manifest(install_root)
-    if data is None:
-        return ManifestStatus(status="missing", manifest_path=mpath)
-
     mschema = data.get("manifest_schema_version")
     if not isinstance(mschema, int) or mschema > MANIFEST_SCHEMA_VERSION:
         raise IncompatibleManifestError(
@@ -112,8 +101,7 @@ def check_compatibility(install_root: Path) -> ManifestStatus:
             f"({mpath}). 升级 chisha 引擎。"
         )
 
-    # data_schema_version 必填 + int: present 的 manifest 是"已版本化 bundle"声明, 缺/非法
-    # = malformed → fail-loud, 绝不尽力解析 (Codex review: 防 present-but-underspecified 绕过).
+    # data_schema_version 必填 + int.
     dsv = data.get("data_schema_version")
     if not isinstance(dsv, int):
         raise IncompatibleManifestError(
@@ -132,10 +120,7 @@ def check_compatibility(install_root: Path) -> ManifestStatus:
             f"bundle 要求引擎 ≥ {min_engine}, 当前引擎 {ENGINE_VERSION} ({mpath}). 升级 chisha。"
         )
 
-    # engine_capabilities_required 必填 + list[str]: present-but-underspecified (字段缺失 /
-    # 非 list / 元素非 str) = malformed → fail-loud. 缺字段 → `or []` 会让子集判定恒成立悄悄
-    # 放行 (Codex acceptance review P1 洞), 与 dsv/nnv 缺字段同等严格 hard-fail; 字段在但
-    # 列空 [] 是合法声明"我不要求任何能力" → 放行.
+    # engine_capabilities_required 必填 + list[str].
     caps_raw = data.get("engine_capabilities_required")
     if not isinstance(caps_raw, list) or not all(isinstance(c, str) for c in caps_raw):
         raise IncompatibleManifestError(
@@ -150,8 +135,7 @@ def check_compatibility(install_root: Path) -> ManifestStatus:
             f"(支持: {sorted(SUPPORTED_ENGINE_CAPABILITIES)}) ({mpath}). 升级 chisha 引擎。"
         )
 
-    # normalized_name_version 必填 + int (D-099 稳定 id 命脉): 缺/非法即 malformed → fail-loud
-    # (归一化版本无法核对会让稳定 id / 反馈静默错配, 比放行更危险).
+    # normalized_name_version 必填 + int.
     nnv = data.get("normalized_name_version")
     if not isinstance(nnv, int):
         raise IncompatibleManifestError(
@@ -167,8 +151,91 @@ def check_compatibility(install_root: Path) -> ManifestStatus:
     return ManifestStatus(
         status="ok", manifest_path=mpath,
         artifact_version=data.get("artifact_version"),
-        data_schema_version=data.get("data_schema_version"),
+        data_schema_version=dsv,
     )
+
+
+def check_compatibility(install_root: Path) -> ManifestStatus:
+    """读 install bundle manifest 比对引擎兼容性。present-incompatible → raise; 缺 → status=missing (warn)。
+
+    比对项 (任一不满足即 IncompatibleManifestError):
+    - manifest_schema_version > 引擎支持上限 (引擎太旧, 看不懂新 manifest 结构)
+    - min_engine_version > 引擎版本 (引擎太旧, 用不了该 bundle)
+    - engine_capabilities_required ⊄ SUPPORTED_ENGINE_CAPABILITIES (引擎缺能力)
+    - normalized_name_version != loader.SHOP_NAME_VERSION (D-099 归一化单边漂移)
+    """
+    mpath = manifest_path(install_root)
+    data = read_manifest(install_root)
+    if data is None:
+        return ManifestStatus(status="missing", manifest_path=mpath)
+    return _validate_manifest_payload(data, mpath)
+
+
+# T-DIST-01 B.5b: user-level resource manifest 校验 (C-d 独立轻量, 复用 capability flags).
+
+def user_resource_manifest_check(state_root_p: Path) -> list[dict]:
+    """枚举 state_root/data/{zone} + state_root/methodologies/, 校验各自 manifest.json.
+
+    返回 list of dict, 每项 {kind, name, status, note}:
+      - kind: "zone" | "methodology"
+      - name: zone/methodology 名 (目录/文件 stem)
+      - status: "ok" | "missing_manifest" | "incompatible"
+      - note: 详情 (incompatible 时含原因; ok 时空字符串)
+
+    与 install bundle manifest 闸门 (check_compatibility) 复用 _validate_manifest_payload,
+    但**不混入**主流程 (D-102.3 CONTRACTS): 主流程 ensure_compatible_once 只检 install,
+    user 区由 doctor 单独报告 (失败标 incompatible 但**不**阻塞 recall — user 决定要不要
+    清理). recall.load_zone_data 命中 user zone 时, 即便 user manifest 不兼容, 数据本身
+    schema 仍走 install bundle 闸门那套引擎兼容性保证 (capability flags 共一套).
+    """
+    results: list[dict] = []
+    # zones
+    data_dir = state_root_p / "data"
+    if data_dir.is_dir():
+        for zone_dir in sorted(data_dir.iterdir(), key=lambda p: p.name):
+            if not zone_dir.is_dir():
+                continue
+            # 只对真实 zone bundle 校验 (有 restaurants.json 才算 zone)
+            if not (zone_dir / "restaurants.json").exists():
+                continue
+            mp = zone_dir / MANIFEST_FILENAME
+            if not mp.exists():
+                results.append({
+                    "kind": "zone", "name": zone_dir.name,
+                    "status": "missing_manifest",
+                    "note": f"{mp} 缺失 (跑 scripts.build_manifest 生成).",
+                })
+                continue
+            try:
+                data = json.loads(mp.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    raise IncompatibleManifestError(f"{mp} 顶层非 object.")
+                _validate_manifest_payload(data, mp)
+                results.append({
+                    "kind": "zone", "name": zone_dir.name,
+                    "status": "ok", "note": "",
+                })
+            except (OSError, json.JSONDecodeError) as e:
+                results.append({
+                    "kind": "zone", "name": zone_dir.name,
+                    "status": "incompatible",
+                    "note": f"manifest 损坏: {type(e).__name__}: {e}",
+                })
+            except IncompatibleManifestError as e:
+                results.append({
+                    "kind": "zone", "name": zone_dir.name,
+                    "status": "incompatible", "note": str(e),
+                })
+    # methodologies (单文件无 manifest, 只列存在; 校验在 load_methodology 走 _validate_spec)
+    meth_dir = state_root_p / "methodologies"
+    if meth_dir.is_dir():
+        for p in sorted(meth_dir.iterdir(), key=lambda p: p.name):
+            if p.is_file() and p.suffix == ".yaml":
+                results.append({
+                    "kind": "methodology", "name": p.stem,
+                    "status": "present", "note": "校验在 load_methodology 触发.",
+                })
+    return results
 
 
 # 进程内只检一次 (per install_root): bundle 运行时不变, 避免每次 load_zone_data 重读 + 日志刷屏。

@@ -50,15 +50,79 @@ def load_profile(
     return apply_methodology(raw, root)
 
 
+class ResourceNameCollisionError(RuntimeError):
+    """T-DIST-01 B.5b: state_root 与 install_root 同时存在同名 zone/methodology — 不允许
+    grandfather. 用户区 bundle 必须与 install bundle 命名区分 (升级 install bundle 后撞名
+    会让旧 user override 静默盖住新版, 看不到改动)."""
+
+
+class ZoneNotFoundError(FileNotFoundError):
+    """T-DIST-01 B.5b: zone 既不在 state_root/data 也不在 install_root/data."""
+
+
+def _list_zone_names(data_dir: Path) -> set[str]:
+    """枚举 data_dir 下含 restaurants.json 的子目录名."""
+    if not data_dir.is_dir():
+        return set()
+    return {
+        p.name for p in data_dir.iterdir()
+        if p.is_dir() and (p / "restaurants.json").exists()
+    }
+
+
+def _resolve_zone_dir(zone: str, install_root_p: Path) -> Path:
+    """T-DIST-01 B.5b: user→install lookup with collision fail-loud.
+
+    1. state_root/data/{zone}/restaurants.json 存在 → 用户区命中
+    2. install_root/data/{zone}/restaurants.json 存在 → install bundle 命中
+    3. 同时存在 (且 user_dir 与 install_dir 物理不同) → RESOURCE_NAME_COLLISION 不可 grandfather
+    4. 都不存在 → ZONE_NOT_FOUND + 列已知 zones (install + user)
+
+    边角: state_root resolve 到与 install_root 同一物理路径时 (测试/legacy 单根布局),
+    user_dir == install_dir, 不算 collision; 只走 install lookup.
+    """
+    from chisha import state_root as _sr
+    state_root_p = _sr.resolve(install_root_p)
+    user_dir = state_root_p / "data" / zone
+    install_dir = install_root_p / "data" / zone
+    user_has = (user_dir / "restaurants.json").exists()
+    install_has = (install_dir / "restaurants.json").exists()
+    # 同物理路径时不视为 collision (state_root 与 install_root 单根布局, 例: 旧 repo / 测试无 CHISHA_STATE_ROOT)
+    same_path = user_has and install_has and user_dir.resolve() == install_dir.resolve()
+    if user_has and install_has and not same_path:
+        raise ResourceNameCollisionError(
+            f"zone {zone!r} 在 user ({user_dir}) 和 install ({install_dir}) 同时存在 — "
+            "用户区 zone 必须与 install bundle 区分命名 (不可 grandfather; "
+            "重命名 user zone 或删一份)."
+        )
+    if user_has and not same_path:
+        return user_dir
+    if install_has:
+        return install_dir
+    if user_has:  # same_path 但 install_has 没命中 (理论上不可能, 兜底)
+        return user_dir
+    known_user = _list_zone_names(state_root_p / "data")
+    known_install = _list_zone_names(install_root_p / "data")
+    raise ZoneNotFoundError(
+        f"zone {zone!r} 不存在 — 已知 user zones={sorted(known_user) or '(none)'}, "
+        f"install zones={sorted(known_install) or '(none)'}. "
+        f"放数据到 {state_root_p}/data/{zone}/ 或更新 install bundle."
+    )
+
+
 def load_zone_data(zone: str, root: Path) -> tuple[list[dict], list[dict]]:
     """读 restaurants + dishes_tagged.
 
-    D-102 Step3: 消费 bundle 前先过 manifest 兼容闸门 (引擎↔产物边界) — 不兼容 hard-fail
-    (D-100 fail-loud); 缺 manifest = 过渡期未版本化 bundle, warn 放行 (per install_root 只检一次).
+    D-102 Step3: 消费 install bundle 前过 manifest 兼容闸门 (引擎↔产物边界) — 不兼容
+    hard-fail (D-100 fail-loud); 缺 manifest = 过渡期未版本化 bundle, warn 放行 (per
+    install_root 只检一次).
+
+    T-DIST-01 B.5b: user→install zone lookup with collision fail-loud. 用户区 zone 走
+    state_root/data/{zone}/ 同结构 (restaurants.json + dishes_tagged.json + manifest.json).
     """
     from chisha import manifest
     manifest.ensure_compatible_once(root)
-    base = root / "data" / zone
+    base = _resolve_zone_dir(zone, root)
     rests = json.loads((base / "restaurants.json").read_text(encoding="utf-8"))
     tagged = json.loads((base / "dishes_tagged.json").read_text(encoding="utf-8"))
     return rests, tagged

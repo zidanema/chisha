@@ -679,29 +679,34 @@ def cmd_doctor(args) -> int:
 
     # D-102 Step3: 数据产物 ↔ 引擎 manifest 兼容闸门 (install_root 上的 data/manifest.json)
     from chisha import manifest as _manifest
-    manifest_status, manifest_note = "ok", ""
+    install_manifest_status, manifest_note = "ok", ""
     manifest_path_str = str(_manifest.manifest_path(install_root))
     bundle_artifact_version: int | None = None
     bundle_data_schema_version: int | None = None
     try:
         mst = _manifest.check_compatibility(install_root)
-        manifest_status = mst.status   # ok | missing
+        install_manifest_status = mst.status   # ok | missing
         bundle_artifact_version = mst.artifact_version
         bundle_data_schema_version = mst.data_schema_version
-        if manifest_status == "missing":
+        if install_manifest_status == "missing":
             manifest_note = (
                 "data/manifest.json 缺失 — 未版本化 bundle, 未达分发就绪 "
                 "(跑 `uv run python -m scripts.build_manifest` 生成)."
             )
     except _manifest.IncompatibleManifestError as e:
-        manifest_status, manifest_note = "incompatible", str(e)
+        install_manifest_status, manifest_note = "incompatible", str(e)
+
+    # T-DIST-01 B.5b: user-level resource manifest 单独报告 (per user zone/methodology).
+    # 复用 capability flags 比对 (manifest._validate_manifest_payload), 不混入 install
+    # 闸门 (D-102.3 CONTRACTS). user 区 incompatible 不影响 doctor.ok (用户区决定要不要清理).
+    user_resource_status = _manifest.user_resource_manifest_check(sroot)
 
     info = {
-        # Q-B: 未迁的旧 repo state 视为"未就绪"; manifest 非 ok (缺/不兼容) 也视为未达
-        # 分发就绪 (Step3 Codex review: doctor 是分发就绪检查, 缺 manifest=未版本化=未就绪;
-        # runtime warn 放行与 doctor gate 不冲突).
+        # Q-B: 未迁的旧 repo state 视为"未就绪"; install manifest 非 ok (缺/不兼容) 也视为
+        # 未达分发就绪 (Step3 Codex review: doctor 是分发就绪检查, 缺 manifest=未版本化=未就绪;
+        # runtime warn 放行与 doctor gate 不冲突). user_resource 单独报, 不计入 ok.
         "ok": (not sb and writable and not legacy_pending
-               and manifest_status == "ok"),
+               and install_manifest_status == "ok"),
         "protocol_version": PROTOCOL_VERSION,
         "candidate_schema_version": CANDIDATE_SCHEMA_VERSION,
         "engine_version": _manifest.ENGINE_VERSION,
@@ -711,7 +716,10 @@ def cmd_doctor(args) -> int:
         "state_root_writable": writable,
         "state_migrated": migrated,
         "legacy_state_pending_migration": legacy_pending,
-        "data_manifest_status": manifest_status,   # ok | missing | incompatible
+        # T-DIST-01 B.5b 改名: data_manifest_status → install_data_manifest_status (旧名删,
+        # 没有 grandfather alias; user_resource_status 是新增字段).
+        "install_data_manifest_status": install_manifest_status,   # ok | missing | incompatible
+        "user_resource_status": user_resource_status,   # list of {kind, name, status, note}
         "manifest_path": manifest_path_str,
         "bundle_artifact_version": bundle_artifact_version,    # int | None (missing/incompatible)
         "bundle_data_schema_version": bundle_data_schema_version,  # int | None

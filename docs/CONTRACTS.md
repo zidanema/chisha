@@ -123,7 +123,7 @@
 
 - **只读 bundle 消费入口 (`recall.load_zone_data`) 必过 `manifest.ensure_compatible_once(install_root)`.** 不在 `loader.load_raw` (那是 collector ingest 入口, 推荐链路不走) / 不在 `data_root` (那管 state 不管只读 bundle)。
 - **兼容判定用 capability flags 不用单调 version** (§C): 产物 `data/manifest.json` 声明 `engine_capabilities_required`, 引擎 `manifest.SUPPORTED_ENGINE_CAPABILITIES` 比对, 缺能力 = 破坏性变更 `IncompatibleManifestError` hard-fail; 同时校验 `manifest_schema_version` ≤ 引擎上限 / `min_engine_version` ≤ `chisha.__version__` (SemVer 下限) / `normalized_name_version == loader.SHOP_NAME_VERSION`。任一不满足 hard-fail, **绝不尽力解析** (D-100)。
-- **缺 manifest ≠ incompatible**: 过渡期未版本化 bundle → warn 放行 (无版本信息可断言), doctor 标 `data_manifest_status=missing` 未达分发就绪; present-but-incompatible 才 hard-fail。
+- **缺 manifest ≠ incompatible**: 过渡期未版本化 bundle → warn 放行 (无版本信息可断言), doctor 标 `install_data_manifest_status=missing` 未达分发就绪; present-but-incompatible 才 hard-fail。 (T-DIST-01 B.5b 改名 `data_manifest_status` → `install_data_manifest_status`, 配对新增 `user_resource_status` 单独报 state_root 下 user zone/methodology 列表)。
 - **manifest 只管"数据产物↔引擎"边界**, 不取代 PROTOCOL_VERSION / CANDIDATE_SCHEMA_VERSION / TRACE_SCHEMA_VERSION (各管各). `chisha.__version__` 必须 == pyproject version (一致性守门测试)。
 - **本期留位不定型** (范围红线): `integrity=null` (hash/签名/来源证明) + plugin marketplace 打包 (先内部 git transport)。`build_manifest` 发布产物时跑 (`--bump` artifact_version)。
 

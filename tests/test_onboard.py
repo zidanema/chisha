@@ -68,8 +68,9 @@ def test_onboard_doctor_invoked(tmp_path):
     r = _run_onboard(tmp_path)
     payload = _last_json(r.stdout)
     doctor = payload["steps"]["doctor"]
-    # doctor 字段齐 (protocol_version / state_root / install_root / data_manifest_status)
-    for k in ("protocol_version", "state_root", "install_root", "data_manifest_status"):
+    # doctor 字段齐 (T-DIST-01 B.5b 改名 data_manifest_status → install_data_manifest_status)
+    for k in ("protocol_version", "state_root", "install_root",
+              "install_data_manifest_status", "user_resource_status"):
         assert k in doctor, f"doctor missing field {k}: {doctor}"
 
 
