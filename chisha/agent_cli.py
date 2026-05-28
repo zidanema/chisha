@@ -678,9 +678,14 @@ def cmd_doctor(args) -> int:
     # D-102 Step3: 数据产物 ↔ 引擎 manifest 兼容闸门 (install_root 上的 data/manifest.json)
     from chisha import manifest as _manifest
     manifest_status, manifest_note = "ok", ""
+    manifest_path_str = str(_manifest.manifest_path(install_root))
+    bundle_artifact_version: int | None = None
+    bundle_data_schema_version: int | None = None
     try:
         mst = _manifest.check_compatibility(install_root)
         manifest_status = mst.status   # ok | missing
+        bundle_artifact_version = mst.artifact_version
+        bundle_data_schema_version = mst.data_schema_version
         if manifest_status == "missing":
             manifest_note = (
                 "data/manifest.json 缺失 — 未版本化 bundle, 未达分发就绪 "
@@ -705,6 +710,9 @@ def cmd_doctor(args) -> int:
         "state_migrated": migrated,
         "legacy_state_pending_migration": legacy_pending,
         "data_manifest_status": manifest_status,   # ok | missing | incompatible
+        "manifest_path": manifest_path_str,
+        "bundle_artifact_version": bundle_artifact_version,    # int | None (missing/incompatible)
+        "bundle_data_schema_version": bundle_data_schema_version,  # int | None
         "sandbox_enabled": sb,
         "scope_ready": not sb,
         "notes": [],

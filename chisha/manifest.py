@@ -132,7 +132,17 @@ def check_compatibility(install_root: Path) -> ManifestStatus:
             f"bundle 要求引擎 ≥ {min_engine}, 当前引擎 {ENGINE_VERSION} ({mpath}). 升级 chisha。"
         )
 
-    required = set(data.get("engine_capabilities_required") or [])
+    # engine_capabilities_required 必填 + list[str]: present-but-underspecified (字段缺失 /
+    # 非 list / 元素非 str) = malformed → fail-loud. 缺字段 → `or []` 会让子集判定恒成立悄悄
+    # 放行 (Codex acceptance review P1 洞), 与 dsv/nnv 缺字段同等严格 hard-fail; 字段在但
+    # 列空 [] 是合法声明"我不要求任何能力" → 放行.
+    caps_raw = data.get("engine_capabilities_required")
+    if not isinstance(caps_raw, list) or not all(isinstance(c, str) for c in caps_raw):
+        raise IncompatibleManifestError(
+            f"manifest 缺/非法 engine_capabilities_required={caps_raw!r} ({mpath}). "
+            "已版本化 bundle 必须声明 (空列表 [] 是合法的 '不要求任何能力' 声明); 重新 build_manifest。"
+        )
+    required = set(caps_raw)
     missing_caps = required - SUPPORTED_ENGINE_CAPABILITIES
     if missing_caps:
         raise IncompatibleManifestError(

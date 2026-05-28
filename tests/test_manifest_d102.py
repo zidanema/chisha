@@ -102,6 +102,38 @@ def test_normalized_name_version_mismatch_raises(tmp_path):
         M.check_compatibility(tmp_path)
 
 
+def test_present_but_missing_capability_field_raises(tmp_path):
+    """缺 engine_capabilities_required 字段必须 hard-fail, 不能 `or []` 静默放行
+    (Codex acceptance review P1 洞: capability fail-open 削弱 D-102.3 闸门)."""
+    _write_manifest(tmp_path)
+    data = json.loads(M.manifest_path(tmp_path).read_text(encoding="utf-8"))
+    del data["engine_capabilities_required"]
+    M.manifest_path(tmp_path).write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(M.IncompatibleManifestError, match="engine_capabilities_required"):
+        M.check_compatibility(tmp_path)
+
+
+def test_present_but_capability_non_list_raises(tmp_path):
+    """engine_capabilities_required 非 list (e.g. None / str / dict) → malformed fail-loud."""
+    _write_manifest(tmp_path, engine_capabilities_required=None)
+    with pytest.raises(M.IncompatibleManifestError, match="engine_capabilities_required"):
+        M.check_compatibility(tmp_path)
+
+
+def test_present_but_capability_non_str_element_raises(tmp_path):
+    """engine_capabilities_required 含非 str 元素 → malformed fail-loud
+    (防 [123] / [None] 之类 set 比较时静默)."""
+    _write_manifest(tmp_path, engine_capabilities_required=["stable_entity_ids_v1", 123])
+    with pytest.raises(M.IncompatibleManifestError, match="engine_capabilities_required"):
+        M.check_compatibility(tmp_path)
+
+
+def test_empty_capability_list_is_ok(tmp_path):
+    """字段在但 [] 是合法声明 '本 bundle 不要求任何引擎能力' → 放行."""
+    _write_manifest(tmp_path, engine_capabilities_required=[])
+    assert M.check_compatibility(tmp_path).status == "ok"
+
+
 def test_present_but_missing_data_schema_version_raises(tmp_path):
     """present manifest 缺关键字段 = malformed → fail-loud (不 fail-open 绕过)."""
     _write_manifest(tmp_path)

@@ -22,6 +22,8 @@
 
 **接下来** (D-097 定位: 自用为主、推广随缘; D-102 已把可分发工程主线落地): 真分发给同事时走内部 git transport 验流程 → 看反馈再决定 marketplace。同事推广向工作 (screener / 第二份 spec) 推迟到真要推时。
 
+> ⚠️ **当前 D-102 manifest 只做兼容性闸门, 不做完整性 / 来源校验** (`integrity=null` 留位). 内部 git transport (拉本仓库当 bundle) 由 git commit hash 兜底; 外部 transport (S3 / OSS / 第三方镜像) 走起来前需自行验 hash + 签名, 或等 D-102 integrity 段落地。
+
 ---
 
 ## Quickstart
