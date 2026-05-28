@@ -652,7 +652,6 @@ def cmd_doctor(args) -> int:
     # D-102 Step2: install/state root 二分 + 迁移状态 + state_root 可写性
     import uuid as _uuid
 
-    from chisha.state_migrate import _MIGRATE_MAP
     # install_root = 本次运行的 root (生产 = 包目录; 测试/worktree = 传入 root), 而非永远
     # 真包目录 — 否则测试 root=tmp 时 doctor 误报真 repo 的旧 state 待迁 (Codex review).
     install_root = root
@@ -675,13 +674,13 @@ def cmd_doctor(args) -> int:
     except Exception:
         pass
 
-    # repo 内还有未迁 state? 检全部迁移输入 (profile/logs + data/ 反馈历史/偏好), 不只 profile/logs
-    # (Codex review Q-D). install==state (无二分场景) 不算 pending.
+    # repo 内还有未迁 state? T-DIST-01 B.7 跟修: 用 state_migrate.has_legacy_state 严判
+    # (避免 wheel 模式把 ship 进去的 profile.yaml 模板误当 legacy → 永远 ok=false).
+    # install==state (无二分场景) 不算 pending.
     legacy_pending = (
         not migrated
         and install_root.resolve() != sroot.resolve()
-        and any((install_root / rel_src.rstrip("/")).exists()
-                for rel_src, _ in _MIGRATE_MAP)
+        and state_migrate.has_legacy_state(install_root)
     )
 
     # D-102 Step3: 数据产物 ↔ 引擎 manifest 兼容闸门 (install_root 上的 data/manifest.json)

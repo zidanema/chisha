@@ -65,6 +65,7 @@ exclude = [
 [tool.hatch.build.targets.wheel.force-include]
 "prompts" = "chisha/prompts"
 "profiles/methodologies" = "chisha/profiles/methodologies"
+"profile.yaml" = "chisha/profile.yaml"
 "data/manifest.json" = "chisha/data/manifest.json"
 "data/aliases.json" = "chisha/data/aliases.json"
 "data/shenzhen-bay/restaurants.json" = "chisha/data/shenzhen-bay/restaurants.json"

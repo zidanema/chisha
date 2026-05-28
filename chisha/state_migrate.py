@@ -36,6 +36,22 @@ _MIGRATE_MAP: list[tuple[str, str]] = [
     ("data/long_term_prefs.json", "long_term_prefs.json"),
 ]
 
+# T-DIST-01 B.7 跟修: doctor 用的"是否真有 legacy state"判定 — profile.yaml 在 wheel 模式
+# 作为 onboard 模板被 ship 进 install_root, 不能再单独作 legacy marker (会误报"待迁移").
+# 用更强信号: logs/ 子目录有内容 OR feedback_history.jsonl 非空 OR long_term_prefs.json 存在.
+# (profile.yaml 在 wheel = 模板; 在 dev = 旧个人 profile, 但 dev 用户已迁 → migrated=True 拦)
+def has_legacy_state(install_root: Path) -> bool:
+    """更严的 legacy 判定 (doctor 用): 至少一个 non-trivial state 标志才算 legacy."""
+    logs_dir = install_root / "logs"
+    if logs_dir.is_dir() and any(logs_dir.iterdir()):
+        return True
+    fb = install_root / "data" / "feedback_history.jsonl"
+    if fb.is_file() and fb.stat().st_size > 0:
+        return True
+    if (install_root / "data" / "long_term_prefs.json").is_file():
+        return True
+    return False
+
 
 @dataclass
 class MigrateResult:
