@@ -1154,7 +1154,28 @@ def _run_llm_rerank(
     import time
     # D-047 merge 修复: 按 resolved provider 选默认 rerank model, 保留
     # profile.llm.model.<provider> 覆盖能力. 见 docs/archive/DECISIONS_phase0.md D-047 Part B.
-    from chisha.llm_client import _resolve_model, _resolve_provider, call_text
+    # D-104 Step4: llm_client = extras (anthropic/openai SDK). full 安装 import 成功,
+    # 行为不变 (0-diff); slim agent core 缺 SDK → ImportError → 退 L2 fallback, 与
+    # config_error (provider 配置错, 必须 loud) 区分。注: agent 走 do_llm 外置 LLM,
+    # 不会到这条内部 LLM 路径; 此守门是 slim 安装的防御 (Codex Step4 设计).
+    try:
+        from chisha.llm_client import _resolve_model, _resolve_provider, call_text
+    except ImportError as e:
+        return {
+            "status": "fallback",
+            "config_error": False,
+            "resolved_provider": None,
+            "fallback_reason": f"LLM client 不可用 (extras 未安装): {type(e).__name__}: {str(e)[:200]}",
+            "candidates": None,
+            "llm_response": None,
+            "system_prompt_chars": 0,
+            "system_prompt_full": "",
+            "user_message_chars": 0,
+            "user_message_full": "",
+            "raw_response": "",
+            "model": None,
+            "latency_ms": None,
+        }
 
     # D-048 BLOCKER (Codex): provider 配置错误 (CHISHA_LLM_PROVIDER=foo /
     # profile.llm.provider=anthropic 但缺 key) 必须 hard-fail, 不能被下方

@@ -274,3 +274,12 @@ Phase 1 启动前原 9 项必收口按"自用是否需要"重切 (清单见 [ROA
 - **兼容**: `llm_request_spec`→`do_llm` (dual-key 一版), 老 verb (`start`/`resolve-intent`/`apply-rerank`/`chisha agent`/`python -m chisha.agent_cli`) 各保留 deprecated alias 一版 (codex: 仓库外旧 skill 可能存活, clean break 不值). 协议契约见 CONTRACTS「Agent CLI 协议」P1 条; AGENTS.md 安装契约 §0/§2/§4/§7 已同步.
 - **守门**: pytest 1257 + 10 新 continue/回放 e2e pass + 真·CLI e2e (真实 shenzhen-bay 60 候选→cards→choose→回放→refine) + baseline_l2 0-diff (引擎未动) + wheel 隔离 venv 实装 (双 entry + doctor ok=True 分发就绪 + eat 通).
 - **未做 (gated)**: P0 = Sprint A 历史清洗 (git filter-repo) + repo 转 public — 不可逆 + 对外, 待志丹显式授权; 是 `uv tool install chisha-meal` 公网可达的硬前置 (现仍 git+https 私仓装).
+
+## D-104
+**agent-only core 解耦 — 推荐核心从 sandbox/web/debug/自调LLM 切干净, 可独立 slim 运行.** (2026-05-29) · 单包逻辑分层 (非物理拆 PyPI 包) + ambient provider DI. Opus 设计 + Codex 设计/commit 双触点逐步落地 (6 commit). 提案归档 `docs/proposals/archive/2026-05-29-agent-core-decoupling.md`.
+- **机制**: ambient provider singleton + test override hook (clock/data_root 同款); default provider == 现 production → **0-diff 根基**. core 只持 `get_clock_provider()`/`get_sandbox_router()`; sandbox 是 extras, 被 import 时注册虚拟时钟/real router (web_api/debug_server 早 import 触发, sandbox-lab 走 debug_server); core/slim 进程永不 import sandbox。边界铁律落 CONTRACTS「agent-only core / extras 边界」段。
+- **分步**: Step0 deps 瘦身 (5 重依赖→optional [web]/[dev]); Step1a 抽 `core_api_helpers`; Step1b agent trace 拆 core-minimal + extras-rich (保 reference refine §1.3 功能零损失, 志丹定 Approach A); Step2/3 DI clock/data_root 去 import sandbox (新 `clock_provider`/`sandbox_router` 零依赖 core 叶子, 两处 fail-loud raise 保留); Step4 rerank LLM 调用补 slim 守门 (llm_client 已 lazy, 边界本就成立); Step5 `scripts/build_skill_bundle.py` 切 core 子树 + 隔离 venv 实跑。
+- **校正提案**: `sandbox_context` 归 CORE (纯 stdlib, §3 误划 extras); data_root 两处 raise (非一处); status_bar 留 core; Step4 是验证+守门非重构。
+- **守门**: 边界 smoke (`tests/test_d104_di_boundary.py`: import core 闭包不含 sandbox/llm_client*/web/debug/fastapi/anthropic/openai/pandas) + baseline_l2_snapshot 0-diff (每步) + pytest 1265 + **真 slim venv 实跑** start→apply-rerank→choose→refine→--at-time (extras 物理缺席, candidate=60, Step1b 最小 trace 落盘)。
+- **行为微调** (与 "sandbox=debug, 在 production 之外" 一致): sandbox-awareness 现仅经 web/debug 入口注册 → 直接 `api.recommend_meal` / 老 cli 不再 sandbox-aware (老 cli D-096 已退役)。
+- **债务** (Codex 标, 出 scope, 非本次引入): `reference_resolver` 用 v2 `list_traces`, session 被 R2 `append_round` 迁 v3 后旧路径可发现性缺口 — full/slim parity 不破, 待独立修。

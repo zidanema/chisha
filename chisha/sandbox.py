@@ -655,3 +655,38 @@ def record_l1_extraction(
             json.dumps(s, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+
+# ───────────── D-104 Step2/3: extras → core provider 注册 (单向 extras→core) ─────────────
+# sandbox 是 extras: 一被 import (web_api / debug_server / sandbox-lab 后端, 或 agent_cli
+# 的 guard lazy import) 就把虚拟时钟 + real sandbox router 注册进 core 的 ambient provider,
+# 让这些进程的 clock / data_root 透明路由到沙盒。agent-only core / slim 进程永不 import
+# sandbox → 永远用 core 默认 (真实时间 + router=False), 0-diff。模块只 import 一次 → 幂等。
+from chisha import clock_provider as _clock_provider  # noqa: E402
+from chisha import sandbox_router as _sandbox_router  # noqa: E402
+from chisha.sandbox_context import current_sandbox_session as _current_sid  # noqa: E402
+
+
+class _VirtualClockProvider:
+    """复刻旧 clock 语义: sandbox 启用→虚拟时间, 否则 None → 真实时间 fallback。"""
+
+    def today(self, root=None) -> dt.date:
+        v = current_date(root, session_id=_current_sid())
+        return v if v is not None else dt.date.today()
+
+    def now(self, root=None) -> dt.datetime:
+        v = current_datetime(root, session_id=_current_sid())
+        return v if v is not None else dt.datetime.now()
+
+    def now_utc(self, root=None) -> dt.datetime:
+        v = current_datetime_utc(root, session_id=_current_sid())
+        return v if v is not None else dt.datetime.now(dt.timezone.utc)
+
+
+class _RealSandboxRouter:
+    def is_enabled(self, root=None) -> bool:
+        return is_enabled(root)
+
+
+_clock_provider.set_clock_provider(_VirtualClockProvider())
+_sandbox_router.set_sandbox_router(_RealSandboxRouter())

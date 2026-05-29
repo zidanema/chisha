@@ -108,8 +108,15 @@ def _guard_scope(root: Path, scope: str) -> None:
             f"Phase 0 CLI 仅支持 --scope {'/'.join(_ALLOWED_SCOPES)} (got {scope!r}); "
             f"sandbox / time-travel 走 sandbox-lab"
         )
-    from chisha import sandbox
-    if sandbox.is_enabled(root):
+    # D-104 Step2/3: sandbox 是 extras. full 安装 (sandbox 在) → 照常检测并拒绝;
+    # slim agent core (sandbox 物理缺席) → ImportError → 当未启用 (slim 下 sandbox
+    # 不可能启用, 语义正确)。lazy import 不进 top-level 依赖图。
+    try:
+        from chisha import sandbox
+        sandbox_on = sandbox.is_enabled(root)
+    except ImportError:
+        sandbox_on = False
+    if sandbox_on:
         raise RuntimeError(
             f"sandbox 全局启用中, CLI 拒绝在 {scope} scope 运行 "
             "(避免误路由到沙盒数据 / 虚拟时钟). 先在 sandbox-lab disable, 再跑 CLI."
@@ -127,7 +134,7 @@ def _parse_at_time(at_time: str | None, root: Path) -> dt.date:
 
 
 def _resolve_zone(profile: dict, meal_type: str) -> str:
-    from chisha.api import _resolve_zone as _rz
+    from chisha.core_api_helpers import _resolve_zone as _rz
     return _rz(profile, meal_type)
 
 
@@ -314,7 +321,7 @@ def cmd_start(args) -> int:
     except RuntimeError as e:
         return _emit_error("SCOPE_OR_TIME", str(e))
 
-    from chisha.api import _gen_session_id
+    from chisha.core_api_helpers import _gen_session_id
 
     if args.from_id:
         sid = args.from_id
@@ -513,7 +520,7 @@ def cmd_apply_rerank(args) -> int:
         return _emit_error("BAD_ID", str(e))
 
     from chisha import agent_round_store
-    from chisha.api import _format_v2_candidate
+    from chisha.core_api_helpers import _format_v2_candidate
     from chisha.rerank import FallbackPlan, apply_rerank_response
 
     try:
@@ -594,6 +601,26 @@ def cmd_apply_rerank(args) -> int:
     return 0
 
 
+def _build_minimal_trace(*, session_id: str, started_at, meal_type: str,
+                          zone: str, reranked: list) -> dict:
+    """D-104 Step1b: slim core (extras 缺席) 的最小功能 trace.
+
+    只含 reference refine + trace 索引必需的字段 (Codex 设计触点确认完备):
+    __frozen.{meal_type,zone} + session_id/started_at + final (含 restaurant.id)。
+    __version 由 trace_store.write_trace 自动注入; l1/l2/l3=None (rich 渲染是 extras)。
+    """
+    from chisha.core_api_helpers import _format_final_minimal
+    return {
+        "__source": "agent_cli",
+        "__frozen": {"meal_type": meal_type, "zone": zone},
+        "session_id": session_id,
+        "started_at": started_at.isoformat(),
+        "l1": None, "l2": None, "l3": None,
+        "final": [_format_final_minimal(i + 1, c) for i, c in enumerate(reranked)],
+        "refine": {"applied": False},
+    }
+
+
 def _publish_trace_best_effort(*, sid, round_id, frozen, persisted, mapped, today,
                                 narrative, used_fallback, fallback_reason, root) -> None:
     """发布 debug trace (best-effort, 失败吞掉不阻断 cards).
@@ -605,7 +632,6 @@ def _publish_trace_best_effort(*, sid, round_id, frozen, persisted, mapped, toda
     try:
         from chisha import clock, trace_store
         from chisha.agent_orchestration import prepare_candidates
-        from chisha.api import _build_trace
 
         profile, zone, rests, tagged, meal_log = _load_inputs(frozen["meal_type"], root)
         intent = _intent_from_dict(frozen.get("intent"))
@@ -625,18 +651,28 @@ def _publish_trace_best_effort(*, sid, round_id, frozen, persisted, mapped, toda
             "fallback_reason": fallback_reason,
         }
         lat = persisted.get("latencies") or {}
-        trace = _build_trace(
-            session_id=sid, started_at=clock.now_utc(root), total_latency_ms=0,
-            ctx_latency_ms=lat.get("ctx", 0), recall_latency_ms=lat.get("recall", 0),
-            score_latency_ms=lat.get("score", 0), rerank_latency_ms=0,
-            meal_type=frozen["meal_type"], zone=zone, today=today, profile=profile,
-            rests=rests, tagged=tagged, meal_log=meal_log, combos=prep.combos,
-            ctx=prep.ctx, daily_mood=None, ranked_raw=prep.ranked_raw,
-            ranked=prep.ranked, top_k=persisted.get("top_k"), reranked=mapped,
-            l3_collector=l3_collector, use_llm_rerank=True, root=root,
-            feedback_signal=frozen.get("fb_signal"),
-            feedback_avoided_names=persisted.get("feedback_avoided_names"),
-        )
+        # D-104 Step1b: 富化 rich trace 走 extras (api→debug_recommend); slim core
+        # 缺 extras → _build_trace 调用期 ImportError → 退到 core 最小功能 trace,
+        # 保 reference refine (读 final[].restaurant.id) 功能零损失. 其余异常仍落外层吞。
+        try:
+            from chisha.api import _build_trace  # extras: rich L1/L2/L3
+            trace = _build_trace(
+                session_id=sid, started_at=clock.now_utc(root), total_latency_ms=0,
+                ctx_latency_ms=lat.get("ctx", 0), recall_latency_ms=lat.get("recall", 0),
+                score_latency_ms=lat.get("score", 0), rerank_latency_ms=0,
+                meal_type=frozen["meal_type"], zone=zone, today=today, profile=profile,
+                rests=rests, tagged=tagged, meal_log=meal_log, combos=prep.combos,
+                ctx=prep.ctx, daily_mood=None, ranked_raw=prep.ranked_raw,
+                ranked=prep.ranked, top_k=persisted.get("top_k"), reranked=mapped,
+                l3_collector=l3_collector, use_llm_rerank=True, root=root,
+                feedback_signal=frozen.get("fb_signal"),
+                feedback_avoided_names=persisted.get("feedback_avoided_names"),
+            )
+        except ImportError:
+            trace = _build_minimal_trace(
+                session_id=sid, started_at=clock.now_utc(root),
+                meal_type=frozen["meal_type"], zone=zone, reranked=mapped,
+            )
         trace["__source"] = "agent_cli"
         if round_id == "R1":
             trace_store.write_trace(sid, trace, root=root)
@@ -804,9 +840,14 @@ def _card_meal_type(sid: str, root: Path) -> str:
 
 def cmd_doctor(args) -> int:
     root = _root()
-    from chisha import sandbox, state_migrate, state_root
+    from chisha import state_migrate, state_root
     from chisha.agent_protocol import CANDIDATE_SCHEMA_VERSION
-    sb = sandbox.is_enabled(root)
+    # D-104 Step2/3: sandbox 是 extras. slim agent core 缺席 → 当未启用 (doctor 仍可跑).
+    try:
+        from chisha import sandbox
+        sb = sandbox.is_enabled(root)
+    except ImportError:
+        sb = False
 
     # D-102 Step2: install/state root 二分 + 迁移状态 + state_root 可写性
     import uuid as _uuid
