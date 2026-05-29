@@ -4,15 +4,22 @@
 LLM 请求**; 需要智能判断的两步 (context→intent 抽取 / 候选→排序) 由 chisha 发
 llm_request_spec 信封, agent 的 LLM 执行后按 correlation_id 回传, chisha 校验落库.
 
-verb 链 (设计 §3):
+verb 链 (P1 折叠后, 顶层 `chisha eat/continue/choose` 见 cli.py):
   start --meal <m> [--context "<原话>"] [--from <rid>] [--at-time <date>]
-      无 context → 直接 recall+score, 返候选 + rerank spec (resolved)
-      有 context → 只发 extract spec (pending), 等 resolve-intent
-  resolve-intent --id <rid> --intent <json>   收抽取结果 → recall+score → rerank spec
-  apply-rerank   --id <rid> --response <json>  收精排结果 → 校验+映射+fallback → final cards
-  choose         --id <rid> --card <cid> --action <accept|skip>   记录选择 (幂等)
+      无 context → 直接 recall+score, 返候选 + rerank spec (status=resolved, 带 do_llm)
+      有 context → 只发 extract spec (status=pending, 带 do_llm), 等 continue
+  continue --id <rid> --result <json> --step <step_token>   ★ P1 主路径
+      喂上一步 do_llm 的 LLM 原始输出 (raw payload, 不包信封) + 回显 step_token;
+      chisha 按 step_token.operation 路由: extract→抽意图发 rerank spec / rerank→出 cards.
+      host 循环: 回包有 do_llm 就再 continue, 直到 status=ready (出 cards).
+  resolve-intent / apply-rerank   [deprecated→continue] legacy 两步, 保留一版兼容
+  choose   --id <rid> --card <cid> --action <accept|skip>   记录选择 (幂等)
   init --agent <type>   生成 adapter skill (T8)
   doctor                检查环境 + 协议版本 + scope
+
+step_token (P1, codex Q1/Q2): = correlation_id 编码, 对 host 不透明 (回显即可). 去掉了
+"手包 {correlation_id, payload} 信封 + 拼 correlation 字符串"的 footgun, 但 token 必填 —
+它是去掉信封后唯一的 stale/串轮守门人, continue 不静默从 round state 派生.
 
 scope (设计 §3 / codex #5): 默认 production. sandbox 全局启用时**拒绝运行** (避免
 静默误路由到沙盒数据/虚拟时钟). --at-time 走 today 注入, 不碰 sandbox.
@@ -204,6 +211,50 @@ def _find_card(sid: str, card_id: str, root: Path) -> tuple[dict | None, str | N
     return None, latest
 
 
+def _ready_path(sid: str, root: Path) -> Path:
+    from chisha import data_root
+    return data_root.agent_round_dir(root) / f"{sid}.ready.json"
+
+
+def _write_ready(sid: str, round_id: str, ready: dict, step_token: str,
+                 root: Path) -> None:
+    """P1 (codex Q3): apply 成功落 ready 响应快照 (含 step_token), 供 continue rerank
+    重发幂等回放 (round clear 后宿主分不清"完成"vs"丢失"). round 维度累加."""
+    p = _ready_path(sid, root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    existing: dict = {}
+    if p.exists():
+        try:
+            existing = json.loads(p.read_text(encoding="utf-8")) or {}
+        except Exception:
+            existing = {}
+    existing[round_id] = {**ready, "step_token": step_token}
+    p.write_text(json.dumps(existing, ensure_ascii=False), encoding="utf-8")
+
+
+def _read_ready(sid: str, round_id: str, root: Path) -> dict | None:
+    p = _ready_path(sid, root)
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data.get(round_id)
+
+
+def _latest_published_round(sid: str, root: Path) -> str | None:
+    """cards 文件的 __latest = 最近发布的 ready round. rerank replay 防跨轮 stale
+    (codex P1 C): 只回放最新轮, 旧轮 token 不静默回放历史 cards."""
+    p = _cards_path(sid, root)
+    if not p.exists():
+        return None
+    try:
+        return (json.loads(p.read_text(encoding="utf-8")) or {}).get("__latest")
+    except Exception:
+        return None
+
+
 # ─────────────────────── 共享: prepare → rerank spec ───────────────────────
 
 def _n_explore_for(round_id: str) -> int:
@@ -305,8 +356,10 @@ def cmd_start(args) -> int:
             "ok": True, "recommendation_id": sid, "round": round_id,
             "status": "pending", "operation": "extract",
             "protocol_version": PROTOCOL_VERSION,
-            "llm_request_spec": extract_spec,
-            "next": "resolve-intent --id <rid> --intent <json>",
+            "do_llm": extract_spec,            # P1 canonical (host 判 do_llm 在否驱动循环)
+            "step_token": cid.encode(),        # P1: continue 回显此 token (不透明)
+            "llm_request_spec": extract_spec,  # deprecated alias, 删于下一版
+            "next": "continue --id <rid> --result <json> --step <step_token>",
         })
         return 0
 
@@ -343,8 +396,10 @@ def cmd_start(args) -> int:
         "protocol_version": PROTOCOL_VERSION,
         "candidate_count": len(prep.top_k),
         "feedback_avoided": prep.feedback_avoided_names,
-        "llm_request_spec": spec,
-        "next": "apply-rerank --id <rid> --response <json>",
+        "do_llm": spec,                    # P1 canonical
+        "step_token": cid.encode(),        # P1: continue 回显此 token
+        "llm_request_spec": spec,          # deprecated alias, 删于下一版
+        "next": "continue --id <rid> --result <json> --step <step_token>",
     })
     return 0
 
@@ -375,8 +430,10 @@ def cmd_resolve_intent(args) -> int:
         _emit({
             "ok": True, "recommendation_id": args.id, "round": round_id,
             "status": "resolved", "operation": "rerank", "idempotent_replay": True,
-            "llm_request_spec": cur.get("rerank_spec"),
-            "next": "apply-rerank --id <rid> --response <json>",
+            "do_llm": cur.get("rerank_spec"),            # P1 canonical
+            "step_token": cur.get("correlation_id"),     # rerank cid (advance 后)
+            "llm_request_spec": cur.get("rerank_spec"),  # deprecated alias
+            "next": "continue --id <rid> --result <json> --step <step_token>",
         })
         return 0
     if cur.get("status") != "pending":
@@ -435,8 +492,10 @@ def cmd_resolve_intent(args) -> int:
         "intent_disclosure": disclosure,
         "candidate_count": len(prep.top_k),
         "feedback_avoided": prep.feedback_avoided_names,
-        "llm_request_spec": spec,
-        "next": "apply-rerank --id <rid> --response <json>",
+        "do_llm": spec,                    # P1 canonical
+        "step_token": cid.encode(),        # P1: continue 回显此 token
+        "llm_request_spec": spec,          # deprecated alias, 删于下一版
+        "next": "continue --id <rid> --result <json> --step <step_token>",
     })
     return 0
 
@@ -521,15 +580,17 @@ def cmd_apply_rerank(args) -> int:
         used_fallback=used_fallback, fallback_reason=meta.get("detail"), root=root,
     )
 
-    agent_round_store.clear_round(args.id, root)
-    _emit({
-        "ok": True, "recommendation_id": args.id, "round": round_id,
-        "status": "ready",
+    ready = {
+        "round": round_id, "status": "ready",
         "fallback": used_fallback,
         "fallback_reason": meta.get("detail") if used_fallback else None,
         "narrative": narrative,
         "cards": cards,
-    })
+    }
+    # P1 (codex Q3): 落 ready 快照供 continue rerank 重发幂等回放 (round clear 前).
+    _write_ready(args.id, round_id, ready, expected.encode(), root)
+    agent_round_store.clear_round(args.id, root)
+    _emit({"ok": True, "recommendation_id": args.id, **ready})
     return 0
 
 
@@ -596,6 +657,104 @@ def _publish_trace_best_effort(*, sid, round_id, frozen, persisted, mapped, toda
             "agent_cli trace publish failed (non-fatal) for %s/%s: %s: %s",
             sid, round_id, type(e).__name__, e,
         )
+
+
+def cmd_continue(args) -> int:
+    """P1: 合并 resolve-intent + apply-rerank 的单 verb (host 一个循环驱动).
+
+    宿主只传 raw LLM 输出 (--result) + 回显回包顶层 step_token (--step); chisha 内部按
+    step_token.operation + round state 路由到 extract / rerank 处理, 自动包 correlation
+    信封 (host 不再手包 {correlation_id, payload} / 不拼 correlation 字符串).
+
+    step_token **必填** (codex Q1/Q2: 去掉信封后它是唯一的 stale/串轮守门人, 不静默派生).
+    幂等回放 (codex Q3):
+      - extract 重发 (round 已经此 extract 推到 resolved) → 复用 cmd_resolve_intent 回放.
+      - rerank 重发 (round 已 apply+clear) → 查 ready 快照回放已落 cards.
+    路由前强校验 token.round == 当前 round (防 stale 跨轮 token 命中错轮回放).
+    """
+    root = _root()
+    try:
+        _guard_scope(root, args.scope)
+    except RuntimeError as e:
+        return _emit_error("SCOPE_OR_TIME", str(e))
+    try:
+        _validate_id(args.id, "--id")
+    except RuntimeError as e:
+        return _emit_error("BAD_ID", str(e))
+
+    if not args.step:
+        return _emit_error(
+            "STEP_REQUIRED",
+            "continue 必须带 --step <step_token> (回显上一步回包顶层 step_token 字段; "
+            "不静默派生, 防 stale/串轮回传)",
+        )
+    try:
+        tok = CorrelationId.decode(args.step)
+    except ValueError as e:
+        return _emit_error("BAD_STEP", f"--step 非法 step_token: {e}")
+    if tok.recommendation_id != args.id:
+        return _emit_error(
+            "STEP_MISMATCH",
+            f"--step token sid {tok.recommendation_id!r} != --id {args.id!r}",
+        )
+
+    try:
+        result_payload = json.loads(args.result)
+    except json.JSONDecodeError as e:
+        return _emit_error("BAD_JSON", f"--result 非合法 JSON: {e}")
+    # host 传 raw payload; chisha 用 step_token 当 correlation 包回 legacy 信封, 委托
+    # 久经考验的 cmd_resolve_intent / cmd_apply_rerank (它们内部再做 correlation 校验).
+    envelope = json.dumps(
+        {"correlation_id": args.step, "payload": result_payload}, ensure_ascii=False
+    )
+
+    from chisha import agent_round_store
+    cur = agent_round_store.read_round(args.id, root)
+
+    if tok.operation == "extract":
+        if cur is None:
+            return _emit_error("ROUND_STATE", f"sid {args.id} 无 in-flight round (extract step)")
+        if tok.round != cur.get("round_id"):
+            return _emit_error(
+                "CORRELATION",
+                f"step_token round {tok.round!r} != 当前 round {cur.get('round_id')!r} (stale)",
+            )
+        ns = argparse.Namespace(scope=args.scope, id=args.id, intent=envelope)
+        return cmd_resolve_intent(ns)
+
+    if tok.operation == "rerank":
+        if cur is not None and cur.get("status") == "resolved":
+            if tok.round != cur.get("round_id"):
+                return _emit_error(
+                    "CORRELATION",
+                    f"step_token round {tok.round!r} != 当前 round {cur.get('round_id')!r} (stale)",
+                )
+            ns = argparse.Namespace(scope=args.scope, id=args.id, response=envelope)
+            return cmd_apply_rerank(ns)
+        if cur is None:
+            # 可能已 apply + clear → 查 ready 快照幂等回放. 仅回放**最新已发布轮**
+            # (codex P1 C): 防 stale 跨轮 token (如 R2 完成后误发 R1 token) 静默回放历史
+            # cards — round 已推进, 旧轮 rerank 回放无意义且误导. step_token 也须精确匹配.
+            latest = _latest_published_round(args.id, root)
+            ready = _read_ready(args.id, tok.round, root)
+            if (ready is not None and ready.get("step_token") == args.step
+                    and tok.round == latest):
+                out = {k: v for k, v in ready.items() if k != "step_token"}
+                out["replayed"] = True
+                _emit({"ok": True, "recommendation_id": args.id, **out})
+                return 0
+            return _emit_error(
+                "ROUND_STATE",
+                f"sid {args.id} 无 in-flight round 且无可回放 ready "
+                f"(rerank step; token round={tok.round} latest={latest})",
+            )
+        return _emit_error(
+            "ROUND_STATE",
+            f"sid {args.id} round 状态 {cur.get('status')!r} 不可 rerank "
+            "(需先 continue 完成 extract)",
+        )
+
+    return _emit_error("BAD_STEP", f"未知 step_token operation: {tok.operation!r}")
 
 
 def cmd_choose(args) -> int:
@@ -779,10 +938,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--intent", required=True, help="agent 抽取的 intent JSON")
     sp.set_defaults(func=cmd_resolve_intent)
 
-    sp = sub.add_parser("apply-rerank", help="收精排结果 → final cards")
+    sp = sub.add_parser("apply-rerank", help="[deprecated→continue] 收精排结果 → final cards")
     sp.add_argument("--id", required=True)
     sp.add_argument("--response", required=True, help="agent 精排结果 JSON")
     sp.set_defaults(func=cmd_apply_rerank)
+
+    # P1: 合并 resolve-intent + apply-rerank — host 一个循环 (有 do_llm 就 continue 到 ready)
+    sp = sub.add_parser("continue", help="推进一轮: 喂 LLM 输出, 按 step_token 路由")
+    sp.add_argument("--id", required=True)
+    sp.add_argument("--result", required=True, help="你的 LLM 原始输出 JSON (raw payload, 不包信封)")
+    sp.add_argument("--step", required=True, help="回显上一步回包顶层 step_token (不透明)")
+    sp.set_defaults(func=cmd_continue)
 
     sp = sub.add_parser("choose", help="记录用户选择 (幂等)")
     sp.add_argument("--id", required=True)

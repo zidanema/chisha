@@ -472,3 +472,139 @@ def test_d102_apply_missing_fallback_plan_fails_loud(cli_env, monkeypatch):
         "narrative": "x"}})
     d = _run(["apply-rerank", "--id", rid, "--response", bad])
     assert d["ok"] is False and d["error"]["code"] == "NO_FALLBACK_PLAN"
+
+
+# ═══════════════════ P1: continue 折叠 + step_token + 回放 ═══════════════════
+
+def _raw_rerank(n_explore=2) -> str:
+    """continue --result 收 raw payload (不包信封, chisha 用 step_token 自动包)."""
+    cands = [{"rank": i + 1, "is_explore": i >= (5 - n_explore), "combo_index": i,
+              "fit_score": 0.8, "taste_match": 0.7, "risk_flags": [],
+              "one_line_reason": f"r{i}"} for i in range(5)]
+    return json.dumps({"candidates": cands, "narrative": "测试"})
+
+
+def _raw_intent() -> str:
+    return json.dumps({
+        "redirect": {"cuisine_want": [], "cuisine_avoid": [],
+                     "cuisine_candidates_expanded": ["川菜"], "ingredient_want": [],
+                     "ingredient_avoid": [], "brand_avoid": [],
+                     "cooking_method_avoid": [], "staple_want": [], "staple_avoid": []},
+        "constrain": {"oil": None, "price_max": 30, "price_band": None,
+                      "wants_soup": False},
+        "reference": None, "reject_previous": False,
+        "raw_understanding": "想吃辣推断川菜", "schema_version": "2.1",
+    })
+
+
+def test_p1_do_llm_and_step_token_present(cli_env):
+    """P1: start 回包带 do_llm (canonical) + step_token + llm_request_spec (deprecated alias)."""
+    d = _run(["start", "--meal", "lunch"])
+    assert d["do_llm"]["operation_kind"] == "rerank"
+    assert d["step_token"] == d["do_llm"]["correlation_id"]
+    assert d["llm_request_spec"] == d["do_llm"]          # dual-key 一版
+    assert "--step <step_token>" in d["next"]
+
+
+def test_p1_continue_chain_no_context(cli_env):
+    """无 context: start → continue(rerank) → ready → choose (host 单循环)."""
+    d = _run(["start", "--meal", "lunch"])
+    rid, step = d["recommendation_id"], d["step_token"]
+    d = _run(["continue", "--id", rid, "--result", _raw_rerank(), "--step", step])
+    assert d["ok"] and d["status"] == "ready" and len(d["cards"]) == 5
+    assert d["fallback"] is False
+    cid = d["cards"][0]["id"]
+    d = _run(["choose", "--id", rid, "--card", cid, "--action", "accept"])
+    assert d["ok"] and d["accept_written"] is True
+
+
+def test_p1_continue_chain_with_context(cli_env):
+    """有 context: start → continue(extract) → continue(rerank) → ready (同一循环, 两轮)."""
+    d = _run(["start", "--meal", "lunch", "--context", "想吃辣的别太贵"])
+    assert d["do_llm"]["operation_kind"] == "extract"
+    rid, step = d["recommendation_id"], d["step_token"]
+    d = _run(["continue", "--id", rid, "--result", _raw_intent(), "--step", step])
+    assert d["status"] == "resolved" and d["do_llm"]["operation_kind"] == "rerank"
+    step2 = d["step_token"]
+    d = _run(["continue", "--id", rid, "--result", _raw_rerank(), "--step", step2])
+    assert d["status"] == "ready" and len(d["cards"]) == 5
+
+
+def test_p1_continue_requires_step(cli_env):
+    """step_token 必填 (空) → STEP_REQUIRED (不静默从 round state 派生)."""
+    d = _run(["start", "--meal", "lunch"])
+    rid = d["recommendation_id"]
+    d = _run(["continue", "--id", rid, "--result", _raw_rerank(), "--step", ""])
+    assert d["ok"] is False and d["error"]["code"] == "STEP_REQUIRED"
+
+
+def test_p1_continue_rejects_stale_round_step(cli_env):
+    """stale 跨轮 step_token (round 不符当前) → CORRELATION, 不命中错轮."""
+    d = _run(["start", "--meal", "lunch"])
+    rid = d["recommendation_id"]
+    stale = f"{rid}::R9::rerank"
+    d = _run(["continue", "--id", rid, "--result", _raw_rerank(), "--step", stale])
+    assert d["ok"] is False and d["error"]["code"] == "CORRELATION"
+
+
+def test_p1_continue_step_sid_mismatch(cli_env):
+    """step_token 的 sid != --id → STEP_MISMATCH."""
+    d = _run(["start", "--meal", "lunch"])
+    rid = d["recommendation_id"]
+    d = _run(["continue", "--id", rid, "--result", _raw_rerank(),
+              "--step", "othersid::R1::rerank"])
+    assert d["ok"] is False and d["error"]["code"] == "STEP_MISMATCH"
+
+
+def test_p1_continue_rerank_replay_after_clear(cli_env):
+    """codex Q3: rerank 重发 (round 已 apply+clear) → ready 快照回放, 不报 ROUND_STATE."""
+    d = _run(["start", "--meal", "lunch"])
+    rid, step = d["recommendation_id"], d["step_token"]
+    d1 = _run(["continue", "--id", rid, "--result", _raw_rerank(), "--step", step])
+    assert d1["status"] == "ready"
+    first_cards = [c["id"] for c in d1["cards"]]
+    d2 = _run(["continue", "--id", rid, "--result", _raw_rerank(), "--step", step])
+    assert d2["ok"] and d2.get("replayed") is True
+    assert [c["id"] for c in d2["cards"]] == first_cards   # 回放同一批 cards
+
+
+def test_p1_continue_rerank_replay_rejects_stale_round(cli_env):
+    """codex P1 C: round 推进后, 旧轮 rerank token 不静默回放历史 cards → ROUND_STATE;
+    最新轮 token 仍可回放."""
+    d = _run(["start", "--meal", "lunch"])
+    rid, step1 = d["recommendation_id"], d["step_token"]   # R1::rerank
+    _run(["continue", "--id", rid, "--result", _raw_rerank(), "--step", step1])
+    # refine → R2 完成
+    d = _run(["start", "--meal", "lunch", "--context", "再辣点", "--from", rid])
+    d = _run(["continue", "--id", rid, "--result", _raw_intent(), "--step", d["step_token"]])
+    step2r = d["step_token"]   # R2::rerank
+    _run(["continue", "--id", rid, "--result", _raw_rerank(n_explore=0), "--step", step2r])
+    # 用 R1 旧 token 重发 → 非最新轮, 拒绝 (不回放 R1 cards)
+    d = _run(["continue", "--id", rid, "--result", _raw_rerank(), "--step", step1])
+    assert d["ok"] is False and d["error"]["code"] == "ROUND_STATE"
+    # 最新轮 R2 token 重发 → 仍可回放
+    d = _run(["continue", "--id", rid, "--result", _raw_rerank(n_explore=0), "--step", step2r])
+    assert d["ok"] and d.get("replayed") is True
+
+
+def test_p1_continue_extract_idempotent_replay(cli_env):
+    """codex Q3: extract 重发 (round 已经此 extract 推到 resolved) → 回放 rerank spec."""
+    d = _run(["start", "--meal", "lunch", "--context", "辣"])
+    rid, step = d["recommendation_id"], d["step_token"]
+    _run(["continue", "--id", rid, "--result", _raw_intent(), "--step", step])
+    d2 = _run(["continue", "--id", rid, "--result", _raw_intent(), "--step", step])
+    assert d2["ok"] and d2.get("idempotent_replay") is True
+    assert d2["do_llm"]["operation_kind"] == "rerank"
+
+
+def test_p1_continue_fallback_on_bad_result(cli_env):
+    """continue 路径越界 combo_index → 仍走 chisha_l2 fallback (确定性守卫不变)."""
+    d = _run(["start", "--meal", "lunch"])
+    rid, step = d["recommendation_id"], d["step_token"]
+    bad = json.dumps({"candidates": [
+        {"rank": 1, "is_explore": False, "combo_index": 999, "fit_score": 0.8,
+         "taste_match": 0.7, "risk_flags": [], "one_line_reason": "x"}],
+        "narrative": "x"})
+    d = _run(["continue", "--id", rid, "--result", bad, "--step", step])
+    assert d["ok"] and d["status"] == "ready" and d["fallback"] is True
+    assert len(d["cards"]) == 5 and d["narrative"] == ""

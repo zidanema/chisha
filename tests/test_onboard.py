@@ -58,9 +58,9 @@ def test_onboard_writes_skill(tmp_path):
     skill_path = Path(skill["path"])
     assert skill_path.is_relative_to(tmp_path)
     assert skill_path.exists()
-    # SKILL.md 内含新 CLI (B.3 同步)
+    # SKILL.md 内含 P1 扁平 CLI (单循环触发器)
     text = skill_path.read_text(encoding="utf-8")
-    assert "chisha agent start" in text
+    assert "chisha eat " in text and "chisha continue " in text
 
 
 def test_onboard_doctor_invoked(tmp_path):

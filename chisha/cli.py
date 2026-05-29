@@ -1,19 +1,25 @@
 """T-DIST-01 B.2: chisha 顶层 CLI (entry point `chisha`).
 
-子命令:
+子命令 (P1 拍平后, 推荐扁平路径):
+  eat <lunch|dinner> [--context "原话"] [--from <rid>] [--at-time <date>]
+                               — 起一轮推荐 (= agent_cli start)
+  continue --id <rid> --result <json> --step <step_token>
+                               — 推进一轮: 喂 LLM 原始输出 + 回显 step_token (host 单循环)
+  choose --id <rid> --card <cid> --action <accept|skip> [--reason ...]
+                               — 记录用户选择 (幂等)
+  skills add [--force]         — 装 Claude Code skill 到 ~/.claude/skills/chisha-meal/
   doctor                       — 检查环境 (delegates to agent_cli.cmd_doctor)
-  agent <verb> [args...]       — 透传 agent_cli (start / resolve-intent / apply-rerank /
-                                  choose / init / doctor)
-  install-skill [--force]      — 写 ~/.claude/skills/chisha-meal/SKILL.md (B.4)
   onboard [--zone] [--methodology] [--force]
                                — 初始化 ~/.chisha/profile.yaml + 装 skill + dry start (B.5)
   migrate-state [--dry-run]    — 把 repo 内旧 state 迁到 ~/.chisha/ (wrap state_migrate)
   methodology {schema|template|validate}
                                — T-DIST-02 占位, 报 NOT_IMPLEMENTED 非零退出
 
+  [deprecated 一版] install-skill [--force] → 用 skills add
+  [deprecated 一版] agent <verb> [args...]  → 用 eat / continue / choose (透传 agent_cli)
+
 stdout 一律 JSON (machine-readable); 人类提示走 stderr (绝不污染 stdout pipe).
-Legacy `python -m chisha.agent_cli` 仍可用 (走 agent_cli.main 直接); 推荐迁到
-`chisha agent <verb>` (功能完全等价).
+Legacy `python -m chisha.agent_cli` 仍可用 (走 agent_cli.main 直接); 推荐迁到扁平 `chisha eat/continue/choose`.
 """
 from __future__ import annotations
 
@@ -46,9 +52,48 @@ def cmd_doctor(args) -> int:
 # ─────────────────────────────── agent passthrough ────────────────────
 
 def cmd_agent(args, agent_argv: list[str]) -> int:
-    """透传 agent_cli.main, 不加 stderr tip (新 CLI 路径)."""
+    """[deprecated 一版] 透传 agent_cli.main. 推荐扁平 `chisha eat/continue/choose`."""
+    import os
     from chisha import agent_cli
+    if not os.environ.get("CHISHA_SUPPRESS_LEGACY_TIP"):
+        _stderr("[chisha] tip: `chisha agent <verb>` 是 deprecated 路径, "
+                "推荐扁平 `chisha eat / continue / choose` (P1).")
     return agent_cli.main(agent_argv)
+
+
+# ─────────────────────────────── 扁平 verbs (P1) ──────────────────────
+
+def cmd_eat(args) -> int:
+    """`chisha eat <meal> [--context ...]` = agent_cli start (host 单循环入口)."""
+    from chisha import agent_cli
+    ns = argparse.Namespace(scope="production", meal=args.meal, context=args.context,
+                            from_id=args.from_id, at_time=args.at_time)
+    return agent_cli.cmd_start(ns)
+
+
+def cmd_continue(args) -> int:
+    """`chisha continue --id --result --step` = agent_cli continue (折叠 resolve+apply)."""
+    from chisha import agent_cli
+    ns = argparse.Namespace(scope="production", id=args.id, result=args.result,
+                            step=args.step)
+    return agent_cli.cmd_continue(ns)
+
+
+def cmd_choose(args) -> int:
+    """`chisha choose --id --card --action` = agent_cli choose."""
+    from chisha import agent_cli
+    ns = argparse.Namespace(scope="production", id=args.id, card=args.card,
+                            action=args.action, reason=args.reason)
+    return agent_cli.cmd_choose(ns)
+
+
+def cmd_skills(args) -> int:
+    """`chisha skills add [--force]` = 装 Claude Code skill (= install-skill rename)."""
+    if args.action == "add":
+        return cmd_install_skill(args)
+    _emit({"ok": False, "error": "UNKNOWN_SKILLS_ACTION",
+           "message": f"未知 skills 子命令: {args.action!r} (支持: add)"})
+    return 1
 
 
 # ─────────────────────────────── migrate-state ────────────────────────
@@ -287,12 +332,38 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("doctor", help="检查 install/state root + manifest + scope")
     sp.set_defaults(func=cmd_doctor)
 
-    sp = sub.add_parser("agent", help="透传到 agent_cli (start / resolve-intent / ...)")
+    # ─ 扁平 verbs (P1, host 单循环主路径) ─
+    sp = sub.add_parser("eat", help="起一轮推荐: chisha eat lunch [--context ...]")
+    sp.add_argument("meal", choices=["lunch", "dinner"])
+    sp.add_argument("--context", default=None, help="用户当天自然语言 (触发 intent 抽取)")
+    sp.add_argument("--from", dest="from_id", default=None, help="refine: 续上一轮 rid")
+    sp.add_argument("--at-time", default=None, help="time-travel: YYYY-MM-DD")
+    sp.set_defaults(func=cmd_eat)
+
+    sp = sub.add_parser("continue", help="推进一轮: 喂 LLM 输出 (--result) + 回显 --step")
+    sp.add_argument("--id", required=True)
+    sp.add_argument("--result", required=True, help="你的 LLM 原始输出 JSON (raw payload)")
+    sp.add_argument("--step", required=True, help="回显上一步回包顶层 step_token")
+    sp.set_defaults(func=cmd_continue)
+
+    sp = sub.add_parser("choose", help="记录用户选择 (幂等)")
+    sp.add_argument("--id", required=True)
+    sp.add_argument("--card", required=True, help="card_id (cards[].id)")
+    sp.add_argument("--action", required=True, choices=["accept", "skip"])
+    sp.add_argument("--reason", default=None, help="skip 原因 (可选)")
+    sp.set_defaults(func=cmd_choose)
+
+    sp = sub.add_parser("skills", help="管理 agent skill (skills add)")
+    sp.add_argument("action", choices=["add"])
+    sp.add_argument("--force", action="store_true", help="覆盖已存在 SKILL.md")
+    sp.set_defaults(func=cmd_skills)
+
+    sp = sub.add_parser("agent", help="[deprecated→eat/continue/choose] 透传到 agent_cli")
     sp.add_argument("rest", nargs=argparse.REMAINDER,
                     help="agent_cli 子命令 + 参数, e.g. `chisha agent start --meal lunch`")
     sp.set_defaults(func="_AGENT")  # 由 main 特判 (REMAINDER 不走标准 func)
 
-    sp = sub.add_parser("install-skill", help="装 Claude Code skill 到 ~/.claude/skills/chisha-meal/")
+    sp = sub.add_parser("install-skill", help="[deprecated→skills add] 装 Claude Code skill")
     sp.add_argument("--force", action="store_true", help="覆盖已存在 SKILL.md")
     sp.set_defaults(func=cmd_install_skill)
 

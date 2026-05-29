@@ -20,26 +20,24 @@ import pytest
 from chisha import agent_skill_init
 
 
-def test_skill_md_uses_new_chisha_agent_verbs():
-    """plan B.3 step 1: 所有 `uv run python -m chisha.agent_cli <verb>` 必须改 `chisha agent <verb>`."""
+def test_skill_md_uses_flat_verbs():
+    """P1: SKILL.md 用扁平 `chisha eat/continue/choose` (不再 `chisha agent <verb>`/legacy)."""
     md = agent_skill_init._claude_code_skill_md()
     # legacy 字符串完全消失
-    assert "uv run python -m chisha.agent_cli" not in md, (
-        "SKILL.md 还含 legacy uv run python -m chisha.agent_cli 路径"
-    )
-    # 新路径出现 (start / resolve-intent / apply-rerank / choose 都改了)
-    assert "chisha agent start" in md
-    assert "chisha agent resolve-intent" in md
-    assert "chisha agent apply-rerank" in md
-    assert "chisha agent choose" in md
-    # doctor 不带 'agent' 子命令 (顶层 `chisha doctor`)
+    assert "uv run python -m chisha.agent_cli" not in md
+    assert "chisha agent start" not in md          # P1 拍平: 不再走 agent 透传层
+    # 扁平 verb + 单循环协议
+    assert "chisha eat " in md
+    assert "chisha continue " in md
+    assert "chisha choose " in md
+    assert "do_llm" in md and "step_token" in md   # P1 协议词
     assert "chisha doctor" in md
 
 
 def test_skill_md_has_install_section():
-    """plan B.3 step 1: 加 'How to install' 段 + transport URL."""
+    """P1: 装包持久 `uv tool install chisha-meal` + `chisha onboard` (model A)."""
     md = agent_skill_init._claude_code_skill_md()
-    assert "uv tool install git+https://github.com/zidanema/chisha.git" in md
+    assert "uv tool install chisha-meal" in md
     assert "chisha onboard" in md
 
 
@@ -52,8 +50,8 @@ def test_init_skill_writes_user_level_by_default(tmp_path, monkeypatch):
     target = tmp_path / ".claude" / "skills" / "chisha-meal" / "SKILL.md"
     assert target.exists()
     content = target.read_text(encoding="utf-8")
-    assert "chisha agent start" in content
-    assert "uv tool install git+" in content
+    assert "chisha eat " in content
+    assert "uv tool install chisha-meal" in content
 
 
 def test_init_skill_exists_without_force(tmp_path, monkeypatch):

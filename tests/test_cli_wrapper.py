@@ -75,15 +75,53 @@ def test_legacy_stderr_has_tip_stdout_does_not():
     json.loads(last)  # 不抛即 OK
 
 
-def test_cli_path_no_legacy_tip():
-    """补 (b): 新路径 `chisha agent doctor` 不应触发 legacy tip."""
+def test_cli_agent_path_emits_deprecation_tip():
+    """P1: `chisha agent` 现为 deprecated → stderr 出 deprecation tip (推扁平 verb), stdout 干净."""
     env = dict(os.environ)
     env.pop("CHISHA_SUPPRESS_LEGACY_TIP", None)
     r = subprocess.run(
         [sys.executable, "-m", "chisha.cli", "agent", "doctor"],
         capture_output=True, text=True, env=env,
     )
-    assert "[chisha] tip:" not in r.stderr, f"unexpected legacy tip in new-path stderr: {r.stderr!r}"
+    assert "[chisha] tip:" in r.stderr, f"expected deprecation tip in stderr, got: {r.stderr!r}"
+    assert "deprecated" in r.stderr
+    # stdout 必须干净 JSON, 不含 tip
+    assert "[chisha] tip:" not in r.stdout
+    json.loads(r.stdout.strip().splitlines()[-1])
+
+
+def test_flat_verbs_dispatch(monkeypatch):
+    """P1: 扁平 chisha eat/continue/choose 正确翻译到 agent_cli handler (in-process, 不碰真实 state)."""
+    from chisha import agent_cli, cli
+    captured: dict = {}
+    monkeypatch.setattr(agent_cli, "cmd_start", lambda ns: captured.update(start=ns) or 0)
+    monkeypatch.setattr(agent_cli, "cmd_continue", lambda ns: captured.update(cont=ns) or 0)
+    monkeypatch.setattr(agent_cli, "cmd_choose", lambda ns: captured.update(choose=ns) or 0)
+
+    assert cli.main(["eat", "lunch", "--context", "辣", "--from", "rid1"]) == 0
+    assert captured["start"].meal == "lunch"
+    assert captured["start"].context == "辣"
+    assert captured["start"].from_id == "rid1"
+    assert captured["start"].scope == "production"
+
+    assert cli.main(["continue", "--id", "rid1", "--result", "{}",
+                     "--step", "rid1::R1::rerank"]) == 0
+    assert captured["cont"].id == "rid1"
+    assert captured["cont"].result == "{}"
+    assert captured["cont"].step == "rid1::R1::rerank"
+
+    assert cli.main(["choose", "--id", "rid1", "--card", "c1", "--action", "accept"]) == 0
+    assert captured["choose"].card == "c1" and captured["choose"].action == "accept"
+
+
+def test_skills_add_dispatches_to_install(monkeypatch):
+    """P1: `chisha skills add --force` = install-skill rename."""
+    from chisha import cli
+    captured: dict = {}
+    monkeypatch.setattr(cli, "cmd_install_skill",
+                        lambda args: captured.update(force=args.force) or 0)
+    assert cli.main(["skills", "add", "--force"]) == 0
+    assert captured["force"] is True
 
 
 def test_methodology_schema_not_implemented():
