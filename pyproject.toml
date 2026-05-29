@@ -18,6 +18,9 @@ dependencies = [
 
 [project.scripts]
 chisha = "chisha.cli:main"
+# P2: `chisha-meal` 别名 = dist 名同名可执行, 让 `uvx chisha-meal ...` / `uv tool install
+# chisha-meal` 后 `chisha-meal <verb>` 都解析得到 (与 `chisha` 等价).
+chisha-meal = "chisha.cli:main"
 
 [project.optional-dependencies]
 dev = [
