@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -907,12 +908,33 @@ def cmd_doctor(args) -> int:
     # 闸门 (D-102.3 CONTRACTS). user 区 incompatible 不影响 doctor.ok (用户区决定要不要清理).
     user_resource_status = _manifest.user_resource_manifest_check(sroot)
 
+    # D-105 形态B: runtime 自检 — python 版本 / POSIX / vendored pyyaml provenance。
+    # core 顶层 import yaml (recall/methodology); 缺失 = 运行时裸 traceback, doctor 提前响亮报。
+    import sys as _sys
+    py_ok = _sys.version_info >= (3, 11)
+    python_version = f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}"
+    is_posix = os.name == "posix"
+    pyyaml_status, pyyaml_version, pyyaml_path = "missing", None, None
+    try:
+        import yaml as _yaml
+        pyyaml_version = getattr(_yaml, "__version__", "unknown")
+        pyyaml_path = str(getattr(_yaml, "__file__", "") or "")
+        # vendored = yaml 解析自 install_root 内 (bundle/vendor); 否则 host (dev/形态A 合法)。
+        try:
+            in_install = Path(pyyaml_path).resolve().is_relative_to(install_root.resolve())
+        except (ValueError, OSError):
+            in_install = False
+        pyyaml_status = "ok" if in_install else "host"
+    except ImportError:
+        pyyaml_status = "missing"
+
     info = {
         # Q-B: 未迁的旧 repo state 视为"未就绪"; install manifest 非 ok (缺/不兼容) 也视为
         # 未达分发就绪 (Step3 Codex review: doctor 是分发就绪检查, 缺 manifest=未版本化=未就绪;
         # runtime warn 放行与 doctor gate 不冲突). user_resource 单独报, 不计入 ok.
         "ok": (not sb and writable and not legacy_pending
-               and install_manifest_status == "ok"),
+               and install_manifest_status == "ok"
+               and py_ok and pyyaml_status != "missing"),
         "protocol_version": PROTOCOL_VERSION,
         "candidate_schema_version": CANDIDATE_SCHEMA_VERSION,
         "engine_version": _manifest.ENGINE_VERSION,
@@ -931,8 +953,32 @@ def cmd_doctor(args) -> int:
         "bundle_data_schema_version": bundle_data_schema_version,  # int | None
         "sandbox_enabled": sb,
         "scope_ready": not sb,
+        # D-105 形态B runtime 自检
+        "python_version": python_version,        # 需 >= 3.11
+        "python_ok": py_ok,
+        "posix": is_posix,                        # POSIX-only (fcntl 文件锁)
+        "pyyaml_status": pyyaml_status,           # ok(vendored) | host | missing
+        "pyyaml_version": pyyaml_version,         # str | None
+        "pyyaml_path": pyyaml_path,               # str | None
         "notes": [],
     }
+    if not py_ok:
+        info["notes"].append(
+            f"python {python_version} < 3.11 — core 不支持. 装 3.11+ (homebrew/pyenv/uv)."
+        )
+    if pyyaml_status == "missing":
+        info["notes"].append(
+            "vendored pyyaml 不可达 (import yaml 失败) — bundle 缺 vendor/yaml/ 或 sys.path "
+            "未注入. 重跑 build_skill_bundle --install 重建 bundle."
+        )
+    elif pyyaml_status == "host":
+        info["notes"].append(
+            f"pyyaml 来自宿主环境而非 bundle vendor (dev/形态A 合法; 形态B bundle 应 vendored): {pyyaml_path}"
+        )
+    if not is_posix:
+        info["notes"].append(
+            "非 POSIX 平台 — core 用 fcntl 文件锁, Windows 不支持 (除 WSL)."
+        )
     if sb:
         info["notes"].append(
             "sandbox 全局启用中 — CLI production scope 会被拒绝. 先 disable sandbox."

@@ -289,3 +289,13 @@ Phase 1 启动前原 9 项必收口按"自用是否需要"重切 (清单见 [ROA
 - **② reference v3 (真 bug 修复)**: `reference_resolver.resolve_reference` 发现 (list_traces→list_traces_v3) + 读取 (read_trace→read_meta/read_round_full 取最新已发布 round 的 final) 双路改 v3-aware。修前: refine 过 (迁 v3 目录) 的历史餐, "上次那家差不多换一家" 类引用解析不到 → 隐性破坏 Faithful Refine (D-080)。v2 单文件回退保留 (无 refine 的 session 不变), 找不到仍 None 让上游降级 (D-085 忠实)。
 - **① 裸 core 真实时钟 (护栏锁死, 行为不变)**: D-104 已确认 "sandbox=debug, 在 production 之外" 是意图 (虚拟时钟只经 web/debug import sandbox 注册); 补测试锁死裸 agent recommend 路径走真实时钟, 防以后假时间被接回点餐路径。
 - 守门: tests/test_d104_followup.py (3 测试: v3 引用解析 / v2 不回归 / 裸 core 真实时钟) + baseline_l2_snapshot 0-diff (reference 不在空-refine L2 dry-run 路径)。`reference_resolver` 不在 high-risk 白名单。
+
+## D-105
+**形态B 自包含 skill 分发 — 替代形态A 当默认接入.** (2026-05-30) · 设计 spec: docs/superpowers/specs/2026-05-30-chisha-form-b-self-contained-skill-design.md · Codex 设计+commit 双触点。
+- **动机**: 形态A (`uv tool install chisha-meal` + 薄 SKILL.md 指全局 `chisha`) 接入两步、代码不随 skill 走、换机器要先装包。形态B: core 代码+数据+vendored 依赖+wrapper bundle 进一个 skill 文件夹, 拷进 `~/.claude/skills/chisha-meal/` 即用, **自包含、零全局安装、运行期零联网、零 pydantic**。
+- **砍 core pydantic**: `collector_contract.py` 从 pydantic strict 改纯 dataclass + 手写校验, 逐层复刻 4 陷阱 (required-but-nullable 用 `_MISSING` 哨兵 / bool 泄漏前置 `not isinstance(v,bool)` / Literal 枚举 / extra 容忍) + 检查顺序 (结构→schema_version→norm_version)。与旧 pydantic 行为对拍 (tests/fixtures/collector_contract_golden.json 46 case + tests/test_collector_contract.py)。core 运行期唯一第三方依赖 = pyyaml。
+- **vendoring pyyaml**: installer 把纯 Python `yaml/` 拷进 bundle `vendor/yaml/` (C 扩展 `_yaml` 不拷, 运行时走纯 Python path)。`scripts/build_skill_bundle.py` 升级真 installer: cli.py 移回 (wrapper dispatch 目标) + 补拷 profile.yaml 模板 + `--install` staged 覆盖 (copy-to-temp-first, 拷贝失败不损 live skill; 两次 rename 间残留极小窗口, 非 OS 单原子) + 备份 + B 形态 SKILL.md (单一源 = `agent_skill_init._claude_code_skill_md`)。wrapper `scripts/chisha`: py>=3.11 硬 guard + sys.path 注入 (bundle→vendor→orig) + dispatch `chisha.cli:main`。
+- **诚实边界**: **POSIX-only** (core 用 fcntl 文件锁, Windows 除 WSL 外不支持); **python3 ≥ 3.11** (macOS 自带 3.9 不够, wrapper guard 报清晰错)。SKILL.md/doctor 显式声明。
+- **A additive 退役**: pyproject `[project.scripts]` 与 A 的 uv tool 入口**保留** (回滚用); 仅 SKILL.md 默认翻成 B 形态。A 入口标 deprecated 留后续。共读同一 `~/.chisha` state (无迁移)。
+- 守门: baseline_l2_snapshot 0-diff (砍 pydantic 后 4 trace 逐字节一致) + pytest 1276 pass (+collector_contract/build_skill_bundle 测试, 4 个形态A SKILL.md 断言改 B 形态) + **裸 python3 隔离实跑全链路** (bare venv 3.13 无 pydantic/pyyaml, doctor→onboard→eat→continue→choose→refine 全绿)。触碰 high-risk `agent_skill_init`。
+- 已知遗留 (非本期): `refine_intent_v2.py` fallback 路径 `print()` 漏到 stdout (违 "stdout 一律 JSON" 契约, host 靠 `splitlines()[-1]` 兜底); 形态A install 跑 onboard 会写 B 形态 SKILL.md (B 默认下符合预期)。

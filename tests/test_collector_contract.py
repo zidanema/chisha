@@ -133,3 +133,51 @@ def test_missing_restaurants_fails():
     del raw["restaurants"]
     with pytest.raises(ContractViolation):
         validate_collector_output(raw, expected_norm_version=NORM_V)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# D-105: 与旧 pydantic 行为对拍 (golden fixture)。
+# tests/fixtures/collector_contract_golden.json 由 tmp/capture_contract_golden.py
+# 在 pydantic 仍在场时跑出 (每 case: input + expect_pass + err_kind 分类)。纯 dataclass
+# 校验器必须逐 case 复现同样的 pass/fail 与失败语义 (4 陷阱 + 检查顺序)。
+# ─────────────────────────────────────────────────────────────────────────
+from pathlib import Path  # noqa: E402
+
+_GOLDEN_PATH = Path(__file__).parent / "fixtures" / "collector_contract_golden.json"
+_GOLDEN = json.loads(_GOLDEN_PATH.read_text(encoding="utf-8")) if _GOLDEN_PATH.exists() else []
+
+
+def _classify(doc, norm):
+    try:
+        validate_collector_output(doc, expected_norm_version=norm)
+        return True, None
+    except ContractViolation as e:
+        msg = str(e)
+        if "不是 dict" in msg:
+            kind = "not_dict"
+        elif "schema_version" in msg and "不受支持" in msg:
+            kind = "schema_version"
+        elif "normalized_name_version" in msg:
+            kind = "norm_version"
+        else:
+            kind = "contract"
+        return False, kind
+
+
+def test_golden_fixture_present_and_balanced():
+    assert len(_GOLDEN) >= 40, "golden fixture 缺失或过少 (期望 ≥40 case)"
+    assert any(c["expect_pass"] for c in _GOLDEN)
+    assert any(not c["expect_pass"] for c in _GOLDEN)
+
+
+@pytest.mark.parametrize("c", _GOLDEN, ids=[c["name"] for c in _GOLDEN] or None)
+def test_matches_pydantic_golden(c):
+    """逐 case 与旧 pydantic 行为对拍: pass/fail + 失败分类一致。"""
+    ok, kind = _classify(c["input"], c["norm"])
+    assert ok == c["expect_pass"], (
+        f"{c['name']}: 新校验器 pass={ok} 但 golden(pydantic) pass={c['expect_pass']}"
+    )
+    if not ok:
+        assert kind == c["err_kind"], (
+            f"{c['name']}: 失败分类 {kind!r} != golden {c['err_kind']!r}"
+        )

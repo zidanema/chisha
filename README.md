@@ -63,14 +63,27 @@ chisha choose   --id <rid> --card <cards[].id> --action accept   # 用户选定
 
 ## 装 (Claude Code 用户, quickstart)
 
+**形态B 自包含 skill (默认, D-105)** — 一个 skill 文件夹 = 代码+数据+vendored 依赖, 拷贝即用, 零全局安装、运行期零联网/零 pydantic。
+
+维护者 (有本仓) 一步构建+安装:
+
 ```bash
-uv tool install git+https://github.com/zidanema/chisha.git
-chisha onboard --zone shenzhen-bay     # 写 ~/.chisha/profile.yaml + 装 skill + dry start 自检
-chisha doctor                          # 自检 install/state root + manifest + scope
+uv run python -m scripts.build_skill_bundle --out tmp/skill_bundle --install
+# → staged 覆盖 ~/.claude/skills/chisha-meal/ (copy-to-temp-first + 备份旧内容); 自包含 bundle 含 scripts/chisha wrapper
+python3 ~/.claude/skills/chisha-meal/scripts/chisha onboard --zone shenzhen-bay  # 写 ~/.chisha/profile.yaml + dry start 自检
+python3 ~/.claude/skills/chisha-meal/scripts/chisha doctor                       # 自检 python 版本/vendored pyyaml/install_root/manifest
 # → 之后 Claude Code 里说 "今天中午吃啥" 即触发 chisha-meal skill
 ```
 
-升级: `uv tool upgrade chisha-meal` (state 永远住 `~/.chisha/`, 不被覆盖)。
+拿到别人发的 bundle 文件夹: 直接拷进 `~/.claude/skills/chisha-meal/`, 再跑上面的 onboard/doctor 即可 (无需本仓、无需 pip/uv)。
+
+**环境要求 (诚实边界)**: python3 ≥ 3.11 在 PATH (macOS 自带 3.9 不够); **POSIX-only** (macOS/Linux, core 用 fcntl 文件锁, Windows 除 WSL 外不支持)。
+
+**形态A (uv tool install, 引擎回滚保留一版)**:
+```bash
+uv tool install git+https://github.com/zidanema/chisha.git && chisha onboard --zone shenzhen-bay
+```
+A 是 **引擎 CLI 回滚** (全局 `chisha` 命令直跑); 注意 onboard 写出的 SKILL.md 已是 B 形态 (命令指向 bundle wrapper) —— 要 B 形态 skill 自动触发就装 B bundle, 纯 A 只用全局 `chisha` 直接跑命令。state 永远住 `~/.chisha/` (A/B 共读, 升级不被覆盖)。
 
 **让 AI agent 帮你装**: 把 [AGENTS.md](AGENTS.md) 链接丢给你的 Claude Code, 它会按 spec 自己探测、安装、配置、冒烟测试。
 

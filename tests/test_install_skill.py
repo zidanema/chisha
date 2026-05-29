@@ -21,24 +21,30 @@ from chisha import agent_skill_init
 
 
 def test_skill_md_uses_flat_verbs():
-    """P1: SKILL.md 用扁平 `chisha eat/continue/choose` (不再 `chisha agent <verb>`/legacy)."""
+    """D-105 形态B: SKILL.md 用 bundle wrapper + 扁平 verb (CHISHA = scripts/chisha)."""
     md = agent_skill_init._claude_code_skill_md()
     # legacy 字符串完全消失
     assert "uv run python -m chisha.agent_cli" not in md
     assert "chisha agent start" not in md          # P1 拍平: 不再走 agent 透传层
-    # 扁平 verb + 单循环协议
-    assert "chisha eat " in md
-    assert "chisha continue " in md
-    assert "chisha choose " in md
+    # 形态B: 命令走 bundle 内 wrapper, 不再依赖全局 PATH
+    assert "scripts/chisha" in md
+    assert "CHISHA eat" in md
+    assert "CHISHA continue" in md
+    assert "CHISHA choose" in md
     assert "do_llm" in md and "step_token" in md   # P1 协议词
-    assert "chisha doctor" in md
+    assert "CHISHA doctor" in md
 
 
 def test_skill_md_has_install_section():
-    """P1: 装包持久 `uv tool install chisha-meal` + `chisha onboard` (model A)."""
+    """D-105 形态B: 拷文件夹即用 (不再 uv tool install) + onboard + 环境声明."""
     md = agent_skill_init._claude_code_skill_md()
-    assert "uv tool install chisha-meal" in md
-    assert "chisha onboard" in md
+    # 形态A 的全局装包入口在 SKILL.md 里消失 (B 替代 A 当默认接入)
+    assert "uv tool install" not in md
+    assert "~/.claude/skills/chisha-meal/" in md    # 拷贝即用目标
+    assert "onboard" in md
+    # POSIX-only + python>=3.11 显式声明 (诚实边界)
+    assert "3.11" in md
+    assert "POSIX" in md
 
 
 def test_init_skill_writes_user_level_by_default(tmp_path, monkeypatch):
@@ -50,8 +56,9 @@ def test_init_skill_writes_user_level_by_default(tmp_path, monkeypatch):
     target = tmp_path / ".claude" / "skills" / "chisha-meal" / "SKILL.md"
     assert target.exists()
     content = target.read_text(encoding="utf-8")
-    assert "chisha eat " in content
-    assert "uv tool install chisha-meal" in content
+    assert "CHISHA eat" in content
+    assert "scripts/chisha" in content
+    assert "uv tool install" not in content
 
 
 def test_init_skill_exists_without_force(tmp_path, monkeypatch):

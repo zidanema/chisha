@@ -1,0 +1,1449 @@
+[
+  {
+    "name": "valid_baseline",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": true,
+    "err_kind": null
+  },
+  {
+    "name": "extra_toplevel",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ],
+      "future_field": "x"
+    },
+    "norm": 1,
+    "expect_pass": true,
+    "err_kind": null
+  },
+  {
+    "name": "extra_in_restaurant",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2,
+          "future": "x"
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": true,
+    "err_kind": null
+  },
+  {
+    "name": "extra_in_menuitem",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28,
+              "image": true
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": true,
+    "err_kind": null
+  },
+  {
+    "name": "extra_in_location",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed",
+        "geohash": "ws10"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": true,
+    "err_kind": null
+  },
+  {
+    "name": "loc_obs_text_null",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": null,
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": true,
+    "err_kind": null
+  },
+  {
+    "name": "loc_obs_text_missing",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "loc_obs_at_null",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": null,
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": true,
+    "err_kind": null
+  },
+  {
+    "name": "loc_obs_at_missing",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "loc_status_null",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": null
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": true,
+    "err_kind": null
+  },
+  {
+    "name": "loc_status_missing",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "loc_status_unobserved",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "unobserved"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": true,
+    "err_kind": null
+  },
+  {
+    "name": "loc_status_bad_value",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "verified"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "loc_status_wrong_type",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": 1
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "price_int_ok",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 10
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": true,
+    "err_kind": null
+  },
+  {
+    "name": "price_float_ok",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 10.5
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": true,
+    "err_kind": null
+  },
+  {
+    "name": "price_bool_reject",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": true
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "price_str_reject",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": "10"
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "rating_bool_reject",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": true,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "rating_null_ok",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": null,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": true,
+    "err_kind": null
+  },
+  {
+    "name": "rating_missing_ok",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": true,
+    "err_kind": null
+  },
+  {
+    "name": "rating_str_reject",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": "4.5",
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "menu_count_float_reject",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2.0
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "menu_count_bool_reject",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": true
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "rest_name_missing",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "rest_name_wrong_type",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": 123,
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "menu_missing",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "menu_item_name_missing",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "menu_item_price_missing",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁"
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "loc_name_missing",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "loc_missing",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "restaurants_missing",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      }
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "schema_version_missing",
+    "input": {
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "schema_version_wrong_type",
+    "input": {
+      "schema_version": "1",
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "contract"
+  },
+  {
+    "name": "schema_version_unsupported",
+    "input": {
+      "schema_version": 2,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "schema_version"
+  },
+  {
+    "name": "norm_version_mismatch",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": "meituan",
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 2,
+    "expect_pass": false,
+    "err_kind": "norm_version"
+  },
+  {
+    "name": "app_null_ok",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "app": null,
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": true,
+    "err_kind": null
+  },
+  {
+    "name": "app_missing_ok",
+    "input": {
+      "schema_version": 1,
+      "normalized_name_version": 1,
+      "collected_at": "2026-05-30",
+      "location": {
+        "name": "深圳湾",
+        "label": "office",
+        "observed_address_text": "科技园南区",
+        "address_observed_at": "2026-05-30",
+        "address_observation_status": "observed"
+      },
+      "restaurants": [
+        {
+          "name": "A 餐厅",
+          "menu": [
+            {
+              "name": "宫保鸡丁",
+              "price": 28
+            },
+            {
+              "name": "番茄炒蛋",
+              "price": 18.5,
+              "category": "热菜",
+              "monthly_sales": "月售300"
+            }
+          ],
+          "rating": 4.6,
+          "menu_count": 2
+        }
+      ]
+    },
+    "norm": 1,
+    "expect_pass": true,
+    "err_kind": null
+  },
+  {
+    "name": "toplevel_list",
+    "input": [
+      {
+        "schema_version": 1,
+        "normalized_name_version": 1,
+        "app": "meituan",
+        "collected_at": "2026-05-30",
+        "location": {
+          "name": "深圳湾",
+          "label": "office",
+          "observed_address_text": "科技园南区",
+          "address_observed_at": "2026-05-30",
+          "address_observation_status": "observed"
+        },
+        "restaurants": [
+          {
+            "name": "A 餐厅",
+            "menu": [
+              {
+                "name": "宫保鸡丁",
+                "price": 28
+              },
+              {
+                "name": "番茄炒蛋",
+                "price": 18.5,
+                "category": "热菜",
+                "monthly_sales": "月售300"
+              }
+            ],
+            "rating": 4.6,
+            "menu_count": 2
+          }
+        ]
+      }
+    ],
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "not_dict"
+  },
+  {
+    "name": "toplevel_none",
+    "input": null,
+    "norm": 1,
+    "expect_pass": false,
+    "err_kind": "not_dict"
+  }
+]

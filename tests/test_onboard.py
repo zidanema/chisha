@@ -58,9 +58,10 @@ def test_onboard_writes_skill(tmp_path):
     skill_path = Path(skill["path"])
     assert skill_path.is_relative_to(tmp_path)
     assert skill_path.exists()
-    # SKILL.md 内含 P1 扁平 CLI (单循环触发器)
+    # D-105 形态B: SKILL.md 走 bundle wrapper (CHISHA = scripts/chisha)
     text = skill_path.read_text(encoding="utf-8")
-    assert "chisha eat " in text and "chisha continue " in text
+    assert "scripts/chisha" in text
+    assert "CHISHA eat" in text and "CHISHA continue" in text
 
 
 def test_onboard_doctor_invoked(tmp_path):

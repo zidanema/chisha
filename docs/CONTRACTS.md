@@ -181,7 +181,7 @@
 - **(F4) agent 回传必须是信封 `{correlation_id, payload}`, correlation_id 必填且严格校验** (resolve-intent / apply-rerank, `parse_agent_response`). 防旧轮 / stale payload 套到当前 round — 持久化 top_k 只防 combo_index 漂移, 不防旧轮 narrative / 排序逻辑串台. 裸 JSON 回传被拒 (CORRELATION). adapter 回显 `llm_request_spec.correlation_id` 即可.
 - **(P1 折叠) 顶层扁平 verb `eat / continue / choose`; `continue` 合并 resolve-intent+apply-rerank**, 按 `--step` token (= correlation_id 编码, 对 host 不透明) 解出的 `operation` + round.status 路由. host 只传 `--result <raw payload>` + 回显 `--step <step_token>`; chisha 内部包 `{correlation_id, payload}` 信封走 `parse_agent_response` — **F4 守卫一字不变** (上一条), 只去掉 host 手包信封/拼 correlation 的 footgun. `--step` **必填** (不静默从 round 派生: 单 in-flight 只防并发, 不防状态前进后的 stale retry — codex P1 Q1/Q2). 两步 step-keyed 幂等回放 (codex Q3): extract 重发→复用 resolved 回放 rerank spec; rerank 重发 (round 已 clear)→查 `{sid}.ready.json` 快照回放. 字段 `llm_request_spec`→`do_llm`, 老 verb (`start`/`resolve-intent`/`apply-rerank` / `chisha agent`) + 老字段各保留 deprecated alias 一版.
 - **CLI 默认 production scope; sandbox 全局启用时拒绝运行** (codex #5). 不假设直 import = production (data_root/clock 按全局 sandbox marker 路由). `--at-time` 走 today 注入不碰 sandbox.
-- **交互层 (AskUserQuestion 呈现 / refine 入口) 是 adapter 特定的 Layer 2, 住 `agent_skill_init` 生成的 SKILL.md, 不进协议层.** 换 agent = 重写交互层、复用 CLI verbs + 信封.
+- **交互层 (AskUserQuestion 呈现 / refine 入口) 是 adapter 特定的 Layer 2, 住 `agent_skill_init` 生成的 SKILL.md, 不进协议层.** 换 agent = 重写交互层、复用 CLI verbs + 信封. **(D-105 形态B) SKILL.md 命令走 bundle 内 `scripts/chisha` wrapper (`CHISHA` 简写), 不再依赖全局 `chisha` PATH; 此函数同时是 bundle SKILL.md 与 `chisha skills add` 的单一源.**
 
 ---
 
@@ -192,7 +192,8 @@
 - **trace 分层**: rich L1/L2/L3 渲染 = extras (api/debug_recommend); agent `_publish_trace_best_effort` 富化失败 (ImportError) → 退 `_build_minimal_trace` (core, final 用 core 格式化、刻意无 cuisine 保 `similar` no-op parity), reference refine 读 final[].restaurant.id 不退化。
 - **slim 守门**: agent_cli sandbox guard (`_guard_scope`/doctor) + rerank `_run_llm_rerank` 的 llm_client import 都 try/except ImportError 降级 (extras 缺席 → 当未启用 / status='fallback')。
 - **新核心模块**: `core_api_helpers` (agent card/session/trace-final 格式化单源) 进 high-risk 白名单; `clock_provider`/`sandbox_router` 是低 churn DI 叶子。
-- **slim bundle**: `scripts/build_skill_bundle.py` 切 core 子树 (排除 extras) + slim requirements → 隔离实跑验证; 非 marketplace 打包 (仍在范围红线外)。
+- **slim bundle / 形态B installer (D-105)**: `scripts/build_skill_bundle.py` 切 core 子树 + **vendoring pyyaml** (`vendor/yaml/`) + 补 profile.yaml 模板 + 生成 `scripts/chisha` wrapper (py>=3.11 guard + sys.path 注入 bundle→vendor→orig + dispatch `chisha.cli:main`) + B 形态 SKILL.md (单一源 `agent_skill_init._claude_code_skill_md`)。`--install` staged 覆盖 `~/.claude/skills/chisha-meal/` (copy-to-temp-first + rename swap, 拷贝失败不损 live skill; 两次 rename 间残留极小窗口, 非 OS 单原子) + 备份旧内容。**cli.py 从 EXTRAS 移回** (wrapper dispatch 目标)。bundle 自包含、运行期零联网/零 pip/零 pydantic; POSIX-only + py>=3.11。非 marketplace 打包 (仍在范围红线外)。
+- **core 零 pydantic (D-105)**: `collector_contract.py` 是 core 最后一处 pydantic, 已改纯 dataclass + 手写 strict 校验 (4 陷阱逐层复刻, golden 对拍 tests/test_collector_contract.py)。core 运行期唯一第三方依赖 = pyyaml (已 vendored)。`schemas.py`/extras 仍可 pydantic, 不进 core 闭包。
 
 ---
 
