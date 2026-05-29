@@ -20,7 +20,7 @@
 
 ## 为什么是这个形态 (AI-friendly 架构)
 
-chisha 是**无脑的**——它自己不调 LLM、不持任何 API key (D-074)。确定性的活 (召回 / 打分 / 校验 / 兜底 / 反馈) 全在 chisha; 需要"智能"的两步 (把用户原话抽成结构化 intent、读候选排出推荐) 由它发一个机器可读的 `do_llm` 信封, **借宿主 agent (Claude Code) 自己的 LLM** 执行后喂回校验落库。
+chisha 是**无脑的**——它自己不调 LLM、不持任何 API key。确定性的活 (召回 / 打分 / 校验 / 兜底 / 反馈) 全在 chisha; 需要"智能"的两步 (把用户原话抽成结构化 intent、读候选排出推荐) 由它发一个机器可读的 `do_llm` 信封, **借宿主 agent (Claude Code) 自己的 LLM** 执行后喂回校验落库。
 
 典型 CLI 工具要么内置模型、要么自己管 key (自包含智能); chisha 选了另一条路: **确定性引擎 + 借来的宿主智能**——既零 key, 又自动蹭到宿主当下最强的模型。宿主接入就一个循环:
 
@@ -37,18 +37,25 @@ chisha choose   --id <rid> --card <cards[].id> --action accept   # 用户选定
 
 ## 当前状态
 
-**V1.0 工程里程碑完成** (2026-05-20) · **自用为主、推广随缘** (D-097)
+**自用打磨中，核心链路已跑通。** 个人项目，repo 已公开，但定位仍是自用为主、推广随缘。
 
-跑通了: 推荐链路 L1/L2/L3 + Web SPA 用户视图 + 反馈系统 + L1 长期偏好 LLM 抽取 + 反馈短链路即时生效 (差评下次推荐就降权/剔除, D-098) + Sandbox time-travel + trace 持久化 + Debug 三模式 + Faithful Refine framework + L2 信号校准 + **可分发共享核心** (D-102: 统一兜底契约 + install/state root 二分 state→`~/.chisha/` + bundle manifest/compat 闸门) + **T-DIST-01** wheel 分发 + Claude Code skill 自动接入 + **P1 接入优雅化** (协议折叠成 `eat → continue` 单循环 + 扁平 CLI + 瘦 skill, 见上「AI-friendly 架构」)。
+已经能用的：
 
-**当前限制** (主动收窄, 等同事真要推时再扩):
+- 三阶段推荐链路（L1 召回 → L2 14 维打分 → L3 LLM 精排写理由）
+- Web SPA 用户视图 + 反馈系统（差评下一次推荐就降权/剔除，好评优先）
+- 长期口味画像（从你的真实反馈统计聚合，可解释、可手编）
+- 多轮 refine（自然语言追加约束，如"想吃辣""少米饭""想喝汤"）
+- 一行装、自动触发：`uv tool install` 装好后，Claude Code 里说"中午吃啥"即触发；状态存在 `~/.chisha/`，升级不动你的数据
+- 开发者自用工具：Sandbox 时光机、trace 持久化、Debug 三模式
+
+**当前限制**（主动收窄，等真要推广时再扩）：
 
 | 项 | 现状 | 后续 |
 |---|---|---|
-| Zone (城市/工区) | 仅 shenzhen-bay (深圳湾, 334 家 / 22556 菜) | T-DIST-02 zone bundle marketplace |
-| Methodology (饮食方法论) | 仅 harvard_plate (哈佛餐盘); 其它走 refine 自由文本兜底 | T-DIST-02 methodology schema/template/validate |
-| Host agent | 仅 Claude Code 有自动触发 skill; 其它可手动调 CLI | T-DIST-02 多 adapter (Cursor / Codex / OpenClaw) |
-| Manifest integrity | 只闸兼容性, 不验完整性/来源 (`integrity=null` 留位) | git+https transport 由 commit hash 兜底; S3/镜像 transport 需自验 |
+| 城市 / 工区 | 仅深圳湾办公区（334 家 / 22556 菜） | 多工区数据包市场 |
+| 饮食方法论 | 仅哈佛餐盘；其它（生酮/增肌/糖控…）走 refine 自由文本兜底 | 可插拔的方法论模板 |
+| 宿主 Agent | 仅 Claude Code 有自动触发 skill；其它（Cursor / Codex / OpenClaw…）可手动调 CLI | 多宿主适配器 |
+| 数据完整性 | 只校验数据包与引擎兼容性，不验完整性/来源 | 走 GitHub 传输时由 commit hash 兜底；外部镜像需自验 |
 
 详细路线见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
@@ -108,7 +115,7 @@ cd apps/sandbox-lab && npm install && npm run dev   # :5175
 
 | 文档 | 内容 |
 |---|---|
-| [AGENTS.md](AGENTS.md) | **AI agent 安装契约** v1.0 (host agent 自动安装走这个; 唯一版本化契约源) |
+| [AGENTS.md](AGENTS.md) | **AI agent 安装契约** — 让你的 AI 助手帮你装 chisha 时读这个 |
 | [CLAUDE.md](CLAUDE.md) | 项目红线 + 常用命令 (coding agent 必读) |
 | [docs/CONTRACTS.md](docs/CONTRACTS.md) | 跨文件隐含约束 + 反直觉规则 |
 | [docs/api.md](docs/api.md) | 前后端 API 契约 |
