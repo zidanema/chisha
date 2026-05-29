@@ -18,11 +18,28 @@
 
 ---
 
+## 为什么是这个形态 (AI-friendly 架构)
+
+chisha 是**无脑的**——它自己不调 LLM、不持任何 API key (D-074)。确定性的活 (召回 / 打分 / 校验 / 兜底 / 反馈) 全在 chisha; 需要"智能"的两步 (把用户原话抽成结构化 intent、读候选排出推荐) 由它发一个机器可读的 `do_llm` 信封, **借宿主 agent (Claude Code) 自己的 LLM** 执行后喂回校验落库。
+
+典型 CLI 工具要么内置模型、要么自己管 key (自包含智能); chisha 选了另一条路: **确定性引擎 + 借来的宿主智能**——既零 key, 又自动蹭到宿主当下最强的模型。宿主接入就一个循环:
+
+```bash
+chisha eat lunch [--context "想吃辣别太贵"]   # 起一轮 → 回一个 do_llm 信封
+# 循环: 回包带 do_llm 就用你的 LLM 跑它 → 喂回 → 直到 status=ready 出 cards
+chisha continue --id <rid> --result '<你的 LLM 原始输出>' --step <step_token>
+chisha choose   --id <rid> --card <cards[].id> --action accept   # 用户选定
+```
+
+`step_token` 由 chisha 发、宿主回显 (不透明), 替代了手抄 correlation / 手包信封。完整接入契约见 [AGENTS.md](AGENTS.md)。
+
+---
+
 ## 当前状态
 
 **V1.0 工程里程碑完成** (2026-05-20) · **自用为主、推广随缘** (D-097)
 
-跑通了: 推荐链路 L1/L2/L3 + Web SPA 用户视图 + 反馈系统 + L1 长期偏好 LLM 抽取 + 反馈短链路即时生效 (差评下次推荐就降权/剔除, D-098) + Sandbox time-travel + trace 持久化 + Debug 三模式 + Faithful Refine framework + L2 信号校准 + **可分发共享核心** (D-102: 统一兜底契约 + install/state root 二分 state→`~/.chisha/` + bundle manifest/compat 闸门) + **T-DIST-01** wheel 分发 + Claude Code skill 自动接入。
+跑通了: 推荐链路 L1/L2/L3 + Web SPA 用户视图 + 反馈系统 + L1 长期偏好 LLM 抽取 + 反馈短链路即时生效 (差评下次推荐就降权/剔除, D-098) + Sandbox time-travel + trace 持久化 + Debug 三模式 + Faithful Refine framework + L2 信号校准 + **可分发共享核心** (D-102: 统一兜底契约 + install/state root 二分 state→`~/.chisha/` + bundle manifest/compat 闸门) + **T-DIST-01** wheel 分发 + Claude Code skill 自动接入 + **P1 接入优雅化** (协议折叠成 `eat → continue` 单循环 + 扁平 CLI + 瘦 skill, 见上「AI-friendly 架构」)。
 
 **当前限制** (主动收窄, 等同事真要推时再扩):
 
