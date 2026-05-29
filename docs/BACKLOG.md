@@ -37,6 +37,18 @@
 - **不修原因**: 涉及打分链路改动, 必须 baseline_l2_snapshot 守门; 衰减曲线 + hard/soft 决策需要设计讨论, 不能边写边定
 - **与 Refine v2 (D-080~D-085) 关系**: 不重叠。Refine v2 解决 "当下意图忠实兑现"，B-001 解决 "近期反馈对长期偏好的衰减"。两条路径独立、可并行做。Refine v2 完成不解此 bug，仍需单独 session 设计。
 
+### B-002 · 3 个测试依赖本机环境 (无 claude 登录 / 跨平台挂)
+
+- **来源**: 2026-05-29 首次加 GitHub Actions CI 跑全量 pytest, 干净 runner 暴露 (本地一直绿因本机 claude 已登录 + macOS). CI commit 已 revert (38d751b), 押后到测试健壮性专项。
+- **状态**: open
+- **现象**: 干净环境 (无 claude CLI 登录态 / 非 macOS) 跑 pytest 挂 3 个:
+  - `test_claude_code_cli.py::test_call_includes_all_required_flags` — `_patch_cli_available` 只 mock `_check_cli`, 漏 `call()` 内 `shutil.which("claude")` → None 进 cmd[0] → TypeError
+  - `test_rerank.py::test_rerank_trace_includes_tool_schema_reference` — cli 分支 `is_available()` probe `claude auth status` firstParty, 无登录 → config_error → KeyError `system_prompt_full`
+  - `test_d079_pr1_golden.py::test_recommend_meal_golden_snapshot` — golden snapshot 跨平台漂移 (`use_llm_rerank=False` 纯确定性, 与 claude **无关**; 根因未定: 浮点 / 排序 tie-break / locale, 需拉 CI 完整 diff)
+- **影响**: 没登录 claude 的 contributor clone 后本地 pytest 挂 test1/3; CI 无法引入
+- **方案预案**: test1/3 mock 掉 claude probe (`which` + `is_available`) 让测试自包含; test2 先拉 CI diff 定位漂移字段。修完重引入 CI (dummy-key 方案已验证 1258 pass, ci.yml 见 revert `d4c2180` diff)
+- **不修原因**: 独立于发布清理 scope; test2 跨平台根因未知深度
+
 ---
 
 ## Features
