@@ -2,7 +2,15 @@
 name = "chisha-meal"
 version = "0.1.0"
 description = "今天吃点啥 - 个人 AI 原则派点餐执行外包"
+readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "志丹", email = "mzd5646241@gmail.com" }]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: POSIX",
+    "Topic :: Utilities",
+]
 dependencies = [
     "anthropic>=0.40.0",
     "pyyaml>=6.0",
@@ -15,6 +23,10 @@ dependencies = [
     "uvicorn>=0.32.0",
     "ruamel-yaml>=0.19.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/zidanema/chisha"
+Repository = "https://github.com/zidanema/chisha"
 
 [project.scripts]
 chisha = "chisha.cli:main"

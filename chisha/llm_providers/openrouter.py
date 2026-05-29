@@ -68,7 +68,7 @@ def call(
         max_tokens=max_tokens,
         temperature=temperature,
         extra_headers={
-            "HTTP-Referer": "https://github.com/chisha-private",
+            "HTTP-Referer": "https://github.com/zidanema/chisha",
             "X-Title": "chisha recommend",
         },
     )
