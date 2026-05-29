@@ -127,7 +127,7 @@ def _parse_at_time(at_time: str | None, root: Path) -> dt.date:
 
 
 def _resolve_zone(profile: dict, meal_type: str) -> str:
-    from chisha.api import _resolve_zone as _rz
+    from chisha.core_api_helpers import _resolve_zone as _rz
     return _rz(profile, meal_type)
 
 
@@ -314,7 +314,7 @@ def cmd_start(args) -> int:
     except RuntimeError as e:
         return _emit_error("SCOPE_OR_TIME", str(e))
 
-    from chisha.api import _gen_session_id
+    from chisha.core_api_helpers import _gen_session_id
 
     if args.from_id:
         sid = args.from_id
@@ -513,7 +513,7 @@ def cmd_apply_rerank(args) -> int:
         return _emit_error("BAD_ID", str(e))
 
     from chisha import agent_round_store
-    from chisha.api import _format_v2_candidate
+    from chisha.core_api_helpers import _format_v2_candidate
     from chisha.rerank import FallbackPlan, apply_rerank_response
 
     try:

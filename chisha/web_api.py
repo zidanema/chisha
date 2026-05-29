@@ -22,7 +22,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from pydantic import BaseModel, Field, model_validator
 
 from chisha import feedback_store
-from chisha.api import format_v2_candidate, recommend_meal
+from chisha.api import recommend_meal
+from chisha.core_api_helpers import format_v2_candidate
 from chisha.recall import (
     load_meal_log,
     load_profile,

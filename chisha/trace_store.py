@@ -388,9 +388,10 @@ def _truncate_for_size(trace: dict) -> dict:
         return t
 
     # Step 4: dish nutrition_profile 仅保留 scoring 字段.
-    # Codex PR-2 DEFER #5: schema 与 api._SCORING_NUTRITION_KEYS 严格一致,
+    # Codex PR-2 DEFER #5: schema 与 core_api_helpers._SCORING_NUTRITION_KEYS 严格一致,
     # 且裁剪目标改成 __frozen.dishes 表 (PR-1 normalized schema, 不再嵌套在 l1_combos).
-    from chisha.api import _SCORING_NUTRITION_KEYS
+    # D-104 Step1a: 常量从 api 挪到 core_api_helpers, 消除 trace_store→api 的 core→extras 隐边.
+    from chisha.core_api_helpers import _SCORING_NUTRITION_KEYS
     dishes_tbl = (t.get("__frozen") or {}).get("dishes") or {}
     if isinstance(dishes_tbl, dict):
         for did, d in dishes_tbl.items():
