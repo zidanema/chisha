@@ -11,16 +11,13 @@ classifiers = [
     "Operating System :: POSIX",
     "Topic :: Utilities",
 ]
+# D-104 Step 0: agent-only core 只需这 5 个轻依赖. server / 自调 LLM / excel 等
+# 重依赖降级到下方 optional-dependencies (core 在静态依赖图上自然到不了它们).
 dependencies = [
-    "anthropic>=0.40.0",
     "pyyaml>=6.0",
     "pydantic>=2.0",
-    "openai>=2.36.0",
     "python-dotenv>=1.2.2",
     "tenacity>=9.1.4",
-    "pandas>=3.0.2",
-    "fastapi>=0.115.0",
-    "uvicorn>=0.32.0",
     "ruamel-yaml>=0.19.1",
 ]
 
@@ -35,9 +32,20 @@ chisha = "chisha.cli:main"
 chisha-meal = "chisha.cli:main"
 
 [project.optional-dependencies]
+# D-104 Step 0: 跑全链路 server + 自调 LLM 精排才需要 (agent-only core 不需要).
+# fastapi/uvicorn → web_api/debug_server; anthropic/openai → llm_client*.
+web = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
+    "anthropic>=0.40.0",
+    "openai>=2.36.0",
+]
 dev = [
+    "chisha-meal[web]",
     "pytest>=8.0",
     "openpyxl>=3.1",
+    # pandas: 当前 chisha/ 与 scripts/ 均无 import (dead requirement), 暂留 dev 候选移除.
+    "pandas>=3.0.2",
 ]
 
 [tool.pytest.ini_options]
