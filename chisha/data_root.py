@@ -35,12 +35,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from chisha import sandbox, state_root
+from chisha import state_root
 from chisha.sandbox_context import (
     _DEFAULT_SID,
     _validate_sid,
     current_sandbox_session,
 )
+# D-104 Step3: data_root 不再 import sandbox (core→extras 解耦). 是否路由到 sandbox
+# 数据区经 ambient sandbox router 判断: 默认 _DefaultSandboxRouter 返 False (prod/agent);
+# sandbox extras 被 import 时注册 RealSandboxRouter. 两处 fail-loud raise 原样保留。
+from chisha.sandbox_router import get_sandbox_router
 
 
 def _project_root() -> Path:
@@ -82,7 +86,7 @@ def _maybe_sandbox(
     - ctx-only sid (无显式参) 在 sandbox 关闭时仍 silent fallback 到 prod,
       让 D-077 中间件透明 (legacy 行为不变).
     """
-    if not sandbox.is_enabled(root):
+    if not get_sandbox_router().is_enabled(root):
         if session_id is not None and session_id != _DEFAULT_SID:
             raise RuntimeError(
                 f"data_root: explicit non-default session_id={session_id!r} "
@@ -224,7 +228,7 @@ def profile_path(
     默认 sid 副本路径 ``logs/sandbox/profile.yaml`` (与 D-077 一致).
     """
     r = _resolve_root(root)
-    if sandbox.is_enabled(r):
+    if get_sandbox_router().is_enabled(r):
         sid = _resolve_sid(session_id)
         if sid == _DEFAULT_SID:
             sandboxed = r / "logs" / "sandbox" / "profile.yaml"

@@ -108,8 +108,15 @@ def _guard_scope(root: Path, scope: str) -> None:
             f"Phase 0 CLI 仅支持 --scope {'/'.join(_ALLOWED_SCOPES)} (got {scope!r}); "
             f"sandbox / time-travel 走 sandbox-lab"
         )
-    from chisha import sandbox
-    if sandbox.is_enabled(root):
+    # D-104 Step2/3: sandbox 是 extras. full 安装 (sandbox 在) → 照常检测并拒绝;
+    # slim agent core (sandbox 物理缺席) → ImportError → 当未启用 (slim 下 sandbox
+    # 不可能启用, 语义正确)。lazy import 不进 top-level 依赖图。
+    try:
+        from chisha import sandbox
+        sandbox_on = sandbox.is_enabled(root)
+    except ImportError:
+        sandbox_on = False
+    if sandbox_on:
         raise RuntimeError(
             f"sandbox 全局启用中, CLI 拒绝在 {scope} scope 运行 "
             "(避免误路由到沙盒数据 / 虚拟时钟). 先在 sandbox-lab disable, 再跑 CLI."
@@ -833,9 +840,14 @@ def _card_meal_type(sid: str, root: Path) -> str:
 
 def cmd_doctor(args) -> int:
     root = _root()
-    from chisha import sandbox, state_migrate, state_root
+    from chisha import state_migrate, state_root
     from chisha.agent_protocol import CANDIDATE_SCHEMA_VERSION
-    sb = sandbox.is_enabled(root)
+    # D-104 Step2/3: sandbox 是 extras. slim agent core 缺席 → 当未启用 (doctor 仍可跑).
+    try:
+        from chisha import sandbox
+        sb = sandbox.is_enabled(root)
+    except ImportError:
+        sb = False
 
     # D-102 Step2: install/state root 二分 + 迁移状态 + state_root 可写性
     import uuid as _uuid

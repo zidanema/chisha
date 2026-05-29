@@ -22,6 +22,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from pydantic import BaseModel, Field, model_validator
 
 from chisha import feedback_store
+# D-104 Step2/3: web_api 是 extras — 早 import sandbox 触发 core provider 注册
+# (虚拟时钟 + real sandbox router), 保证本进程任何 clock/data_root 调用前 provider 已就位。
+from chisha import sandbox  # noqa: F401
 from chisha.api import recommend_meal
 from chisha.core_api_helpers import format_v2_candidate
 from chisha.recall import (

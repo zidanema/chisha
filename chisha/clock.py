@@ -24,26 +24,23 @@ import datetime as dt
 from pathlib import Path
 from typing import Optional
 
-from chisha import sandbox
-from chisha.sandbox_context import current_sandbox_session
+# D-104 Step2: clock 不再 import sandbox (core→extras 解耦). 经 ambient clock provider
+# 取业务时间: 默认 RealClockProvider == 真实时间; sandbox extras 被 import 时注册
+# VirtualClockProvider (虚拟时钟). 旧的 "sandbox 启用→虚拟 / 否则真实" 语义被 provider
+# 内部复刻 (见 clock_provider.py + sandbox.py 尾部注册), clock.* 调用点零修改。
+from chisha.clock_provider import get_clock_provider
 
 
 def today(root: Optional[Path] = None) -> dt.date:
     """业务"今天". sandbox 启用时返虚拟 date, 否则真实 today."""
-    sid = current_sandbox_session()
-    virtual = sandbox.current_date(root, session_id=sid)
-    return virtual if virtual is not None else dt.date.today()
+    return get_clock_provider().today(root)
 
 
 def now(root: Optional[Path] = None) -> dt.datetime:
     """业务 datetime (naive). 与 dt.datetime.now() 兼容."""
-    sid = current_sandbox_session()
-    virtual = sandbox.current_datetime(root, session_id=sid)
-    return virtual if virtual is not None else dt.datetime.now()
+    return get_clock_provider().now(root)
 
 
 def now_utc(root: Optional[Path] = None) -> dt.datetime:
     """业务 UTC datetime (aware, tz=UTC). 与 dt.datetime.now(tz=UTC) 兼容."""
-    sid = current_sandbox_session()
-    virtual = sandbox.current_datetime_utc(root, session_id=sid)
-    return virtual if virtual is not None else dt.datetime.now(dt.timezone.utc)
+    return get_clock_provider().now_utc(root)

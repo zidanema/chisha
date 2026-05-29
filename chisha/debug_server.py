@@ -25,6 +25,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+# D-104 Step2/3: debug_server 是 extras — 早 import sandbox 触发 core provider 注册
+# (虚拟时钟 + real sandbox router), 先于 debug_recommend / web_api。
+from chisha import sandbox  # noqa: F401
 from chisha.debug_recommend import compare_moods, debug_recommend
 from chisha.web_api import router as web_router
 
