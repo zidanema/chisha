@@ -282,4 +282,10 @@ Phase 1 启动前原 9 项必收口按"自用是否需要"重切 (清单见 [ROA
 - **校正提案**: `sandbox_context` 归 CORE (纯 stdlib, §3 误划 extras); data_root 两处 raise (非一处); status_bar 留 core; Step4 是验证+守门非重构。
 - **守门**: 边界 smoke (`tests/test_d104_di_boundary.py`: import core 闭包不含 sandbox/llm_client*/web/debug/fastapi/anthropic/openai/pandas) + baseline_l2_snapshot 0-diff (每步) + pytest 1265 + **真 slim venv 实跑** start→apply-rerank→choose→refine→--at-time (extras 物理缺席, candidate=60, Step1b 最小 trace 落盘)。
 - **行为微调** (与 "sandbox=debug, 在 production 之外" 一致): sandbox-awareness 现仅经 web/debug 入口注册 → 直接 `api.recommend_meal` / 老 cli 不再 sandbox-aware (老 cli D-096 已退役)。
-- **债务** (Codex 标, 出 scope, 非本次引入): `reference_resolver` 用 v2 `list_traces`, session 被 R2 `append_round` 迁 v3 后旧路径可发现性缺口 — full/slim parity 不破, 待独立修。
+- **债务** (Codex 标, 出 scope, 非本次引入): `reference_resolver` 用 v2 `list_traces`, session 被 R2 `append_round` 迁 v3 后旧路径可发现性缺口 — full/slim parity 不破, 待独立修。 [已修 by D-104.1]
+
+## D-104.1
+**D-104 两条备查跟修 — reference v3 可发现性 + 裸 core 真实时钟护栏.** (2026-05-30) · 跟修 D-104 债务 + 行为微调, 非推翻。
+- **② reference v3 (真 bug 修复)**: `reference_resolver.resolve_reference` 发现 (list_traces→list_traces_v3) + 读取 (read_trace→read_meta/read_round_full 取最新已发布 round 的 final) 双路改 v3-aware。修前: refine 过 (迁 v3 目录) 的历史餐, "上次那家差不多换一家" 类引用解析不到 → 隐性破坏 Faithful Refine (D-080)。v2 单文件回退保留 (无 refine 的 session 不变), 找不到仍 None 让上游降级 (D-085 忠实)。
+- **① 裸 core 真实时钟 (护栏锁死, 行为不变)**: D-104 已确认 "sandbox=debug, 在 production 之外" 是意图 (虚拟时钟只经 web/debug import sandbox 注册); 补测试锁死裸 agent recommend 路径走真实时钟, 防以后假时间被接回点餐路径。
+- 守门: tests/test_d104_followup.py (3 测试: v3 引用解析 / v2 不回归 / 裸 core 真实时钟) + baseline_l2_snapshot 0-diff (reference 不在空-refine L2 dry-run 路径)。`reference_resolver` 不在 high-risk 白名单。

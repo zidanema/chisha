@@ -163,6 +163,28 @@ def _extract_meal_hint(text: str) -> str | None:
 # ────────────────────────── resolve layer
 
 
+def _load_base_final(trace_store, sid: str, root: Optional[Path]):
+    """读历史 session 的 final combos + meal_type, v2/v3 布局通吃。
+
+    D-104 债务修复: resolve_reference 旧用 read_trace (只读平铺 v2 单文件), 对 refine 后
+    迁成 v3 目录的 session 返 None → 引用解析不到。这里 v3 优先 (read_meta + 最新已发布
+    round 的 final), v2 回退 read_trace。session 完全不可读返 (None, None) 让上游降级。
+
+    返 (final_combos | None, frozen_meal_type | None)。
+    """
+    meta = trace_store.read_meta(sid, root=root)
+    if meta is not None:
+        latest = meta.get("latest_round") or "R1"
+        rd = trace_store.read_round_full(sid, latest, root=root)
+        if rd is None:
+            return None, None
+        return (rd.get("final") or []), meta.get("meal_type")
+    base_trace = trace_store.read_trace(sid, root=root)
+    if base_trace is None:
+        return None, None
+    return (base_trace.get("final") or []), base_trace.get("__frozen", {}).get("meal_type")
+
+
 def resolve_reference(
     query: ReferenceQuery,
     *,
@@ -180,7 +202,8 @@ def resolve_reference(
     """
     from chisha import trace_store
 
-    items, _ = trace_store.list_traces(root=root, limit=100)
+    # D-104 债务修复: 用 v3-aware lister, 否则 refine 后迁成 v3 目录的 session 发现不到。
+    items, _ = trace_store.list_traces_v3(root=root, limit=100)
     if not items:
         return None
     # 解析 weekday 引用: 用 raw_text 重做一次
@@ -248,16 +271,15 @@ def resolve_reference(
 
     sid = chosen["session_id"]
     try:
-        base_trace = trace_store.read_trace(sid, root=root)
+        base_combos, frozen_meal = _load_base_final(trace_store, sid, root)
     except Exception:
         return None
-    if base_trace is None:
+    if base_combos is None:
         return None
 
-    base_combos = base_trace.get("final") or []
     return ResolvedReference(
         base_session_id=sid,
-        base_meal_type=chosen.get("meal_type") or base_trace.get("__frozen", {}).get("meal_type") or "",
+        base_meal_type=chosen.get("meal_type") or frozen_meal or "",
         base_started_at=chosen.get("started_at") or "",
         base_combos=base_combos,
         relation=query.relation,
