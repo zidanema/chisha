@@ -33,10 +33,10 @@ npm run dev                      # http://localhost:5173 (默认: 真接口, /ap
 ## 数据层
 
 - `src/lib/api.ts` — 真接口客户端，HTTP/JSON
-- `src/lib/mockApi.ts` — mock 数据，端口 §5 契约（[docs/api.md](../../docs/api.md)）
+- `src/lib/mockApi.ts` — mock 数据，契约见 [docs/api.md](../../docs/api.md)
 - `VITE_USE_MOCK=0`（默认, 真接口）；`VITE_USE_MOCK=1` 切 mock (UI 上 NavBar 显示红色 `MOCK` 角标)
 
-V1.1 反馈链路 7 个端点已在后端 FastAPI 装上 (D-069) 并在 mockApi 全量实现 — 详见 [docs/api.md §5](../../docs/api.md)。
+V1.1 反馈链路 7 个端点已在后端 FastAPI 装上 (D-069) 并在 mockApi 全量实现 — 详见 [docs/api.md §反馈端点 (V1.1)](../../docs/api.md)。
 
 ## 设计原则
 

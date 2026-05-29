@@ -36,7 +36,7 @@
 ## Stage 3 — 摄入 + 打标 (`~/chisha`, 见 data-pipeline.md 四步)
 
 1. **loader** (`chisha/loader.py`): `output/*.json` → `data/<zone>/{restaurants.json, dishes_raw.json}`。归一化月售/距离/时长、抽 brand、按**稳定哈希 id** 去重 (rid=`r_`+sha1(归一店名); dish_id=`d_`+rid+sha1(归一菜名), D-099, 与采集端逐字一致 → 重采不漂移)。同店同归一菜名异价 = 真冲突, 隔离不发布直到 `conflicts_ack.json` 确认 (D-099.1, fail-loud)。`office→shenzhen-bay`, `home→home`。
-2. **tag** (`scripts/tag_via_api.py`): `dishes_raw → dishes_tagged`。OpenRouter deepseek-v4-flash (D-037), batch 30 / 16 workers, 缓存绑有序 dish-id 清单 (D-099.3, 重采批内变了才重跑)。产出 = `cuisine` (16 枚举) + `nutrition_profile` (12 维营养画像, schemas.py 权威)。默认增量, 全量 `--force-version`。
+2. **tag** (`scripts/tag_via_api.py`): `dishes_raw → dishes_tagged`。OpenRouter deepseek-v4-flash (D-037), batch 15 / 8 workers (D-101 收口稳定值, 30/16 实测截断+限流), 缓存绑有序 dish-id 清单 (D-099.3, 重采批内变了才重跑)。产出 = `cuisine` (16 枚举) + `nutrition_profile` (12 维营养画像, schemas.py 权威)。默认增量, 全量 `--force-version`。
 3. **backfill** (`backfill_restaurant_category`): tagged 菜系 majority vote → `restaurants.json.category`。
 4. **validate** (`scripts/validate_data.py`): `DishTagged` 全量 schema 校验 + 覆盖率 + 引用完整性, hard-fail。
 
@@ -48,25 +48,20 @@
 - **精排** (`rerank.py` + `refine.py`): L3 LLM (sonnet/opus, 非 flash) 读紧凑菜品行 + profile + refine_intent, 输出 rank/fit/risk_flags/一句理由。忠实纪律见 [chisha_faithful_refine_principle] / CONTRACTS。
 - **id 作 join key**: `dish_id`/`restaurant_id` 贯穿 recall 分桶 → score 反馈查表 → rerank 编码 → feedback_store 反查。`logs/feedback/store.json` 靠 dish_id/rid 闭环; `logs/meal_log.jsonl` 仅落 canonical_name + main_ingredient_type (不落 dish_id, 见「断裂点 E」)。
 
-## 现状数据量 (2026-05-26)
+## 现状数据量
 
-| zone | 采集 output 店 | chisha 店 | dishes (raw=tagged) | 残缺菜单店 (partial+failed+None) |
-|---|---|---|---|---|
-| shenzhen-bay (office) | 429 | 395 | 22,688 | 166 (42%) |
-| home (home) | 142 | 142 | 8,088 | 47 (33%) |
-
-tagged 覆盖率 100% of raw; monthly_sales=0 占 ~10% (部分真 0, 部分 parse 失败)。
-**注意 (P0, 见断裂点 G)**: home 142 店全部是 shenzhen-bay 子集 (0 家独有), 且 129/142 店 distance 与 office 逐字相同 → home 采集疑似未切配送地址, 距离/eta 是深圳湾值。
+库内当前只有 `shenzhen-bay` (office) 一个 zone (~334 家 / ~22.5k 道, tagged 覆盖率 100%; monthly_sales=0 占 ~10% — 部分真 0, 部分 parse 失败)。精确数量随重采漂移, 以 `data/<zone>/` 实际文件为准, 不在此维护。
+`home` zone **当前未入库**: 采集数据采址污染 (见断裂点 G — home 全是 office 子集 + distance 逐字相同), 未发布到 `data/home/`, 待切对配送地址重采。
 
 ## 已知断裂点与优化方向
 
 > 按影响排序, 经 Opus 实证 + Codex 二审收敛 (2026-05-26)。严重度已按代码/数据核实校准, 非凭印象。
 
-- **G. (P0, 实证) home 距离/eta 疑似采集污染**: 采集 output 里 home 142 店**全部**是 office 子集 (0 家独有), 129/142 店 distance 字符串与 office 逐字相同 (西贝印力中心 990m=990m / 马记永 4800m=4800m)。两地实际相距 ~12km (config gps), 距离不可能相同 → **home 采集时美团配送地址疑似未切到家附近社区, distance/eta 反映的是深圳湾**。后果: 在家点餐场景拿到的是 office 区餐厅 + 错的 ETA (score eta 维度直接吃这值)。**行动: 志丹确认采集时是否切地址 → 切对地址重采 home**。(此问题由追 Codex 的"跨 zone id 碰撞"线索挖出: id 碰撞本身不是 bug——同一物理店本该共享稳定 id; 真问题是 home 根本没采居住区。)
+- **G. (P0, 实证) home 距离/eta 疑似采集污染**: 采集 output 里 home 142 店**全部**是 office 子集 (0 家独有), 129/142 店 distance 字符串与 office 逐字相同 (西贝印力中心 990m=990m / 马记永 4800m=4800m)。两地实际相距 ~12km (config gps), 距离不可能相同 → **home 采集时美团配送地址疑似未切到家附近社区, distance/eta 反映的是深圳湾**。后果: 在家点餐场景拿到的是 office 区餐厅 + 错的 ETA (score eta 维度直接吃这值)。**现状: 污染数据未发布, `data/home/` 当前不存在 → home zone 暂不可推荐; 行动: 切对配送地址重采 home**。(此问题由追 Codex 的"跨 zone id 碰撞"线索挖出: id 碰撞本身不是 bug——同一物理店本该共享稳定 id; 真问题是 home 根本没采居住区。)
 - **A. 标签地基质量无持续抽检 (高)**: `nutrition_profile` 全是 deepseek-flash 估计值 (`eval/` 有 171 条一次性横评, flash 88.9% → ~11% 字段误), 推荐 15 维多数建其上 (eta/price/popularity/feedback 不依赖标签, 实际影响低于"全军覆没")。缺口是无生产持续抽检。建议: 固化 ground-truth gate, 换模型/prompt 时跑准确率回归。
-- **B. `restaurant.category` 全空 → L3 丢餐厅菜系信号 (已修正: 非死字段)**: 两 zone 店 category 全空 (D-099 重消费漏跑 backfill 第3步)。`rerank.py:599` 把 `category` 当餐厅 "cuisine" 喂给 L3 → 现在每次给 L3 一个空信号。**消费方真实存在**, 不是死字段。行动: 补跑 backfill (而非砍字段)。
-- **C. 残缺/空菜单店残留 ingest (中, 已部分治理)**: 采集端 `_keep_for_output` 已过滤 0 菜/低残缺店, validate 仅对 0 菜店报 error (partial/failed 不 hardfail)。旧数据入库的空壳仍膨胀店数 (深圳湾 42% / 居住区 33% 残缺), backfill 在空店失败、debug UI 露脸。主链路无害 (recall 从菜出发)。是否清旧空店是产品选择。
-- **D. 跨 repo 四步无单一入口 (中, scp 已自动)**: `uploader.py` 已自动 scp, 但 `loader→tag→backfill→validate` 无统一编排, 回填遗漏 (B) 就是结构性证据。建议: 一个编排脚本串四步, 末尾 validate 不过非 0 退出, 并加 category 空率 / 跨 zone distance 全等 等哨兵 (能自动抓住 G 类污染)。
+- **B. `restaurant.category` 回填 (✅ 已解决)**: 早先 D-099 重消费漏跑 backfill 第 3 步致 category 全空; 现已补跑, shenzhen-bay 334/334 非空。澄清: live L3 输入 (`rerank.build_user_message`) **本就不含** category, 只有 debug-only `build_payload` 把 category 当 cuisine — 即便空也只影响 debug trace, 不影响真实推荐。
+- **C. 残缺/空菜单店残留 ingest (中, 已部分治理)**: 采集端 `_keep_for_output` 已过滤 0 菜/低残缺店, validate 仅对 0 菜店报 error (partial/failed 不 hardfail)。旧数据入库的空壳仍膨胀店数, backfill 在空店失败、debug UI 露脸。主链路无害 (recall 从菜出发)。是否清旧空店是产品选择。
+- **D. 跨 repo 四步无单一入口 (✅ 已解决 by D-100)**: `scripts/refresh_from_collector.py` 编排 preflight→指纹哨兵→loader→tag→backfill→validate, 任一步非 0 退出; 跨 zone 指纹哨兵自动抓 G 类采址污染。回填遗漏 (B) 不再结构性发生。
 - **E. `meal_log` 不落 dish_id (低)**: 确认只落 canonical_name + ingredient_type; 短链反馈通过 session 冷存取 dish_id 闭环未断, meal_log 缺口仅影响未来菜品级长期厌腻/复购分析。低成本补: 落盘加 dish_id。
 - **F. 打标缓存 key 太弱 + 无 enum 归一化 (中)**: (1) 缓存只绑有序 dish_id 清单, **不绑 model name / prompt 版本 / category_raw** → 换模型或改 prompt 会静默复用旧标签 (Codex 提出, 成立)。(2) deepseek 偶发枚举越界值无确定性归一化层 (越界后重试 + 写 staged 不污染 live, 但仍需人工介入)。建议: cache key 加 model+prompt hash; merge 前加 enum 归一化 (已知值映射 + 未知值 warn)。
 - **H. (Codex 提出, 已核实) 反馈落盘失败仅 print 不告警 (低-中)**: `web_api._remember_session_safe` catch 异常后 print 一行 (非"无日志", Codex 略夸大), docstring 明写"失败不阻断"是有意设计。真风险: session 冷存缺失 → 之后对该 session 的反馈无法 resolve combo, 静默 no-op (与 B-001/D-098"差评不生效"同源)。建议: 失败计数落结构化日志或在反馈页提示。

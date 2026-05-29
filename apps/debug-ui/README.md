@@ -100,7 +100,8 @@ src/
 ├── constants/
 │   ├── intentSchema.ts      INTENT_SCHEMA fallback (后端 GET 失败时用)
 │   ├── labels.ts            oil/spicy/wetness/sweet 数字 → 中文 label 映射
-│   └── zones.ts             zone code → 中文 area name
+│   ├── zones.ts             zone code → 中文 area name
+│   └── defaults.ts          DEFAULT_PROFILE_OVERRIDE / DEFAULT_REFINE_TEXT / TODAY_ISO
 ├── hooks/
 │   ├── useTheme.ts          5 套 palette + prefers-color-scheme
 │   ├── useWaTrace.ts        Workflow A 中央 hook (traces + LRU lazy fetch + adapter)
@@ -108,7 +109,7 @@ src/
 ├── lib/diffSession.ts       ComboDiff/FinalDiffKind 类型 + comboDiffBadge formatter
 ├── mocks/
 │   ├── waMocks.ts           38 trace fixture + ACTIVE_TRACE_ROUNDS (R1-R4) 用于 offline fallback
-│   └── session.ts           老 LCG mock (adapter 内部冗余, 后续可删)
+│   └── session.ts           老 LCG mock (useWaTrace dev fallback)
 ├── types/trace.ts           Session / L1 / L2 / L3 / Final + WaTrace / RoundRecord / RoundIntentV2
 ├── components/
 │   ├── TraceBrowser.tsx     左侧 trace 列表 (filter + sort + 搜索 + 按天分组 + tree-fold)
@@ -118,19 +119,21 @@ src/
 │   ├── RoundBanner.tsx      RoundBanner + PanelRoundStrip (layer delta)
 │   ├── DagHeader.tsx        V12 DAG (compact-only inside sticky stack)
 │   ├── LookupDrawer.tsx     ⌘K 反查抽屉 (内存搜索)
-│   ├── WorkspaceSwitch.tsx  A 激活 / B 锁定 + toast
+│   ├── WorkspaceSwitch.tsx  A·分析 trace (B·沙盒已独立到 apps/sandbox-lab :5175)
 │   ├── ThemeSwitcher.tsx
 │   ├── Toaster.tsx
 │   └── ui/
 │       ├── StatusBadge.tsx / Pill.tsx / CopyBtn.tsx
 │       ├── CodeBlock.tsx    plain / json + searchTerm highlight
-│       └── ToolUseBlockView.tsx  深度折叠 JSON
+│       ├── ToolUseBlockView.tsx  深度折叠 JSON
+│       └── MiniFunnel.tsx   漏斗缩略组件
 └── panels/
     ├── PanelL1.tsx          召回漏斗 + drop 原因 + restaurant ban
     ├── PanelL2.tsx          L2 打分 (3 子组件)
     ├── L2KpiBar.tsx / L2Heatmap.tsx / L2ComboTable.tsx
     ├── PanelL3.tsx          LLM rerank + I/O viewer + status callout
-    └── PanelFinal.tsx       Top 5 卡片 + 三态着色 (新进/保持/踢出)
+    ├── PanelFinal.tsx       Top 5 卡片 + 三态着色 (新进/保持/踢出)
+    └── PanelRefineIntentLLM.tsx  refine intent LLM trace 展示 (App.tsx 渲染)
 ```
 
 ## 显式 non-goals

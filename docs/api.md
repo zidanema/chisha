@@ -41,7 +41,7 @@ Sandbox Lab 端点 (`/api/sandbox/*`) 见 [apps/sandbox-lab/README.md](../apps/s
 ## 关键端点细节
 
 ### `GET /api/recommend`
-Query: `meal_type=lunch|dinner&mood=...`. 响应 `RecommendResponse` (types.ts). 含 `session_id` (形如 `2026034521_lunch`) + `round=1` + `candidates[]` (5 个按 rank 排序) + `stats`.
+Query: `meal_type=lunch|dinner&mood=...`. 响应 `RecommendResponse` (types.ts). 含 `session_id` (形如 `20260529_lunch_a1b2c3d4e5f6a7b8`, 即 `YYYYMMDD_<meal>_<16hex 随机>`, D-079) + `round=1` + `candidates[]` (5 个按 rank 排序) + `stats`.
 
 ### `POST /api/refine`
 Body: `{ session_id, refine_text, meal_type, mood, round, excludeIds }`. 响应同 `RecommendResponse`, 复用 `session_id`, `round++`, 顶层加 `refine_input` (原文) + `refine_intent` (结构化意图 **V2.1** 多 slot schema, 详见 types.ts `RefineIntentV2`).

@@ -14,7 +14,7 @@
 
 典型用法: 我自己认了哈佛餐盘弱约束 (控油 + 有蔬菜 + 有蛋白), 每天点外卖还得花 10-20 分钟翻 200 家店上千道菜手动凑齐这个结构。`chisha` 把这个执行过程外包: 每顿饭推 5 个组合, 30 秒选一个就走, 吃完反馈, 越用越准。
 
-技术上是三阶段推荐: **L1 召回** (硬过滤 + 软偏好) → **L2 14 维打分** → **L3 LLM 精排 + 写推荐理由**。详见 [docs/PRD.md](docs/PRD.md)。
+技术上是三阶段推荐: **L1 召回** (硬过滤 + 软偏好) → **L2 15 维打分** → **L3 LLM 精排 + 写推荐理由**。详见 [docs/PRD.md](docs/PRD.md)。
 
 ---
 
@@ -41,7 +41,7 @@ chisha choose   --id <rid> --card <cards[].id> --action accept   # 用户选定
 
 已经能用的：
 
-- 三阶段推荐链路（L1 召回 → L2 14 维打分 → L3 LLM 精排写理由）
+- 三阶段推荐链路（L1 召回 → L2 15 维打分 → L3 LLM 精排写理由）
 - Web SPA 用户视图 + 反馈系统（差评下一次推荐就降权/剔除，好评优先）
 - 长期口味画像（从你的真实反馈统计聚合，可解释、可手编）
 - 多轮 refine（自然语言追加约束，如"想吃辣""少米饭""想喝汤"）
@@ -120,7 +120,8 @@ cd apps/sandbox-lab && npm install && npm run dev   # :5175
 | [docs/CONTRACTS.md](docs/CONTRACTS.md) | 跨文件隐含约束 + 反直觉规则 |
 | [docs/api.md](docs/api.md) | 前后端 API 契约 |
 | [docs/style-guide.md](docs/style-guide.md) | `apps/web/` UI 规范 + 反模式清单 |
+| [docs/data-flow.md](docs/data-flow.md) | 数据流全景 (采集→推荐 4 stage, 跨 2 repo) + 已知断裂点 |
 | [docs/data-pipeline.md](docs/data-pipeline.md) | 采集后加工流水线: 消费/打标/回填/验收 + 坑 |
 | [docs/CONTRIBUTING_DOCS.md](docs/CONTRIBUTING_DOCS.md) | 文档维护准则 (改任何文档前必读) |
 
-**草稿 / 历史**: [docs/proposals/](docs/proposals/) 未落地的提案; [docs/archive/](docs/archive/) Phase 0 归档不维护。
+**草稿 / 历史** (均 frozen 不维护): [docs/proposals/archive/](docs/proposals/archive/) 设计提案存档 (落地后归此, 溯源用); [docs/archive/](docs/archive/) Phase 0 归档。

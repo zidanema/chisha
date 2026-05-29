@@ -32,12 +32,12 @@
 
 ### L2 打分
 - **`apply_caps()` 只返回 head 段, 不带 tail.** brand cap=2 真正生效在 L2, **不能下放到 L3 prompt** (D-049).
-- **改 `score.py` / `methodology.py` / spec yaml 前后必跑回归:** `baseline_l2_snapshot` (改前) + 改后再跑 + `compare_traces`. top60 顺序 + 14 维 breakdown `|delta| < 1e-6` 才允许 commit (D-072.1).
+- **改 `score.py` / `methodology.py` / spec yaml 前后必跑回归:** `baseline_l2_snapshot` (改前) + 改后再跑 + `compare_traces`. top60 顺序 + 15 维 breakdown `|delta| < 1e-6` 才允许 commit (D-072.1).
 - **methodology spec 只搬运不改逻辑.** 改打分逻辑 / 调权重 / 加新维度走 `score.py` + decisions 修订, **不走 spec**.
 - **`health_guardrail(combo, profile, intent=None)` 是 slot-aware** (D-090 + D-090.1). intent=None 时行为与旧 API 一致 (R1 baseline 0-diff 守门); **D-090.1 修正案 (随 D-096 V1 退役)**: oil 触发豁免字段从 V1 `intent.flavor_tags="heavy"` 切到 V2 `intent.oil == "high"` (`constrain.oil`, property alias). 加新豁免类型走 D-090.x + `tests/test_l2_refine_snapshot_d090.py` 更新断言.
 - **`score_combo` 在 refine 模式下按 explicit slot 动态调权重** (D-091 phase-2). `_build_refine_weight_overlay(intent)` 给 dim weight 加 multiplier. intent=None 时 overlay 空 dict → R1 0-diff. 改 overlay mapping 走 D-091.x + 断言更新.
 - **`intent_match_bonus` 不再把 price_band 加到 cuisine 通道** (D-091 P2-B 语义解耦). price 维度独立兜底.
-- **`score_combo` breakdown 是 14 维 (D-092: 11 基础 + 3 intent).** 已删 5 死维度 (`vegetable_floor_pass / protein_floor_pass / distance / wetness / context_boost`). 函数本身保留防 import 破, 但不再进 V2_DEFAULT_WEIGHTS / parts dict / spec / adapter DIM_ORDER. `compare_traces` 允许"key 缺失且对侧=0"视为 0-diff (兼容老 baseline).
+- **`score_combo` breakdown 是 15 维 (11 基础 + 3 intent + feedback_recency).** D-092 删 5 死维度 (`vegetable_floor_pass / protein_floor_pass / distance / wetness / context_boost`, 函数本身保留防 import 破, 但不再进 V2_DEFAULT_WEIGHTS / parts dict / spec / adapter DIM_ORDER); D-098 加第 15 维 `feedback_recency` (无反馈→0, 不破无反馈 baseline). `compare_traces` 允许"key 缺失且对侧=0"视为 0-diff (兼容老 baseline).
 
 ### L3 精排
 - **L3 输入 = top60.** 不是 40 / 100. 改输入大小先看 D-046.

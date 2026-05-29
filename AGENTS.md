@@ -15,7 +15,7 @@ chisha-meal:
   contract_version: "1.0"
   what: |
     个人原则派点餐推荐引擎 (餐厅 + 菜品组合). 三阶段链路:
-    L1 召回 → L2 14 维打分 → L3 LLM 精排 + 写理由.
+    L1 召回 → L2 15 维打分 → L3 LLM 精排 + 写理由.
     装完后宿主 agent 可调 `chisha eat` / `continue` / `choose` CLI 完成一轮推荐.
 
   install_target: ~/.chisha/         # state root, env CHISHA_STATE_ROOT 可覆盖
