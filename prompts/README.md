@@ -8,13 +8,11 @@
 | 文件 | 状态 | 加载点 | 相关决策 |
 |---|---|---|---|
 | `l1_extract.md` | active | `chisha/l1_extractor.py:34` | D-076 (L1 长期偏好) |
-| `parse_refine_intent_v2.md` | active | `chisha/refine_intent_v2.py:34` | D-080~D-085, D-094 (Faithful Refine 主输出, L3 + trace 双存消费) |
-| `parse_refine_intent.md` | active (并行, 待退役) | `chisha/refine_intent.py:33` | 每次 refine 跟 V2 并行调; 下游 recall/score 消费窄枚举字段; 退役计划见 specs/T-FR-V1-RETIRE.md |
+| `parse_refine_intent_v2.md` | active | `chisha/refine_intent_v2.py:34` | D-080~D-085, D-094 (Faithful Refine 主输出, L3 + trace 双存消费); D-096 砍 V1 后为唯一意图层 |
 | `parse_feedback.md` | legacy | `chisha/feedback.py:18` | D-073 已被 refine_intent V2 取代; `parse_feedback()` 无 live caller, `CHIP_VOCAB` 仍被 openclaw 引 |
 | `rerank_system.md` | active | `chisha/rerank.py:32` | D-046/D-047/D-048/D-049, T-PR-01~07 |
 | `rerank_user.md` | template (仅供人对照) | 不加载, 实际 user message 由 `rerank.build_user_message()` 拼 | — |
 | `tag_dishes.md` | active | `scripts/tag_via_api.py`, `scripts/tag_dishes.py` | D-036/D-037 (dual-model audit, deepseek-v4-flash) |
-| `tag_dishes.v3.pre_dual.md` | **archive** | 无加载点 | D-036 之前备份; git 可溯源, 待评估删除 |
 | `_dev_notes.md` | dev notes (not loaded) | 无加载点 | prompt 锚点 + 跨文件耦合提醒, 不进 token bill |
 
 ## 纪律

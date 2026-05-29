@@ -11,7 +11,7 @@
 |---|---|---|---|
 | **产品决策 (你)** | `decisions.md` / `PRD.md` / `ROADMAP.md` | 产品方向 / 推翻历史 / 没选 B 方案的原因 | 单条 3-5 行, > 15 行就是塞实施 |
 | **Agent 契约 (Claude/Codex)** | `CONTRACTS.md` / `../CLAUDE.md` / `api.md` / `style-guide.md` | 跨文件约束 / 反直觉规则 / 红线 / API 契约 | CONTRACTS ≤ 200 行, CLAUDE ≤ 100 行 |
-| **归档 (frozen)** | `archive/` / `proposals/archive/` / `specs/archive/` | Phase 0 历史 | **不维护** |
+| **归档 (frozen)** | `archive/` / `proposals/archive/` | Phase 0 历史 | **不维护** |
 | **评测** | `../eval/` | 评测框架 + golden set | 评测重做时改 |
 
 ---

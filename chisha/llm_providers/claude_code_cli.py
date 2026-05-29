@@ -1,7 +1,7 @@
 """Claude Code CLI subprocess provider (D-047).
 
 复用本机 Claude Code 订阅额度调 LLM. 通过 `claude -p` 子进程实现.
-关键设计 (见 docs/superpowers/specs/2026-05-14-claude-code-cli-provider-design.md §3):
+关键设计:
 - 10 个 flag 隔离 Claude Code 默认行为 (含 --strict-mcp-config)
 - system 通过 --system-prompt-file 私有临时文件传, user 通过 stdin
 - effort=low 防 extended thinking 拖长延迟
