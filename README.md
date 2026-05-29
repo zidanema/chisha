@@ -80,7 +80,8 @@ chisha doctor                          # 自检 install/state root + manifest + 
 
 ```bash
 # 1. 装依赖 (需要 Python 3.11+, uv, Node 18+)
-uv sync
+# D-104: agent-only core 只装轻依赖; 跑调试台/全链路 LLM 需 dev (含 web extra: fastapi/anthropic/openai)
+uv sync --extra dev
 cp .env.example .env  # 填 OPENROUTER_API_KEY 或 ANTHROPIC_API_KEY
 
 # 2. 启后端 (FastAPI, :8765)

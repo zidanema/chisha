@@ -1,6 +1,7 @@
 # D-104(方案)agent-only core 解耦重构
 
-> 状态: **方案已与 Codex 对齐, 待志丹拍板执行**. 2026-05-29 · Opus 设计 + Codex rescue review 收敛.
+> 状态: **已落地** (2026-05-29, 6 commit, 见 decisions D-104). frozen 设计稿, 实现以代码 + decisions D-104 + CONTRACTS「agent-only core / extras 边界」为准。落地校正: sandbox_context 归 CORE (§3 误划); data_root 两处 raise (非一处); Step4 是验证+守门非重构; rich trace → extras (不建 trace_build, 走 _build_minimal_trace fallback)。
+> 原状态: 方案已与 Codex 对齐, 待志丹拍板执行. Opus 设计 + Codex rescue review 收敛.
 > 关联: D-103(分发形态 B: 引擎进 skill / `uv run` 就地跑 / 18MB 数据进 skill / 状态 `~/.chisha`)→ 本案做包的 core/extras 解耦, 让 skill 分发的 agent 接入零冗余.
 
 ## 1. 目标

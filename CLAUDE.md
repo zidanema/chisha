@@ -1,7 +1,7 @@
 # chisha · 项目级指令
 
 > 项目名: 今天吃点啥 (chisha) · 个人 AI **原则派点餐执行外包**工具 (L0 方法论 spec / L1 数据 / L2 打分 / L3 LLM 精排)
-> 当前阶段: **V1.0 工程里程碑收尾完成** (2026-05-20). 推荐链路 L1/L2/L3 + Web SPA + V1.1 反馈 + L1 真兑现 + sandbox time-travel + trace 持久化 + Debug 三模式 + FastAPI 23 端点 + Refine V2-only (V1 退役 D-096) / Faithful Refine framework (D-080~D-085) + 字段闭包 (D-094.1, V2.1 13 槽) + L2 信号校准 (D-090~092 + D-090.1, 14 维) + Sandbox Lab + 反馈短链路即时生效 (D-098, 差评下次推荐就降权/剔除, score 第 15 维 feedback_recency). 当前定位 **自用为主、推广随缘** (D-097): AI-friendly 接个人 agent (D-074 **Phase 0 已落地**: chisha 零 LLM + one-shot CLI `chisha.agent_cli` + Claude Code reference adapter skill, 智能外置给宿主 agent 的 LLM) + B-001 反馈短链路 (已 D-098 落地). **D-102 (2026-05-28) 可分发共享核心三步落地**: FallbackPlan 统一兜底 (D-102.1) + install/state root 二分 state→`~/.chisha/`+迁移 (D-102.2) + bundle manifest/capability-compat 闸门 (D-102.3); plugin marketplace 打包 + 产物签名留位. 路线见 [docs/ROADMAP.md](docs/ROADMAP.md).
+> 当前阶段: **V1.0 工程里程碑收尾完成** (2026-05-20). 推荐链路 L1/L2/L3 + Web SPA + V1.1 反馈 + L1 真兑现 + sandbox time-travel + trace 持久化 + Debug 三模式 + FastAPI 23 端点 + Refine V2-only (V1 退役 D-096) / Faithful Refine framework (D-080~D-085) + 字段闭包 (D-094.1, V2.1 13 槽) + L2 信号校准 (D-090~092 + D-090.1, 14 维) + Sandbox Lab + 反馈短链路即时生效 (D-098, 差评下次推荐就降权/剔除, score 第 15 维 feedback_recency). 当前定位 **自用为主、推广随缘** (D-097): AI-friendly 接个人 agent (D-074 **Phase 0 已落地**: chisha 零 LLM + one-shot CLI `chisha.agent_cli` + Claude Code reference adapter skill, 智能外置给宿主 agent 的 LLM) + B-001 反馈短链路 (已 D-098 落地). **D-102 (2026-05-28) 可分发共享核心三步落地**: FallbackPlan 统一兜底 (D-102.1) + install/state root 二分 state→`~/.chisha/`+迁移 (D-102.2) + bundle manifest/capability-compat 闸门 (D-102.3); plugin marketplace 打包 + 产物签名留位. **D-104 (2026-05-29) agent-only core 解耦落地**: 推荐核心从 sandbox/web/debug/自调LLM 切干净, ambient provider DI (clock_provider/sandbox_router 两叶子, default==prod 0-diff), 真 slim venv 实跑全链路通过 (边界铁律见 CONTRACTS「agent-only core / extras 边界」+ tests/test_d104_di_boundary). 路线见 [docs/ROADMAP.md](docs/ROADMAP.md).
 > 主语言: Python (后端) + TypeScript (前端) · 包管理: uv / npm · 测试: pytest
 
 ## 必读(首次接触本项目)
@@ -66,7 +66,8 @@ uv run python -m scripts.compare_traces                                         
 **high-risk 文件白名单** (单一权威源, 下方「工作流 § Codex 双触点」引用这份):
 
 后端 16 模块 — 改任一 → `regression_risk = high`:
-- `chisha/{api,recall,score,rerank,refine,l1_extractor,sandbox,clock,data_root,trace_store,debug_what_if,web_api,feedback_signal,agent_orchestration,state_root,manifest}.py`
+- `chisha/{api,recall,score,rerank,refine,l1_extractor,sandbox,clock,data_root,trace_store,debug_what_if,web_api,feedback_signal,agent_orchestration,state_root,manifest,core_api_helpers}.py`
+- (D-104: `core_api_helpers` = agent card/session/trace-final 格式化单源 (改前读 CONTRACTS「agent-only core / extras 边界」段). `clock_provider`/`sandbox_router` 是零依赖 DI 叶子, **不进**白名单 (低 churn); 但改 clock/data_root/sandbox 的 provider 注册时同读该段, 改完跑 `tests/test_d104_di_boundary.py` 守边界)
 - (D-102: `state_root` = install/state 路径解析单一权威源 (改前读 CONTRACTS「install/state root 二分」段); `manifest` = 数据产物↔引擎兼容闸门 (CONTRACTS「数据产物↔引擎 manifest 闸门」段). `state_migrate` 是一次性迁移器, **不进**白名单 (同 collector_contract/non_dish_rules 先例: 非热路径))
 - (D-074 agent 面 `agent_{cli,protocol,round_store,choose,skill_init}.py` = chisha 零 LLM 协议层, 改前读 CONTRACTS「Agent CLI 协议」段; 单独改不进 baseline 严格回归网, 与 prepare_candidates/recall/score 同时改 → high)
 

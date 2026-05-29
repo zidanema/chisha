@@ -185,6 +185,17 @@
 
 ---
 
+## agent-only core / extras 边界 (D-104)
+
+- **铁律**: agent-only core 在静态依赖图上到不了 `sandbox* / web_api / debug_* / llm_client* / api`。回归网 = `tests/test_d104_di_boundary.py` (import core 入口闭包后 sys.modules 不含上述 + 重依赖 fastapi/uvicorn/anthropic/openai/pandas)。改核心模块 import 前跑它; 谁加了顶层 import 立刻红。
+- **provider DI**: `clock` 经 `clock_provider.get_clock_provider()` 取业务时间; `data_root` 经 `sandbox_router.get_sandbox_router().is_enabled()` 判沙盒路由。两个 provider 是零依赖 core 叶子, default == prod (真实时间 / router=False, 0-diff)。**sandbox 是 extras**: 被 import 时 (sandbox.py 尾部) 注册 `_VirtualClockProvider` + `_RealSandboxRouter`; 注册接缝 = web_api/debug_server 早 import sandbox (sandbox-lab 走 debug_server)。∴ sandbox-awareness 仅经 web/debug 入口生效, 裸 `api.recommend_meal`/老 cli 不再 sandbox-aware。
+- **trace 分层**: rich L1/L2/L3 渲染 = extras (api/debug_recommend); agent `_publish_trace_best_effort` 富化失败 (ImportError) → 退 `_build_minimal_trace` (core, final 用 core 格式化、刻意无 cuisine 保 `similar` no-op parity), reference refine 读 final[].restaurant.id 不退化。
+- **slim 守门**: agent_cli sandbox guard (`_guard_scope`/doctor) + rerank `_run_llm_rerank` 的 llm_client import 都 try/except ImportError 降级 (extras 缺席 → 当未启用 / status='fallback')。
+- **新核心模块**: `core_api_helpers` (agent card/session/trace-final 格式化单源) 进 high-risk 白名单; `clock_provider`/`sandbox_router` 是低 churn DI 叶子。
+- **slim bundle**: `scripts/build_skill_bundle.py` 切 core 子树 (排除 extras) + slim requirements → 隔离实跑验证; 非 marketplace 打包 (仍在范围红线外)。
+
+---
+
 ## 范围红线 (V1.0 后 Phase 1 推广前不做)
 
 不要在 V1.0 工程里程碑收尾后启动以下工作 (推迟到 Phase 1 推广启动后):
