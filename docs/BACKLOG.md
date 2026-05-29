@@ -107,11 +107,11 @@
 
 ### F-009 · Faithful Refine 真兑现 [superseded by D-094, 2026-05-21]
 
-- **状态**: **superseded** — scope 翻盘. `reference` 已在 T-P2-01 真消费; `quality_floor / delivery_only / max_distance_km / functional.*` 砍 schema (志丹单用户实际不用); 见 D-094 草稿 + `docs/proposals/2026-05-21-faithful-refine-true-fulfillment.md`
+- **状态**: **superseded** — scope 翻盘. `reference` 已在 T-P2-01 真消费; `quality_floor / delivery_only / max_distance_km / functional.*` 砍 schema (志丹单用户实际不用); 见 D-094 草稿 + `docs/proposals/archive/2026-05-21-faithful-refine-true-fulfillment.md`
 
 ### F-010 · expanded / synonyms 词典化 [superseded by D-094, 2026-05-21]
 
-- **状态**: **superseded** — scope 翻盘. 不迁词典: `cuisine_candidates_expanded` 真消费 (L1 召回 `cuisine_want ∪ expanded`), `ingredient_synonyms` 砍 (代码 `_INGREDIENT_BROAD` 已替代). 见 D-094 草稿 + `docs/proposals/2026-05-21-faithful-refine-true-fulfillment.md`
+- **状态**: **superseded** — scope 翻盘. 不迁词典: `cuisine_candidates_expanded` 真消费 (L1 召回 `cuisine_want ∪ expanded`), `ingredient_synonyms` 砍 (代码 `_INGREDIENT_BROAD` 已替代). 见 D-094 草稿 + `docs/proposals/archive/2026-05-21-faithful-refine-true-fulfillment.md`
 
 ### F-011 · food_form_avoid 数据打标 + L1 硬过滤
 
@@ -125,7 +125,7 @@
 
 - **来源**: 2026-05-21 prompt 优化 Step 3 续 brief 项 B, codex 共商 SHIP 但志丹砍
 - **状态**: open, 暂不做 (ROI 不足)
-- **What**: rerank `build_user_message` 在 [PROFILE] 段尾加第 2 个 ephemeral cache breakpoint, 让 5min TTL 内连续 refine 链路 (refine→refine→refine 不带 L1 抽取重算) input_tokens 再省 ~2k cache_read. 详见 `docs/proposals/2026-05-21-prompt-step3-cache-and-examples.md`
+- **What**: rerank `build_user_message` 在 [PROFILE] 段尾加第 2 个 ephemeral cache breakpoint, 让 5min TTL 内连续 refine 链路 (refine→refine→refine 不带 L1 抽取重算) input_tokens 再省 ~2k cache_read. 详见 `docs/proposals/archive/2026-05-21-prompt-step3-cache-and-examples.md`
 - **砍的原因**: (1) 工程量 ~9h + 3 个 high-risk 文件 (llm_client.py / anthropic_api.py / openrouter.py + rerank.py 改 build_user_message), (2) 真命中窗口窄 — 仅"5min TTL 内连续 refine 且后台 L1 抽取没触发", codex Q-B2 警告 "PROFILE 一天内不变" 不成立, (3) 单用户日常 refine 频率不高, 长尾场景
 - **触发重做条件**: Phase 1 推广有真用户连续 refine 数据 / refine latency 还要再压 / Anthropic 计费成本成为瓶颈
 - **优先级**: P3 (长尾)
