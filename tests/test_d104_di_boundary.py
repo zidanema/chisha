@@ -24,14 +24,25 @@ def _run(code: str) -> subprocess.CompletedProcess:
                           capture_output=True, text=True)
 
 
-def test_core_import_closure_excludes_sandbox():
-    """import 全部 agent core 入口后 chisha.sandbox 必须不在 sys.modules。"""
+# D-104 总边界: import agent core 闭包后, 这些 extras / 重依赖都不许进 sys.modules
+# (Step0 重依赖 + Step2/3 sandbox + Step4 自调 LLM + debug/web 一网打尽; Step5 smoke 同款)。
+FORBIDDEN_IN_CORE = [
+    "chisha.sandbox", "chisha.llm_client", "chisha.llm_client_openrouter",
+    "chisha.web_api", "chisha.debug_recommend", "chisha.debug_server",
+    "fastapi", "uvicorn", "anthropic", "openai", "pandas",
+]
+
+
+def test_core_import_closure_excludes_extras_and_heavy_deps():
+    """import 全部 agent core 入口后, sandbox / 自调LLM / web/debug / 重依赖都不在
+    sys.modules —— 这是整个 D-104 解耦的护栏 (未来谁加了顶层 import 立刻红)。"""
     code = (
         "import sys, importlib\n"
         f"for m in {CORE_ENTRYPOINTS!r}:\n"
         "    importlib.import_module(m)\n"
-        "leak = sorted(k for k in sys.modules if k == 'chisha.sandbox')\n"
-        "assert not leak, f'BOUNDARY VIOLATION: {leak}'\n"
+        f"forbidden = {FORBIDDEN_IN_CORE!r}\n"
+        "leak = sorted(m for m in forbidden if m in sys.modules)\n"
+        "assert not leak, f'BOUNDARY VIOLATION: core 拉入了 {leak}'\n"
         "print('OK')\n"
     )
     r = _run(code)
@@ -78,3 +89,19 @@ def test_guard_scope_degrades_when_sandbox_unimportable():
     )
     r = _run(code)
     assert r.returncode == 0, f"guard 未优雅降级:\n{r.stdout}\n{r.stderr}"
+
+
+def test_run_llm_rerank_degrades_when_llm_client_unimportable():
+    """slim core: llm_client (anthropic/openai SDK) 不可 import → _run_llm_rerank 退
+    fallback (status='fallback', 非 config_error), 不崩 (D-104 Step4 guard)。"""
+    code = (
+        "import sys\n"
+        "sys.modules['chisha.llm_client'] = None  # 模拟 slim core: LLM SDK extras 缺席\n"
+        "from chisha.rerank import _run_llm_rerank\n"
+        "res = _run_llm_rerank([], {}, None, n=1, n_explore=0)\n"
+        "assert res['status'] == 'fallback', res\n"
+        "assert res['config_error'] is False, res\n"
+        "print('OK')\n"
+    )
+    r = _run(code)
+    assert r.returncode == 0, f"rerank guard 未降级:\n{r.stdout}\n{r.stderr}"
