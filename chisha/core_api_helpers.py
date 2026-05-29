@@ -102,3 +102,48 @@ def _format_v2_candidate(rank: int, c: dict) -> dict:
 
 # 暴露给 web_api / 外部调用方:
 format_v2_candidate = _format_v2_candidate
+
+
+def _format_final_minimal(rank: int, c: dict) -> dict:
+    """D-104 Step1b: trace["final"] 的 core 最小格式化 (供 slim core 发最小功能 trace).
+
+    刻意镜像 debug_recommend._format_final_candidate 的字段口径 (行为 parity):
+    - dish 用 key "name" (= canonical_name), 让 trace_store._extract_top1_summary 不退化;
+    - **刻意不带 dish cuisine** —— _format_final_candidate 也不带, 不能让 slim 下
+      reference_resolver 的 `similar` 关系从"现状恒 no-op"变成按 cuisine 生效 (Codex blocker);
+    - 不含 _combo_signature (那是 debug_recommend/extras 专属, reference refine 不消费)。
+    reference refine 实际只读 final[].restaurant.id (similar_but_different_venue)。
+    """
+    rest = c.get("restaurant", {})
+    return {
+        "rank": rank,
+        "combo_index": c.get("combo_index"),
+        "is_explore": bool(c.get("is_explore", False)),
+        "restaurant": {
+            "id": rest.get("id"),
+            "name": rest.get("name"),
+            "distance_m": rest.get("distance_m", -1),
+            "eta_min": rest.get("delivery_eta_min", -1),
+        },
+        "dishes": [
+            {
+                "dish_id": d.get("dish_id"),
+                "name": d.get("canonical_name"),
+                "price": d.get("price"),
+                "main_ingredient_type":
+                    d["nutrition_profile"].get("main_ingredient_type"),
+                "oil_level": d["nutrition_profile"].get("oil_level"),
+            }
+            for d in c.get("dishes", [])
+        ],
+        "total_price": round(
+            sum(d.get("price", 0) for d in c.get("dishes", [])), 1
+        ),
+        "score": round(c.get("score", 0), 3),
+        "fit_score": c.get("fit_score"),
+        "health_flags": c.get("health_flags") or {},
+        "risk_flags": c.get("risk_flags") or [],
+        "taste_match": c.get("taste_match"),
+        "one_line_reason":
+            c.get("one_line_reason") or c.get("reason_one_line", ""),
+    }
