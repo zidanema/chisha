@@ -156,68 +156,6 @@ export type BackendFinalRow = {
   one_line_reason: string;
 };
 
-export type BackendConfig = {
-  meal_type: string;
-  zone: string;
-  today: string;
-  daily_mood: string | null;
-  version: string;
-  use_llm_rerank: boolean;
-  fallback_used: boolean;
-  profile_overrides: Record<string, unknown>;
-};
-
-export type BackendMatchedDish = {
-  dish_id: string;
-  name: string;
-  restaurant_id: string;
-  restaurant_name: string | null;
-  price?: number;
-  nutrition_profile?: {
-    // level 字段是 backend 数字 (1..N), 但可能在某些 schema 路径上是 string.
-    oil_level?: number | string | null;
-    spicy_level?: number | string | null;
-    protein_grams_estimate?: number | null;
-    main_ingredient_type?: string | null;
-    cooking_method?: string | null;
-    wetness?: number | string | null;
-    grain_type?: string | null;
-    processed_meat_flag?: boolean | null;
-    sweet_sauce_level?: number | string | null;
-    vegetable_ratio_estimate?: number | null;
-  };
-  stage:
-    | "passed_recall"
-    | "dropped_hard_filter"
-    | "dropped_diversity_filter"
-    | "unknown";
-  reason: string | null;
-};
-
-export type BackendMatchedCombo = {
-  rank: number;
-  score: number;
-  signature: string;
-  breakdown: Record<string, number>;
-};
-
-export type BackendTargetTrace = {
-  query: { restaurant_name?: string; dish_names?: string[] };
-  matched_dishes: BackendMatchedDish[];
-  matched_combos_in_ranked: BackendMatchedCombo[];
-  in_final: boolean;
-};
-
-export type BackendDebugRecommend = {
-  config: BackendConfig;
-  context: Record<string, unknown>;
-  l1_recall: BackendL1Recall;
-  l2_score: BackendL2Score;
-  l3_rerank: BackendL3Rerank;
-  final: BackendFinalRow[];
-  target_trace: BackendTargetTrace | null;
-};
-
 // ---------- D-079: /api/debug/* trace replay endpoints ----------
 
 export type BackendFeedbackLink = {
@@ -228,23 +166,6 @@ export type BackendFeedbackLink = {
   feedback_submitted: boolean;
   rating: number | null;
   feedback_record?: unknown;
-};
-
-export type BackendSessionMeta = {
-  session_id: string;
-  started_at: string;
-  meal_type: "lunch" | "dinner" | string;
-  zone: string;
-  top1_summary: string;
-  total_latency_ms: number;
-  l3_status: string;
-  source: "production" | "what_if_preview" | string;
-  feedback?: BackendFeedbackLink | null;
-};
-
-export type BackendSessionsResp = {
-  items: BackendSessionMeta[];
-  corrupt_count: number;
 };
 
 // D-089-S5a: 通用单次 LLM call trace shape — serialize_llm_call_trace 产出.

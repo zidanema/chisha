@@ -64,10 +64,3 @@ export const PROFILE_DEFAULTS: Profile = {
     },
   },
 };
-
-export const ZONES_OPTS = [
-  { id: "shenzhen-bay", label: "深圳湾·科技园" },
-  { id: "home", label: "家附近" },
-  { id: "futian-cbd", label: "福田 CBD" },
-  { id: "other", label: "其它" },
-] as const;
