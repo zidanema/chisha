@@ -133,6 +133,25 @@ def _parse_at_time(at_time: str | None, root: Path) -> dt.date:
     return clock.today(root)
 
 
+def _guarded_entry(args) -> tuple[Path | None, int | None]:
+    """verb 公共前导: _root + _guard_scope(→SCOPE_OR_TIME) + _validate_id(→BAD_ID).
+
+    成功返 (root, None); 失败返 (None, _emit_error(...) 的退出码) 供 caller 直接 return。
+    仅供"标准前导"的 verb (resolve-intent / apply-rerank / continue) 用; cmd_start /
+    cmd_choose 的前导含额外校验, 不走本 helper。
+    """
+    root = _root()
+    try:
+        _guard_scope(root, args.scope)
+    except RuntimeError as e:
+        return None, _emit_error("SCOPE_OR_TIME", str(e))
+    try:
+        _validate_id(args.id, "--id")
+    except RuntimeError as e:
+        return None, _emit_error("BAD_ID", str(e))
+    return root, None
+
+
 def _resolve_zone(profile: dict, meal_type: str) -> str:
     from chisha.core_api_helpers import _resolve_zone as _rz
     return _rz(profile, meal_type)
@@ -150,6 +169,30 @@ def _load_inputs(meal_type: str, root: Path) -> tuple[dict, str, list, list, lis
 
 # ─────────────────────── round / cards 持久化 ───────────────────────
 
+def _read_round_keyed_json(path: Path) -> dict:
+    """读 round-keyed JSON (cards / ready). 不存在或损坏 → {} (best-effort 吞)."""
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    # 形态损坏 (合法 JSON 但非 dict, 如 list/str) 也归一到 {}: 调用方一律 .get,
+    # 防 helper 外 AttributeError (codex review: 旧各 try 内 .get 会吞掉此类错).
+    return data if isinstance(data, dict) else {}
+
+
+def _append_round_keyed_json(path: Path, round_id: str, payload,
+                             set_latest: bool = False) -> None:
+    """round 维度累加写 round-keyed JSON: mkdir → 读吞 → 置 round_id → (可选 __latest) → 写."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = _read_round_keyed_json(path)
+    existing[round_id] = payload
+    if set_latest:
+        existing["__latest"] = round_id
+    path.write_text(json.dumps(existing, ensure_ascii=False), encoding="utf-8")
+
+
 def _next_round_id(sid: str, root: Path) -> str:
     """--from refine: 下一个 R{n}.
 
@@ -157,15 +200,10 @@ def _next_round_id(sid: str, root: Path) -> str:
     best-effort 的 trace 发布 — 否则 trace 写失败会让 refine 轮号回退到 R1 串台.
     cards 缺失 → 回退查 trace → 都没有 → R1.
     """
-    p = _cards_path(sid, root)
-    if p.exists():
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            rounds = [k for k in data if k != "__latest"]
-            if rounds:
-                return f"R{len(rounds) + 1}"
-        except Exception:
-            pass
+    data = _read_round_keyed_json(_cards_path(sid, root))
+    rounds = [k for k in data if k != "__latest"]
+    if rounds:
+        return f"R{len(rounds) + 1}"
     from chisha import trace_store
     try:
         view = trace_store.read_trace_v3_view(sid, root)
@@ -183,17 +221,8 @@ def _cards_path(sid: str, root: Path) -> Path:
 
 def _write_cards(sid: str, round_id: str, cards: list[dict], root: Path) -> None:
     """apply-rerank 落 final cards (choose 按 card_id 查). round 维度累加."""
-    p = _cards_path(sid, root)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    existing: dict = {}
-    if p.exists():
-        try:
-            existing = json.loads(p.read_text(encoding="utf-8")) or {}
-        except Exception:
-            existing = {}
-    existing[round_id] = cards
-    existing["__latest"] = round_id
-    p.write_text(json.dumps(existing, ensure_ascii=False), encoding="utf-8")
+    _append_round_keyed_json(_cards_path(sid, root), round_id, cards,
+                             set_latest=True)
 
 
 def _find_card(sid: str, card_id: str, root: Path) -> tuple[dict | None, str | None]:
@@ -202,13 +231,7 @@ def _find_card(sid: str, card_id: str, root: Path) -> tuple[dict | None, str | N
 
     返回 (card, round_id) 或 (None, latest_round).
     """
-    p = _cards_path(sid, root)
-    if not p.exists():
-        return None, None
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return None, None
+    data = _read_round_keyed_json(_cards_path(sid, root))
     latest = data.get("__latest")
     if not latest:
         return None, None
@@ -227,39 +250,18 @@ def _write_ready(sid: str, round_id: str, ready: dict, step_token: str,
                  root: Path) -> None:
     """P1 (codex Q3): apply 成功落 ready 响应快照 (含 step_token), 供 continue rerank
     重发幂等回放 (round clear 后宿主分不清"完成"vs"丢失"). round 维度累加."""
-    p = _ready_path(sid, root)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    existing: dict = {}
-    if p.exists():
-        try:
-            existing = json.loads(p.read_text(encoding="utf-8")) or {}
-        except Exception:
-            existing = {}
-    existing[round_id] = {**ready, "step_token": step_token}
-    p.write_text(json.dumps(existing, ensure_ascii=False), encoding="utf-8")
+    _append_round_keyed_json(_ready_path(sid, root), round_id,
+                             {**ready, "step_token": step_token})
 
 
 def _read_ready(sid: str, round_id: str, root: Path) -> dict | None:
-    p = _ready_path(sid, root)
-    if not p.exists():
-        return None
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    return data.get(round_id)
+    return _read_round_keyed_json(_ready_path(sid, root)).get(round_id)
 
 
 def _latest_published_round(sid: str, root: Path) -> str | None:
     """cards 文件的 __latest = 最近发布的 ready round. rerank replay 防跨轮 stale
     (codex P1 C): 只回放最新轮, 旧轮 token 不静默回放历史 cards."""
-    p = _cards_path(sid, root)
-    if not p.exists():
-        return None
-    try:
-        return (json.loads(p.read_text(encoding="utf-8")) or {}).get("__latest")
-    except Exception:
-        return None
+    return _read_round_keyed_json(_cards_path(sid, root)).get("__latest")
 
 
 # ─────────────────────── 共享: prepare → rerank spec ───────────────────────
@@ -412,16 +414,9 @@ def cmd_start(args) -> int:
 
 
 def cmd_resolve_intent(args) -> int:
-    root = _root()
-    try:
-        _guard_scope(root, args.scope)
-    except RuntimeError as e:
-        return _emit_error("SCOPE_OR_TIME", str(e))
-
-    try:
-        _validate_id(args.id, "--id")
-    except RuntimeError as e:
-        return _emit_error("BAD_ID", str(e))
+    root, err = _guarded_entry(args)
+    if err is not None:
+        return err
 
     from chisha import agent_round_store
     from chisha.refine_intent_v2 import apply_intent_response
@@ -508,16 +503,9 @@ def cmd_resolve_intent(args) -> int:
 
 
 def cmd_apply_rerank(args) -> int:
-    root = _root()
-    try:
-        _guard_scope(root, args.scope)
-    except RuntimeError as e:
-        return _emit_error("SCOPE_OR_TIME", str(e))
-
-    try:
-        _validate_id(args.id, "--id")
-    except RuntimeError as e:
-        return _emit_error("BAD_ID", str(e))
+    root, err = _guarded_entry(args)
+    if err is not None:
+        return err
 
     from chisha import agent_round_store
     from chisha.core_api_helpers import _format_v2_candidate
@@ -621,6 +609,25 @@ def _build_minimal_trace(*, session_id: str, started_at, meal_type: str,
     }
 
 
+def _persist_agent_trace(sid, round_id, trace, frozen, narrative, n_combos,
+                         root) -> None:
+    """R1 整条写, refine 轮 append round payload (trace_store)."""
+    from chisha import trace_store
+    if round_id == "R1":
+        trace_store.write_trace(sid, trace, root=root)
+        return
+    round_payload = {
+        "user_input": frozen.get("refine_input"),
+        "intent_v2": frozen.get("intent"),
+        "narrative": narrative,
+        "kpi": {"combos": n_combos, "top1": "", "latency_ms": 0},
+        "l1": trace.get("l1"), "l2": trace.get("l2"),
+        "l3": trace.get("l3"), "final": trace.get("final"),
+        "__frozen": trace.get("__frozen"),
+    }
+    trace_store.append_round(sid, round_payload, root=root)
+
+
 def _publish_trace_best_effort(*, sid, round_id, frozen, persisted, mapped, today,
                                 narrative, used_fallback, fallback_reason, root) -> None:
     """发布 debug trace (best-effort, 失败吞掉不阻断 cards).
@@ -630,7 +637,7 @@ def _publish_trace_best_effort(*, sid, round_id, frozen, persisted, mapped, toda
     cards 正确性 (codex #a). 重跑/build 任一失败 → 跳过 trace.
     """
     try:
-        from chisha import clock, trace_store
+        from chisha import clock
         from chisha.agent_orchestration import prepare_candidates
 
         profile, zone, rests, tagged, meal_log = _load_inputs(frozen["meal_type"], root)
@@ -674,19 +681,8 @@ def _publish_trace_best_effort(*, sid, round_id, frozen, persisted, mapped, toda
                 meal_type=frozen["meal_type"], zone=zone, reranked=mapped,
             )
         trace["__source"] = "agent_cli"
-        if round_id == "R1":
-            trace_store.write_trace(sid, trace, root=root)
-        else:
-            round_payload = {
-                "user_input": frozen.get("refine_input"),
-                "intent_v2": frozen.get("intent"),
-                "narrative": narrative,
-                "kpi": {"combos": len(prep.combos), "top1": "", "latency_ms": 0},
-                "l1": trace.get("l1"), "l2": trace.get("l2"),
-                "l3": trace.get("l3"), "final": trace.get("final"),
-                "__frozen": trace.get("__frozen"),
-            }
-            trace_store.append_round(sid, round_payload, root=root)
+        _persist_agent_trace(sid, round_id, trace, frozen, narrative,
+                             len(prep.combos), root)
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(
@@ -708,15 +704,9 @@ def cmd_continue(args) -> int:
       - rerank 重发 (round 已 apply+clear) → 查 ready 快照回放已落 cards.
     路由前强校验 token.round == 当前 round (防 stale 跨轮 token 命中错轮回放).
     """
-    root = _root()
-    try:
-        _guard_scope(root, args.scope)
-    except RuntimeError as e:
-        return _emit_error("SCOPE_OR_TIME", str(e))
-    try:
-        _validate_id(args.id, "--id")
-    except RuntimeError as e:
-        return _emit_error("BAD_ID", str(e))
+    root, err = _guarded_entry(args)
+    if err is not None:
+        return err
 
     if not args.step:
         return _emit_error(
