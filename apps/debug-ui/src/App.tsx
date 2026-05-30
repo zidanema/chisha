@@ -285,14 +285,10 @@ export function App() {
             )}
             {session && (
               <DagHeader
-                activeTab="main"
-                fallbackL3LatencyMs={null}
-                fallbackProvider={null}
                 currentPanel="l1"
                 onClickNode={handleNodeClick}
                 compact={true}
                 onToggleCompact={() => { /* always compact inside sticky stack */ }}
-                runningPulse={false}
                 session={session}
               />
             )}

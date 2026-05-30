@@ -9,64 +9,33 @@ import {
   RiskChip,
 } from "./atoms";
 
-export type RecCardMode = "decision" | "review";
-
 export interface RecCardProps {
   candidate: Candidate;
-  mode?: RecCardMode;
-  // decision mode (homepage)
   pickedRank?: number | null;
   onPick?: (c: Candidate) => void;
   onUnpick?: () => void;
   onDetail?: (c: Candidate) => void;
-  // review mode (feedback)
-  checked?: boolean;
-  onSelect?: (rank: number) => void;
 }
 
 // D-052: pick = inline 持久锁定（边框 + ✓ 已选 + 改主意），不是 toast。
 // 非 picked 卡片淡化（opacity 0.55），按钮转次级"选这个"。
 export function RecCard({
   candidate,
-  mode = "decision",
   pickedRank,
   onPick,
   onUnpick,
   onDetail,
-  checked,
-  onSelect,
 }: RecCardProps) {
   const c = candidate;
-  const isReview = mode === "review";
-  const someonePicked = !isReview && pickedRank != null;
+  const someonePicked = pickedRank != null;
   const isPicked = someonePicked && c.rank === pickedRank;
   const isDimmed = someonePicked && c.rank !== pickedRank;
 
-  const onCardKey =
-    isReview && onSelect
-      ? (e: React.KeyboardEvent<HTMLElement>) => {
-          if (e.key === " " || e.key === "Enter") {
-            e.preventDefault();
-            onSelect(c.rank);
-          }
-        }
-      : undefined;
-
   return (
     <article
-      onClick={isReview && onSelect ? () => onSelect(c.rank) : undefined}
-      role={isReview ? "radio" : undefined}
-      aria-checked={isReview ? !!checked : undefined}
-      tabIndex={isReview ? 0 : undefined}
-      onKeyDown={onCardKey}
       className={cx(
         "rec-card rounded-lg border bg-[color:var(--surface)] transition-all",
-        isReview && "cursor-pointer",
-        isReview && checked
-          ? "border-[color:var(--accent)]"
-          : isReview
-          ? "border-[color:var(--border)]"
-          : isPicked
+        isPicked
           ? "border-[color:var(--accent)]"
           : someonePicked
           ? "border-[color:var(--border)]"
@@ -74,7 +43,7 @@ export function RecCard({
         isDimmed && "opacity-55"
       )}
       style={
-        (isReview && checked) || isPicked
+        isPicked
           ? {
               boxShadow: "0 0 0 1px var(--accent) inset",
               background: "color-mix(in srgb, var(--accent) 5%, var(--surface))",
@@ -83,17 +52,6 @@ export function RecCard({
       }
     >
       <div className="p-4 flex gap-3">
-        {isReview && (
-          <span
-            className="shrink-0 mt-1 inline-flex items-center justify-center w-4 h-4 rounded-full border-2 transition-colors"
-            style={{
-              borderColor: checked ? "var(--accent)" : "var(--border)",
-              background: checked ? "var(--accent)" : "transparent",
-            }}
-          >
-            {checked && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
-          </span>
-        )}
         <div className="flex-1 min-w-0 flex flex-col gap-2.5">
           <div className="flex items-center gap-1.5 flex-wrap min-h-[22px]">
             <span className="font-mono text-[11px] text-[color:var(--muted)] tabular-nums">
@@ -152,9 +110,8 @@ export function RecCard({
               <OilLabel level={c.estimated_total_oil} />
             </span>
 
-            {!isReview && (
-              <div className="ml-auto flex items-center gap-2">
-                {isPicked ? (
+            <div className="ml-auto flex items-center gap-2">
+              {isPicked ? (
                   <>
                     <span
                       className="text-[12.5px] px-3 py-1.5 rounded-md font-medium inline-flex items-center gap-1.5"
@@ -207,7 +164,6 @@ export function RecCard({
                   </>
                 )}
               </div>
-            )}
           </div>
         </div>
       </div>

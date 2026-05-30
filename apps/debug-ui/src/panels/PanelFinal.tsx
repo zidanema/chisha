@@ -1,6 +1,5 @@
 import { CopyBtn } from "../components/ui/CopyBtn";
 import { Pill } from "../components/ui/Pill";
-import type { FinalDiffKind } from "../lib/diffSession";
 import type { FinalRow } from "../types/trace";
 
 function FlagDot({
@@ -21,29 +20,12 @@ function FlagDot({
   );
 }
 
-function FinalCard({ c, diff }: { c: FinalRow; diff?: FinalDiffKind }) {
+function FinalCard({ c }: { c: FinalRow }) {
   const isExplore = c.kind === "explore";
-  const isDropped = diff === "dropped";
-  const isNew = diff === "new";
-
-  // Border / stripe / opacity hint by diff state. Original "explore" styling
-  // still applies via className; diff tags layer on top.
-  const cardStyle: React.CSSProperties = isDropped
-    ? { opacity: 0.5, filter: "saturate(0.6)" }
-    : isNew
-      ? { boxShadow: "0 0 0 1px var(--ok-edge), 0 4px 14px var(--shadow-card)" }
-      : {};
 
   return (
-    <div className={`final-card ${isExplore ? "explore" : ""}`.trim()} style={cardStyle}>
-      <div
-        className="final-stripe"
-        style={
-          isNew ? { background: "var(--ok)" } :
-          isDropped ? { background: "var(--err)" } :
-          undefined
-        }
-      ></div>
+    <div className={`final-card ${isExplore ? "explore" : ""}`.trim()}>
+      <div className="final-stripe"></div>
       <div className="final-body">
         <div className="rank-row">
           <div className={`rank ${isExplore ? "explore" : ""}`.trim()}>{c.rank}</div>
@@ -51,22 +33,6 @@ function FinalCard({ c, diff }: { c: FinalRow; diff?: FinalDiffKind }) {
             <span className="tag-explore">explore</span>
           ) : (
             <span className="tag-exploit">exploit</span>
-          )}
-          {diff === "new" && (
-            <span style={{
-              fontSize: 9, padding: "2px 6px", borderRadius: 2,
-              background: "var(--ok-bg)", color: "var(--ok)",
-              border: "1px solid var(--ok-edge)", fontFamily: "var(--mono)",
-              fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em",
-            }}>+ 新进</span>
-          )}
-          {diff === "dropped" && (
-            <span style={{
-              fontSize: 9, padding: "2px 6px", borderRadius: 2,
-              background: "var(--err-bg)", color: "var(--err)",
-              border: "1px solid var(--err-edge)", fontFamily: "var(--mono)",
-              fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em",
-            }}>− 踢出</span>
           )}
           <span className="mono dim" style={{ fontSize: 10, marginLeft: "auto" }}>{c.combo_id}</span>
         </div>
@@ -141,17 +107,12 @@ function FinalCard({ c, diff }: { c: FinalRow; diff?: FinalDiffKind }) {
 export function PanelFinal({
   rows,
   totalLatencyMs,
-  finalDiff,
-  droppedRows,
 }: {
   rows: FinalRow[];
   totalLatencyMs: number;
-  finalDiff?: Map<string, FinalDiffKind>;
-  droppedRows?: FinalRow[];
 }) {
   const exploreN = rows.filter((c) => c.kind === "explore").length;
   const exploitN = rows.length - exploreN;
-  const droppedN = droppedRows?.length ?? 0;
   return (
     <div className="panel">
       <div className="panel-head">
@@ -159,9 +120,6 @@ export function PanelFinal({
         <h2>Top {rows.length}</h2>
         <span className="subtitle">
           {exploitN} exploit + {exploreN} explore
-          {droppedN > 0 && (
-            <span style={{ color: "var(--err)", marginLeft: 8 }}>· {droppedN} dropped</span>
-          )}
         </span>
         <div className="right">
           <Pill tone="gray">总 latency <span className="mono">{totalLatencyMs}ms</span></Pill>
@@ -171,12 +129,7 @@ export function PanelFinal({
       <div className="panel-body">
         <div className="final-grid">
           {rows.map((c) => (
-            // PanelRefine 同时传 droppedRows; rows / droppedRows 的 combo_id 来自
-            // 不同 index 空间 (L2 rank vs final combo_index+1) 可能撞 id, 各自加前缀.
-            <FinalCard key={`keep-${c.combo_id}`} c={c} diff={finalDiff?.get(c.combo_id)} />
-          ))}
-          {droppedRows?.map((c) => (
-            <FinalCard key={`drop-${c.combo_id}`} c={c} diff="dropped" />
+            <FinalCard key={`keep-${c.combo_id}`} c={c} />
           ))}
         </div>
       </div>
