@@ -32,7 +32,6 @@ CLI flags:
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import json
 import sys
 from pathlib import Path
@@ -45,16 +44,22 @@ from scripts.tag_dishes import (
     merge_into_output,
     validate_record,
 )
+from scripts._common import (
+    ZONES_ALL,
+    now_iso as _now_iso,
+    read_json as _read_json,
+    write_json as _write_json,
+    resolve_zones as _resolve_zones,
+    record_failure as _record_failure,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 JOBS_ROOT = ROOT / ".claude" / "tag_jobs"
-FAILURES_LOG = ROOT / "logs" / "tag_failures.jsonl"
 
 MAX_ATTEMPTS = 3
 DEFAULT_VERSION_LABEL = "v1-claude-code"
 # subagent 路径默认 50 条/批. 主会话单 message 可并发多个 subagent 分轮处理全量菜品.
 DEFAULT_BATCH_SIZE = 50
-ZONES_ALL = ("home", "shenzhen-bay")
 
 
 # ---------------- IO helpers ----------------
@@ -69,26 +74,6 @@ def _zone_jobs_dir(zone: str) -> Path:
 
 def _manifest_path(zone: str) -> Path:
     return _zone_jobs_dir(zone) / "manifest.json"
-
-
-def _read_json(p: Path) -> Any:
-    return json.loads(p.read_text(encoding="utf-8"))
-
-
-def _write_json(p: Path, obj: Any, indent: int = 2) -> None:
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(obj, ensure_ascii=False, indent=indent),
-                 encoding="utf-8")
-
-
-def _now_iso() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
-
-
-def _resolve_zones(zone_arg: str) -> list[str]:
-    if zone_arg == "all":
-        return list(ZONES_ALL)
-    return [zone_arg]
 
 
 # ---------------- prepare ----------------
@@ -234,20 +219,6 @@ def _validate_subagent_batch(
         if per:
             issues.append(f"{r.get('dish_id')}: {per}")
     return issues
-
-
-def _record_failure(zone: str, batch_id: int, dish_ids: list[str],
-                    error: str) -> None:
-    FAILURES_LOG.parent.mkdir(parents=True, exist_ok=True)
-    line = {
-        "ts": _now_iso(),
-        "zone": zone,
-        "batch_id": batch_id,
-        "dish_ids": dish_ids,
-        "error": error[:500],
-    }
-    with FAILURES_LOG.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
 def _advance_manifest_state(manifest: dict, zone: str) -> int:

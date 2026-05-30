@@ -58,7 +58,8 @@ def sandbox(tmp_path: Path, monkeypatch) -> Path:
     """指向 tmp_path 的沙盒, 包含 data/ + .claude/tag_jobs/ + logs/."""
     monkeypatch.setattr(tvs, "ROOT", tmp_path)
     monkeypatch.setattr(tvs, "JOBS_ROOT", tmp_path / ".claude" / "tag_jobs")
-    monkeypatch.setattr(tvs, "FAILURES_LOG",
+    # F-016 #28: FAILURES_LOG/record_failure 抽到 scripts._common, 故在那里 patch
+    monkeypatch.setattr("scripts._common.FAILURES_LOG",
                         tmp_path / "logs" / "tag_failures.jsonl")
     (tmp_path / "data").mkdir()
     return tmp_path

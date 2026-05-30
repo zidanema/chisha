@@ -16,13 +16,11 @@
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import json
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
 
 from chisha.llm_client_openrouter import (
     DEFAULT_BULK_MODEL,
@@ -38,11 +36,18 @@ from scripts.tag_dishes import (
     _DISH_ROLE_VALUES as DISH_ROLE_VALUES,
     _GRAIN_TYPE_VALUES as GRAIN_TYPE_VALUES,
 )
+from scripts._common import (
+    ZONES_ALL,
+    now_iso as _now_iso,
+    read_json as _read_json,
+    write_json as _write_json,
+    resolve_zones as _resolve_zones,
+    record_failure as _record_failure,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PROMPT_PATH = ROOT / "prompts" / "tag_dishes.md"
 JOBS_ROOT = ROOT / ".claude" / "v3_tagging"
-FAILURES_LOG = ROOT / "logs" / "tag_failures.jsonl"
 
 # batch=30/workers=16 实测对 deepseek-flash 会截断 (输出超 8192 token) + 限流 (空响应),
 # home 重采实测 24/28 batch 挂; 降到 15/8 后 56 batch 0 失败 (D-101). refresh_from_collector
@@ -52,24 +57,8 @@ DEFAULT_WORKERS = 8
 DEFAULT_VERSION_LABEL = "v3"
 DEFAULT_MAX_ATTEMPTS = 3
 
-ZONES_ALL = ("home", "shenzhen-bay")
-
 # v3 schema 校验常量 (字段集 / dish_role / grain_type 枚举) 复用 tag_dishes 单一来源
 # (上方 import alias), 不再各维护一份。
-
-
-def _now_iso() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
-
-
-def _read_json(p: Path) -> Any:
-    return json.loads(p.read_text(encoding="utf-8"))
-
-
-def _write_json(p: Path, obj: Any, indent: int = 2) -> None:
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(obj, ensure_ascii=False, indent=indent),
-                 encoding="utf-8")
 
 
 def _zone_data_dir(zone: str) -> Path:
@@ -78,12 +67,6 @@ def _zone_data_dir(zone: str) -> Path:
 
 def _zone_jobs_dir(zone: str, version_label: str) -> Path:
     return JOBS_ROOT / version_label / zone
-
-
-def _resolve_zones(zone_arg: str) -> list[str]:
-    if zone_arg == "all":
-        return list(ZONES_ALL)
-    return [zone_arg]
 
 
 # ---------------- v3 record validator ----------------
@@ -165,20 +148,6 @@ def _call_one_batch(
                 # 指数 backoff: 2s -> 4s -> 8s
                 time.sleep(2 ** attempt)
     return [], last_err
-
-
-def _record_failure(zone: str, batch_id: int, dish_ids: list[str],
-                    error: str) -> None:
-    FAILURES_LOG.parent.mkdir(parents=True, exist_ok=True)
-    line = {
-        "ts": _now_iso(),
-        "zone": zone,
-        "batch_id": batch_id,
-        "dish_ids": dish_ids,
-        "error": error[:500],
-    }
-    with FAILURES_LOG.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
 # ---------------- pipeline ----------------

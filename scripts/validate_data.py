@@ -18,26 +18,18 @@ exit code: 0 = OK; 1 = 有 hard 失败; --strict 下 warning 也返 1.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any
 
 from chisha.schemas import validate_dishes_tagged
+from scripts._common import (
+    ZONES_ALL,
+    read_json as _read_json,
+    resolve_zones as _resolve_zones,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
-ZONES_ALL = ("home", "shenzhen-bay")
-
-
-def _read_json(p: Path) -> Any:
-    return json.loads(p.read_text(encoding="utf-8"))
-
-
-def _resolve_zones(zone_arg: str) -> list[str]:
-    if zone_arg == "all":
-        return list(ZONES_ALL)
-    return [zone_arg]
 
 
 def check_zone(zone: str) -> tuple[list[str], list[str]]:
