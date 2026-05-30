@@ -973,7 +973,7 @@ def cmd_doctor(args) -> int:
         )
     elif pyyaml_status == "host":
         info["notes"].append(
-            f"pyyaml 来自宿主环境而非 bundle vendor (dev/形态A 合法; 形态B bundle 应 vendored): {pyyaml_path}"
+            f"pyyaml 来自宿主环境而非 bundle vendor (dev 合法; 形态B bundle 应 vendored): {pyyaml_path}"
         )
     if not is_posix:
         info["notes"].append(

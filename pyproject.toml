@@ -25,11 +25,9 @@ dependencies = [
 Homepage = "https://github.com/zidanema/chisha"
 Repository = "https://github.com/zidanema/chisha"
 
-[project.scripts]
-chisha = "chisha.cli:main"
-# P2: `chisha-meal` 别名 = dist 名同名可执行, 让 `uvx chisha-meal ...` / `uv tool install
-# chisha-meal` 后 `chisha-meal <verb>` 都解析得到 (与 `chisha` 等价).
-chisha-meal = "chisha.cli:main"
+# D-105.1: 形态A (uv tool install → 全局 chisha 命令) 已退役. 不再注册 [project.scripts]
+# console 入口; 接入唯一形态 = 形态B 自包含 bundle (build_skill_bundle --install → wrapper
+# scripts/chisha)。repo dev 仍走 `uv run python -m ...` (editable, 不需 console script)。
 
 [project.optional-dependencies]
 # D-104 Step 0: 跑全链路 server + 自调 LLM 精排才需要 (agent-only core 不需要).
@@ -61,35 +59,9 @@ addopts = "-m 'not requires_claude_cli'"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# D-105.1: 形态A wheel 分发已退役 — force-include / wheel exclude / 内容闸门 (旧
+# test_wheel_content_gate.py) 整体拆除. 形态B bundle (build_skill_bundle.py) 自带 DATA_FILES /
+# RESOURCE_DIRS 拷贝清单, 不经 wheel. 本节仅保留 hatchling 识别 `chisha` 包, 让 repo dev
+# `uv run` editable 安装可用 (editable 引用源文件在位, 不需 force-include 打包数据)。
 [tool.hatch.build.targets.wheel]
 packages = ["chisha"]
-# T-DIST-01 B.0: 标准 wheel 排除 (force-include 旁路, 但留作 source dist 守门).
-exclude = [
-    "apps/",
-    "plans/",
-    "docs/",
-    "tmp/",
-    "logs/",
-    "eval/",
-    "tests/",
-    "scripts/",
-    ".claude/",
-    "design/",
-    "specs/",
-    "integrations/",
-]
-
-# T-DIST-01 B.0: force-include 把 chisha/ 包外的资源进 wheel.
-# 形态: 源 = repo root 相对路径; 目标 = `chisha/<name>` (与包同根, 让 install_root() / "prompts" 等命中).
-# 注意: hatch force-include 旁路 exclude — 必须 per-file 枚举 runtime 真正消费的数据,
-# 否则 data/*/dishes_raw.json (4.7MB 离线打标中间产物) / review_sample.* / conflicts_ack.json 等会污染 wheel.
-# Runtime 消费 (recall.py grep): restaurants.json + dishes_tagged.json (两 zone 文件).
-# aliases.json (D-099.2 别名表) / data/manifest.json (D-102.3 bundle 闸门) 顶层两份.
-[tool.hatch.build.targets.wheel.force-include]
-"prompts" = "chisha/prompts"
-"profiles/methodologies" = "chisha/profiles/methodologies"
-"profile.yaml" = "chisha/profile.yaml"
-"data/manifest.json" = "chisha/data/manifest.json"
-"data/aliases.json" = "chisha/data/aliases.json"
-"data/shenzhen-bay/restaurants.json" = "chisha/data/shenzhen-bay/restaurants.json"
-"data/shenzhen-bay/dishes_tagged.json" = "chisha/data/shenzhen-bay/dishes_tagged.json"

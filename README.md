@@ -45,7 +45,7 @@ chisha choose   --id <rid> --card <cards[].id> --action accept   # 用户选定
 - Web SPA 用户视图 + 反馈系统（差评下一次推荐就降权/剔除，好评优先）
 - 长期口味画像（从你的真实反馈统计聚合，可解释、可手编）
 - 多轮 refine（自然语言追加约束，如"想吃辣""少米饭""想喝汤"）
-- 一行装、自动触发：`uv tool install` 装好后，Claude Code 里说"中午吃啥"即触发；状态存在 `~/.chisha/`，升级不动你的数据
+- 拷贝即用、自动触发：自包含 skill 文件夹拷进 `~/.claude/skills/`，Claude Code 里说"中午吃啥"即触发；状态存在 `~/.chisha/`，升级不动你的数据
 - 开发者自用工具：Sandbox 时光机、trace 持久化、Debug 三模式
 
 **当前限制**（主动收窄，等真要推广时再扩）：
@@ -79,13 +79,10 @@ python3 ~/.claude/skills/chisha-meal/scripts/chisha doctor                      
 
 **环境要求 (诚实边界)**: python3 ≥ 3.11 在 PATH (macOS 自带 3.9 不够); **POSIX-only** (macOS/Linux, core 用 fcntl 文件锁, Windows 除 WSL 外不支持)。
 
-**形态A (uv tool install, 引擎回滚保留一版)**:
-```bash
-uv tool install git+https://github.com/zidanema/chisha.git && chisha onboard --zone shenzhen-bay
-```
-A 是 **引擎 CLI 回滚** (全局 `chisha` 命令直跑); 注意 onboard 写出的 SKILL.md 已是 B 形态 (命令指向 bundle wrapper) —— 要 B 形态 skill 自动触发就装 B bundle, 纯 A 只用全局 `chisha` 直接跑命令。state 永远住 `~/.chisha/` (A/B 共读, 升级不被覆盖)。
+> 形态A (`uv tool install` → 全局 `chisha` 命令) 已于 D-105.1 退役, 接入唯一形态 = 上面的 B 自包含 bundle。state 仍住 `~/.chisha/` (升级不被覆盖)。
 
 **让 AI agent 帮你装**: 把 [AGENTS.md](AGENTS.md) 链接丢给你的 Claude Code, 它会按 spec 自己探测、安装、配置、冒烟测试。
+> ⚠️ 当前 AGENTS.md 仍是形态A (`uv tool install`) 的远程自安装协议, D-105.1 退役后**已 stale**, 待 B 形态远程分发协议定型后重写。在那之前请按上面的 B bundle 手动装, 不要走 AGENTS.md 的 uv tool install 步骤。
 
 ---
 

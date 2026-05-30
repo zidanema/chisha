@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
@@ -503,7 +504,7 @@ def _llm_parse_v2(text: str,
         fail_msg = f"{type(e).__name__}: {str(e)[:160]}"
         if trace_collector is not None:
             trace_collector["fallback_reason"] = fail_msg
-        print(f"  [refine_intent_v2] LLM 失败 ({fail_msg}), 降级到空 V2 + raw_understanding 占位")
+        print(f"  [refine_intent_v2] LLM 失败 ({fail_msg}), 降级到空 V2 + raw_understanding 占位", file=sys.stderr)
         return None
 
 
@@ -679,7 +680,7 @@ def apply_intent_response(
     required_keys = ("schema_version", "redirect", "constrain", "raw_understanding")
     missing = [k for k in required_keys if k not in parsed]
     if missing:
-        print(f"  [refine_intent_v2] LLM 漏必填字段 {missing}, 走 empty 兜底")
+        print(f"  [refine_intent_v2] LLM 漏必填字段 {missing}, 走 empty 兜底", file=sys.stderr)
         return _fb(f"LLM 漏必填字段 {missing[0]}, refine 字段全空")
 
     # Faithful Refine (codex #5): raw_text 永远是 CLI 注入的原文, 不信 agent 回传.
@@ -692,7 +693,7 @@ def apply_intent_response(
 
     ok, errors = validate_v2_schema(parsed)
     if not ok:
-        print(f"  [refine_intent_v2] schema validate fail: {errors[:3]}, 走 empty 兜底")
+        print(f"  [refine_intent_v2] schema validate fail: {errors[:3]}, 走 empty 兜底", file=sys.stderr)
         return _fb("LLM schema 不匹配, refine 字段全空")
 
     intent = _clean_parsed_to_v2(parsed, raw_text=raw_text)

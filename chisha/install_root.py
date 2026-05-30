@@ -3,13 +3,15 @@
 install_root = 包资源根 (含 prompts/, profiles/, data/), 与 state_root (~/.chisha/,
 用户可写) 对偶. 改前读 CONTRACTS「install/state root 二分」段.
 
-布局兼容 (dev + wheel 双形态):
+布局兼容 (dev / 形态B bundle 都走 sibling 布局; chisha/<resource> 是退役 wheel 旧布局):
   - dev: repo root 含 prompts/ profiles/ data/ (chisha/ 同级), install_root = repo root.
-  - wheel: hatch force-include 把上述目录复制到 chisha/prompts/ chisha/profiles/
-    chisha/data/ (site-packages/chisha/), install_root = chisha/ 包目录.
+  - 形态B bundle: bundle 根含 prompts/ profiles/ data/ (chisha/ 同级), 同 dev 布局,
+    install_root = bundle 根 (build_skill_bundle 复刻 dev 同级布局)。
+  - wheel (D-105.1 退役): 旧 hatch force-include 把上述目录复制进 chisha/prompts/ 等,
+    install_root = chisha/ 包目录。已不再产此布局, 检测分支留作无害 fallback。
 
-检测顺序: 优先 chisha/<resource>/ 存在则用包目录 (wheel), 否则 fallback 到包目录
-父级 (dev). 改 force-include 源布局必须同步更新这里 (`prompts` 探测目录).
+检测顺序: 优先 chisha/<resource>/ 存在则用包目录 (旧 wheel), 否则 fallback 到包目录
+父级 (dev / 形态B bundle, 现行唯一形态). 改 bundle 资源布局必须同步更新这里 (`prompts` 探测目录).
 
 零 chisha 依赖 (与 state_root 同款): 多个模块 import 它, 不能反向. 改前看
 [CONTRACTS.md 「install/state root 二分」段].

@@ -296,6 +296,12 @@ Phase 1 启动前原 9 项必收口按"自用是否需要"重切 (清单见 [ROA
 - **砍 core pydantic**: `collector_contract.py` 从 pydantic strict 改纯 dataclass + 手写校验, 逐层复刻 4 陷阱 (required-but-nullable 用 `_MISSING` 哨兵 / bool 泄漏前置 `not isinstance(v,bool)` / Literal 枚举 / extra 容忍) + 检查顺序 (结构→schema_version→norm_version)。与旧 pydantic 行为对拍 (tests/fixtures/collector_contract_golden.json 46 case + tests/test_collector_contract.py)。core 运行期唯一第三方依赖 = pyyaml。
 - **vendoring pyyaml**: installer 把纯 Python `yaml/` 拷进 bundle `vendor/yaml/` (C 扩展 `_yaml` 不拷, 运行时走纯 Python path)。`scripts/build_skill_bundle.py` 升级真 installer: cli.py 移回 (wrapper dispatch 目标) + 补拷 profile.yaml 模板 + `--install` staged 覆盖 (copy-to-temp-first, 拷贝失败不损 live skill; 两次 rename 间残留极小窗口, 非 OS 单原子) + 备份 + B 形态 SKILL.md (单一源 = `agent_skill_init._claude_code_skill_md`)。wrapper `scripts/chisha`: py>=3.11 硬 guard + sys.path 注入 (bundle→vendor→orig) + dispatch `chisha.cli:main`。
 - **诚实边界**: **POSIX-only** (core 用 fcntl 文件锁, Windows 除 WSL 外不支持); **python3 ≥ 3.11** (macOS 自带 3.9 不够, wrapper guard 报清晰错)。SKILL.md/doctor 显式声明。
-- **A additive 退役**: pyproject `[project.scripts]` 与 A 的 uv tool 入口**保留** (回滚用); 仅 SKILL.md 默认翻成 B 形态。A 入口标 deprecated 留后续。共读同一 `~/.chisha` state (无迁移)。
+- **A additive 退役 (D-105 落地时)**: pyproject `[project.scripts]` 与 A 的 uv tool 入口**保留** (回滚用); 仅 SKILL.md 默认翻成 B 形态。[已 by D-105.1 推翻: A 入口已删]
 - 守门: baseline_l2_snapshot 0-diff (砍 pydantic 后 4 trace 逐字节一致) + pytest 1276 pass (+collector_contract/build_skill_bundle 测试, 4 个形态A SKILL.md 断言改 B 形态) + **裸 python3 隔离实跑全链路** (bare venv 3.13 无 pydantic/pyyaml, doctor→onboard→eat→continue→choose→refine 全绿)。触碰 high-risk `agent_skill_init`。
-- 已知遗留 (非本期): `refine_intent_v2.py` fallback 路径 `print()` 漏到 stdout (违 "stdout 一律 JSON" 契约, host 靠 `splitlines()[-1]` 兜底); 形态A install 跑 onboard 会写 B 形态 SKILL.md (B 默认下符合预期)。
+
+## D-105.1
+**形态A 彻底退役 + stdout 泄漏修复.** (2026-05-30) · 志丹拍板 "形态A 不要了, 回滚靠 git"。
+- **删 uv tool 入口**: pyproject `[project.scripts]` (chisha / chisha-meal 双 console) + wheel `force-include` + wheel `exclude` 整块删; 仅留 `[build-system]` + `[tool.hatch...wheel] packages=["chisha"]` 让 repo dev `uv run` editable 可用。`tests/test_wheel_content_gate.py` 整删 (它只为形态A wheel 闸门存在; 形态B bundle 由 `build_skill_bundle` 自带 DATA_FILES 拷贝清单 + `test_build_skill_bundle` 守门)。接入唯一形态 = B 自包含 bundle; 回滚靠 git 不再保留 A 装包路径。
+- **stdout 泄漏修复**: `refine_intent_v2.py` 3 处 fallback `print()` (LLM 失败 / 漏必填字段 / schema validate fail) 全改 `file=sys.stderr`, 兑现 "stdout 一律 JSON" 契约 (此前 host 靠 `splitlines()[-1]` 兜底)。
+- **未做 (flag 给后续)**: `AGENTS.md` (404 行远程 agent 自安装协议) 整份基于 form A 的 `uv tool install` → 全局 `chisha`, 现已 stale; B 形态远程分发 (非维护者、无 repo 的 agent 如何拿 bundle) spec D-105 §2 列为非目标、未设计 → AGENTS.md 重写待 B 远程分发协议定型后单独做。
+- 守门: pytest 全过 (删 wheel gate 后) + 真实 `~/.claude/skills/chisha-meal/` --install 实跑全链路验证 + Codex commit review。
