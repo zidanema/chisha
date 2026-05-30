@@ -222,28 +222,12 @@ def _impl_refine(req: RefineReq) -> dict:
     # = recall path L0-A/B (与 recommend 同源, 重跑 _build_l1_trace)
     # + refine path L0-C 解除事件 (来自 raw["_refine_hard_filter_events"])
     # Codex M2: 与 refine_session 内部共用同一个 today (clock.today, sandbox 友好)
-    try:
-        from chisha.debug_recommend import _build_l1_trace
-        from chisha.status_bar import build_status_bar
-        _l1_trace, _ = _build_l1_trace(
-            profile, rests, tagged, meal_log,
-            today,
-            meal_type=state.meal_type,
-        )
-        _hfe = list(_l1_trace.get("hard_filter_events") or [])
-        # 合并 refine 自身的 L0-C override 事件
-        _hfe.extend(raw.get("_refine_hard_filter_events") or [])
-        status_bar = build_status_bar(profile, _hfe)
-    except Exception as _e:
-        import logging
-        logging.getLogger(__name__).warning(
-            "refine status_bar build failed (non-fatal): %s: %s",
-            type(_e).__name__, _e,
-        )
-        from chisha.status_bar import build_status_bar
-        status_bar = build_status_bar(
-            profile, raw.get("_refine_hard_filter_events") or []
-        )
+    # 合并 refine 自身的 L0-C override 事件 (extra_events) 进 recall path 的 L0-A/B
+    from chisha.status_bar import build_status_bar_safe
+    status_bar, _ = build_status_bar_safe(
+        profile, rests, tagged, meal_log, today, state.meal_type,
+        extra_events=raw.get("_refine_hard_filter_events") or [],
+    )
 
     out = {
         "session_id": raw["session_id"],

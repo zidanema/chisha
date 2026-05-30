@@ -134,3 +134,38 @@ def build_status_bar(
         "l0_protections": _derive_l0_protections(profile),
         "override_events": override_events,
     }
+
+
+def build_status_bar_safe(
+    profile: dict,
+    rests: list[dict],
+    tagged: list[dict],
+    meal_log: list[dict],
+    today,
+    meal_type: str | None = None,
+    *,
+    extra_events=(),
+    feedback_signal: dict | None = None,
+) -> tuple[dict, dict | None]:
+    """recommend / refine 两路共用的 status_bar 派生 (best-effort, F-016 #19).
+
+    跑一次 _build_l1_trace 拿 recall path 的 hard_filter_events, 合并 extra_events
+    (refine 路的 L0-C 解除事件), 再 build_status_bar。失败降级到 build_status_bar(
+    profile, extra_events) 不阻断 response。返回 (status_bar, l1_trace_cache | None);
+    recommend 路用 cache 喂 _build_trace, refine 路忽略第二返回值。
+    """
+    try:
+        from chisha.debug_recommend import _build_l1_trace
+        l1_trace_cache, _ = _build_l1_trace(
+            profile, rests, tagged, meal_log, today,
+            meal_type=meal_type, feedback_signal=feedback_signal,
+        )
+        _hfe = list(l1_trace_cache.get("hard_filter_events") or [])
+        _hfe.extend(extra_events)
+        return build_status_bar(profile, _hfe), l1_trace_cache
+    except Exception as _e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "status_bar build failed (non-fatal): %s: %s", type(_e).__name__, _e,
+        )
+        return build_status_bar(profile, list(extra_events)), None

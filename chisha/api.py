@@ -122,25 +122,11 @@ def recommend_meal(
     # (recall path 的 L0-A/B 事件), 给前端 always-on 状态条派生数据.
     # Codex M1 修: status_bar 与 _build_trace 共用同一份 _build_l1_trace 结果,
     # 之前 status_bar 跑一次 + _build_trace 又跑一次 → 100ms 重复开销 + 边界漂移风险.
-    l1_trace_cache: dict | None = None
-    try:
-        from chisha.debug_recommend import _build_l1_trace
-        from chisha.status_bar import build_status_bar
-        l1_trace_cache, _ = _build_l1_trace(
-            profile, rests, tagged, meal_log, today, meal_type=meal_type,
-            feedback_signal=fb_signal,
-        )
-        _hfe = l1_trace_cache.get("hard_filter_events") or []
-        status_bar = build_status_bar(profile, _hfe)
-    except Exception as _e:
-        import logging
-        logging.getLogger(__name__).warning(
-            "status_bar build failed (non-fatal): %s: %s", type(_e).__name__, _e,
-        )
-        # 降级到 baseline (无 events), 不阻断 response
-        from chisha.status_bar import build_status_bar
-        status_bar = build_status_bar(profile, [])
-        l1_trace_cache = None
+    from chisha.status_bar import build_status_bar_safe
+    status_bar, l1_trace_cache = build_status_bar_safe(
+        profile, rests, tagged, meal_log, today, meal_type,
+        feedback_signal=fb_signal,
+    )
 
     # T-P1b-02: L3 narrative (顶层"为什么推这 5 道"摘要)
     # collector 里若 LLM 路径触发, narrative 已写入; fallback / 旧 trace 为空
