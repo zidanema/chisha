@@ -1,5 +1,4 @@
 // labels.ts — single source of truth for backend enum → 中文 UI mapping.
-// Keep API parity with the prototype's window.LABELS (DESIGN_NOTES §3).
 // All UI components MUST go through `LABELS` rather than rendering raw enum values.
 
 import type { Mood, MoodResponse, MealType, ZoneId, IngredientKind } from "./types";
@@ -31,8 +30,6 @@ export const LABELS = {
     "shenzhen-bay": "深圳湾科技园",
     "home": "家附近",
     "futian-cbd": "福田 CBD",
-    "beijing-zgc": "北京中关村",
-    "shanghai-xhh": "上海徐汇湾",
     other: "其它",
   } as Record<ZoneId, string>,
 
@@ -204,8 +201,8 @@ export const LABELS = {
     skipUndo: "撤销，重新看推荐",
     skippedToast: "已记录，本餐不再提醒",
 
-    version: "v0.1",
-    versionTip: "chisha v1 · localhost · D-051 build",
+    version: "v1.0",
+    versionTip: "今天吃点啥 · v1.0",
 
     unknownRoute: "未知路由",
     backHome: "回主页",

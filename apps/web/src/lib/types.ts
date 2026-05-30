@@ -21,8 +21,6 @@ export type ZoneId =
   | "shenzhen-bay"
   | "home"
   | "futian-cbd"
-  | "beijing-zgc"
-  | "shanghai-xhh"
   | "other";
 
 export type IngredientKind =
