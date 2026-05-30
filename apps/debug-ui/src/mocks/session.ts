@@ -1,6 +1,5 @@
-// Mock session — TS port of design/mock.jsx.
+// Mock session — dev-only offline fallback.
 // Deterministic (seeded RNG) so render output matches the canvas pixel-for-pixel.
-// Phase 2: replaced by API fetch; this file is dev-only fallback.
 
 import type {
   ComboDish,
@@ -136,7 +135,7 @@ const DISHES_BY_REST: Record<string, ComboDish[]> = {
   ],
 };
 
-// Deterministic LCG — matches design/mock.jsx exactly (seed=42)
+// Deterministic LCG (seed=42)
 function makeRand(seed: number): () => number {
   let s = seed;
   return () => {

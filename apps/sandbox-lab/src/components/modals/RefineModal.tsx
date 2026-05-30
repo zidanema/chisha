@@ -1,4 +1,4 @@
-// D-093 S-02 RefineModal: handoff 保留, S-02 仅静态. S-03 接业务.
+// RefineModal: 单句约束当前这一顿推荐的弹窗.
 import { useEffect, useState } from "react";
 
 const PRESETS = ["戒辣", "今天想喝汤", "不想吃肉", "少油少盐", "便宜点"];

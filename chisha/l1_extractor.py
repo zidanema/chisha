@@ -12,7 +12,7 @@
     data/long_term_prefs.json
 
 设计约束:
-- 输入源仅 feedback_store.json (meal_log.jsonl V1 还没写入端, 不依赖, PR-2 记录)
+- 输入源仅 feedback_store.json (不消费 meal_log.jsonl)
 - LLM 走 claude_code_cli (Max 订阅免费, 拍板 1A); 不走 tool_use (claude_code_cli 不支持)
 - enum 校验在代码侧 (validate_prefs); LLM 仅作语义判断
 - 失败降级: 抽取失败 → 保留上次 prefs (调用方决定); 不写新文件
@@ -35,7 +35,7 @@ DEFAULT_PROMPT_PATH = "prompts/l1_extract.md"
 MAX_RECENT_EVIDENCE_SAMPLES = 5
 
 
-# V1.1 反馈 4 维 calibration 桶映射 (web_api.py:362-378 DimVal: 0/1/2)
+# V1.1 反馈 4 维 calibration 桶映射 (DimVal: 0/1/2)
 _CALIBRATION_DIMS = {
     "oil_calibration": ("too_low", "ok", "too_high"),
     "fullness": ("too_low", "ok", "too_high"),

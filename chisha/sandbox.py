@@ -7,7 +7,7 @@
 - 沉淀可见: inspect 端点暴露 L1 prefs
 - 一键回到干净状态: reset 不留痕
 
-State 落盘: logs/sandbox/state.json
+State 落盘: <state_root>/logs/sandbox/state.json (state_root 经 D-102 解析, 默认 ~/.chisha)
 {
   "enabled": true,
   "current_date": "2026-05-18",
@@ -28,7 +28,7 @@ State 落盘: logs/sandbox/state.json
 
 设计约束:
 - sandbox 关闭时 current_date()/current_datetime() 返 None, clock.* 降级到真实时间
-- profile.yaml 在 sandbox 内不动 (拷贝到 logs/sandbox/profile.yaml 由 PR-1b 实现)
+- profile.yaml 在 sandbox 内不动 (按需拷贝到 logs/sandbox/profile.yaml)
 """
 from __future__ import annotations
 
@@ -48,11 +48,11 @@ _SESSIONS_DIR_REL = "logs/sandbox/sessions"  # S-06a: sandbox 非 default 桶目
 _STATE_LOCK = threading.Lock()
 
 
-# S-04 Codex adversarial fix: destructive / mutating API 必须 fail-loud
-# (S-04 没实现 per-session state, init/advance/reset/disable/record_l1_extraction
-# 都是全局副作用. 接受非 default sid 会让 caller 误以为是 scoped 操作).
+# destructive / mutating API 必须 fail-loud: init/advance/reset/disable/
+# record_l1_extraction 都是全局副作用. 接受非 default sid 会让 caller 误以为是
+# scoped 操作; per-session 改写走 advance_meal/create_session.
 def _reject_nondefault_sid(api: str, sid: object) -> None:
-    """destructive API 拒绝非 default sid (S-05 才真支持 per-session 改写)."""
+    """这些全局副作用 API 不接受非 default sid."""
     if sid is None:
         return
     if sid == "_default":
@@ -105,8 +105,8 @@ def state(
 
     损坏 → 视为 disabled (派生数据 fail-open, 与 l1_prefs 风格一致)
 
-    S-04: ``session_id`` 签名预留, 本任务内不消费 (仍读单 ``logs/sandbox/state.json``).
-    S-05 拆 ``sessions/{sid}/state.json`` 时此处真用 sid 派生路径.
+    仅读 default 扁平 ``state.json``, 不消费 sid; sid-aware 读盘走
+    ``_state_path_for_sid`` / ``advance_meal``.
     """
     del session_id  # S-04 stub: implementation ignores sid
     p = _state_path(root)

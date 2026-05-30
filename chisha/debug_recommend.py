@@ -1,6 +1,6 @@
 """Debug-instrumented V2 推荐管道.
 
-复刻 chisha.api._recommend_meal_v2, 但每一阶段记录中间状态:
+复刻 chisha.api.recommend_meal, 但每一阶段记录中间状态:
 - L1 召回: hard_filter / diversity_filter 的丢弃明细 (dish_id + reason)
 - L2 打分: 全量 ranked combos + 每条 score_breakdown
 - L3 精排: LLM payload 输入 + LLM 原始返回 + fallback 标记

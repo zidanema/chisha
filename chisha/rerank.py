@@ -1,17 +1,10 @@
-"""LLM 精排 (D-035 → D-046): topN candidates → 5 个候选 (3 exploit + 2 explore).
+"""LLM 精排: 打分后的 topK candidates → 5 个候选 (3 exploit + 2 explore).
 
-D-046 重构 (2026-05-13):
-- top N 从 30 → 40 (L2 4 层 cap 已把多样性骨架定死, top31-40 仍有结构增量,
-  top41+ 高度同质, 且 lost-in-the-middle 会让 LLM 看不见中后段)
-- prompt 拆 system / user:
-  - system (prompts/rerank_system.md): 角色 + 任务 + 输出 schema + few-shot,
-    打 Anthropic prompt cache, 100% 命中
-  - user: 紧凑符号化的 PROFILE+CONTEXT+CANDIDATES, 每菜一行约 80-100 字符
-- payload 紧凑化: 每 candidate 从 ~1.47k chars 砍到 ~600 chars, 默认值省略
-- health_flags 从 LLM 输出移除, 改 rerank.py 收到结果后用规则算 (确定性 +
-  省 input/output token + 不再让 LLM 算油的算术平均). 最终对外字段不变.
+输入候选数由 L3_INPUT_TOP_K 权威; prompt 拆 system (打 cache) / user (紧凑
+符号化 PROFILE+CONTEXT+CANDIDATES); health_flags 由 rerank 收到结果后用规则算
+(确定性, 不让 LLM 算油), 最终对外字段不变.
 
-输入: 打分后 top40 combos + ContextSnapshot + profile + meal_log.
+输入: 打分后 topK combos + ContextSnapshot + profile + meal_log.
 输出: list[dict], 每条 candidate 含:
     rank / is_explore / combo_index / fit_score / health_flags /
     taste_match / risk_flags / one_line_reason

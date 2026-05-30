@@ -32,7 +32,7 @@ basics:
   zones:
     lunch: <YOUR_LUNCH_ZONE>       # 现支持 shenzhen-bay / home (或自建 zone, 见 docs/data-pipeline.md)
     dinner: <YOUR_DINNER_ZONE>
-  office_zone: <YOUR_LUNCH_ZONE>   # 旧字段, 向后兼容; 与 zones.lunch 同值
+  office_zone: <YOUR_LUNCH_ZONE>   # 兜底就餐片区: 未填对应 zones.{lunch/dinner} 时回退到此 zone
 
 # 弱约束三件套: 控油 + 有蔬菜 + 有蛋白 (D-023 不再强求 1/2-1/4-1/4 比例)
 plate_rule:

@@ -2,6 +2,7 @@
 
 CLI 三步 (start → resolve-intent → apply-rerank) 是独立进程, 中间协议状态必须落盘
 让下一步读取继续. 本 store 保存"进行中的协议 round" (pending / resolved).
+(P1 后宿主走单 verb `continue`, 三步 verb 降为 `continue` 内部 delegate 的 legacy 路径.)
 
 **核心隔离 (codex #2)**: pending/resolved 状态**绝不进** trace_store 的
 round_ids / latest_round (list_traces_v3 + debug-ui 的可见索引). 只有 apply-rerank

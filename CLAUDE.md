@@ -67,7 +67,7 @@ uv run python -m scripts.compare_traces                                         
 
 **high-risk 文件白名单** (单一权威源, 下方「工作流 § Codex 双触点」引用这份):
 
-后端 16 模块 — 改任一 → `regression_risk = high`:
+后端 17 模块 — 改任一 → `regression_risk = high`:
 - `chisha/{api,recall,score,rerank,refine,l1_extractor,sandbox,clock,data_root,trace_store,debug_what_if,web_api,feedback_signal,agent_orchestration,state_root,manifest,core_api_helpers}.py`
 - (D-104: `core_api_helpers` = agent card/session/trace-final 格式化单源 (改前读 CONTRACTS「agent-only core / extras 边界」段). `clock_provider`/`sandbox_router` 是零依赖 DI 叶子, **不进**白名单 (低 churn); 但改 clock/data_root/sandbox 的 provider 注册时同读该段, 改完跑 `tests/test_d104_di_boundary.py` 守边界)
 - (D-102: `state_root` = install/state 路径解析单一权威源 (改前读 CONTRACTS「install/state root 二分」段); `manifest` = 数据产物↔引擎兼容闸门 (CONTRACTS「数据产物↔引擎 manifest 闸门」段). `state_migrate` 是一次性迁移器, **不进**白名单 (同 collector_contract/non_dish_rules 先例: 非热路径))
@@ -100,11 +100,11 @@ stuck override 护栏: `high` (含 unknown 默认) 严禁 override; `low/medium`
 默认走 Claude Code 原生 TaskCreate todolist + Agent subagent. 两个关键点强制拉 Codex 共商:
 
 1. **方案设计敲定前** → 调 `codex:rescue` skill 一起讨论
-   - 触发: design plan / 架构选型 / **改 high-risk 16 文件白名单前**
+   - 触发: design plan / 架构选型 / **改 high-risk 17 文件白名单前**
 2. **git commit 前** → 调 `codex:rescue` 做 diff review
-   - 触发: 改 high-risk 16 文件白名单时强制; 其他场景志丹可说"跳过 codex review"
+   - 触发: 改 high-risk 17 文件白名单时强制; 其他场景志丹可说"跳过 codex review"
 
-high-risk 16 文件白名单 + 前端高风险条件单一权威源在 § 推荐链路改动红线.
+high-risk 17 文件白名单 + 前端高风险条件单一权威源在 § 推荐链路改动红线.
 
 ## 提醒
 

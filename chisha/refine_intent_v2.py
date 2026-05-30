@@ -1,26 +1,19 @@
-"""Faithful Refine 多 slot schema + LLM 解析层 + 安全带 (D-094.1 schema 扩展版).
+"""Faithful Refine 多 slot schema + LLM 解析层 + 安全带.
 
-边界 (D-094.1 后):
-  - LLM 解析直出多 slot 结构; 解析失败时**降级到 empty V2**, 永不崩 (V1 已退役).
-  - 下游 L1/L2/L3 真消费的 slot (D-094.1: 13 槽真兑现):
+边界:
+  - LLM 解析直出多 slot 结构; 解析失败时**降级到 empty V2**, 永不崩.
+  - 下游 L1/L2/L3 真消费的 slot:
     - redirect.cuisine_want / cuisine_avoid / ingredient_want / ingredient_avoid
-    - redirect.cuisine_candidates_expanded (D-094: L1 bucket_soft 真召回)
-    - redirect.brand_avoid (D-094: L1 venue 整店硬过滤)
-    - redirect.cooking_method_avoid (D-094: L1 dish 硬过滤, 9 类枚举)
-    - redirect.staple_want / staple_avoid (D-094.1: 主食偏好 L2 真打分)
-    - constrain.oil ∈ {"low","normal","high"} | null (D-094.1: "high" 替代 V1 heavy 触发 D-090.1 油豁免)
-    - constrain.price_max (数字精确) / price_band ∈ {"cheap","normal","premium"} | null (D-094.1: 模糊文本)
-    - constrain.wants_soup (D-094.1: bool, L2 真打分有汤优先)
-    - reference (T-P2-01 L3 软重排消费)
+    - redirect.cuisine_candidates_expanded (L1 bucket_soft 真召回)
+    - redirect.brand_avoid (L1 venue 整店硬过滤)
+    - redirect.cooking_method_avoid (L1 dish 硬过滤, 9 类枚举)
+    - redirect.staple_want / staple_avoid (主食偏好 L2 真打分)
+    - constrain.oil ∈ {"low","normal","high"} | null ("high" 触发油豁免)
+    - constrain.price_max (数字精确) / price_band ∈ {"cheap","normal","premium"} | null (模糊文本)
+    - constrain.wants_soup (bool, L2 真打分有汤优先)
+    - reference (L3 软重排消费)
     - reject_previous (V2 全盘重推)
-  - 已砍字段 (D-094: 字段要么真消费要么砍, 不留 trace-only 装饰):
-    - redirect.ingredient_synonyms (score.py _INGREDIENT_BROAD 硬词典已替代)
-    - redirect.food_form_avoid (dish.food_form 0 覆盖, F-011 数据打标后再加回)
-    - constrain.quality_floor / delivery_only / max_distance_km
-    - constrain.functional.{low_caffeine, low_satiety_drowsy}
-  - 已砍字段 (D-094.1 本案): V1 flavor_tags=sweet/sour 走 raw_understanding + L3 兜底 (narrative 不假装).
-  - D-085 第二句 "字段空洞务实降级" 已废弃 (by D-094): 没 trace-only 字段了, 没 unsupported_in_recall.
-  - schema_version bump "2.0" → "2.1" (D-094.1).
+  - 字段要么真消费要么砍, 不留 trace-only 装饰.
 
 trace 双存 (安全带):
   - raw_text: 用户原文

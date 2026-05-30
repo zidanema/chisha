@@ -15,9 +15,7 @@ import { HistoryPage } from "@/pages/HistoryPage";
 import { FeedbackPage, FeedbackLastResolverPage } from "@/pages/FeedbackPage";
 import { FeedbackInbox } from "@/pages/FeedbackInbox";
 
-// Single-source theme (DESIGN_NOTES §4) — light + indigo accent. Dark mode is
-// V2; tweaks panel from the prototype was a claude.ai/design host shim and
-// is intentionally dropped.
+// Single-source theme (see docs/style-guide.md) — light + indigo accent.
 const ACCENT_HEX = "#4f46e5";
 
 function themeVars(): React.CSSProperties {

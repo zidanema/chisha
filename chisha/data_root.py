@@ -4,19 +4,12 @@
 sandbox 关闭时, 所有路径 = prod 默认; 启用时, **业务数据**全部落
 logs/sandbox/ 子目录, prod 数据零污染.
 
-7 个落盘点:
-| key                  | prod 默认                       | sandbox            |
-|----------------------|----------------------------------|---------------------|
-| meal_log_path        | logs/meal_log.jsonl             | logs/sandbox/meal_log.jsonl |
-| sessions_dir         | logs/sessions/                  | logs/sandbox/sessions/ |
-| feedback_store_path  | logs/feedback/store.json        | logs/sandbox/feedback/store.json |
-| recommend_log_path   | logs/recommend_log.jsonl        | logs/sandbox/recommend_log.jsonl |
-| feedback_history_path | data/feedback_history.jsonl    | logs/sandbox/feedback_history.jsonl |
-| long_term_prefs_path | data/long_term_prefs.json       | logs/sandbox/long_term_prefs.json |
-| profile_path         | profile.yaml                    | logs/sandbox/profile.yaml (copy-on-init by PR-1c) |
+业务数据落盘点 (meal_log / sessions / feedback_store / recommend_log /
+feedback_history / long_term_prefs / agent_round / recommend_trace / profile)
+各由下方对应函数解析; sandbox 启用时统一落 logs/sandbox/ 子树。
 
 只读数据不动:
-- data/{zone}/restaurants.jsonl / tagged_dishes.jsonl (餐厅 / 菜品库)
+- data/{zone}/restaurants.json / dishes_tagged.json (餐厅 / 菜品库)
 - profiles/methodologies/*.yaml (方法论 spec 库)
 - prompts/*.md
 
@@ -101,7 +94,7 @@ def _maybe_sandbox(
     return root / "logs" / "sandbox" / "sessions" / sid / rel_in_sandbox
 
 
-# ────────────────────────── 7 个落盘点
+# ────────────────────────── 业务数据落盘点
 def meal_log_path(
     root: Optional[Path] = None,
     session_id: Optional[str] = None,

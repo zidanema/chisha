@@ -1,5 +1,5 @@
 // RoundBanner + PanelRoundStrip — connects timeline → panels.
-// 1:1 port chisha-debug/project/wa-detail.jsx; deltas synthesized from round.diff.
+// deltas synthesized from round.diff.
 
 import type { ReactNode } from "react";
 import type { RoundRecord } from "../types/trace";

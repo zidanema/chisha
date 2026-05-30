@@ -1,5 +1,5 @@
 // D-093 S-02 APanel: 长期画像 (taste + L1 关键词).
-// Codex Q3 iter2: taste color 走 TS map → className, mock 不带 color.
+// taste color 由 TS map 推 className, mock 数据不带 color 字段.
 import { useState } from "react";
 import type { KeywordEntry, TasteEntry } from "../../types/sandbox";
 

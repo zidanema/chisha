@@ -1,14 +1,7 @@
 """打分: combo → 分数.
 
-V1: 6 维 (vegetable_floor / protein_floor / low_oil / popularity /
-       cuisine_preference / variety_bonus).
-V2 ([D-033](docs/archive/DECISIONS_phase0.md#d-033)): 加 ~10 个维度
-       - 5 新字段 (carb_quality / processed_meat / sweet_sauce / soup_broth / dish_role)
-       - 履约 (distance / eta / price)
-       - taste_match (taste_description 进决策, 由 LLM 反馈解析员提示)
-       - context_boost (D-034 ContextSnapshot 软调权)
-新维度向下兼容: combo dish 缺字段时返回 0; profile 没配权重时用 V2_DEFAULT_WEIGHTS.
-V1 不传 context / taste_hints, 行为不变.
+活维度清单以 V2_DEFAULT_WEIGHTS + score_combo 的 parts dict 为权威。
+combo dish 缺字段时该维返回 0; profile 没配权重时用 V2_DEFAULT_WEIGHTS。
 """
 from __future__ import annotations
 
@@ -939,10 +932,11 @@ def score_combo(
 ) -> tuple[float, dict[str, float]]:
     """计算 combo 综合分. 返回 (score, breakdown).
 
-    V1 行为: 不传 context/taste_hints/meal_type/intent 时, 仍只用 6 维 + V2 维度.
-    V2 行为: 传 context + taste_hints + meal_type 时, 全 ~12 维生效.
-    D-073: 传 intent (refine 二轮) 时, intent_match 三档加分生效.
-    B-001/D-098: 传 fb_signal (短链路反馈) 时, feedback_recency 维生效 (None→0).
+    实际生效维度 = 下方 parts dict (权威源)。
+    传 taste_hints/meal_type 时对应维度参与打分, 不传则该维为 0。
+    传 intent (refine 二轮) 时 intent_* 三档加分生效。
+    传 fb_signal (短链路反馈) 时 feedback_recency 维生效 (None→0)。
+    context 参数现为 no-op (仅保留 API 兼容, 不进任何打分项)。
     """
     w = profile.get("scoring_weights") or {}
     # D-091 phase-2: refine 模式下按 explicit slot 动态调权重 (R1 intent=None 时 multiplier 全 1.0 → 0-diff)

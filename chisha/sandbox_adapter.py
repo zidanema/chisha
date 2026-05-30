@@ -4,8 +4,7 @@ Rec 视图字段 (与 apps/sandbox-lab/src/types/sandbox.ts 一致):
   rank, name, venue, dishes (list[str]), price, l2 (0-1), l3 (0-100), boost (派生),
   intent, l1Hits, explore, conflict, meta {eta, dist, protein, oil}, why
 
-l1Hits / conflict 本任务**简化**: 调用方按需提供, 默认 [] / null.
-真实数据从 L1 trace 派生留 S-08 联调时按需扩.
+l1Hits / conflict 当前由调用方按需提供, 默认 [] / null.
 """
 from __future__ import annotations
 
@@ -66,7 +65,7 @@ def format_v2_to_rec(
         "intent": intent,
         "l1Hits": l1_hits or [],
         "explore": bool(candidate.get("is_explore")),
-        "conflict": None,  # S-08 派生 hard_filter_events
+        "conflict": None,  # 当前由调用方提供, 默认 null
         "meta": {
             "eta": f"{rest.get('eta_min', -1)}min" if rest.get("eta_min", -1) >= 0 else "",
             "dist": f"{(rest.get('distance_m', -1) / 1000):.1f}km" if rest.get("distance_m", -1) >= 0 else "",

@@ -1,6 +1,6 @@
 """反馈解析层 (D-033 反馈骨架 + D-035 LLM 反馈解析员).
 
-输入: 用户在飞书卡片上点的 chip + 自由文本.
+输入: 用户选的反馈 chip + 自由文本 (当前仅 openclaw/飞书集成消费, 主 Web 链路不调本入口).
 输出: FeedbackParsed (规范化 chip + rating + want_again + note).
 
 LLM 角色: 反馈解析员 — 仅做"自然语言 → 结构化 chip"映射, 不做学习决策.

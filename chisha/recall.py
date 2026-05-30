@@ -1,7 +1,4 @@
-"""召回：规则过滤 + 弱约束三件套校验 + 组合策略 → top N 候选.
-
-完整流程见 DESIGN §5.6。V1 不引入个性化项 (D-024)。
-"""
+"""召回：规则过滤 + 弱约束三件套校验 + 组合策略 → top N 候选."""
 from __future__ import annotations
 
 import datetime as dt

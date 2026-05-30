@@ -46,7 +46,7 @@ _PLATE_RULE_KEYS = (
     "min_protein_g", "prefer_oil_level_at_most", "hard_max_oil_level",
 )
 
-# 与 chisha.score.V2_DEFAULT_WEIGHTS 一致 (D-092: 11 活维度, 删 5 死维度)
+# V2_DEFAULT_WEIGHTS 中可由方法论配置的 11 个基础维度 (子集, 排除 intent_*/feedback_recency 运行期权重)
 _SCORE_WEIGHT_KEYS = (
     "low_oil", "popularity", "cuisine_preference", "variety_bonus",
     "carb_quality", "processed_meat", "sweet_sauce",

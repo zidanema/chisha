@@ -8,12 +8,9 @@ Phase 0 reference adapter = Claude Code: 生成一个**瘦** SKILL.md (P1: 从 1
 手册收敛成单循环触发器, 对标 lark-cli 的薄 skill), 教 Claude Code 用自己的 LLM 执行
 chisha 发的 do_llm + 用 AskUserQuestion 摆候选 + refine 多轮.
 
-D-105 形态B (自包含 skill 分发): SKILL.md 从 "uv tool install + 全局 chisha" (形态A)
-翻成 "拷文件夹即用 + python3 wrapper" (形态B). 命令指向 bundle 内 scripts/chisha,
-不再依赖全局 PATH。**单一源**: build_skill_bundle --install 也写这份 SKILL.md 进 bundle
+接入形态 = 自包含 bundle: SKILL.md 命令指向 bundle 内 scripts/chisha wrapper, 不依赖
+全局 PATH。**单一源**: build_skill_bundle --install 也写这份 SKILL.md 进 bundle
 (调 _claude_code_skill_md), 故此函数是 bundle SKILL.md 与 `chisha skills add` 的共同源。
-D-105.1 形态A 已退役: pyproject [project.scripts] (uv tool 入口) 已删, 接入唯一形态 = B
-自包含 bundle。回滚靠 git, 不再保留 A 装包路径。
 """
 from __future__ import annotations
 

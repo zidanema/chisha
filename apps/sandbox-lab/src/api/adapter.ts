@@ -1,5 +1,5 @@
 // S-08: backend dict → 前端 view-model.
-// activeRules 后端字段本任务不接入前端 (RightCol 维持 MOCK, future S-11+).
+// activeRules 后端字段暂不接入前端 (RightCol 用内置 MOCK).
 
 import type {
   BackendDecision,

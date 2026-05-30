@@ -1,5 +1,4 @@
 // TraceContextBar — sticky 顶部 trace 元信息 (meal/time/source/round/top1/id-pill).
-// 1:1 port chisha-debug/project/wa-detail.jsx TraceContextBar.
 
 import { useState } from "react";
 import type { RoundRecord, TraceMeta } from "../types/trace";

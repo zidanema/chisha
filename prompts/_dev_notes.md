@@ -14,7 +14,3 @@
 - `tests/test_rerank.py` 相关 patch 锚点测试
 
 锚点缺失时 `_patch_system_prompt_for_cli` 显式 raise ValueError (D-048), 不会静默 fallback。
-
-## parse_refine_intent_v2.md 锚点
-
-待补 (V1 退役 + Step 2 refine 部分启动时落)。

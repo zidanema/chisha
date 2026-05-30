@@ -1,5 +1,5 @@
-// D-093 S-02 TopBar.
-// Session 下拉本任务静态展开/收起态; 切换/新建走 props stub (S-03 接 useSandbox).
+// TopBar.
+// Session 下拉本地管展开/收起态; 切换/新建经 onSelectSession/onNewSession 回调驱动 useSandbox.
 import { useEffect, useRef, useState } from "react";
 import type { Clock, SessionMeta } from "../types/sandbox";
 

@@ -56,7 +56,7 @@ def recommend_meal(
     Args:
         daily_mood: ContextSnapshot.daily_mood, 见 chisha/context.DAILY_MOODS.
         use_llm_rerank: None=auto (任意 LLM provider 可用即开, D-047).
-        root: 仓库根目录 (测试可注入), 默认 chisha/__file__.parent.parent.
+        root: 仓库根目录 (测试可注入), 默认 install_root() (dev=repo root, wheel=包目录).
         persist_trace: D-079, 默认 True. 写完整 trace 到 logs/recommend_trace/.
             Live 模式 (debug_server /api/debug_recommend) 传 False 不污染历史.
     """
@@ -407,7 +407,7 @@ def _build_trace(
 
     # combos normalize: 2467 combos 直存会膨胀到 6MB+, 必须 dedupe restaurants/dishes
     # __frozen.l1_combos = [{restaurant_id, dish_ids}], 配合 restaurants/dishes 表
-    # What-if 重跑时 rehydrate refs (PR-2 实现)
+    # What-if 重跑时 rehydrate refs
     frozen_restaurants, frozen_dishes, frozen_combo_refs = _normalize_combos(combos)
     frozen = {
         "ctx": ctx.to_llm_dict(),

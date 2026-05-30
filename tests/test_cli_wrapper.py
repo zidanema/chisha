@@ -67,7 +67,7 @@ def test_legacy_stderr_has_tip_stdout_does_not():
     )
     # tip 整句标识 (避免误命中 doctor JSON 的 `legacy_state_pending_migration` 字段名)
     assert "[chisha] tip:" in r.stderr, f"expected legacy tip in stderr, got: {r.stderr!r}"
-    assert "chisha agent" in r.stderr
+    assert "chisha eat" in r.stderr
     # stdout 必须是干净 JSON, 不含 tip 整句
     assert "[chisha] tip:" not in r.stdout
     # stdout 应是有效 JSON

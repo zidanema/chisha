@@ -2311,7 +2311,7 @@ button:focus-visible,
 }
 
 /* ============================================================
-   D-088 S-02 additions: helper classes for ported components
+   D-093 S-02 additions: helper classes for ported components
    (replaces prototype inline styles with semantic classes; supports
    classes introduced by RecCard/DPanel/CPanel/APanel/Modals/TweaksPanel)
    ============================================================ */

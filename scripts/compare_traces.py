@@ -2,7 +2,7 @@
 
 Codex Round 2 blindspot-1 要求明确断言层级:
   - top60 combo 顺序完全一致 (rname + dish_ids 签名)
-  - 每个 combo 的 16 维 breakdown |delta| < 1e-6
+  - 每个 combo 的每维 breakdown |delta| < 1e-6
   - 总 score |delta| < 1e-6
 
 任何 diff → exit 1 + 详细报错. 全过 → exit 0.

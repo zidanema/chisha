@@ -520,8 +520,7 @@ def _impl_history(days: int) -> dict:
         pass
 
     items: list[dict] = []
-    # 去重: 同 session_id 取最新 (refine 不重写 recommend_log; 多次 recommend 同 sid
-    # 不应发生因为 _gen_session_id 含 4-char hex)
+    # 去重: 同 session_id 取最新 (refine 不重写 recommend_log)
     seen: set[str] = set()
     with log_path.open("r", encoding="utf-8") as f:
         for line in f:

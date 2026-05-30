@@ -1,4 +1,4 @@
-"""随机抽 N 条 dishes_tagged 输出 markdown / xlsx 表格供人工抽查 (DESIGN §3.3 抽查 1).
+"""随机抽 N 条 dishes_tagged 输出 markdown / xlsx 表格供人工抽查.
 
 用法:
     uv run python -m scripts.sample_for_review home

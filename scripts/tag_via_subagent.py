@@ -1,5 +1,7 @@
 """subagent 路径的打标编排脚本 (无 LLM API key 场景).
 
+注: 默认打标路径已是 scripts/tag_via_api.py; 本脚本为不依赖 LLM API key 的备用编排 (仍被 prune-stale 流程引用)。
+
 工作流:
   1. uv run python -m scripts.tag_via_subagent prepare <zone>
      → 计算 delta = dishes_raw - dishes_tagged
@@ -22,7 +24,7 @@
      → 打印每批状态 + 进度
 
 CLI flags:
-  --batch N            每批菜品数 (默认 50, DESIGN §3.5 上限)
+  --batch N            每批菜品数 (默认 50)
   --force-version      把现有 tagged 当 stale, 全部重打 (覆盖增量逻辑)
   --prune-stale        清理 dishes_raw 已删的 tagged 记录
   --version-label STR  打标版本号 (默认 v1-claude-code)
@@ -50,8 +52,7 @@ FAILURES_LOG = ROOT / "logs" / "tag_failures.jsonl"
 
 MAX_ATTEMPTS = 3
 DEFAULT_VERSION_LABEL = "v1-claude-code"
-# subagent 路径默认 50 条/批 (DESIGN §3.5 上限). 主会话单 message 并发 16 个
-# subagent → 单轮 16*50=800 条菜. 9000 条菜约 11-12 轮.
+# subagent 路径默认 50 条/批. 主会话单 message 可并发多个 subagent 分轮处理全量菜品.
 DEFAULT_BATCH_SIZE = 50
 ZONES_ALL = ("home", "shenzhen-bay")
 

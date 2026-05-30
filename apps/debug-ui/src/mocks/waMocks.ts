@@ -1,9 +1,4 @@
-// Workflow A mocks — TS port of chisha-debug/project/wa-mock.jsx + wa-rounds-mock.jsx.
-// Phase 1: 视觉验证用. Phase 2b: 真后端 GET /api/traces + /api/trace/{id}/round/{rid} 替代.
-//
-// 与原设计稿差异:
-//   - intent 字段集改成 V2 schema (refine_intent_v2.RefineIntentV2), 不用原 V1 12 字段
-//   - round 数据走 React props 下传, 不再 window.MOCK swap
+// Workflow A mocks — backend offline fallback for trace views.
 
 import { MOCK_SESSION } from "./session";
 import type { FinalRow, L1Trace, L2Combo, L2KPI, L2Trace, L3Trace,

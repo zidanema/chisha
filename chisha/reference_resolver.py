@@ -13,7 +13,7 @@
     本模块产出的 ResolvedReference 用作上游"软重排" 数据, 不强制硬过滤
 
 接入:
-  - refine path 拿 RefineIntentV2.reference / V1 freeform_note 走 parse_reference_text
+  - refine path 拿 RefineIntentV2.reference 走 parse_reference_text
   - resolve_reference 返 ResolvedReference (含历史 combos) 给 L3 prompt 上下文
   - apply_relation 给 L3 之前的 candidates 做软重排
 """

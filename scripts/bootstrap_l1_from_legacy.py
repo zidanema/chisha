@@ -4,11 +4,11 @@ Goal: PR-0.7 切 score 读取路径前生成首版 long_term_prefs.json,
 保留 D-043 旧 chip 频次累积的弱信号, 避免 score 切换瞬间丢 hints.
 
 数据流:
-    data/feedback_history.jsonl (D-043 旧 chip 频次)
+    feedback_history.jsonl (D-043 旧 chip 频次; 路径由 data_root 解析)
         ↓
     chisha.long_term_prefs.load_runtime_hints (deprecated stub, 但仍能读)
         ↓ 转 prefs.json schema
-    data/long_term_prefs.json (bootstrap_from_legacy=True)
+    long_term_prefs.json (bootstrap_from_legacy=True; 路径由 data_root 解析)
 
 设计:
 - 不调 LLM (deterministic, 可在 CI 跑, 无 API 成本)

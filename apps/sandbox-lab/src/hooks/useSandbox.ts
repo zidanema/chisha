@@ -1,7 +1,7 @@
 // S-03: sandbox-lab 交互状态机 (前端 mock).
 // S-08: backend ping → online 走 fetch (mock_recommend=1 by default), offline 保留 S-03 mock.
 //
-// State model (v2 修订 A): per-session map {sid → SessionInternalState}.
+// State model: per-session map {sid → SessionInternalState}.
 // 切 session 时不 reset 字段, 而是切 map key. branch 写新 sid + 老 sid 不动.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

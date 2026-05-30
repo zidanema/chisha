@@ -70,11 +70,10 @@ def _validate_id(value: str, label: str) -> None:
 
 
 def _prepared_blob(prep, *, n_explore: int, today: dt.date) -> dict:
-    """codex #a: 持久化 apply-rerank 映射所需 (top_k 精确), 不靠重跑.
+    """持久化 apply-rerank 映射所需 (top_k 精确), 不靠重跑.
 
-    D-102 Step1: 同时冻结 FallbackPlan blob (含 meal_log 只读快照 + 兜底参数), apply
-    若走规则兜底就从此 blob 重建 → 不再像旧 cli 那样漏 meal_log (病根根治). 候选集 =
-    top_k (单源), 不在 fallback_plan 里重复.
+    同时冻结 FallbackPlan blob (含 meal_log 只读快照 + 兜底参数), apply 若走规则兜底
+    就从此 blob 重建. 候选集 = top_k (单源), 不在 fallback_plan 里重复.
     """
     from chisha.rerank import build_fallback_plan
     plan = build_fallback_plan(
@@ -997,7 +996,7 @@ def cmd_doctor(args) -> int:
 
 
 def cmd_init(args) -> int:
-    """T8: 生成 reference adapter skill. 占位 (T8 填充)."""
+    """生成 reference adapter skill (delegate init_skill)."""
     from chisha.agent_skill_init import init_skill
     return init_skill(args.agent, _root(), force=args.force)
 
@@ -1064,13 +1063,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    # T-DIST-01 B.2: legacy entry compat — 推 `chisha agent <verb>`, stderr 一行 tip,
+    # T-DIST-01 B.2: legacy entry compat — 推 `chisha eat/continue/choose`, stderr 一行 tip,
     # 绝不污染 stdout JSON (machine-readable 协议). Env CHISHA_SUPPRESS_LEGACY_TIP=1 可关.
     import os
     if not os.environ.get("CHISHA_SUPPRESS_LEGACY_TIP"):
         print(
             "[chisha] tip: `python -m chisha.agent_cli` 是 legacy 路径, "
-            "推荐改用 `chisha agent <verb>` (T-DIST-01 B.2).",
+            "推荐改用 `chisha eat/continue/choose`.",
             file=sys.stderr,
         )
     sys.exit(main())

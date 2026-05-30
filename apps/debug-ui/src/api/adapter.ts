@@ -151,8 +151,6 @@ function adaptL2Combo(c: BackendL2Combo): L2Combo {
 // Canonical dim ordering for the heatmap. Matches profile.yaml scoring_weights
 // insertion order. Dims not in DIM_ORDER but present in the backend response
 // get appended at the end so we don't silently drop them.
-// D-092: 删 5 死维度 (vegetable_floor_pass / protein_floor_pass / distance /
-// wetness / context_boost), 11 活维度.
 const DIM_ORDER: string[] = [
   "low_oil", "popularity", "cuisine_preference",
   "variety_bonus", "carb_quality", "processed_meat",

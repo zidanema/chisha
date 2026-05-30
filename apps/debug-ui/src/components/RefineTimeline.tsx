@@ -1,6 +1,5 @@
 // RefineTimeline — git-compare 横条 (R1...Rn 节点 + base/target 选择 + diff 模式).
 // click=setTarget, shift/alt/cmd-click=setBase, right-click=setBase.
-// 1:1 port chisha-debug/project/wa-refine.jsx RefineTimeline.
 
 import type { MouseEvent } from "react";
 import type { RoundRecord } from "../types/trace";

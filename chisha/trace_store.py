@@ -2,7 +2,7 @@
 
 存储位置: logs/recommend_trace/{session_id}.json (sandbox → logs/sandbox/recommend_trace/)
 一次推荐一个文件, **不写 jsonl** (单行膨胀难调试).
-单文件硬上限 300KB (超过按 §10 优先级裁剪).
+单文件超 MAX_TRACE_BYTES (50MB sanity bound) 时按优先级裁剪.
 
 设计原则 (D-079 决策 + Codex review 闭环):
 - best-effort 写盘: 失败 logger.warning, 不阻断 recommend (同 feedback_store)
@@ -332,12 +332,12 @@ def attach_feedback_links(
 # ────────────────────────── 裁剪 (D-079 §10)
 
 def _truncate_for_size(trace: dict) -> dict:
-    """按 §10 4 级裁剪顺序处理超 300KB trace.
+    """按 4 级裁剪顺序处理超 MAX_TRACE_BYTES (50MB) 的 trace.
 
     1. l3.llm_raw_response: 首 8KB + 尾 4KB, 中间替占位
     2. l1.dropped_dishes: cap 500 条 + __truncated_drop_count
     3. __frozen.profile_snapshot: 仅保留 scoring 必需字段
-    4. __frozen.l1_combos[].dishes[].nutrition_profile: 删非 scoring 字段
+    4. __frozen.dishes[].nutrition_profile: 仅保留 scoring 字段
     """
     import copy
     t = copy.deepcopy(trace)
@@ -467,7 +467,7 @@ def append_hard_filter_event(
 # 布局:
 #   {recommend_trace_dir}/{sid}/meta.json     ← TRACES item shape + round_ids
 #   {recommend_trace_dir}/{sid}/rounds/R{n}.json  ← 单 round 完整 (l1/l2/l3/final)
-#   {recommend_trace_dir}/{sid}/.lock             ← fcntl.flock 临界区
+#   {recommend_trace_dir}/.lock-{sid}             ← fcntl.flock 临界区
 #
 # v2 单文件 ({sid}.json) 仍可被 read_trace_v3 读 (内存升 v3 view, 不写回).
 # /api/refine 调 append_round 时自动触发 v2 → v3 文件迁移.

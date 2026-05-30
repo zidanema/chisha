@@ -11,9 +11,7 @@
 - clock.now() — 业务 datetime (naive, 复刻 dt.datetime.now())
 - clock.now_utc() — 业务 UTC datetime (aware, tz=UTC)
 
-S-04: 透 ContextVar sandbox sid → sandbox.current_date/datetime/datetime_utc.
-S-04 阶段 sandbox.* 仍读单 state.json (忽略 sid), 行为完全等同 D-077.
-S-05 拆 sessions/{sid}/state.json 时 clock 调用点零修改.
+虚拟时钟经 ambient clock provider 间接接入 (见下方 D-104 注释), clock.* 调用点不感知 sandbox.
 
 未来扩展: 沙盒按小时推进时, current_datetime() 实现可换成"date + 沙盒指定时间"
 而不是"date + 真机 wall-clock 时间".

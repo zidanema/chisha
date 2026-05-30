@@ -282,7 +282,7 @@ def refine(
         else None
     )
 
-    # 8. 返回 §5.7-style (字段对前端兼容)
+    # 8. 返回 response (字段对前端兼容)
     return {
         "session_id": session_id,
         "meal_type": state.meal_type,

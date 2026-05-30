@@ -1,5 +1,4 @@
 // Intent schema descriptor — drives IntentStrip 渲染.
-// Phase 1: 写死字段 (mock 后端). Phase 2a: 后端 GET /api/intent_schema 替代.
 // 字段集与 chisha/refine_intent_v2.py RefineIntentV2 schema 一一对应.
 //
 // 后续扩 V2 schema 字段时, **优先方案**: 在后端 intent_schema endpoint 加条目,

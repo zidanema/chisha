@@ -1,5 +1,4 @@
-// Trace type definitions — reverse-engineered from design/mock.jsx.
-// Phase 2 will swap this with backend response shape via a thin adapter.
+// Trace type definitions — backend response shape consumed via a thin adapter.
 
 export type Meal = "lunch" | "dinner";
 
@@ -353,9 +352,8 @@ export type RoundRecord = {
   // D-089-S5a: R2+ refine round 含意图解析 LLM call 完整 trace.
   // R1 主链路 / R2 没启用 sync v2 / LLM 调用失败时为 null.
   refine_intent_llm?: LlmCallTrace | null;
-  // 后端 refine round (R2+) 暂未存 l1/l2/l3 切片 (refine_session 不暴露), 当前用 mock R1
-  // 兜底让 panel 不崩 — 这种情况标 __partial=true, LookupDrawer 警告用户反查不可信.
-  // D-089-S2 之后此字段应该不再出现 (refine round 现在已经落完整切片).
+  // zero-state 骨架等无完整切片的兜底场景标 __partial=true,
+  // LookupDrawer 据此警告用户该 round 反查不可信.
   __partial?: boolean;
 };
 

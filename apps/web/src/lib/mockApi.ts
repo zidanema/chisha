@@ -1,7 +1,7 @@
 // mockApi.ts — pure browser mock for /api/* (D-051 dev/preview).
 // Ports the v0 prototype data.js exactly, including pool, scoring, session
 // store, and the simulated 900ms latency for recommend/refine (real backend
-// is 15-60s — UI must still use skeleton, see DESIGN_NOTES §4 加载态).
+// is 15-60s — UI must still use a skeleton loading state).
 
 import type {
   Candidate,

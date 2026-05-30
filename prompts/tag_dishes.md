@@ -1,45 +1,4 @@
-<!--
-prompt_version: v3
-updated: 2026-05-11
-changelog (vs v2-promptfix):
-  - 新增 5 字段: dish_role / processed_meat_flag / sweet_sauce_level / wetness / grain_type
-  - dish_role 用于召回拼餐 (避免 主食+主食 / 0 蔬菜); 决定能不能拼餐
-  - processed_meat_flag 命中减脂偏好 (蟹柳/午餐肉/培根/烤肠/腊肠等工业或腌制肉降权);
-    叉烧/烧鸭/卤水/酱牛肉 = 整块鲜肉熟制, 默认 false
-  - sweet_sauce_level 命中 "受不了甜口" (红烧/糖醋/照烧/拔丝/烧汁/普通叉烧)
-  - wetness (1-3) 命中 "喜欢清爽不油带汤水" (干→汤);
-    =3 仅指真正"可喝汤底" (汤/粥/砂锅汤底/汤面汤粉), 关东煮/卤水浸泡 = 2
-  - grain_type 区分白米 vs 糙米杂粮 vs 精制面 vs 全麦 vs 粗粮;
-    复合套餐多主食按更精制/高 GI 的标
-  - 输出字段顺序固定, 新增字段紧跟旧字段
-  - 字段名一律 wetness (不允许 soup_or_broth_flag)
-r1 changelog (codex adversarial review):
-  - dish_role: "+饭/+饮料/+主食/+小菜/+汤/拼盘" 即使无"套餐"二字也归套餐
-  - processed_meat_flag: 中式腊味=true, 烧腊/叉烧/卤水默认 false; 汉堡三明治主料夹层=true
-  - sweet_sauce_level: 普通叉烧/烧汁/照烧/甜辣酱/韩辣 锚到 2; 蜜汁/蜂蜜/拔丝 锚到 3
-  - wetness: 关东煮/卤味浸泡 改 2; 干拌+饮品组合本体仍 1, role=套餐
-  - grain_type: 套餐多主食取最精制/高 GI
-  - 加非食物兜底 (调料/餐具/赠品): dish_role=小食 + 全字段保守
-  - 加烧腊套餐示例 anchor
-final (v3) changelog (r2 audit 1 P1 + 3 P2 修补, 准确率 98%):
-  - 西式蛋白碗 is_complete_meal=true (本就是一餐, 即使无谷物)
-  - 商业能量棒/燕麦棒 cooking_method=烤 (压制烘焙, 非生)
-  - 复合粉面套餐 cooking_method 按粉/面本体取 (煮 / 凉拌), 配菜的工艺不主导
-r3 changelog (dual-model golden set, Opus 4.7 + Codex GPT-5.4 共创 171 条):
-  - d010 示例输出 spicy_level=2 改 0 (修复 prompt 内部矛盾, 与第 169 行规则"非食物兜底 spicy=0"对齐)
-  - sweet_sauce_level 新增锚到 1: 回锅肉 / 鱼香肉丝 / 宫保鸡丁 (字面无锚词但实际含糖)
-  - grain_type 新增锚点: 红薯粉/绿豆粉/魔芋粉 → 白米 (精制淀粉高 GI 类推)
-r2 changelog (spike 50 audit, 12/50 violation 修补):
-  - wetness: 套餐里若列出汤/粥 → 整套 wetness=3 (修 d_035_031 / d_170_038)
-  - dish_role: 复合粉面 + 蛋 + 小菜 ≥ 3 件 + 主食 → 套餐 (修 d_121_014)
-  - cuisine: 赣菜/客家/云贵店 → "其他", 严禁就近归江浙/粤菜 (修 d_180_029)
-  - dish_role 非食物兜底: spicy_level=0 强制 (修 d_142_064)
-  - grain_type: 西式蛋白碗无谷物 → 无, dish_role=主菜 (修 d_194_044)
-  - grain_type: 商业燕麦棒/能量棒 → 精制面 (修 d_184_048 边界)
-  - dish_role: 汉堡/三明治 = 主食 (与盖饭对齐, 即使含肉饼+菜+酱)
-  - main_ingredient_type: 热狗/简易三明治 = 主食 (载体), 不归"其他" (修 d_104_009)
-see: docs/archive/DECISIONS_phase0.md D-032
--->
+<!-- prompt_version: v3 — 菜品营养画像打标 system prompt (规则见下方正文) -->
 
 你是营养标签助手。给以下外卖菜品打营养画像。**输出必须严格 JSON 数组, 字段顺序固定, 不要任何解释文字。**
 
@@ -314,7 +273,7 @@ see: docs/archive/DECISIONS_phase0.md D-032
   {"dish_id":"d006","canonical_name":"关东煮 蟹柳+鱼丸+午餐肉","cuisine":"日式","main_ingredient_type":"其他","cooking_method":"煮","oil_level":2,"protein_grams_estimate":15,"vegetable_ratio_estimate":0.1,"is_complete_meal":false,"spicy_level":0,"dish_role":"小食","processed_meat_flag":true,"sweet_sauce_level":0,"wetness":2,"grain_type":"无","tags":["小份"]},
   {"dish_id":"d007","canonical_name":"燕麦坚果碗","cuisine":"西式","main_ingredient_type":"主食","cooking_method":"生","oil_level":2,"protein_grams_estimate":10,"vegetable_ratio_estimate":0.1,"is_complete_meal":true,"spicy_level":0,"dish_role":"主食","processed_meat_flag":false,"sweet_sauce_level":1,"wetness":1,"grain_type":"粗粮","tags":["高纤维","适合减脂"]},
   {"dish_id":"d008","canonical_name":"紫菜蛋花汤","cuisine":"湘菜","main_ingredient_type":"汤","cooking_method":"煮","oil_level":2,"protein_grams_estimate":5,"vegetable_ratio_estimate":0.3,"is_complete_meal":false,"spicy_level":0,"dish_role":"汤","processed_meat_flag":false,"sweet_sauce_level":0,"wetness":3,"grain_type":"无","tags":["清淡","汤水"]},
-  {"dish_id":"d009","canonical_name":"烧鸭腿拼叉烧饭 含汤","cuisine":"粤菜","main_ingredient_type":"红肉","cooking_method":"烤","oil_level":3,"protein_grams_estimate":35,"vegetable_ratio_estimate":0.1,"is_complete_meal":true,"spicy_level":0,"dish_role":"套餐","processed_meat_flag":false,"sweet_sauce_level":2,"wetness":2,"grain_type":"白米","tags":["高蛋白","下饭"]},
+  {"dish_id":"d009","canonical_name":"烧鸭腿拼叉烧饭 含汤","cuisine":"粤菜","main_ingredient_type":"红肉","cooking_method":"烤","oil_level":3,"protein_grams_estimate":35,"vegetable_ratio_estimate":0.1,"is_complete_meal":true,"spicy_level":0,"dish_role":"套餐","processed_meat_flag":false,"sweet_sauce_level":2,"wetness":3,"grain_type":"白米","tags":["高蛋白","下饭"]},
   {"dish_id":"d010","canonical_name":"蒜蓉辣椒酱","cuisine":"其他","main_ingredient_type":"其他","cooking_method":"凉拌","oil_level":1,"protein_grams_estimate":0,"vegetable_ratio_estimate":0,"is_complete_meal":false,"spicy_level":0,"dish_role":"小食","processed_meat_flag":false,"sweet_sauce_level":0,"wetness":1,"grain_type":"无","tags":["小份"]}
 ]
 ```
