@@ -270,10 +270,10 @@ Phase 1 启动前原 9 项必收口按"自用是否需要"重切 (清单见 [ROA
 - **协议折叠**: 顶层扁平 `chisha eat / continue / choose`; `continue` 合并 resolve-intent+apply-rerank, 按回包顶层 `step_token` (=correlation 编码, 对 host 不透明) 的 operation + round.status 路由. host 单循环: 回包带 `do_llm` 就用自己 LLM 跑它、喂回, 直到 `status=ready`. 去掉手抄 correlation / 手包 `{correlation_id,payload}` 信封的 footgun.
 - **step_token 必填** (codex Q1/Q2): 去信封后它是唯一的 stale/串轮守门人, continue 不静默从 round state 派生; 内部仍包信封走 `parse_agent_response`, F4 守卫一字不变.
 - **幂等回放** (codex Q3): extract 重发复用 resolved 回放; rerank 重发 (round 已 clear) 查 `{sid}.ready.json` 快照, 仅回放最新已发布轮 (`_latest_published_round` 守卫, 防跨轮 stale).
-- **装包模型** (志丹卡片选 A 持久装): `uv tool install chisha-meal` → `chisha`/`chisha-meal` 双命令上 PATH; **不用 uvx ephemeral** (跑完不留 chisha 给 skill 用, 与"skill 用裸 chisha eat"不自洽). SKILL.md 从 110 行过程手册 → ~25 行单循环触发器.
+- **装包模型** (志丹卡片选 A 持久装) [已废弃 by D-105.1: 形态A `uv tool install` 入口彻底退役, 接入唯一形态 = 形态B 自包含 bundle]: `uv tool install chisha-meal` → `chisha`/`chisha-meal` 双命令上 PATH; **不用 uvx ephemeral** (跑完不留 chisha 给 skill 用, 与"skill 用裸 chisha eat"不自洽). SKILL.md 从 110 行过程手册 → ~25 行单循环触发器.
 - **兼容**: `llm_request_spec`→`do_llm` (dual-key 一版), 老 verb (`start`/`resolve-intent`/`apply-rerank`/`chisha agent`/`python -m chisha.agent_cli`) 各保留 deprecated alias 一版 (codex: 仓库外旧 skill 可能存活, clean break 不值). 协议契约见 CONTRACTS「Agent CLI 协议」P1 条; AGENTS.md 安装契约 §0/§2/§4/§7 已同步.
 - **守门**: pytest 1257 + 10 新 continue/回放 e2e pass + 真·CLI e2e (真实 shenzhen-bay 60 候选→cards→choose→回放→refine) + baseline_l2 0-diff (引擎未动) + wheel 隔离 venv 实装 (双 entry + doctor ok=True 分发就绪 + eat 通).
-- **未做 (gated)**: P0 = Sprint A 历史清洗 (git filter-repo) + repo 转 public — 不可逆 + 对外, 待志丹显式授权; 是 `uv tool install chisha-meal` 公网可达的硬前置 (现仍 git+https 私仓装).
+- **未做 (gated)**: P0 = Sprint A 历史清洗 (git filter-repo) + repo 转 public — 不可逆 + 对外, 待志丹显式授权; 是对外公开分发 (含 D-105.1 后形态B bundle 公网可达 / 远程获取) 的硬前置 (现仍私仓, bundle 靠手动拷贝分发).
 
 ## D-104
 **agent-only core 解耦 — 推荐核心从 sandbox/web/debug/自调LLM 切干净, 可独立 slim 运行.** (2026-05-29) · 单包逻辑分层 (非物理拆 PyPI 包) + ambient provider DI. Opus 设计 + Codex 设计/commit 双触点逐步落地 (6 commit). 提案归档 `docs/proposals/archive/2026-05-29-agent-core-decoupling.md`.

@@ -1,5 +1,12 @@
 # AGENTS.md — chisha-meal Install Spec for AI Agents
 
+> ⛔ **已 STALE — 整份安装协议基于已退役的形态A (`uv tool install` → 全局 `chisha`)。**
+> D-105.1 (2026-05-30) 已彻底退役形态A: `[project.scripts]` 已删, `uv tool install` 不再产出全局 `chisha` 命令, 本文 §1–§8 的安装步骤 (`uv tool install` / `which chisha` / 全局 `chisha eat`) **跑不通**。
+> 现行唯一接入形态 = **形态B 自包含 bundle**, 见 [README.md](README.md)「装」节 (拷 skill 文件夹进 `~/.claude/skills/chisha-meal/` + `python3 .../scripts/chisha onboard`)。
+> 本文待 **B 形态远程分发协议** (非维护者、无 repo 的 agent 如何拿到 bundle) 定型后整体重写 (见 decisions D-105.1)。**在此之前不要按本文安装**; 下面的 §3–§7 协议层语义 (do_llm 循环 / eat·continue·choose 流程 / refine) 仍准确, 仅安装与 `chisha` 调用方式需替换成 bundle wrapper `python3 ~/.claude/skills/chisha-meal/scripts/chisha`。
+
+---
+
 > **You are an AI agent** (Claude Code / Cursor / Codex CLI / Cline / OpenClaw / 其他) **and your user asked you to install or set up chisha-meal.**
 >
 > Read this file in full before any action. Follow §1 → §8 in order. Do not skip.
