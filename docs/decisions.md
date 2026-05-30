@@ -6,20 +6,20 @@
 
 ## 索引
 
-**产品定位 / 形态**: [D-001](#d-001) · [D-021](#d-021) · [D-051](#d-051) · [D-070](#d-070)
-**数据层**: [D-002+D-030](#d-002--d-030) · [D-008](#d-008) · [D-037](#d-037) · [D-099~D-099.3](#d-099--d-0991--d-0992--d-0993)
+**产品定位 / 形态**: [D-001](#d-001) · [D-021](#d-021) · [D-051](#d-051) · [D-070](#d-070) · [D-097](#d-097)
+**数据层**: [D-002+D-030](#d-002--d-030) · [D-008](#d-008) · [D-037](#d-037) · [D-099~D-099.3](#d-099--d-0991--d-0992--d-0993) · [D-100](#d-100) · [D-101](#d-101)
 **推荐链路架构**: [D-005](#d-005) · [D-041+D-006+D-040](#d-041--d-006--d-040) · [D-043~D-045](#d-043--d-042--d-044--d-0441--d-045) · [D-046](#d-046) · [D-035+D-047A](#d-035--d-047a) · [D-049](#d-049) · [D-050](#d-050) · [D-038+D-047B+D-048](#d-038--d-047b--d-048)
 **Profile / 学习**: [D-025](#d-025) · [D-026](#d-026) · [D-014](#d-014)
 **Context / Mood**: [D-034](#d-034) · [D-071](#d-071) · [D-015](#d-015)
 **方法论 (L0)**: [D-023](#d-023) · [D-072+D-072.1](#d-072--d-0721)
-**反馈系统**: [D-063~D-065](#d-063--d-064--d-065) · [D-066+D-067](#d-066--d-067)
+**反馈系统**: [D-063~D-065](#d-063--d-064--d-065) · [D-066+D-067](#d-066--d-067) · [D-098](#d-098)
 **北极星指标**: [D-028](#d-028)
-**Refine 重做**: [D-073+D-073.1](#d-073--d-0731)
-**L1 长期反馈层 / Sandbox 形态**: [D-076+D-076.1](#d-076--d-0761) · [D-077](#d-077)
-**Refine v2 / Faithful Refine**: [D-080](#d-080) · [D-081](#d-081) · [D-082](#d-082) · [D-083](#d-083) · [D-084](#d-084) · [D-085](#d-085) · [D-094](#d-094)
+**Refine 重做 / Refine v2 / Faithful Refine**: [D-073+D-073.1](#d-073--d-0731) · [D-080](#d-080) · [D-081](#d-081) · [D-082](#d-082) · [D-083](#d-083) · [D-084](#d-084) · [D-085](#d-085) · [D-094](#d-094) · [D-096](#d-096--d-0901--d-0941)
 **L2 信号校准**: [D-090~D-092](#d-090--d-091--d-092)
+**L1 长期反馈层 / Sandbox / Trace**: [D-076+D-076.1](#d-076--d-0761) · [D-077](#d-077) · [D-079](#d-079)
 **LLM 调用基建**: [D-095](#d-095)
-**AI-friendly 接入 (active)**: [D-074](#d-074)
+**AI-friendly 接入形态演进 (active)**: [D-074](#d-074) (零 LLM 内核) → [D-103](#d-103) (eat/continue/choose 折叠) → [D-104](#d-104)+[D-104.1](#d-1041) (core 解耦) → [D-105](#d-105)+[D-105.1](#d-1051) (形态B 自包含 bundle, 形态A 退役)
+**可分发核心 / install·state·manifest 分发基建**: [D-102~D-102.3](#d-102--d-1021--d-1022--d-1023)
 
 > **不在本文件**: 内部工具的工程契约 (debug 台 / sandbox 实现细节 / trace schema / worktree 教训) → [CONTRACTS.md](CONTRACTS.md). 历史 D-039 调试台立项也已迁移过去。
 
@@ -150,10 +150,8 @@ L1 召回之前注入"当前时间 / 天气 / 上一餐 / 今日剩余预算"等
 
 ## D-074
 **AI-friendly 接入 = chisha 零 LLM 确定性内核 + one-shot CLI + agent 的 LLM 做智能.** (2026-05-25, active 设计定稿) · 推翻 2026-05-16 v2 共识 · 翻案 D-022 / D-038 / D-051
-定位 [D-097] 自用为主: Phase 0 reference adapter = Claude Code (手动/pull/同步, 不做定时推送). chisha 不持 LLM key, context 抽取 + L3 精排交 agent 的 LLM (`llm_request_spec` 带版本信封 `extract|rerank`); refine 守卫 (校验/清洗/raw_text 注入/disclosure/trace) 全留 chisha (Faithful Refine 不破). CLI verb 链 `start → [resolve-intent] → apply-rerank → choose`, 状态复用 trace_store/feedback_store/meal_log 不新建 ledger. 反馈闭环 defer [F-014]; OpenClaw (推送/定时/飞书) defer Phase 1.
-设计定稿: [`proposals/archive/2026-05-25-ai-friendly-integration.md`](proposals/archive/2026-05-25-ai-friendly-integration.md) (Opus + Codex 3 轮收敛 GO). 2026-05-16 v1/v2 过程稿 → `proposals/archive/`.
-**Phase 0 落地 (2026-05-25)**: 新 6 模块 — `agent_protocol` (信封 + correlation_id 幂等) / `agent_orchestration.prepare_candidates` (recommend_meal+refine+CLI 共用的确定性编排, 防 CLI 重拼丢守卫) / `agent_round_store` (pending→resolved 状态机, 与 trace 可见 round 索引隔离, flock 幂等) / `agent_choose` (choice_key 双写幂等) / `agent_cli` (verb 链) / `agent_skill_init` (Claude Code SKILL.md). rerank/refine_intent_v2 抽 `build_*_spec`/`apply_*_response` (in-process LLM 路径不动, 保 0-diff). CLI scope 默认 production (sandbox 全局启用拒绝运行). apply-rerank 用 resolved round **持久化的 top_k** 映射 (不重跑, 防 combo_index 漂移). 守门: pytest 1054 pass (979→+75) + baseline_l2_snapshot 0-diff + codex 3 轮 review (设计 + T1-T3 diff + CLI 集成, 共修 9 项含 raw_text 守卫/反馈冻结时序/combo 漂移/跨轮串卡). 接 codex / 其他 agent = 重写 `agent_skill_init` 交互层, 协议层复用.
-**收口 review 加固 (2026-05-25, Opus+Codex 二轮)**: F1 fallback 时不传播 agent narrative (破 D-085 风险) / F2 `_map_validated_candidates` 字段白名单 (agent 不能覆盖 restaurant/dishes/score) / F3 一 sid 一餐至多一条 accept (`upsert_meal_log_accept` 改选覆盖 + 旧轮拒回写) / F4 correlation_id 必填强制 (信封回传, 防 stale 串轮). 否决 codex 误报"零 LLM 违反"(混淆 web 内嵌路径与 CLI 路径). 守门 pytest 1057 pass + baseline 0-diff. 契约见 CONTRACTS「Agent CLI 协议」F1-F4. **代码 2026-05-26 补齐提交 (20b3a55) + ff merge 回 main (812f60c) + 端到端实测跑通** (Web SPA 与 CLI 共写同一 meal_log/feedback/trace; apply-rerank fallback=false 证 chisha 确定性校验真生效).
+chisha 不持 LLM key, context 抽取 + L3 精排交 host agent 的 LLM (`do_llm` 带版本信封 `extract|rerank`); refine 守卫 (校验/清洗/disclosure/trace) 全留 chisha (Faithful Refine 不破)。状态复用 trace_store/feedback_store/meal_log 不新建 ledger。接 codex / 其它 agent = 重写交互层 (SKILL.md), 协议层复用。反馈闭环 defer [F-014]; OpenClaw 推送/定时 defer Phase 1。
+**接入形态已演进** (见索引): D-074 零 LLM 内核 → D-103 协议折叠 (eat/continue/choose) → D-105.1 形态B bundle。协议层契约 (F1-F4 守卫 / 信封 / round 状态机) 见 CONTRACTS「Agent CLI 协议」段。设计定稿 `proposals/archive/2026-05-25-ai-friendly-integration.md` (Opus+Codex 3 轮 GO)。
 
 ## D-076 + D-076.1
 **L1 长期反馈层重构 — 砍伪 L1 + LLM 抽取真兑现.** (2026-05-16) · 推翻 D-043 "refine chip → load_runtime_hints"
@@ -207,73 +205,56 @@ L3 prompt 加 narrative 字段 + 顶部 always-on 状态条, 必须在 D-083/D-0
 
 ## D-094
 **Faithful Refine 真兑现 — refine v2 schema 字段闭包.** (2026-05-21) · 推翻 D-085 第二句"字段空洞务实降级"
-**砍 5**: `redirect.ingredient_synonyms` (代码 `_INGREDIENT_BROAD` 已替代) + `constrain.{quality_floor, delivery_only, max_distance_km, functional.low_caffeine, low_satiety_drowsy}` (单用户实际不用). **修 3 真消费**: `cuisine_candidates_expanded` 进 `_apply_intent_buckets` bucket_soft + `_intent_dish_score` 1.0 加分 (显式 want 仍优先 exact) / `brand_avoid` 在 `recall()` 顶层做 venue 整店硬过滤 (数据 277 venue 100% 单 brand) / `cooking_method_avoid` 在 `_apply_intent_buckets` 做 dish-级硬过滤, **9 类枚举闭包** {油炸/凉拌/生/炖/炒/煮/蒸/烤/煎} (codex audit 实读, brief 写 7 类是漏数据). `food_form_avoid` 数据层 0% 覆盖 → 砍 schema, 立 F-011 数据打标 follow-up; narrative 不主动提"不要面条"诉求 (老实暴露局限 > 假装支持). `DATA_LAYER_UNSUPPORTED_FIELDS` 常量 + `unsupported_in_recall` 字段全删. V2→V1 桥接: `refine.py` 把 intent_v2.redirect 的新字段拷到 V1 RefineIntent. baseline_l2_snapshot 守门: 空 refine 路径 0 diff 验证通过. 详见 `docs/proposals/archive/2026-05-21-faithful-refine-true-fulfillment.md`.
+原则: schema 里的字段必须真消费, 不留"抽出但不用"的空洞字段。砍单用户不用的 5 字段 (quality_floor / delivery_only / max_distance_km / functional / ingredient_synonyms); 让 cuisine_candidates_expanded / brand_avoid / cooking_method_avoid 三个真进 L1/L2 过滤 (cooking_method_avoid 是 9 类枚举闭包)。数据层 0 覆盖的 `food_form_avoid` 砍 schema → 立 F-011; narrative 老实暴露局限不假装支持。字段闭包见 CONTRACTS「Refine/Mood」段; 设计存档 `docs/proposals/archive/2026-05-21-faithful-refine-true-fulfillment.md`。
 
 ## D-095
 **Refine LLM 调用拆 system/user + Anthropic ephemeral cache.** (2026-05-21) · prompt 优化 Step 1 收尾后 Step 3 🔴 项落地
-`_llm_parse_v2` 早先把整段 prompt 模板 (含 `{INPUT_TEXT}` 替换后) 塞 user role, `call_text` 没传 `system=` 导致 Anthropic prompt cache 完全失效 — 注释自承认是已识别 bug. **方案 B (Codex 共商定)**: `template.partition("{INPUT_TEXT}")` 切点, `system=template_head` (含八例 + "用户 refine 文本:\n\`\`\`\n", 约 6-7K static tokens), `user=text+template_tail` (用户原文 + "\n\`\`\`\n\n输出 JSON:"). `cache_system=True` 启用 ephemeral cache. trace `system_prompt_full / user_message_full` 由"假拆"变与实际 LLM 入参 1:1 对齐. 模板顺序与语义不变, 仅挪 static head 到 system. 预期 ROI: refine latency 6-8s → 3-4s, input_tokens 95%+ 走 cache_read (10% 价格). 跨 provider: anthropic_api / openrouter ephemeral cache 真生效, claude_code_cli 静默忽略 (CLI 自管). 守门: 全套 pytest 984 pass + baseline_l2_snapshot 0 diff + Codex diff review SHIP. 详见 `docs/proposals/archive/2026-05-21-refine-cache-fix.md`.
+病根: refine prompt 整段塞 user role 没传 `system=` → Anthropic prompt cache 完全失效 (注释自承认的 bug)。方案: 按 `{INPUT_TEXT}` 切点, static head (八例) 进 system 启 ephemeral cache, 用户原文进 user; 模板语义不变, 仅挪 static head。ROI: refine latency 6-8s→3-4s, input_tokens 95%+ 走 cache_read。设计存档 `docs/proposals/archive/2026-05-21-refine-cache-fix.md`。
 
 
 
 ## D-096 + D-090.1 + D-094.1
 **V1 refine 退役 + V2 schema 扩 4 槽 + 全栈切 V2 (单 PR).** (2026-05-24) · 推翻 D-073 双模式 + D-094 字段闭包
-**主决策 (D-096)**: V1 `refine_intent.py` + `parse_refine_intent.md` 整模块砍 (无 caller / 双模式过渡债 / 每轮多耗 2~6s); V2 是唯一意图层. response `refine_intent` 字段直接是 V2 shape (砍 V1+V2 双存); trace round 字段统一 `intent_v2`; refine.py async/off 三模式逻辑同时砍 (V1 已无 fallback). **D-090.1 修正案**: `health_guardrail` 油豁免触发字段从 V1 `flavor_tags="heavy"` 切到 V2 `constrain.oil="high"`. **D-094.1 修正案 (推翻原 D-094 字段闭包)**: V2 schema 9 槽扩到 13 槽 — `redirect` 加 `staple_want / staple_avoid` (主食偏好自由字符串, L2 真打分); `constrain.oil` 枚举 `{low}` 扩到 `{low,normal,high}` ("high" 替代 V1 heavy 触发油豁免); `constrain` 加 `wants_soup: bool` (L2 真打分) + `price_band ∈ {cheap,normal,premium} | null` (模糊文本兜底, `price_max` 数字优先). 同时砍 V1 `flavor_tags=sweet/sour` (L3 narrative 兜底). L3 prompt (`rerank_system.md`) refine_intent 字段口径 + narrative 真消费闭包同步 V2.1. schema_version bump `2.0 → 2.1`. baseline_l2_snapshot 是新基线 (schema 变 → 不跟旧对比). 守门: pytest 936 pass / V1 imports 全清 / codex BLOCK×2 修复 (price_max 优先 + staple_avoid 走 recall 硬过滤) / 前端 debug-ui 同步 V2.1 shape.
+V1 `refine_intent.py` 整模块砍 (无 caller / 双模式过渡债 / 每轮多耗 2~6s), V2 是唯一意图层 (response/trace 统一 `intent_v2`, 砍双存)。D-090.1: 油豁免触发字段切到 `constrain.oil="high"`。D-094.1 (推翻原 D-094 闭包): V2 schema 9→13 槽 — 加 staple_want/avoid + oil 扩 {low,normal,high} + wants_soup + price_band, 砍 V1 flavor_tags。schema_version `2.0→2.1` (新 baseline 基线)。字段口径见 CONTRACTS「Refine/Mood」段。
 
 ## D-097
 **项目定位收敛: 自用为主、推广随缘 — 推翻 Phase 1 "同事推广" 的范围假设.** (2026-05-25) · 调整 D-070 Phase 切分优先级 (不改 Phase 结构, 只调先做什么)
-志丹拍板: 主目标回到"我自己每天用得爽"; 同事推广降为"随缘" (遇到合适的人自然推, 不为推广提前建设).
-Phase 1 启动前原 9 项必收口按"自用是否需要"重切 (清单见 [ROADMAP](ROADMAP.md) "必收口"段):
-- **留 (自用刚需)**: AI-friendly 接个人 agent (D-074 Phase 0 reference adapter, 含 Living API meal_hint+at_time 参数化) + B-001 反馈短链路 (P0, 差评当前不生效)
-- **降级到 BACKLOG (有兜底, 触发再做)**: Living/Lab router 后端拆分 (F-013) + screener (F-003)
-- **推迟 (为同事服务, 自用不需要)**: 第二份 methodology spec (F-004) / L1 cuisine token (F-001, 同事 cuisine 才分散)
-- **已实质解**: 沙箱动线 (用户视图 sandbox UI 已移除 :5173, D-093)
-不砍能力, 只调先做什么. 真要推广同事时回看本条恢复"推迟"项.
+志丹拍板: 主目标回到"我自己每天用得爽"; 同事推广降为"随缘" (遇到合适的人自然推, 不为推广提前建设)。原 Phase 1 必收口 9 项按"自用是否需要"重切: 留 AI-friendly 接入 (D-074) + 反馈短链路 (D-098); 降级 Living/Lab router 拆分 (F-013) + screener (F-003); 推迟第二份 methodology spec (F-004) + L1 cuisine token (F-001, 为同事服务)。不砍能力, 只调先做什么; 真要推广同事时回看本条恢复"推迟"项。
 
 ## D-098
 **Responsive Feedback — 反馈短链路即时生效 (差评不生效 B-001 P0 修复).** (2026-05-25) · 第一原则: 用户每次 👍/👎 必须在下次推荐被可感知响应, "差评不生效"=信任崩塌
-新增短链路 (实时 / 餐厅·菜品级 / 带衰减) 补 L1 慢链路缺口, 二者独立互补 (L1 仍负责泛化成长期口味). 新核心模块 `chisha/feedback_signal.py` 从 `feedback_store` **自包含**取数 (accepted_rank→cold-store session combo→restaurant_id+dish_id; 弃 meal_log JOIN 因落盘丢 dish_id). **信号源**=组合C+Q-B 冲突规则 (强负=rating==-1且repurchase==0 / boost=rating==1且repurchase==2 / repurchase 优先于 rating). **三注入**: ① score.py 第 15 维 `feedback_recency` (餐厅级主+菜品级辅弱累积, weight 1.5 由 top5 cutoff margin 法标定) ② recall.py 强负 30 天剔除 (放 combo/价格/intent 全部过滤之后, 捕获 with/without-feedback 最终集差集 → narrative 忠实) ③ L3 narrative `[FEEDBACK_AVOIDED]` 段只列真剔除店 (D-085 忠实). 线性衰减 (差评 0-30d 强/30-60d 衰减; 好评 7-30d 弱boost). **§8.1 单次构建**: api/refine 起点 build 一个对象, recall/score/L3/trace 共享同一引用, rank_combos 自身不读 store (防 standalone L1/L2 不一致). What-if 零 runtime read: trace `__frozen` 加 `feedback_signal_snapshot`+`feedback_avoided_names`, `TRACE_SCHEMA_VERSION` 3→4 (v3 仍 accepted). 守门: pytest 979 pass + baseline_l2_snapshot 0-diff (无反馈 gating) + snapshot 标定测试 (真实数据强负压出 top5) + codex BLOCK×4 修复 (narrative 真实归因 / refine R2 一致 / version bump / 白名单). 详见 `docs/proposals/archive/2026-05-25-feedback-short-loop-b001.md`.
+新增短链路 (实时 / 餐厅·菜品级 / 带衰减) 补 L1 慢链路缺口, 二者独立互补 (L1 仍负责泛化长期口味)。短链路只压差评的店/菜, 不泛化。信号源 = rating + repurchase 冲突规则 (强负压制 / 好评弱 boost, 线性衰减)。实现契约 (三注入 / §8.1 单次构建 / What-if 零 runtime read / trace v3→v4) 见 CONTRACTS「反馈短链路」段; 设计存档 `docs/proposals/archive/2026-05-25-feedback-short-loop-b001.md`。
 
 ## D-099 + D-099.1 + D-099.2 + D-099.3
 **稳定实体 id — 跨重采不漂移.** (2026-05-26) · 推翻 loader 按文件位置发号 (`r_{i}`/`d_{i}_{j}`); 修「重采→id 洗牌→历史反馈/标签错投」根因. Opus 提案 + Codex pressure-test 收敛, 提案存档 `docs/proposals/archive/2026-05-26-stable-entity-id.md`.
-- **D-099 公式**: `rid = "r_"+sha1(normalize_shop_name_v1(name))[:10]` (逐字复现采集端 `text_norm.py` v1, 字节对拍 571/571 一致); `dish_id = "d_"+rid+"_"+sha1(normalize_dish_name_v1(raw_name))[:8]` (restaurant-scoped). 归一化只动空白/零宽/全角括号, 显式不动大小写/标点/价格/规格.
-- **D-099.1 唯一性 + 冲突 fail-loud**: 价/销变化不改 id. 同店同归一菜名但**价格不同**=真冲突 → 隔离不进 active (不加后缀/不混 price 进 key); 同名同价仅销量差 → 折叠. 8-hex 碰撞 / 餐厅级歧义 (同 status+count 内容不同) 同样隔离. 餐厅去重取**单一权威记录** (`status ok>early_ok>partial>failed>None` → menu_count → 内容指纹, 不取并集, 不用输入顺序). **原子发布状态机**: 未确认冲突 → 只写 staged + `dish_id_conflicts.json` 报告, active 不动, 退出非0; 冲突进 `conflicts_ack.json` 后才发布.
-- **D-099.2 改名/跨 zone 身份**: rid=全局门店身份, zone 仅配送上下文 (同 rid 反馈跨 zone 生效). 店改名→新 rid, 靠人工 `data/aliases.json` 把旧名绑 canonical rid 兜底 (loader+迁移都应用). 归一化版本变=迁移事件.
-- **D-099.3 增量打标**: 仅新 dish_id / tag_version 变才调 LLM. 每次 ingest **重建活动集** (复用旧标签 + 刷新 price/sales/raw + 删 raw 中消失的菜); batch 缓存绑**有序 dish-id 清单** (非批号/长度). recall/score/feedback_signal 对 id 只做字符串相等/映射 (无 `r_\d+` 数字假设, `r_<hex>` 兼容).
-- **落地**: office 429→395 唯一店 (5 同名异价 SKU acked 隔离), home 142 (100% ⊆ office, 采集侧问题待查). 旧标签按 (新rid,新dish_id) 重映射: szbay 19934 复用 + 1762 旧重复店标签不一致判 ambiguous 重打 + ~992 新菜, home 8088 全复用. 一次性迁移 `scripts/migrate_stable_ids.py` (ingest 前快照旧数据). 守门: pytest 全绿 + 字节对拍采集端 + codex 设计触点×1 + diff review×4 (8 blocking 全纳: 碰撞双隔离/歧义整店隔离/原子成对写/迁移刷新上架/schema失败不污染live/conflict-key带价格指纹/exit非零/离线tagger查锁).
-- **已知残留 (志丹拍板接受)**: ingest 锁是 check-then-read, 对**并发** loader+tagger 有 TOCTOU (单人顺序工作流不触发). 现有防护 (锁marker防崩溃残留 + live文件最后翻 + dishes_raw仅离线消费 + 4 tagger入口查锁) 覆盖真实失败; 若将来多人/并行再上 `fcntl.flock` 真互斥.
+- **D-099 公式**: id = 稳定哈希 (`r_`+sha1(归一店名)[:10] / `d_`+rid+sha1(归一菜名)[:8], restaurant-scoped), 逐字复现采集端归一化 (只动空白/零宽/全角括号, 不动大小写/标点/价格)。当不透明字符串用, 禁 `int(rid[2:])` 数字解析。
+- **D-099.1 冲突 fail-loud**: 价/销变化不改 id; 同名异价/哈希碰撞/餐厅歧义 → 隔离不进 active + 报告, 进 `conflicts_ack.json` 才发布 (原子发布状态机)。
+- **D-099.2 改名/跨 zone**: rid=全局门店身份, zone 仅配送上下文 (同 rid 反馈跨 zone 生效); 改名→新 rid, 靠人工 `aliases.json` 兜底。归一化版本变=迁移事件。
+- **D-099.3 增量打标**: 仅新 dish_id / tag_version 变才调 LLM; 每次 ingest 重建活动集 (复用旧标签 + 删 raw 中消失的菜)。
+- **已知残留 (志丹拍板接受)**: ingest 锁 check-then-read, 对并发 loader+tagger 有 TOCTOU (单人顺序工作流不触发); 多人/并行再上 `fcntl.flock` 真互斥。契约见 CONTRACTS「数据/打标」段。
 
 ## D-100
 **collector↔chisha 接口契约硬化 — 防字段漂移 / id 漂移 / 采址污染.** (2026-05-26) · 触发=断裂点 G (home 采到深圳湾, 标签对地址错从产物无法自检). 两 repo 间隐式契约零防护 → 把"静默出错"变"响亮报错". Opus 实现 + Codex 设计 review + commit review 收敛. 提案 `docs/proposals/archive/2026-05-26-collector-chisha-contract.md`.
-- **Batch A (生产端 waimai_data)**: output envelope 加 `schema_version=1` + `normalized_name_version` + `location.observed_*` 软地址 provenance; `build_output` 加 location 护栏 (name==label 即 fail, 防手搓 location 把 name 静默降级成 label —— 实证一次 ad-hoc regeneration 把 office 的 name 降级了); 弃用发散 envelope 的 `tools/aggregate.py` (hard-fail 指向 collector.main); 软地址观测 (采前主动读美团实际配送地址文本, 软版只记录不判定). 契约落档 `OUTPUT_CONTRACT.md`.
-- **Batch B (消费端 chisha)**: 新 `chisha/collector_contract.py` 窄契约校验 (pydantic `strict=True` + `extra="allow"`, provenance 字段 required-nullable, status 锁 `Literal[observed/unobserved]`); `loader.load_raw` 入口 fail-loud 校验 + 断言 `normalized_name_version==SHOP_NAME_VERSION` (**无 grandfather**); 新 `scripts/refresh_from_collector.py` 编排 preflight→哨兵→loader→tag→backfill→validate (publish 全 zone 后才 tag) + 跨 zone 指纹哨兵 + `ZONE_MAP` (D5).
-- **设计决策锁定 (D1-D5)**: schema_version=int; grandfather 选重导出不留放行口; 哨兵 hard-fail=共享≥30 且 rid 共享率≥80% 且 distance 相同率≥80% 且 label 不同; zone 映射放消费端; 自用阶段不抽共享归一化包 (触发=第 3 个消费者).
-- **守门**: chisha pytest 1023 pass + 真 A4 office 文件过契约 (strict 抓到 menu `image` 实为 bool → 移出契约) + Codex commit review SHIP-WITH-FIXES (S-1 status→Literal / S-2 publish-then-tag 分两轮, 已修). `collector_contract.py` **不进 high-risk 白名单** (纯边界校验器, D4).
-- **收口 (2026-05-27 重采两 zone 实跑)**: envelope 已落地 `extractor.build_output` (schema_version/normalized_name_version/location.observed_* 三字段) → 真 A4 office 文件过契约守门**自动恢复** (`test_real_a4_office_file_passes` 从 skip 转真校验 pass); B3 全链路 (publish→tag→backfill→validate) + 跨 zone 指纹哨兵两 zone 真数据**已实跑通过**. 仍未落地: A3 `observed_address_text` 真机观测 (现填 null/unobserved 合法空值, 契约过但 provenance 仍空); Batch A 的 name==label 护栏 / aggregate.py 弃用本次未碰 (只补 envelope).
+生产端 envelope 加版本 + 软地址 provenance, 消费端 `loader.load_raw` 入口窄契约 fail-loud 校验 (**无 grandfather**)。
+设计锁定 (D1-D5): schema_version=int; grandfather 不留放行口; 跨 zone 指纹哨兵 hard-fail (共享≥30 且 rid/distance 高重合且 label 不同, 抓 G 式采址污染); zone 映射放消费端; 自用阶段不抽共享归一化包 (触发=第 3 个消费者)。契约见 CONTRACTS「数据/打标」段 + 跨 repo `OUTPUT_CONTRACT.md`。残留: 真机观测地址 (`observed_address_text`) 未落地, 现填合法空值。
 
 ## D-101
 **非菜品两层隔离 — 防餐具/包装/营销项炸打标.** (2026-05-27) · 触发=重采后 home 打标卡死: collector 把"需要餐具/纸巾/烧烤店里更好吃"当菜爬 (office 171+home 14), LLM 诚实打 `cooking_method='其他'` 不在 `COOKING_METHODS` 枚举 → DishTagged schema 拒 → 整 zone 写 .staged 不发布. Codex 设计 review.
-- **Layer 1 (loader 打标前)**: 新 `chisha/non_dish_rules.py` `is_non_dish()` — 强信号子串 (餐具/一次性/保温袋...) + 裸器具去装饰整名精确 (筷子/手套/勺子, 防误杀"神枪手套餐"/"配手套"/"筷子鸡"). `_build_dishes` 在冲突检测**前**剔除, **non-blocking 隔离** (不进 conflicts 集 → 不阻塞 publish), 写 `non_dish_quarantine.json` 报告. 全量 23551 道实测命中 168 零误杀.
-- **Layer 2 (tagger 兜底)**: `tag_via_api._finalize_write` 改**记录级隔离** — 单条 schema 越界写 `dishes_tagged.quarantine.json` (具名+reason), valid 照进 active; 退役旧 all-or-nothing `.staged` (1 道脏菜不再阻塞整 zone). active 恒 schema-valid 不变 (BLOCK#5 安全守住).
-- **精度第一**: 宁可漏不可误杀真菜, 漏网 (如营销语) 由 Layer 2 兜底; `COOKING_METHODS` **不加'其他'** (保持严格, 不让垃圾混进 recall). `non_dish_rules.py` 纯函数 **不进 high-risk 白名单** (同 collector_contract 先例).
-- **打标鲁棒性**: deepseek batch=30/16workers 实测 home 24/28 截断+限流挂; 降 `--batch 15 --workers 8` 后 home 56 batch 0 失败. 增量兑现: office 22556 道仅 delta=147 真调 LLM (复用 22409).
+两层: loader 打标前 `is_non_dish()` 规则隔离 (精度优先, 宁漏不误杀真菜, non-blocking 不阻塞 publish) + tagger 记录级隔离 (单条越界进 quarantine, valid 照发, 退役旧 all-or-nothing `.staged`)。`COOKING_METHODS` 保持严格不加'其他' (不让垃圾混进 recall)。契约见 CONTRACTS「数据/打标」段。
 
 ## D-102 + D-102.1 + D-102.2 + D-102.3
 **可分发的共享核心 — chisha 从单用户工具到类 feishu-cli 可分发物.** (2026-05-28) · 重激活 ROADMAP Phase 1 工程主线 (不推翻 D-097 自用为主, 把"真要推广时回看恢复"落地). Opus + 志丹多轮 + Codex 架构 review 两轮收敛. 提案 `docs/proposals/archive/2026-05-28-distributable-shared-core.md` (5 支柱 + 分步 + 已知坑).
-- **5 支柱 (锁定)**: ① 核心产 plan 三件套 (PromptPlan/ValidationSpec/FallbackPlan)、不拥有执行 (adapter 执行 LLM); ② install/state root 二分、state→`~/.chisha/`、sandbox 为 state namespace; ③ 分发=版本化静态产物+capability manifest+doctor 闸门、Claude Code 走 plugin; ④ web 降自用薄壳 (禁独占业务逻辑); ⑤ 分步先焊大脑再搬文件. 病根=两入口靠"手工穿状态"而非"核心打包状态" → meal_log 在 cli 兜底 drift (信任砸点).
-- **D-102.1 Step1 焊大脑 (已落地)**: 抽 `FallbackPlan` (rerank.py) 封装兜底全部状态 (候选集+meal_log 只读快照+n/n_explore/today+version); `build_fallback_plan` 唯一构造入口 meal_log **必填**, `fallback_rerank` 改 meal_log 必填 (拔"默认 None 隐式漏传"温床). web/cli/what-if/debug 四路兜底全经此. cli 跨进程: PreparedCandidates 加 meal_log → resolve 时 `to_blob` 冻进 round prepared (D-098 范式), apply 时 `from_blob` 重建执行 (blob 缺失/版本不符 fail-loud, D-100 无 grandfather). 根治 `agent_cli` 漏 meal_log → explore 丢"避开最近吃过"偏置. PromptPlan/ValidationSpec 经核确认已单源 (`build_rerank_spec`/`apply_rerank_response`), 本期不加仪式 wrapper, 形式化推迟 (Codex scope 共识). 守门: pytest 1155 pass (+13 测试, 有牙=meal_log 真改 explore + 跨进程 blob 忠实 + 7 天边界) + baseline_l2_snapshot 0-diff (web 主路径).
-- **D-102.2 Step2 搬文件 (已落地, 分两 commit)**: install/state root 二分, user state 默认落 `~/.chisha/` (host-agnostic 活过 plugin update). 新 `chisha/state_root.py` (零依赖, 避循环) `resolve()` 三规则: env `CHISHA_STATE_ROOT` > 显式非包目录 root > `default_state_root()`(=~/.chisha). data_root 9 落盘函数 + sandbox + web_api sandbox 路由 (`_sb_bucket`/`_validate_and_route_sid`/`_copy_real_data`) + sandbox_migration 全收口经 state_root (防 split-brain). feedback_history/long_term_prefs 从 `data/`(install 只读区) 迁出到 state_root 顶层 (user state 不能与引擎只读库同住). 新 `chisha/state_migrate.py` + `scripts/migrate_state.py`: 复制(不删源, repo 作回滚)+目录逐文件原子合并(staging+rename, 不 clobber/不丢)+校验+原子 marker+幂等. agent_cli doctor 扩 install_root/state_root/writable/migrated/legacy_pending (未迁旧 state→ok=false 未就绪). 真迁移已跑 (repo→~/.chisha 108 文件). **行为 0-diff** = flip+迁移一起 (单翻不迁会读空 state, 守门: CHISHA_STATE_ROOT=repo 跑 baseline 0-diff + 迁移后 ~/.chisha 跑 baseline 0-diff). 测试隔离: conftest autouse monkeypatch default_state_root→tmp_path+delenv (绝不污染真实 ~/.chisha). Commit A=管道(0-diff plumbing)/Commit B=翻默认+迁移. Codex 双 commit review (各 FAIL/HOLD→修 3+5 BLOCKING→SHIP). 守门: pytest 1167 pass (+11 state_root/migrate 测试) + baseline 0-diff. 残留: 迁移 TOCTOU (单用户一次性, 接 D-099 先例接受); sandbox `sandboxes/<id>/` 重构 + PROFILE_PATH legacy 常量推迟.
-- **D-102.3 Step3 分发/compat 闸门 (已落地)**: 数据 bundle 发布带 bundle 级 `data/manifest.json` (字段: manifest_schema_version/artifact_version/data_schema_version/min_engine_version/engine_capabilities_required/normalized_name_version/zones/integrity=null). 新 `chisha/manifest.py` `check_compatibility(install_root)`: 引擎用 `__version__`(=pyproject, 一致性守门) + `SUPPORTED_ENGINE_CAPABILITIES`{stable_entity_ids_v1, dish_tag_schema_v3} 比对产物 — **不用单调 version 用 capability flags** (§C: 缺能力=破坏性变更); 校验 manifest_schema/min_engine(SemVer 下限)/capability 子集/normalized_name_version==SHOP_NAME_VERSION, 任一不满足 `IncompatibleManifestError` hard-fail (D-100 无 grandfather). 接入点 = `recall.load_zone_data` (真消费入口, 非 loader.load_raw ingest / 非 data_root state) + doctor (`engine_version`/`install_data_manifest_status` ok|missing|incompatible, incompatible→ok=false; T-DIST-01 B.5b 配对新增 `user_resource_status`). **缺 manifest = 过渡期未版本化 bundle, warn 放行** (非 incompatible, 无信息可断言), doctor 标未达分发就绪. `scripts/build_manifest.py` 生成 (--bump artifact_version). **本期留位不定型** (范围红线): integrity hash/签名/来源证明 (integrity=null); plugin marketplace 打包 (先内部 git transport 验流程, /plugin install + marketplace metadata 推迟). Codex 设计+commit 双触点. 守门: pytest 1178 pass (+11 manifest 测试) + baseline 0-diff (compat 闸门不改 L2).
-- **D-102 acceptance review 跟修 (2026-05-28, Codex CONDITIONAL_PASS→SHIP)**: P1 `manifest.py` capability fail-open 修 — `engine_capabilities_required` 缺字段/非 list/元素非 str → hard-fail (空 `[]` 是合法"不要求能力"声明放行), 与 dsv/nnv 同严格; 测试 +4 case (缺字段/非 list/含非 str/空合法). P2 `agent_cli doctor` 露 `manifest_path` (str) / `bundle_artifact_version` (int|None) / `bundle_data_schema_version` (int|None) — 外部 agent 可定位 bundle. P3 README 加 integrity caveat (内部 git transport ok / 外部 transport 需自验 hash). 守门: pytest 1186 pass (+4) + Codex SHIP 1 nit (本条目同步).
+- **5 支柱**: ① 核心产 plan 三件套 (PromptPlan/ValidationSpec/FallbackPlan)、不拥有执行; ② install/state root 二分、state→`~/.chisha/`; ③ 分发=版本化产物+capability manifest+doctor 闸门; ④ web 降自用薄壳; ⑤ 先焊大脑再搬文件。病根=两入口靠"手工穿状态"而非"核心打包状态" → meal_log 在 cli 兜底 drift (信任砸点)。
+- **D-102.1 焊大脑**: 抽 `FallbackPlan` 封装兜底全部状态, meal_log **必填** (拔"默认 None 隐式漏传"温床), web/cli/what-if/debug 四路单源。cli 跨进程靠 blob 冻结/重建 (D-098 范式)。
+- **D-102.2 搬文件**: install/state root 二分, user state 默认落 `~/.chisha/` (host-agnostic 活过 plugin update); 所有 state 路径经 `state_root.resolve()` 单源 (防 split-brain); 一次性显式迁移 (复制不删源 + 原子合并 + 幂等)。
+- **D-102.3 分发闸门**: 数据 bundle 带 `manifest.json`, `recall.load_zone_data` 入口用 capability flags (非单调 version) 比对, 不兼容 `IncompatibleManifestError` hard-fail; 缺 manifest=过渡期 warn 放行。
+- **本期留位不定型 (范围红线)**: integrity hash/签名 (`integrity=null`) + plugin marketplace 打包 (先内部 git transport)。契约见 CONTRACTS「install/state root 二分」+「manifest 闸门」段。
 
 ## D-103
-**P1 AI-friendly 接入优雅化 — 折成 eat→continue 单循环, 对标 feishu-cli 薄 skill.** (2026-05-29) · 触发=志丹"对外发布太繁琐不优雅". 系统学 feishu-cli (Go 单二进制 + 薄 SKILL.md shell out 到二进制) 后定方向: **保留零 LLM 无脑核心 (这是差异点/卖点, lark 是被迫自包含智能, chisha 主动选确定性引擎+借宿主智能), 只偷打包+触发纪律**. Opus + Codex 设计评审 + diff 复核双触点 (各 needs-fix→修→SHIP).
-- **协议折叠**: 顶层扁平 `chisha eat / continue / choose`; `continue` 合并 resolve-intent+apply-rerank, 按回包顶层 `step_token` (=correlation 编码, 对 host 不透明) 的 operation + round.status 路由. host 单循环: 回包带 `do_llm` 就用自己 LLM 跑它、喂回, 直到 `status=ready`. 去掉手抄 correlation / 手包 `{correlation_id,payload}` 信封的 footgun.
-- **step_token 必填** (codex Q1/Q2): 去信封后它是唯一的 stale/串轮守门人, continue 不静默从 round state 派生; 内部仍包信封走 `parse_agent_response`, F4 守卫一字不变.
-- **幂等回放** (codex Q3): extract 重发复用 resolved 回放; rerank 重发 (round 已 clear) 查 `{sid}.ready.json` 快照, 仅回放最新已发布轮 (`_latest_published_round` 守卫, 防跨轮 stale).
-- **装包模型** (志丹卡片选 A 持久装) [已废弃 by D-105.1: 形态A `uv tool install` 入口彻底退役, 接入唯一形态 = 形态B 自包含 bundle]: `uv tool install chisha-meal` → `chisha`/`chisha-meal` 双命令上 PATH; **不用 uvx ephemeral** (跑完不留 chisha 给 skill 用, 与"skill 用裸 chisha eat"不自洽). SKILL.md 从 110 行过程手册 → ~25 行单循环触发器.
-- **兼容**: `llm_request_spec`→`do_llm` (dual-key 一版), 老 verb (`start`/`resolve-intent`/`apply-rerank`/`chisha agent`/`python -m chisha.agent_cli`) 各保留 deprecated alias 一版 (codex: 仓库外旧 skill 可能存活, clean break 不值). 协议契约见 CONTRACTS「Agent CLI 协议」P1 条; AGENTS.md 安装契约 §0/§2/§4/§7 已同步.
-- **守门**: pytest 1257 + 10 新 continue/回放 e2e pass + 真·CLI e2e (真实 shenzhen-bay 60 候选→cards→choose→回放→refine) + baseline_l2 0-diff (引擎未动) + wheel 隔离 venv 实装 (双 entry + doctor ok=True 分发就绪 + eat 通).
-- **未做 (gated)**: P0 = Sprint A 历史清洗 (git filter-repo) + repo 转 public — 不可逆 + 对外, 待志丹显式授权; 是对外公开分发 (含 D-105.1 后形态B bundle 公网可达 / 远程获取) 的硬前置 (现仍私仓, bundle 靠手动拷贝分发).
+**P1 AI-friendly 接入优雅化 — 折成 eat→continue 单循环, 对标 feishu-cli 薄 skill.** (2026-05-29) · 触发=志丹"对外发布太繁琐不优雅"。学 feishu-cli 后定方向: **保留零 LLM 无脑核心 (差异点/卖点: chisha 主动选确定性引擎+借宿主智能, 非被迫自包含智能), 只偷打包+触发纪律**。Opus+Codex 双触点。
+- **协议折叠**: 顶层扁平 `eat / continue / choose`; `continue` 合并 resolve-intent+apply-rerank, 按不透明 `step_token` 路由。host 单循环: 回包带 `do_llm` 就跑、喂回, 直到 `status=ready`。去掉手抄 correlation / 手包信封的 footgun。协议契约见 CONTRACTS「Agent CLI 协议」P1 条。
+- **装包模型** [已废弃 by D-105.1: 形态A `uv tool install` 入口退役, 接入唯一形态 = 形态B bundle]。老 verb / 老字段各留 deprecated alias 一版。
+- **未做 (gated, 转 public 前置)**: Sprint A 历史清洗 (git filter-repo) + repo 转 public — 不可逆+对外, 待志丹显式授权; 是对外公开分发的硬前置 (现仍私仓, bundle 靠手动拷贝)。
 
 ## D-104
 **agent-only core 解耦 — 推荐核心从 sandbox/web/debug/自调LLM 切干净, 可独立 slim 运行.** (2026-05-29) · 单包逻辑分层 (非物理拆 PyPI 包) + ambient provider DI. Opus 设计 + Codex 设计/commit 双触点逐步落地 (6 commit). 提案归档 `docs/proposals/archive/2026-05-29-agent-core-decoupling.md`.
@@ -286,22 +267,18 @@ Phase 1 启动前原 9 项必收口按"自用是否需要"重切 (清单见 [ROA
 
 ## D-104.1
 **D-104 两条备查跟修 — reference v3 可发现性 + 裸 core 真实时钟护栏.** (2026-05-30) · 跟修 D-104 债务 + 行为微调, 非推翻。
-- **② reference v3 (真 bug 修复)**: `reference_resolver.resolve_reference` 发现 (list_traces→list_traces_v3) + 读取 (read_trace→read_meta/read_round_full 取最新已发布 round 的 final) 双路改 v3-aware。修前: refine 过 (迁 v3 目录) 的历史餐, "上次那家差不多换一家" 类引用解析不到 → 隐性破坏 Faithful Refine (D-080)。v2 单文件回退保留 (无 refine 的 session 不变), 找不到仍 None 让上游降级 (D-085 忠实)。
-- **① 裸 core 真实时钟 (护栏锁死, 行为不变)**: D-104 已确认 "sandbox=debug, 在 production 之外" 是意图 (虚拟时钟只经 web/debug import sandbox 注册); 补测试锁死裸 agent recommend 路径走真实时钟, 防以后假时间被接回点餐路径。
-- 守门: tests/test_d104_followup.py (3 测试: v3 引用解析 / v2 不回归 / 裸 core 真实时钟) + baseline_l2_snapshot 0-diff (reference 不在空-refine L2 dry-run 路径)。`reference_resolver` 不在 high-risk 白名单。
+- reference 解析改 v3-aware: 修前 refine 过的历史餐 (迁 v3 目录) "上次那家换一家"类引用解析不到 → 隐性破坏 Faithful Refine (D-080)。v2 回退保留, 找不到仍降级 (D-085 忠实)。
+- 锁死裸 agent recommend 走真实时钟 (虚拟时钟只经 web/debug 注册), 防假时间被接回点餐路径。`reference_resolver` 不进 high-risk 白名单。
 
 ## D-105
 **形态B 自包含 skill 分发 — 替代形态A 当默认接入.** (2026-05-30) · 设计 spec: docs/superpowers/specs/2026-05-30-chisha-form-b-self-contained-skill-design.md · Codex 设计+commit 双触点。
 - **动机**: 形态A (`uv tool install chisha-meal` + 薄 SKILL.md 指全局 `chisha`) 接入两步、代码不随 skill 走、换机器要先装包。形态B: core 代码+数据+vendored 依赖+wrapper bundle 进一个 skill 文件夹, 拷进 `~/.claude/skills/chisha-meal/` 即用, **自包含、零全局安装、运行期零联网、零 pydantic**。
-- **砍 core pydantic**: `collector_contract.py` 从 pydantic strict 改纯 dataclass + 手写校验, 逐层复刻 4 陷阱 (required-but-nullable 用 `_MISSING` 哨兵 / bool 泄漏前置 `not isinstance(v,bool)` / Literal 枚举 / extra 容忍) + 检查顺序 (结构→schema_version→norm_version)。与旧 pydantic 行为对拍 (tests/fixtures/collector_contract_golden.json 46 case + tests/test_collector_contract.py)。core 运行期唯一第三方依赖 = pyyaml。
-- **vendoring pyyaml**: installer 把纯 Python `yaml/` 拷进 bundle `vendor/yaml/` (C 扩展 `_yaml` 不拷, 运行时走纯 Python path)。`scripts/build_skill_bundle.py` 升级真 installer: cli.py 移回 (wrapper dispatch 目标) + 补拷 profile.yaml 模板 + `--install` staged 覆盖 (copy-to-temp-first, 拷贝失败不损 live skill; 两次 rename 间残留极小窗口, 非 OS 单原子) + 备份 + B 形态 SKILL.md (单一源 = `agent_skill_init._claude_code_skill_md`)。wrapper `scripts/chisha`: py>=3.11 硬 guard + sys.path 注入 (bundle→vendor→orig) + dispatch `chisha.cli:main`。
-- **诚实边界**: **POSIX-only** (core 用 fcntl 文件锁, Windows 除 WSL 外不支持); **python3 ≥ 3.11** (macOS 自带 3.9 不够, wrapper guard 报清晰错)。SKILL.md/doctor 显式声明。
-- **A additive 退役 (D-105 落地时)**: pyproject `[project.scripts]` 与 A 的 uv tool 入口**保留** (回滚用); 仅 SKILL.md 默认翻成 B 形态。[已 by D-105.1 推翻: A 入口已删]
-- 守门: baseline_l2_snapshot 0-diff (砍 pydantic 后 4 trace 逐字节一致) + pytest 1276 pass (+collector_contract/build_skill_bundle 测试, 4 个形态A SKILL.md 断言改 B 形态) + **裸 python3 隔离实跑全链路** (bare venv 3.13 无 pydantic/pyyaml, doctor→onboard→eat→continue→choose→refine 全绿)。触碰 high-risk `agent_skill_init`。
+- **砍 core pydantic**: `collector_contract.py` 改纯 dataclass + 手写 strict 校验 (4 陷阱逐层复刻, golden 对拍)。core 运行期唯一第三方依赖 = pyyaml, **vendored** 进 bundle `vendor/yaml/` (纯 Python path)。
+- **诚实边界**: **POSIX-only** (core 用 fcntl 文件锁, Windows 仅 WSL) + **python3 ≥ 3.11** (macOS 自带 3.9 不够, wrapper 硬 guard)。
+- bundle/installer 契约 (build_skill_bundle / wrapper / `--install` staged 覆盖) 见 CONTRACTS「agent-only core / extras 边界」段。触碰 high-risk `agent_skill_init`。
 
 ## D-105.1
 **形态A 彻底退役 + stdout 泄漏修复.** (2026-05-30) · 志丹拍板 "形态A 不要了, 回滚靠 git"。
-- **删 uv tool 入口**: pyproject `[project.scripts]` (chisha / chisha-meal 双 console) + wheel `force-include` + wheel `exclude` 整块删; 仅留 `[build-system]` + `[tool.hatch...wheel] packages=["chisha"]` 让 repo dev `uv run` editable 可用。`tests/test_wheel_content_gate.py` 整删 (它只为形态A wheel 闸门存在; 形态B bundle 由 `build_skill_bundle` 自带 DATA_FILES 拷贝清单 + `test_build_skill_bundle` 守门)。接入唯一形态 = B 自包含 bundle; 回滚靠 git 不再保留 A 装包路径。
-- **stdout 泄漏修复**: `refine_intent_v2.py` 3 处 fallback `print()` (LLM 失败 / 漏必填字段 / schema validate fail) 全改 `file=sys.stderr`, 兑现 "stdout 一律 JSON" 契约 (此前 host 靠 `splitlines()[-1]` 兜底)。
-- **未做 (flag 给后续)**: `AGENTS.md` (404 行远程 agent 自安装协议) 整份基于 form A 的 `uv tool install` → 全局 `chisha`, 现已 stale; B 形态远程分发 (非维护者、无 repo 的 agent 如何拿 bundle) spec D-105 §2 列为非目标、未设计 → AGENTS.md 重写待 B 远程分发协议定型后单独做。
-- 守门: pytest 全过 (删 wheel gate 后) + 真实 `~/.claude/skills/chisha-meal/` --install 实跑全链路验证 + Codex commit review。
+- **删 uv tool 入口**: pyproject `[project.scripts]` 双 console + wheel force-include/exclude 整块删 (仅留 editable `uv run` dev 用); 接入唯一形态 = B 自包含 bundle, 回滚靠 git 不留 A 装包路径。
+- **stdout 泄漏修复**: `refine_intent_v2.py` 3 处 fallback `print()` 改 `file=sys.stderr`, 兑现 "stdout 一律 JSON" 契约。
+- **AGENTS.md 已重写为形态B (2026-05-30 跟修)**: 原 404 行 form A 协议整份重写成形态B (拷 bundle + wrapper 调用, 与 SKILL.md 单一源对齐); 协议层保留。**仍未做**: B 形态**远程分发协议** (非维护者、无 repo 的 agent 如何拿 bundle) D-105 §2 列为非目标、未设计 — 现以 AGENTS.md §1 NO_BUNDLE 模板诚实兜底, 待定型后补。
