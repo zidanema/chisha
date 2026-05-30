@@ -300,7 +300,7 @@ def _parse_cn_int(s: str) -> int | None:
         # 中间位: "一百二" → 120, "一百二十五" → 125
         if m.group(2):
             mid = _CN_NUMERAL[m.group(2)]
-            tens = mid * 10 if "十" in s else mid * 10  # 简化: 见百必出十
+            tens = mid * 10  # 百位语境中间位恒为十位 ("一百二"→120, "一百二十五"→125)
             ones = _CN_NUMERAL[m.group(3)] if m.group(3) else 0
             return hundreds + tens + ones
         return hundreds

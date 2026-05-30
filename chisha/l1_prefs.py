@@ -81,6 +81,18 @@ def canonicalize_token(token: str) -> str | None:
     return token if token in ALL_TOKENS else None
 
 
+def _sanitize_tokens(raw_list: list, allowed: frozenset) -> set[str]:
+    """canonical 化并按词表过滤: 跳过非 str, 丢弃不在 allowed 的 token."""
+    out: set[str] = set()
+    for t in raw_list:
+        if not isinstance(t, str):
+            continue
+        c = canonicalize_token(t)
+        if c and c in allowed:
+            out.add(c)
+    return out
+
+
 def validate_prefs(prefs: dict) -> dict:
     """schema 校验 + canonicalize + 去重 + maxItems 限制. 返回 sanitized prefs.
 
@@ -101,21 +113,8 @@ def validate_prefs(prefs: dict) -> dict:
     if not isinstance(raw_boost, list) or not isinstance(raw_penalty, list):
         raise ValueError("boost / penalty must be list")
 
-    boost: set[str] = set()
-    for t in raw_boost:
-        if not isinstance(t, str):
-            continue
-        c = canonicalize_token(t)
-        if c and c in BOOST_TOKENS:
-            boost.add(c)
-
-    penalty: set[str] = set()
-    for t in raw_penalty:
-        if not isinstance(t, str):
-            continue
-        c = canonicalize_token(t)
-        if c and c in PENALTY_TOKENS:
-            penalty.add(c)
+    boost = _sanitize_tokens(raw_boost, BOOST_TOKENS)
+    penalty = _sanitize_tokens(raw_penalty, PENALTY_TOKENS)
 
     # boost ∩ penalty 矛盾时, penalty 优先 (LLM 不能同时说"想要" + "不想要")
     boost -= penalty
