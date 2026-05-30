@@ -235,18 +235,16 @@ def _pick_authoritative(rid: str, rows: list[dict]) -> tuple[dict, dict | None]:
     distinct_content = {_menu_content_hash(r) for r in tied}
     conflict = None
     if len(distinct_content) > 1:
-        conflict = {
-            "type": "restaurant_ambiguity",
-            "key": f"rest:{rid}#{_conflict_digest(sorted(distinct_content))}",
-            "rid": rid,
-            "restaurant_name": top.get("name", ""),
-            "detail": {
+        conflict = _make_conflict(
+            "restaurant_ambiguity",
+            f"rest:{rid}#{_conflict_digest(sorted(distinct_content))}", rid,
+            top.get("name", ""),
+            detail={
                 "tied_rows": len(tied),
                 "distinct_content_hashes": sorted(distinct_content),
                 "menu_status": top.get("menu_status"),
                 "menu_count": top.get("menu_count"),
-            },
-        }
+            })
     return top, conflict
 
 
@@ -258,20 +256,25 @@ def _conflict_digest(payload: Any) -> str:
     旧 ack 不再命中 → 强制重新人工复审 (codex 防"旧 ack 覆盖新冲突")。"""
     blob = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:8]
-def _build_dishes(rid: str, auth: dict) -> tuple[list[dict], list[dict], list[dict]]:
-    """从权威餐厅记录建 active dishes + dish 级 conflicts + 非菜品隔离项.
 
-    冲突 (隔离, 不进 active):
-    - 同归一菜名 → 多个不同 price (真不同 SKU, 截断同名): dish_name_price
-    - 不同归一菜名 → 同 8-hex (哈希碰撞): dish_hash_collision
-    - 归一后空菜名: empty_dish_name
-    销量(monthly_sales)差异不算冲突 (D-099.1: 价/销变化不改 id; 销量是噪声).
 
-    非菜品 (餐具/包装/营销, is_non_dish 命中) → **non-blocking 隔离**: 在冲突检测**之前**
-    剔除 (不参与同名异价/哈希碰撞判定, 防两条"需要餐具"异价被误判成阻塞冲突), 不进 active、
-    不进 conflicts (不阻塞发布), 单独返回供报告. 第三个返回值 = 非菜品记录.
+def _make_conflict(ctype: str, key: str, rid: str, restaurant_name: str,
+                   *, detail: dict, **extra: Any) -> dict:
+    """统一冲突记录模板 (4 类冲突共享 type/key/rid/restaurant_name/detail).
+
+    extra 在 detail 之前插入 (如 dish_name_price 的 norm_name), 保持原字段顺序。
     """
-    menu = auth.get("menu", []) or []
+    out = {"type": ctype, "key": key, "rid": rid,
+           "restaurant_name": restaurant_name}
+    out.update(extra)
+    out["detail"] = detail
+    return out
+
+
+def _partition_menu(
+    rid: str, auth: dict, menu: list[dict],
+) -> tuple[dict[str, list[dict]], list[dict], list[dict]]:
+    """剔非菜品 (冲突检测前) + 隔离空菜名 → (by_name, empty_conflicts, non_dishes)."""
     by_name: dict[str, list[dict]] = defaultdict(list)
     empty_conflicts: list[dict] = []
     non_dishes: list[dict] = []
@@ -286,35 +289,34 @@ def _build_dishes(rid: str, auth: dict) -> tuple[list[dict], list[dict], list[di
             continue
         norm = normalize_dish_name_v1(m.get("name", ""))
         if not norm:
-            empty_conflicts.append({
-                "type": "empty_dish_name",
-                "key": f"emptydish:{rid}:idx{j}",
-                "rid": rid,
-                "restaurant_name": auth.get("name", ""),
-                "detail": {"raw_name": m.get("name", ""), "index": j},
-            })
+            empty_conflicts.append(_make_conflict(
+                "empty_dish_name", f"emptydish:{rid}:idx{j}", rid,
+                auth.get("name", ""),
+                detail={"raw_name": m.get("name", ""), "index": j}))
             continue
         by_name[norm].append(m)
+    return by_name, empty_conflicts, non_dishes
 
-    conflicts: list[dict] = list(empty_conflicts)
-    # 第一遍: 剔同名异价冲突, 给存活菜名算 (did, h8)
+
+def _detect_price_conflicts(
+    rid: str, auth: dict, by_name: dict[str, list[dict]],
+) -> tuple[dict[str, dict], dict[str, list[str]], list[dict]]:
+    """同名异价隔离 + 给存活菜算 (did, h8) → (survivors, by_hash, price_conflicts)."""
     survivors: dict[str, dict] = {}   # norm_name → {did, h8, best_row}
     by_hash: dict[str, list[str]] = defaultdict(list)  # h8 → [norm_name...]
+    price_conflicts: list[dict] = []
     for norm, rows in by_name.items():
         prices = {round(float(r.get("price") or 0.0), 2) for r in rows}
         if len(prices) > 1:
-            conflicts.append({
-                "type": "dish_name_price",
+            price_conflicts.append(_make_conflict(
+                "dish_name_price",
                 # key 带价格指纹: 价格集变了 → 新冲突需重新 ack (不被旧 ack 覆盖)
-                "key": f"dish:{rid}:{norm}#{_conflict_digest(sorted(prices))}",
-                "rid": rid,
-                "restaurant_name": auth.get("name", ""),
-                "norm_name": norm,
-                "detail": {
+                f"dish:{rid}:{norm}#{_conflict_digest(sorted(prices))}", rid,
+                auth.get("name", ""), norm_name=norm,
+                detail={
                     "prices": sorted(prices),
                     "raw_names": sorted({r.get("name", "") for r in rows}),
-                },
-            })
+                }))
             continue  # 整组隔离, 无法确定哪个 price 是 canonical
         # 同名同价的多条 → 折叠取销量最大者 (sales 噪声, 非冲突)
         best = max(rows, key=lambda r: parse_monthly_sales(r.get("monthly_sales")))
@@ -322,19 +324,45 @@ def _build_dishes(rid: str, auth: dict) -> tuple[list[dict], list[dict], list[di
         h8 = did.rsplit("_", 1)[-1]
         survivors[norm] = {"did": did, "h8": h8, "best": best}
         by_hash[h8].append(norm)
+    return survivors, by_hash, price_conflicts
 
-    # 第二遍: 8-hex 碰撞 (不同归一名同 hash) → **两边都隔离** (该 dish_id 已污染, 不能信)
+
+def _detect_hash_collisions(
+    rid: str, auth: dict, by_hash: dict[str, list[str]],
+) -> tuple[set[str], list[dict]]:
+    """8-hex 碰撞 (不同归一名同 hash) → 两边都隔离 → (poisoned, hash_conflicts)."""
     poisoned: set[str] = set()
+    hash_conflicts: list[dict] = []
     for h8, names in by_hash.items():
         if len(names) > 1:
             poisoned.add(h8)
-            conflicts.append({
-                "type": "dish_hash_collision",
-                "key": f"hashcoll:{rid}:{h8}#{_conflict_digest(sorted(names))}",
-                "rid": rid,
-                "restaurant_name": auth.get("name", ""),
-                "detail": {"hash": h8, "names": sorted(names)},
-            })
+            hash_conflicts.append(_make_conflict(
+                "dish_hash_collision",
+                f"hashcoll:{rid}:{h8}#{_conflict_digest(sorted(names))}", rid,
+                auth.get("name", ""),
+                detail={"hash": h8, "names": sorted(names)}))
+    return poisoned, hash_conflicts
+
+
+def _build_dishes(rid: str, auth: dict) -> tuple[list[dict], list[dict], list[dict]]:
+    """从权威餐厅记录建 active dishes + dish 级 conflicts + 非菜品隔离项.
+
+    冲突 (隔离, 不进 active):
+    - 同归一菜名 → 多个不同 price (真不同 SKU, 截断同名): dish_name_price
+    - 不同归一菜名 → 同 8-hex (哈希碰撞): dish_hash_collision
+    - 归一后空菜名: empty_dish_name
+    销量(monthly_sales)差异不算冲突 (D-099.1: 价/销变化不改 id; 销量是噪声).
+
+    非菜品 (餐具/包装/营销, is_non_dish 命中) → **non-blocking 隔离**: 在冲突检测**之前**
+    剔除 (不参与同名异价/哈希碰撞判定, 防两条"需要餐具"异价被误判成阻塞冲突), 不进 active、
+    不进 conflicts (不阻塞发布), 单独返回供报告. 第三个返回值 = 非菜品记录.
+    """
+    menu = auth.get("menu", []) or []
+    by_name, empty_conflicts, non_dishes = _partition_menu(rid, auth, menu)
+    survivors, by_hash, price_conflicts = _detect_price_conflicts(rid, auth, by_name)
+    poisoned, hash_conflicts = _detect_hash_collisions(rid, auth, by_hash)
+    # 追加顺序: 空名 → 同名异价 → 哈希碰撞 (与原三遍扫描一致)
+    conflicts: list[dict] = empty_conflicts + price_conflicts + hash_conflicts
 
     dishes: list[dict] = []
     for norm, s in survivors.items():
