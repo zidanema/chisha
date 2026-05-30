@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from chisha.context import build_context
+from chisha.core_api_helpers import _resolve_zone  # F-016 #17: 单一权威源
 from chisha.recall import (
     build_combos_for_restaurant,
     combo_total_price,
@@ -55,13 +56,6 @@ def _deep_merge(base: dict, override: dict) -> dict:
         else:
             out[k] = v
     return out
-
-
-def _resolve_zone(profile: dict, meal_type: str) -> str:
-    zones = profile.get("basics", {}).get("zones") or {}
-    if meal_type in zones:
-        return zones[meal_type]
-    return profile["basics"]["office_zone"]
 
 
 # ---------- L1 召回 traced ----------

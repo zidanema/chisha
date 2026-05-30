@@ -10,6 +10,9 @@ from collections import Counter
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
+# F-016 #17: _resolve_zone 单一权威源 (core_api_helpers 是无 chisha 依赖的叶子模块)
+from chisha.core_api_helpers import _resolve_zone
+
 
 # 当日开场 1 问的可选值. None = 用户没回答 / 跳过.
 # D-071 砍前端 mood picker 后, 前端默认 FIXED_MOOD='neutral'.
@@ -61,13 +64,6 @@ class ContextSnapshot:
         d = asdict(self)
         d["now"] = self.now.isoformat()
         return d
-
-
-def _resolve_zone(profile: dict, meal_type: str) -> str:
-    zones = profile.get("basics", {}).get("zones") or {}
-    if meal_type in zones:
-        return zones[meal_type]
-    return profile["basics"]["office_zone"]
 
 
 def _parse_log_date(entry: dict) -> dt.date:

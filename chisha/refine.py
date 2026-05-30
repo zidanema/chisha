@@ -35,6 +35,22 @@ from chisha.session import SessionState, load_session, save_session
 _INTENT_TRACE_FILENAME = "logs/refine_intent_trace.jsonl"
 
 
+def _build_reference_resolved(resolved, source: str) -> dict | None:
+    """reference resolve 命中时的 8 字段执行证据 dict (trace + response 共用单源)."""
+    if resolved is None:
+        return None
+    return {
+        "relation": resolved.relation,
+        "raw_text": resolved.raw_text,
+        "base_session_id": resolved.base_session_id,
+        "base_meal_type": resolved.base_meal_type,
+        "base_started_at": resolved.base_started_at,
+        "n_base_combos": len(resolved.base_combos or []),
+        "notes": list(resolved.notes or []),
+        "source": source,
+    }
+
+
 def _append_intent_trace(trace: dict[str, Any], root: Path) -> None:
     """非阻塞写一行 jsonl. 失败静默不阻断 refine 主流程."""
     try:
@@ -227,20 +243,8 @@ def refine(
                           for c in reranked[:5]],
         # T-P2-01: reference resolve 命中时记一条 (debug + 用户语言交互可视化)
         # Codex M3: source 字段标 "v2_intent" / "raw_parser", debug-ui 可见执行来源
-        "reference_resolved": (
-            {
-                "relation": resolved_reference.relation,
-                "raw_text": resolved_reference.raw_text,
-                "base_session_id": resolved_reference.base_session_id,
-                "base_meal_type": resolved_reference.base_meal_type,
-                "base_started_at": resolved_reference.base_started_at,
-                "n_base_combos": len(resolved_reference.base_combos or []),
-                "notes": list(resolved_reference.notes or []),
-                "source": reference_source,
-            }
-            if resolved_reference is not None
-            else None
-        ),
+        "reference_resolved": _build_reference_resolved(
+            resolved_reference, reference_source),
         # T-P2-02: cuisine_want 触发子类多样化时记一条
         "subtype_diversified": subtype_diversified,
     }
@@ -267,20 +271,8 @@ def refine(
     # Codex H1 修: reference_resolved / subtype_diversified 必须透传给 web_api,
     # 让 base_trace["refine"] 落执行证据 (Faithful Refine 可审计性). 之前只写到
     # _append_intent_trace 本地 dict, 主 trace 看不到, debug-ui Replay 不可证.
-    reference_resolved_field = (
-        {
-            "relation": resolved_reference.relation,
-            "raw_text": resolved_reference.raw_text,
-            "base_session_id": resolved_reference.base_session_id,
-            "base_meal_type": resolved_reference.base_meal_type,
-            "base_started_at": resolved_reference.base_started_at,
-            "n_base_combos": len(resolved_reference.base_combos or []),
-            "notes": list(resolved_reference.notes or []),
-            "source": reference_source,
-        }
-        if resolved_reference is not None
-        else None
-    )
+    reference_resolved_field = _build_reference_resolved(
+        resolved_reference, reference_source)
 
     # 8. 返回 response (字段对前端兼容)
     return {
