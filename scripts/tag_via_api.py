@@ -309,6 +309,48 @@ def _finalize_write(zone: str, all_records: list[dict], version_label: str,
     return tagged_path, len(valid), len(merged)
 
 
+def _filter_resume_batches(
+    batches: list[list[dict]], jobs_dir: Path, no_resume: bool,
+) -> tuple[list[tuple[int, list[dict]]], int]:
+    """提前过滤已 done 的 batch (resume): 返回 (待跑 todo_batches, 已缓存可复用数)."""
+    todo_batches: list[tuple[int, list[dict]]] = []
+    done_count = 0
+    for idx, batch in enumerate(batches, start=1):
+        out_path = jobs_dir / f"batch_{idx:04d}.out.json"
+        if not no_resume and out_path.exists():
+            try:
+                cached = _read_json(out_path)
+                # 缓存复用须绑精确有序 dish_id 清单 (非仅长度): 重采后批内菜变了就重跑 (D-099.3)
+                if (isinstance(cached, list)
+                        and [r.get("dish_id") for r in cached]
+                        == [d["dish_id"] for d in batch]):
+                    done_count += 1
+                    continue
+            except Exception:
+                pass
+        todo_batches.append((idx, batch))
+    return todo_batches, done_count
+
+
+def _merge_batch_outputs(
+    batches: list[list[dict]], jobs_dir: Path, raw_idx: dict,
+    version_label: str, combined: dict[str, dict],
+) -> int:
+    """合并各 batch 的 .out 产物进 combined (就地), 返回新合并条数."""
+    merged_count = 0
+    for idx, _batch in enumerate(batches, start=1):
+        out_path = jobs_dir / f"batch_{idx:04d}.out.json"
+        if not out_path.exists():
+            continue
+        recs = _read_json(out_path)
+        new_objs = merge_into_output(raw_idx, recs)
+        for rec in new_objs:
+            rec["metadata"]["tag_version"] = version_label
+            combined[rec["dish_id"]] = rec
+            merged_count += 1
+    return merged_count
+
+
 def run_zone(
     zone: str,
     *,
@@ -375,22 +417,7 @@ def run_zone(
     prompt_template = prompt_path.read_text(encoding="utf-8")
 
     # ---- 提前过滤已 done 的 batch (resume) ----
-    todo_batches: list[tuple[int, list[dict]]] = []
-    done_count = 0
-    for idx, batch in enumerate(batches, start=1):
-        out_path = jobs_dir / f"batch_{idx:04d}.out.json"
-        if not no_resume and out_path.exists():
-            try:
-                cached = _read_json(out_path)
-                # 缓存复用须绑精确有序 dish_id 清单 (非仅长度): 重采后批内菜变了就重跑 (D-099.3)
-                if (isinstance(cached, list)
-                        and [r.get("dish_id") for r in cached]
-                        == [d["dish_id"] for d in batch]):
-                    done_count += 1
-                    continue
-            except Exception:
-                pass
-        todo_batches.append((idx, batch))
+    todo_batches, done_count = _filter_resume_batches(batches, jobs_dir, no_resume)
 
     if done_count:
         print(f"[{zone}] resume: {done_count} batch 已缓存可复用",
@@ -434,17 +461,8 @@ def run_zone(
     else:
         combined = _rebuild_active(existing_tagged, raw_idx)
 
-    merged_count = 0
-    for idx, batch in enumerate(batches, start=1):
-        out_path = jobs_dir / f"batch_{idx:04d}.out.json"
-        if not out_path.exists():
-            continue
-        recs = _read_json(out_path)
-        new_objs = merge_into_output(raw_idx, recs)
-        for rec in new_objs:
-            rec["metadata"]["tag_version"] = version_label
-            combined[rec["dish_id"]] = rec
-            merged_count += 1
+    merged_count = _merge_batch_outputs(
+        batches, jobs_dir, raw_idx, version_label, combined)
 
     all_records = list(combined.values())
     out_target, active_count, quarantined = _finalize_write(

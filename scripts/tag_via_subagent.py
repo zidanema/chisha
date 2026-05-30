@@ -250,27 +250,11 @@ def _record_failure(zone: str, batch_id: int, dish_ids: list[str],
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
-def merge_zone(
-    zone: str,
-) -> dict:
-    """读所有 .out.json → schema 校验 → 合并 → 更新 manifest.
+def _advance_manifest_state(manifest: dict, zone: str) -> int:
+    """步骤 1: 处理新到达的 .out 文件, 就地更新 batch 状态机, 返回本次新完成批数.
 
-    幂等设计: 每次 merge 都从 manifest 里所有 done 批 + 新到达的 out 文件
-    重建 combined, 写回 dishes_tagged.json. 多次跑 merge 结果一致.
-
-    返回最终统计.
+    已 done 不重处理 (幂等); 已 failed 不再重试 (避免反复 attempts++ + 写重复 failure log)。
     """
-    manifest = _read_json(_manifest_path(zone))
-    version_label = manifest["version_label"]
-    base = _zone_data_dir(zone)
-    jobs_dir = _zone_jobs_dir(zone)
-
-    raw_by_id = {d["dish_id"]: d for d in _read_json(base / "dishes_raw.json")}
-    kept_tagged = _read_json(jobs_dir / "kept_tagged.json") \
-        if (jobs_dir / "kept_tagged.json").exists() else []
-
-    # ---- 步骤 1: 处理新到达的 out 文件, 更新 manifest 状态机 ----
-    # 已 done 不重处理 (幂等); 已 failed 不再重试 (避免反复 attempts++ + 写重复 failure log)
     newly_done_this_run = 0
     for b in manifest["batches"]:
         if b["status"] in ("done", "failed"):
@@ -305,8 +289,16 @@ def merge_zone(
         b["completed_at"] = _now_iso()
         b["last_error"] = None
         newly_done_this_run += 1
+    return newly_done_this_run
 
-    # ---- 步骤 2: 幂等重建 combined ----
+
+def _rebuild_combined_tagged(
+    manifest: dict,
+    raw_by_id: dict,
+    kept_tagged: list,
+    version_label: str,
+) -> dict[str, dict]:
+    """步骤 2: 幂等重建 combined dict (force_version 从空起, 否则从 kept_tagged 起)."""
     if manifest.get("force_version"):
         combined: dict[str, dict] = {}
     else:
@@ -321,6 +313,31 @@ def merge_zone(
         for rec in merged:
             rec["metadata"]["tag_version"] = version_label
             combined[rec["dish_id"]] = rec
+    return combined
+
+
+def merge_zone(
+    zone: str,
+) -> dict:
+    """读所有 .out.json → schema 校验 → 合并 → 更新 manifest.
+
+    幂等设计: 每次 merge 都从 manifest 里所有 done 批 + 新到达的 out 文件
+    重建 combined, 写回 dishes_tagged.json. 多次跑 merge 结果一致.
+
+    返回最终统计.
+    """
+    manifest = _read_json(_manifest_path(zone))
+    version_label = manifest["version_label"]
+    base = _zone_data_dir(zone)
+    jobs_dir = _zone_jobs_dir(zone)
+
+    raw_by_id = {d["dish_id"]: d for d in _read_json(base / "dishes_raw.json")}
+    kept_tagged = _read_json(jobs_dir / "kept_tagged.json") \
+        if (jobs_dir / "kept_tagged.json").exists() else []
+
+    newly_done_this_run = _advance_manifest_state(manifest, zone)
+    combined = _rebuild_combined_tagged(
+        manifest, raw_by_id, kept_tagged, version_label)
 
     all_records = list(combined.values())
     validate_dishes_tagged(all_records)
