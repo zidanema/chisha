@@ -136,6 +136,14 @@
 - **依赖**: 碰 recall/score high-risk 文件, 改前 codex 共商 + baseline_l2_snapshot 守门
 - **优先级**: P2 (推广前)
 
+### F-016 · 重构债 (审计轮2 识别)
+
+- **来源**: 2026-05-30 全仓审计轮2 (过时内容 + 死代码清理同轮副产), 识别 47 项重构候选 (1 high / 22 med / 25 low)
+- **状态**: open, 单独立项 (不在清理轮塞结构改动)
+- **What**: 三类 —— (1) **long-function**: `rerank._run_llm_rerank` (~337行) / `web_api._rollback_session_impl` (~240行) / `loader._build_dishes` / `agent_cli.cmd_doctor` 等单函数多职责; (2) **duplication**: trace meta 三处 / L2 trace summary / dim_stats 多处重复 (碰 api/trace_store) + 前端 GUT_OPTIONS / ConfirmKind 常量重复; (3) **schema 权威源**: DISH_ROLES/GRAIN_TYPES 在 schemas.py (pydantic) 与打标脚本 (手动 set) 两套, 可统一到 schemas
+- **约束**: 多数碰 high-risk 白名单 (rerank/web_api/api/trace_store/loader), 需 codex 共商 + baseline_l2_snapshot 守门
+- **优先级**: P3 (可读性债, 非功能, 自用不阻塞)
+
 ---
 
 ## Ideas
