@@ -27,7 +27,7 @@ uv run python -m scripts.refresh_from_collector   # 串: preflight 契约校验 
 #    冲突未确认会 block (退出非0, 写 dish_id_conflicts.json + _staged/), 审阅后把 key
 #    加进 data/<zone>/conflicts_ack.json 再重跑。
 uv run python -m chisha.loader ~/waimai_data/output/office_restaurants.json shenzhen-bay
-uv run python -m chisha.loader ~/waimai_data/output/home_restaurants.json   home
+uv run python -m chisha.loader ~/waimai_data/output/home_restaurants.json   home  # home 当前未发布 (data/home 不存在, 采址污染待重采, 见 data-flow 断点 G)
 
 # 1b. (一次性迁移, 仅 id 算法/归一化版本变时) 旧标签按 (新rid,新dish_id) 重映射免重打:
 #     先单跑第 1 步看冲突报告并 ack, 再跑迁移 (快照旧数据 + 发布 active raw + 预填 tagged)
@@ -67,7 +67,7 @@ uv run python -m scripts.validate_data
 
 ## 验收清单
 
-- `validate_data`: 两 zone tagged 覆盖率 = 100% of raw; DishTagged 0 违规 (空菜单店的 ✗ 属既有, 非新增)。
+- `validate_data`: 当前仅 shenzhen-bay 一 zone, tagged 覆盖率 = 100% of raw (home 未发布); DishTagged 0 违规 (空菜单店的 ✗ 属既有, 非新增)。
 - 冲突报告 `data/<zone>/dish_id_conflicts.json` 已审阅, 未确认冲突清零 (否则 loader 不发布)。
 - (稳定 id 后) `logs/feedback/store.json` + `logs/meal_log.jsonl` 旧 id 跨重采自动对齐, **无需迁移**; 仅店改名需在 `data/aliases.json` 补 alias。
 - `restaurants.json.category` 已回填 (空菜单店除外)。
