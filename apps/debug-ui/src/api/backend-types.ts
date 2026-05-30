@@ -218,17 +218,6 @@ export type BackendDebugRecommend = {
   target_trace: BackendTargetTrace | null;
 };
 
-export type BackendDebugRecommendReq = {
-  meal_type?: string;
-  today?: string;
-  use_llm_rerank?: boolean | null;
-  profile_overrides?: Record<string, unknown> | null;
-  daily_mood?: string | null;
-  trace_target?: { restaurant_name: string; dish_names: string[] } | null;
-  n_return?: number;
-  n_explore?: number;
-};
-
 // ---------- D-079: /api/debug/* trace replay endpoints ----------
 
 export type BackendFeedbackLink = {
@@ -389,16 +378,4 @@ export type BackendDebugTrace = {
   l3: BackendTraceL3;
   final: BackendFinalRow[];
   refine: BackendTraceRefine;
-};
-
-export type BackendWhatIfOverrides = {
-  n_return?: number | null;
-  n_explore?: number | null;
-  use_llm_rerank?: boolean | null;
-  profile_overrides?: Record<string, unknown> | null;
-};
-
-export type BackendWhatIfReq = {
-  base_session_id: string;
-  overrides: BackendWhatIfOverrides;
 };

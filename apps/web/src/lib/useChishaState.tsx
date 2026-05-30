@@ -3,7 +3,7 @@
 // shape via context — pages stay unmounted-friendly.
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import type { Candidate, MealType, Mood, RecommendResponse, SkipReason, StatusBarPayload, UnfedSession } from "./types";
+import type { Candidate, MealType, RecommendResponse, SkipReason, StatusBarPayload, UnfedSession } from "./types";
 import type { RefineHistoryEntry } from "@/components/RefineCrumb";
 import { api } from "./api";
 
@@ -16,7 +16,6 @@ interface SessionState {
 
 export interface HomeState {
   meal: MealType;
-  mood: Mood;
   session: SessionState | null;
   loading: boolean;
   refineHistory: RefineHistoryEntry[];
@@ -56,7 +55,6 @@ function detectAutoMeal(): MealType {
 export function ChishaProvider({ children }: { children: React.ReactNode }) {
   const [home, setHomeState] = useState<HomeState>({
     meal: detectAutoMeal(),
-    mood: "neutral",
     session: null,
     loading: false,
     refineHistory: [],

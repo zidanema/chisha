@@ -1,10 +1,5 @@
 // Thin fetch wrappers. ALL backend rename / shape coercion happens in adapter.ts.
 
-import type {
-  BackendDebugTrace,
-  BackendSessionsResp,
-} from "./backend-types";
-
 export class ApiError extends Error {
   status: number;
   code: string;
@@ -41,35 +36,6 @@ async function fetchJson<T>(input: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(res.status, `HTTP_${res.status}`, String(detail));
   }
   return (await res.json()) as T;
-}
-
-export type ProfileResponse = Record<string, unknown>;
-
-export function getProfile(): Promise<ProfileResponse> {
-  return fetchJson<ProfileResponse>("/api/profile");
-}
-
-// ---------- D-079: trace replay (read-only) ----------
-// 注: D-087 后写入路径全删 (postDebugRecommend / postWhatIf). 这两个 GET 端点
-// 保留, 让 useWaTrace 在 v3 endpoint 出 500 时 fallback 走老 sessions 列表.
-
-export function fetchSessions(params: {
-  limit?: number;
-  meal_type?: "lunch" | "dinner" | null;
-} = {}): Promise<BackendSessionsResp> {
-  const q = new URLSearchParams();
-  if (params.limit != null) q.set("limit", String(params.limit));
-  if (params.meal_type) q.set("meal_type", params.meal_type);
-  const qs = q.toString();
-  return fetchJson<BackendSessionsResp>(
-    `/api/debug/sessions${qs ? `?${qs}` : ""}`,
-  );
-}
-
-export function fetchSession(sid: string): Promise<BackendDebugTrace> {
-  return fetchJson<BackendDebugTrace>(
-    `/api/debug/sessions/${encodeURIComponent(sid)}`,
-  );
 }
 
 // ---------- D-087 Workflow A: 4 个新 read-only endpoint ----------

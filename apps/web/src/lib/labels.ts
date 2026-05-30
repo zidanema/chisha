@@ -1,13 +1,7 @@
 // labels.ts — single source of truth for backend enum → 中文 UI mapping.
 // All UI components MUST go through `LABELS` rather than rendering raw enum values.
 
-import type { Mood, MoodResponse, MealType, ZoneId, IngredientKind } from "./types";
-
-interface BannerText {
-  before: string;
-  name: string;
-  after: string;
-}
+import type { MoodResponse, MealType, ZoneId, IngredientKind } from "./types";
 
 export const LABELS = {
   meal: { lunch: "午餐", dinner: "晚餐" } as Record<MealType, string>,
@@ -23,8 +17,6 @@ export const LABELS = {
     want_soup: "想喝汤",
     low_carb: "低碳水",
   } as Record<MoodResponse, string>,
-
-  moodList: ["neutral"] as Mood[],
 
   zone: {
     "shenzhen-bay": "深圳湾科技园",
@@ -75,15 +67,11 @@ export const LABELS = {
     navFeedback: "反馈",
     navBack: "回主页",
 
-    mealLunch: "午餐",
-    mealDinner: "晚餐",
     regen: "换一组",
     loadingHint: "正在为你挑选...",
     loadingHintLong: "15-60 秒不等",
 
     homeSecTitle: "今天的推荐",
-    expandAlts: (n: number) => `${n} 个备选 ▽`,
-    collapseAlts: "收起备选 △",
     pickThis: "就这个",
     pickThisAlt: "选这个",
     picked: "已选",
@@ -100,20 +88,13 @@ export const LABELS = {
     refineSubmit: "换一组",
     refineHistory: "刚才你试过这几次：",
 
-    bannerText: (name: string): BannerText => ({
-      before: "中午吃的",
-      name,
-      after: "怎么样？",
-    }),
     bannerCta: "5 秒反馈一下 →",
-    bannerDismiss: "关闭提醒",
     bannerStackMore: (n: number) => `还有 ${n} 餐没反馈`,
     bannerStackGo: "去反馈中心 →",
     bannerSnooze: "以后再说",
     bannerStop: "这餐别催了",
     bannerOpenMenu: "更多",
 
-    fbBackToHome: "回主页",
     fbBackToInbox: "反馈中心",
     fbPickedHint: "你当时点的是",
     fbNoPickHint: "没记录到你的选择 — 直接选下面任意一项",
@@ -207,12 +188,8 @@ export const LABELS = {
     unknownRoute: "未知路由",
     backHome: "回主页",
 
-    pickedRank: (r: number) => `吃了 #${r}`,
     notEatenShort: "都没吃",
     historyUnfedChip: "未反馈",
-    historyFedChip: "已反馈",
     historyHintClickable: "点行可打分 / 看详情",
   },
 };
-
-export type LabelsShape = typeof LABELS;

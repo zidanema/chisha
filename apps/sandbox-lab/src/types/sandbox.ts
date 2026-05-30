@@ -163,17 +163,3 @@ export interface Tweaks {
 }
 
 export type ConfirmKind = "rollback" | "branch";
-
-// FullSnapshot stub: S-02 不直接使用 (mock 喂分段数据), 留给 S-06a/S-08 adapter.
-export interface FullSnapshot {
-  meta: SessionMeta;
-  clock: Clock;
-  history: Meal[];
-  currentRecs: Rec[];
-  lastDecision: Decision | null;
-  activeRules: { refine: ActiveRule[]; blacklist: ActiveRule[] };
-  taste: TasteEntry[];
-  keywords: KeywordEntry[];
-  recent: string[];
-  fatigue: FatigueEntry[];
-}

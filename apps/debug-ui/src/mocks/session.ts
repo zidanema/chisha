@@ -10,7 +10,6 @@ import type {
   L2Weight,
   L3Trace,
   RefineTrace,
-  RunHistoryRow,
   Session,
   FinalRow,
 } from "../types/trace";
@@ -333,23 +332,6 @@ const L3: L3Trace = {
   validator_errors: null,
 };
 
-export const L3_FALLBACK_EXAMPLE: L3Trace = {
-  ...L3,
-  status: "fallback",
-  resolved_provider: "openrouter",
-  model: "anthropic/claude-sonnet-4-5",
-  latency_ms: 5732,
-  fallback_reason: "anthropic primary 调用返回 529 overloaded_error;retry-after 1.2s 后仍失败,已切换 openrouter sonnet 完成",
-  fallback_chain: [
-    { step: 1, name: "anthropic / claude-opus-4-7", status: "error",
-      meta: "529 overloaded_error · latency 1024ms", error: "Overloaded" },
-    { step: 2, name: "anthropic / claude-sonnet-4-5", status: "error",
-      meta: "529 overloaded_error · latency 980ms", error: "Overloaded" },
-    { step: 3, name: "openrouter / claude-sonnet-4-5", status: "ok",
-      meta: "latency 5732ms · 4824 in · 587 out · cache miss", error: null },
-  ],
-};
-
 const FINAL: FinalRow[] = [
   { rank: 1, kind: "exploit", combo_id: "cmb_001", restaurant: "椰客椰子鸡 (科兴店)",
     distance_km: 1.4, eta_min: 22, total_price: 90, score: 1.187, fit_score: 0.78,
@@ -431,16 +413,6 @@ const REFINE: RefineTrace = {
     diff_top5: 2,
   },
 };
-
-export const RUN_HISTORY: RunHistoryRow[] = [
-  { id: "sess_a7f1", title: "lunch · 深圳湾", time: "12:04", status: "ok", latency: 2841 },
-  { id: "sess_a7f0", title: "lunch · 深圳湾", time: "12:01", status: "fallback", latency: 6210 },
-  { id: "sess_a7ef", title: "dinner · 家附近", time: "昨 19:32", status: "ok", latency: 2510 },
-  { id: "sess_a7ee", title: "lunch · 深圳湾", time: "昨 12:18", status: "ok", latency: 2620 },
-  { id: "sess_a7ed", title: "lunch refine · 深圳湾", time: "昨 12:21", status: "ok", latency: 2310 },
-  { id: "sess_a7ec", title: "dinner · 家附近", time: "前 19:08", status: "warn", latency: 4520 },
-  { id: "sess_a7eb", title: "lunch · 深圳湾", time: "前 11:54", status: "ok", latency: 2402 },
-];
 
 export const MOCK_SESSION: Session = {
   session_id: SESSION_ID,

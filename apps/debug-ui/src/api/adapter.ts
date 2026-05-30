@@ -4,7 +4,6 @@
 // view-model Session lives here so panels stay data-in.
 
 import type {
-  BackendDebugRecommend,
   BackendDebugTrace,
   BackendL1Recall,
   BackendL2Combo,
@@ -336,12 +335,6 @@ function adaptFinal(rows: BackendFinalRow[]): FinalRow[] {
   }));
 }
 
-export type AdaptOptions = {
-  sessionId: string;
-  startedAt: string;       // ISO or human time, frontend formats further
-  totalLatencyMs: number;  // measured on client around the fetch
-};
-
 // Production trace.l3 is flat; debug_recommend's l3_rerank wraps under .llm.
 // Wrap so we can reuse adaptL3 without duplicating field maps.
 // D-079 followup: rerankLatencyFallback 是 trace 顶层 rerank_latency_ms, 旧 trace
@@ -457,49 +450,6 @@ export function traceToSession(trace: BackendDebugTrace): Session {
         total_latency_ms: 0,
         candidates_returned: trace.refine?.n_returned ?? 0,
         diff_top5: 0,
-      },
-    },
-  };
-}
-
-export function backendToSession(
-  raw: BackendDebugRecommend,
-  opts: AdaptOptions,
-): Session {
-  const meal: Meal = raw.config.meal_type === "dinner" ? "dinner" : "lunch";
-  const area = zoneLabel(raw.config.zone);
-  return {
-    session_id: opts.sessionId,
-    started_at: opts.startedAt,
-    total_latency_ms: opts.totalLatencyMs,
-    ctx_latency_ms: 0,
-    final_latency_ms: 0,
-    l1: adaptL1(raw.l1_recall, area, meal),
-    l2: adaptL2(raw.l2_score, raw.l1_recall.summary.n_combos),
-    l3: adaptL3(raw.l3_rerank),
-    final: adaptFinal(raw.final),
-    // Refine trace 不在 /api/debug_recommend 返回里 — Phase 3 才有真数据.
-    // 给一个空骨架, 让 panel 至少不崩.
-    refine: {
-      parent_session: opts.sessionId,
-      refine_session: "—",
-      user_text: "",
-      parse_feedback: {
-        llm_call: {
-          model: "—", latency_ms: 0,
-          input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0,
-        },
-        chips_hit: [],
-        note: "(尚未触发 refine)",
-        rating_taste: null,
-        want_again: false,
-      },
-      chips_to_taste_hints: { boost: {}, penalty: {} },
-      infer_refine_mood: { triggered: false, hits: [], resolved_mood: {} },
-      diff: { new_in_top5: [], dropped_from_top5: [], moved_up: [], moved_down: [] },
-      summary_kpi: {
-        explore_n: 0, total_latency_ms: 0,
-        candidates_returned: 0, diff_top5: 0,
       },
     },
   };

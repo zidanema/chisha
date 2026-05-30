@@ -37,7 +37,6 @@ import {
   RECENT,
   SESSIONS,
   TASTE,
-  TOTAL_MEALS,
   buildDecisionMock,
   buildSkipDecisionMock,
   expandHistoryForDoneSession,
@@ -994,6 +993,3 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
     dismissApiError,
   };
 }
-
-// Keep TOTAL_MEALS export accessible (was inlined; helps any future caller).
-export const __DEFAULT_TOTAL_MEALS__ = TOTAL_MEALS;

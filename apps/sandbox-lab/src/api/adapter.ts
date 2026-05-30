@@ -168,10 +168,9 @@ export function backendFullSnapshotToStore(
 
 
 // ── Job status mapping ──
-export type FrontendJobStatus = "running" | "done" | "failed" | "cancelled";
-
-
-export function backendJobToStatus(j: BackendJobInfo): FrontendJobStatus {
+export function backendJobToStatus(
+  j: BackendJobInfo,
+): "running" | "done" | "failed" | "cancelled" {
   if (j.status === "done") return "done";
   if (j.status === "failed") return "failed";
   if (j.status === "cancelled_by_rollback") return "cancelled";

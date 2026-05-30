@@ -223,30 +223,6 @@ export type RefineTrace = {
   };
 };
 
-export type RunStatus = "ok" | "fallback" | "warn";
-
-export type FeedbackBadge = {
-  accepted: boolean;
-  accepted_rank: number | null;
-  rating: number | null;
-  stopped: boolean;
-  feedback_submitted: boolean;
-};
-
-export type RunHistoryRow = {
-  id: string;
-  title: string;
-  time: string;
-  status: RunStatus;
-  latency: number;
-  meal?: Meal;
-  area?: string;
-  // D-079: 后端 backed row 才有 feedback badge (localStorage fallback 永远 null).
-  feedback?: FeedbackBadge | null;
-  // D-079: backend-backed 行允许 fetch trace 详情走 /api/debug/sessions/{sid}.
-  source?: "backend" | "local";
-};
-
 export type Session = {
   session_id: string;
   started_at: string;

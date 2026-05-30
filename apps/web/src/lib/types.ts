@@ -171,7 +171,6 @@ export interface FeedbackPayload {
   repurchase_intent: DimVal;
   note: string;
   variant: FeedbackVariant;
-  quick?: boolean;
 }
 
 export interface FeedbackComment {
