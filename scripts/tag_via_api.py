@@ -34,6 +34,9 @@ from scripts.tag_dishes import (
     build_input_payload,
     extract_json_array,
     merge_into_output,
+    REQUIRED as _V3_REQUIRED_TOP,
+    _DISH_ROLE_VALUES as DISH_ROLE_VALUES,
+    _GRAIN_TYPE_VALUES as GRAIN_TYPE_VALUES,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -51,17 +54,8 @@ DEFAULT_MAX_ATTEMPTS = 3
 
 ZONES_ALL = ("home", "shenzhen-bay")
 
-# v3 字段集合 (DishTagged + 5 新字段); 在 schema 升级之前手动校验
-_V3_REQUIRED_TOP = {
-    "dish_id", "canonical_name", "cuisine", "main_ingredient_type",
-    "cooking_method", "oil_level", "protein_grams_estimate",
-    "vegetable_ratio_estimate", "is_complete_meal", "spicy_level",
-    "dish_role", "processed_meat_flag", "sweet_sauce_level", "wetness",
-    "grain_type", "tags",
-}
-
-DISH_ROLE_VALUES = {"主菜", "主食", "配菜", "汤", "小食", "饮品", "套餐"}
-GRAIN_TYPE_VALUES = {"白米", "糙米杂粮", "精制面", "全麦面", "粗粮", "粥", "无"}
+# v3 schema 校验常量 (字段集 / dish_role / grain_type 枚举) 复用 tag_dishes 单一来源
+# (上方 import alias), 不再各维护一份。
 
 
 def _now_iso() -> str:
