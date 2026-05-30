@@ -139,9 +139,10 @@
 ### F-016 · 重构债 (审计轮2 识别)
 
 - **来源**: 2026-05-30 全仓审计轮2 (过时内容 + 死代码清理同轮副产), 识别 47 项重构候选 (1 high / 22 med / 25 low)
-- **状态**: open, 单独立项 (不在清理轮塞结构改动)
-- **What**: 三类 —— (1) **long-function**: `rerank._run_llm_rerank` (~337行) / `web_api._rollback_session_impl` (~240行) / `loader._build_dishes` / `agent_cli.cmd_doctor` 等单函数多职责; (2) **duplication**: trace meta 三处 / L2 trace summary / dim_stats 多处重复 (碰 api/trace_store) + 前端 GUT_OPTIONS / ConfirmKind 常量重复; (3) **schema 权威源**: DISH_ROLES/GRAIN_TYPES 在 schemas.py (pydantic) 与打标脚本 (手动 set) 两套, 可统一到 schemas
-- **约束**: 多数碰 high-risk 白名单 (rerank/web_api/api/trace_store/loader), 需 codex 共商 + baseline_l2_snapshot 守门
+- **状态**: **部分完成** (2026-05-30 重核+分批落地, 见 git log "F-016")。已落: 安全批 (scripts/loader 长函数+去重) + 白名单批 refine/_resolve_zone 单源/status_bar 统一/agent_cli 去重+拆/manifest 工厂/feedback_signal 抽取 (各过 baseline_l2 0-diff + codex review)。重核剔除 2 项已死 (审计快照 stale)。
+- **判断 skip** (非真重复/净负, 不做): data_root 路径函数 (rich docstring 工厂化会抹) / sandbox default-sid (4 处消息各异 + lazy import 疑似破环) / tag_via_api 验证器合并 (strict vs partial 两套语义) / refresh_from_collector.main (分阶段 early-return 退出码, 抽 helper 反增间接性)
+- **剩余 (后续单独做)**: ① long-function defer — `rerank._run_llm_rerank` (~338行, baseline 守不住 L3 质量) / `web_api._rollback_session_impl` (~240行) / `agent_cli.cmd_doctor` (ok+notes 与子检查紧耦合); ② `trace_store` v2-meta 三处去重 + `list_traces_v3` 拆 (源 key "source"/"__source" 不一, 需保 debug-ui meta 契约); ③ `l1_extractor.aggregate_inputs` (137行 6 pass + 嵌套闭包); ④ `recall.build_combos_for_restaurant` 8 层深嵌套 (喂打分链路, 须最小步 + 每步 baseline); ⑤ `#12` atomic write 跨 6 模块统一 chisha/atomic_io.py (codex: 单独成批, 碰 web_api); ⑥ debug_recommend trace 簇 (dim_stats 四处 → trace_helpers / build_l2_trace / 长函数, 碰 api/debug_what_if); ⑦ **前端 16 项** (web/debug-ui/sandbox-lab, 阻于 chrome-devtools MCP 未连接, 须浏览器自测)
+- **约束**: 剩余多碰 high-risk 白名单 (rerank/web_api/trace_store/recall/api), 需 codex 共商 + baseline_l2_snapshot 守门; 前端须 chrome-devtools 自测
 - **优先级**: P3 (可读性债, 非功能, 自用不阻塞)
 
 ---
