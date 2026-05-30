@@ -42,13 +42,13 @@ def test_infer_subtype_xiangcai_jiandai_chao():
 
 
 def test_infer_subtype_riliao_lamian():
-    sa = infer_combo_subtype(_combo("r3", "日式拉面", cuisine="日料"))
-    assert sa.cuisine == "日料"
+    sa = infer_combo_subtype(_combo("r3", "日式拉面", cuisine="日式"))
+    assert sa.cuisine == "日式"
     assert sa.subtype == "拉面"
 
 
 def test_infer_subtype_riliao_shoushi():
-    sa = infer_combo_subtype(_combo("r4", "三文鱼寿司", cuisine="日料"))
+    sa = infer_combo_subtype(_combo("r4", "三文鱼寿司", cuisine="日式"))
     assert sa.subtype == "寿司"
 
 
@@ -102,11 +102,11 @@ def test_diversify_japanese_no_brand_spam_d073_1_followup():
     纵向 subtype 多样化能让前 3 道至少覆盖 2+ subtypes.
     """
     cs = [
-        _combo("r_a", "豚骨拉面", cuisine="日料"),
-        _combo("r_b", "酱油拉面", cuisine="日料"),
-        _combo("r_c", "三文鱼寿司", cuisine="日料"),
-        _combo("r_d", "鳗鱼盖饭", cuisine="日料"),  # 定食候选
-        _combo("r_e", "烤鸡串", cuisine="日料"),    # 居酒屋
+        _combo("r_a", "豚骨拉面", cuisine="日式"),
+        _combo("r_b", "酱油拉面", cuisine="日式"),
+        _combo("r_c", "三文鱼寿司", cuisine="日式"),
+        _combo("r_d", "鳗鱼盖饭", cuisine="日式"),  # 定食候选
+        _combo("r_e", "烤鸡串", cuisine="日式"),    # 居酒屋
     ]
     out = diversify_by_subtype(cs, target_subtypes=3, max_per_subtype=2)
     front_3_subtypes = {infer_combo_subtype(out[i]).subtype for i in range(3)}
