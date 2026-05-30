@@ -406,7 +406,7 @@ rm -rf ~/.claude/skills/chisha-meal/      # 删 bundle (代码 + 数据)
 
 ## Appendix — Project Pointers (for context, not for install)
 
-- 仓库: https://github.com/zidanema/chisha  (当前私仓; 公网远程分发未定型)
+- 仓库: https://github.com/zidanema/chisha  (public; 但 agent 从公网自动拉取 bundle 的远程分发协议未定型, 见 §0 distribution)
 - 人版 README: [README.md](README.md)
 - 产品 PRD: [docs/PRD.md](docs/PRD.md)
 - 推荐链路活契约: [docs/CONTRACTS.md](docs/CONTRACTS.md)
