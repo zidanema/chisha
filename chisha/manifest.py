@@ -173,6 +173,31 @@ def check_compatibility(install_root: Path) -> ManifestStatus:
 
 # T-DIST-01 B.5b: user-level resource manifest 校验 (C-d 独立轻量, 复用 capability flags).
 
+def _result_dict(kind: str, name: str, status: str, note: str = "") -> dict:
+    """user_resource 检查结果统一模板 {kind, name, status, note}."""
+    return {"kind": kind, "name": name, "status": status, "note": note}
+
+
+def _check_zone_manifest(zone_dir: Path) -> dict:
+    """校验单个 zone bundle 的 manifest.json → result dict (kind=zone)."""
+    name = zone_dir.name
+    mp = zone_dir / MANIFEST_FILENAME
+    if not mp.exists():
+        return _result_dict("zone", name, "missing_manifest",
+                            f"{mp} 缺失 (跑 scripts.build_manifest 生成).")
+    try:
+        data = json.loads(mp.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise IncompatibleManifestError(f"{mp} 顶层非 object.")
+        _validate_manifest_payload(data, mp)
+        return _result_dict("zone", name, "ok", "")
+    except (OSError, json.JSONDecodeError) as e:
+        return _result_dict("zone", name, "incompatible",
+                            f"manifest 损坏: {type(e).__name__}: {e}")
+    except IncompatibleManifestError as e:
+        return _result_dict("zone", name, "incompatible", str(e))
+
+
 def user_resource_manifest_check(state_root_p: Path) -> list[dict]:
     """枚举 state_root/data/{zone} + state_root/methodologies/, 校验各自 manifest.json.
 
@@ -189,52 +214,23 @@ def user_resource_manifest_check(state_root_p: Path) -> list[dict]:
     schema 仍走 install bundle 闸门那套引擎兼容性保证 (capability flags 共一套).
     """
     results: list[dict] = []
-    # zones
+    # zones (有 restaurants.json 才算真实 zone bundle)
     data_dir = state_root_p / "data"
     if data_dir.is_dir():
         for zone_dir in sorted(data_dir.iterdir(), key=lambda p: p.name):
             if not zone_dir.is_dir():
                 continue
-            # 只对真实 zone bundle 校验 (有 restaurants.json 才算 zone)
             if not (zone_dir / "restaurants.json").exists():
                 continue
-            mp = zone_dir / MANIFEST_FILENAME
-            if not mp.exists():
-                results.append({
-                    "kind": "zone", "name": zone_dir.name,
-                    "status": "missing_manifest",
-                    "note": f"{mp} 缺失 (跑 scripts.build_manifest 生成).",
-                })
-                continue
-            try:
-                data = json.loads(mp.read_text(encoding="utf-8"))
-                if not isinstance(data, dict):
-                    raise IncompatibleManifestError(f"{mp} 顶层非 object.")
-                _validate_manifest_payload(data, mp)
-                results.append({
-                    "kind": "zone", "name": zone_dir.name,
-                    "status": "ok", "note": "",
-                })
-            except (OSError, json.JSONDecodeError) as e:
-                results.append({
-                    "kind": "zone", "name": zone_dir.name,
-                    "status": "incompatible",
-                    "note": f"manifest 损坏: {type(e).__name__}: {e}",
-                })
-            except IncompatibleManifestError as e:
-                results.append({
-                    "kind": "zone", "name": zone_dir.name,
-                    "status": "incompatible", "note": str(e),
-                })
+            results.append(_check_zone_manifest(zone_dir))
     # methodologies (单文件无 manifest, 只列存在; 校验在 load_methodology 走 _validate_spec)
     meth_dir = state_root_p / "methodologies"
     if meth_dir.is_dir():
         for p in sorted(meth_dir.iterdir(), key=lambda p: p.name):
             if p.is_file() and p.suffix == ".yaml":
-                results.append({
-                    "kind": "methodology", "name": p.stem,
-                    "status": "present", "note": "校验在 load_methodology 触发.",
-                })
+                results.append(_result_dict(
+                    "methodology", p.stem, "present",
+                    "校验在 load_methodology 触发."))
     return results
 
 

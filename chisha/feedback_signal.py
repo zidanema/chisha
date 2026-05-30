@@ -180,6 +180,38 @@ def _resolve_combo(
     return rid, rname, dish_ids
 
 
+def _feedback_contrib(fb, sid: str, feedback_store: dict, today: dt.date):
+    """单条反馈 → (rid, rname, dish_ids, contrib, dish_unit, evict_remaining|None) 或 None.
+
+    封装极性/日期/衰减/combo 定位 + 贡献值与剔除剩余天数计算; 跨条累积留给调用方。
+    任一守门不过 (非 dict / NEUTRAL / 无日期 / decay 0 / 未定位) → None (跳过)。
+    """
+    if not isinstance(fb, dict):
+        return None
+    polarity = _polarity(fb.get("rating"), fb.get("repurchase_intent"))
+    if polarity == NEUTRAL:
+        return None
+    submitted = _submitted_date(fb.get("submitted_at"))
+    if submitted is None:
+        return None
+    days_ago = (today - submitted).days
+    decay = _decay_factor(polarity, days_ago)
+    if decay == 0.0:
+        return None
+    resolved = _resolve_combo(feedback_store, sid, fb)
+    if resolved is None:
+        return None
+    rid, rname, dish_ids = resolved
+    contrib = _BASE_WEIGHT[polarity] * decay
+    dish_unit = contrib * DISH_ACCUM_UNIT
+    evict_remaining = (
+        EVICT_WINDOW_DAYS - days_ago
+        if polarity == STRONG_NEG and days_ago < EVICT_WINDOW_DAYS
+        else None
+    )
+    return rid, rname, dish_ids, contrib, dish_unit, evict_remaining
+
+
 def build_feedback_signal(
     feedback_store: dict, today: dt.date, *, root: Path | None = None
 ) -> dict:
@@ -211,35 +243,18 @@ def build_feedback_signal(
 
     feedbacks = feedback_store.get("feedbacks") or {}
     for sid, fb in feedbacks.items():
-        if not isinstance(fb, dict):
+        one = _feedback_contrib(fb, sid, feedback_store, today)
+        if one is None:
             continue
-        polarity = _polarity(fb.get("rating"), fb.get("repurchase_intent"))
-        if polarity == NEUTRAL:
-            continue
-        submitted = _submitted_date(fb.get("submitted_at"))
-        if submitted is None:
-            continue
-        days_ago = (today - submitted).days
-        decay = _decay_factor(polarity, days_ago)
-        if decay == 0.0:
-            continue
-        resolved = _resolve_combo(feedback_store, sid, fb)
-        if resolved is None:
-            continue
-        rid, rname, dish_ids = resolved
-
-        base = _BASE_WEIGHT[polarity]
-        contrib = base * decay
+        rid, rname, dish_ids, contrib, dish_unit, evict_remaining = one
         # 餐厅级: 累积 raw (同店多次反馈叠加, 末尾统一 clamp)
         rest_raw[rid] = rest_raw.get(rid, 0.0) + contrib
         # 菜品级: 单次弱权重, 跨 combo 累积 raw
-        dish_unit = contrib * DISH_ACCUM_UNIT
         for did in dish_ids:
             dish_raw[did] = dish_raw.get(did, 0.0) + dish_unit
-        # recall 剔除: 仅强负, 剩余天数 = 窗口 - days_ago (取最大)
-        if polarity == STRONG_NEG and days_ago < EVICT_WINDOW_DAYS:
-            remaining = EVICT_WINDOW_DAYS - days_ago
-            recall_evict[rid] = max(recall_evict.get(rid, 0), remaining)
+        # recall 剔除: 仅强负, 剩余天数取最大
+        if evict_remaining is not None:
+            recall_evict[rid] = max(recall_evict.get(rid, 0), evict_remaining)
             evict_names[rid] = rname
 
     # 统一 clamp + 剔除衰减/抵消后为 0 的项 (保持空 dict 0-diff 语义). 排序输出
