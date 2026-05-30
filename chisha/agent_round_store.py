@@ -29,14 +29,13 @@ import logging
 import os
 import secrets
 from pathlib import Path
-from typing import Any, Iterator, Literal, Optional
+from typing import Any, Iterator, Optional
 
 from chisha import data_root
 
 logger = logging.getLogger(__name__)
 
 ROUND_STORE_VERSION = 1
-RoundStatus = Literal["pending", "resolved"]
 
 # 合法状态转移 (publish=apply-rerank 成功后 caller clear, 不在本 store 留 ready 态)
 _VALID_TRANSITIONS: dict[str, set[str]] = {

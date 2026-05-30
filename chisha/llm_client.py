@@ -21,7 +21,6 @@ D-047 接口:
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv

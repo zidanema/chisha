@@ -36,7 +36,6 @@ import datetime as dt
 import json
 import threading
 from pathlib import Path
-from typing import Any
 
 
 _STATE_REL = "logs/sandbox/state.json"

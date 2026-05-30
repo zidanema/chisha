@@ -8,8 +8,6 @@ l1Hits / conflict 当前由调用方按需提供, 默认 [] / null.
 """
 from __future__ import annotations
 
-from typing import Any
-
 
 def format_v2_to_rec(
     candidate: dict,

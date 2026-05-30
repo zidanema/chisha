@@ -475,7 +475,7 @@ def append_hard_filter_event(
 
 import fcntl
 import contextlib
-from typing import Callable, Iterator
+from typing import Iterator
 
 
 def _sid_dir(sid: str, root: Optional[Path] = None) -> Path:

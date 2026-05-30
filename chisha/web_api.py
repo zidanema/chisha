@@ -2332,23 +2332,6 @@ def api_sandbox_init(request: Request, req: SandboxInitReq) -> dict:
 _L1_LOCK_WAIT_SECONDS = 30.0
 
 
-def _block_until_l1_idle_or_409(action_label: str) -> None:
-    """[已废弃 by S-07] D-078 Codex S2 Q3-High 的 probe-release 模式不闭环:
-    probe 通过 → release → mutation 之间, 排队的 BG worker 可以抢锁继续跑.
-
-    本函数保留签名以防外部 caller; 但实际语义已变 (现在仍是 probe-release).
-    新代码用 ``_l1_extraction_lock_or_409`` context manager: 持锁穿透 lifecycle
-    mutation, 保 CONTRACTS.md:98 不变式.
-    """
-    if _L1_EXTRACTION_LOCK.acquire(timeout=_L1_LOCK_WAIT_SECONDS):
-        _L1_EXTRACTION_LOCK.release()
-        return
-    raise HTTPException(
-        409, f"{action_label} blocked: L1 extraction worker busy >"
-              f" {_L1_LOCK_WAIT_SECONDS:.0f}s, retry shortly"
-    )
-
-
 @_contextmanager
 def _l1_extraction_lock_or_409(action_label: str):
     """S-07 Phase 4 Codex iter 3 #1 修订: 持 _L1_EXTRACTION_LOCK 穿透整个 reset/

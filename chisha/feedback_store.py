@@ -37,7 +37,6 @@ import json
 import secrets
 import threading
 from pathlib import Path
-from typing import Any
 
 
 _LOCK = threading.Lock()

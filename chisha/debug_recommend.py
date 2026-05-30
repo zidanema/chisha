@@ -24,11 +24,6 @@ from chisha.context import build_context
 from chisha.recall import (
     build_combos_for_restaurant,
     combo_total_price,
-    diversity_filter,
-    is_carb_dish,
-    is_complete_meal,
-    is_protein_dish,
-    is_vegetable_dish,
     load_meal_log,
     load_profile,
     load_zone_data,

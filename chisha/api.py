@@ -11,7 +11,6 @@ import datetime as dt
 import json
 from pathlib import Path
 
-from chisha.context import build_context
 from chisha.recall import (
     load_meal_log,
     load_profile,
@@ -19,7 +18,6 @@ from chisha.recall import (
     recall,
 )
 from chisha.rerank import rerank as v2_rerank
-from chisha.score import apply_caps, rank_combos
 from chisha.session import create_session, save_session
 
 # D-104 Step1a: card/session 格式化 helper 抽到 core_api_helpers (agent-only core).
@@ -27,11 +25,9 @@ from chisha.session import create_session, save_session
 # _normalize_combos 直接用这些名字)。
 from chisha.core_api_helpers import (  # noqa: F401
     _SCORING_NUTRITION_KEYS,
-    _format_candidate,
     _format_v2_candidate,
     _gen_session_id,
     _resolve_zone,
-    format_v2_candidate,
 )
 
 
@@ -104,7 +100,6 @@ def recommend_meal(
     ranked = prep.ranked
     score_latency_ms = prep.score_latency_ms
     # 4. LLM 精排 topK → 5 (3 exploit + 2 explore, D-015; D-046: 30 → 60) (L3)
-    from chisha.rerank import L3_INPUT_TOP_K
     top_k = prep.top_k
     # D-079: trace_collector 捕获 LLM 中间状态 (Codex Q3: 传 today 防 fallback 漂移)
     # T-P1b-02: collector 始终是 dict, narrative 也要在 Live (persist_trace=False)

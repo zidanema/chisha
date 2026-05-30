@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field, asdict
-from pathlib import Path
 from typing import Any
 
 from chisha.install_root import install_root as _install_root  # T-DIST-01 B.1

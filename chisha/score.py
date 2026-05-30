@@ -58,7 +58,6 @@ GRAIN_GOOD = {"糙米杂粮", "全麦面", "粗粮"}
 GRAIN_BAD = {"白米", "精制面"}
 DISH_ROLE_MAIN = "主菜"
 DISH_ROLE_VEG = "配菜"
-DISH_ROLE_SOUP = "汤"
 DISH_ROLE_CARB = "主食"
 DISH_ROLE_COMBO = "套餐"   # 套餐通常自带主菜+主食 (按完整餐处理)
 
@@ -285,10 +284,6 @@ def wetness_bonus(combo: dict) -> float:
         if w_int == 2 and best < 0.5:
             best = 0.5
     return best
-
-
-# 兼容老命名的别名 (旧测试或外部调用方可能用)
-soup_or_broth_bonus = wetness_bonus
 
 
 def dish_role_match_bonus(combo: dict) -> float:

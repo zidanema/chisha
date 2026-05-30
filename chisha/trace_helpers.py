@@ -150,29 +150,6 @@ def build_l3_trace_from_collector(
 
 # ─────────────────────────── L1/L2 trace ───────────────────────────
 
-def build_l1_trace_for_round(
-    profile: dict,
-    rests: list[dict],
-    tagged: list[dict],
-    meal_log: list[dict],
-    today: Any,
-    meal_type: str,
-    precomputed: dict | None = None,
-) -> dict:
-    """L1 trace 重建 wrapper. precomputed 注入时跳过重跑.
-
-    实际 L1 trace 构造逻辑仍在 debug_recommend._build_l1_trace 里 (避免重复迁移
-    破坏 baseline_l2_snapshot 严格回归对比). 本 helper 是 refine.py 调用入口.
-    """
-    if precomputed is not None:
-        return precomputed
-    from chisha.debug_recommend import _build_l1_trace
-    l1_trace, _ = _build_l1_trace(
-        profile, rests, tagged, meal_log, today, meal_type=meal_type
-    )
-    return l1_trace
-
-
 def build_l2_trace_for_round(
     ranked_raw: list[dict],
     ranked: list[dict],

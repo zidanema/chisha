@@ -29,7 +29,6 @@ from chisha.non_dish_rules import is_non_dish
 # 映射表用 codepoint 转义构造而非复制不可见字符, 保证与采集端字节一致 (test 对拍采集端函数)。
 # 显式不动: 大小写 / 中点 / 标点 / 价格 / 规格份量 —— 这些常是真不同实体。
 SHOP_NAME_VERSION = 1   # == collector NORMALIZED_NAME_VERSION
-DISH_NAME_VERSION = 1   # 复用同一套保守规则; 菜名归一化在采集端尚无定义, 此处定版
 
 _NAME_NORM_MAP = str.maketrans({
     " ": " ",  # NBSP
@@ -64,7 +63,7 @@ def normalize_shop_name_v1(name: str | None) -> str:
 
 
 def normalize_dish_name_v1(name: str | None) -> str:
-    """菜名归一化 (复用店名那套保守规则, DISH_NAME_VERSION=1)."""
+    """菜名归一化 (复用店名那套保守规则)."""
     return _normalize_name_v1(name)
 
 
