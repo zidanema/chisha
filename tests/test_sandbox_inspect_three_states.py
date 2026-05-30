@@ -52,21 +52,6 @@ def test_layout_disabled_after_init_disable(app_with_sandbox):
     assert data["sessions"][0]["sid"] == "_default"
 
 
-def test_layout_disabled_after_migration_only(app_with_sandbox):
-    """手工跑 migration (不 init) → layout-disabled."""
-    app, root = app_with_sandbox
-    # 没 init, 手工建 sandbox dir 让 migrate 工作
-    (root / "logs" / "sandbox").mkdir(parents=True, exist_ok=True)
-    from chisha.sandbox_migration import migrate_to_v2
-    migrate_to_v2(root)
-    with TestClient(app) as c:
-        r = c.get("/api/sandbox/inspect")
-    data = r.json()
-    assert data["enabled"] is False
-    assert data["has_layout"] is True
-    assert data["sessions"][0]["sid"] == "_default"
-
-
 def test_layout_disabled_with_non_default(app_with_sandbox):
     """init + create s1 + disable → sessions 含 default + s1."""
     app, _ = app_with_sandbox

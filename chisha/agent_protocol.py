@@ -78,13 +78,6 @@ class CorrelationId:
         rid, rnd, op = parts
         return cls(recommendation_id=rid, round=rnd, operation=op)  # type: ignore[arg-type]
 
-    def idempotency_key(self) -> str:
-        """幂等键 = correlation_id 编码 (设计 §3: 每步幂等键 = (rid, round, operation)).
-
-        重试同 correlation_id 应返同结果不新建 round (由 trace_store 状态机消费).
-        """
-        return self.encode()
-
 
 # ─────────────────────────── 信封 builder ───────────────────────────
 
@@ -181,7 +174,6 @@ class AgentResponse:
     """宿主 agent 执行 spec 后的回传 (解包后)."""
     correlation_id: CorrelationId
     payload: dict[str, Any]                   # extract: intent dict; rerank: {candidates, narrative}
-    disclosure: dict[str, Any] = field(default_factory=dict)
 
 
 def parse_agent_response(
@@ -193,8 +185,7 @@ def parse_agent_response(
 
     回传 shape (agent 按信封产出):
         {"correlation_id": "<sid>::R1::extract",
-         "payload": {...},                  # extract→intent dict / rerank→{candidates,...}
-         "disclosure": {...}}               # 可选; extract 的未映射诉求 / rerank 校验状态
+         "payload": {...}}                  # extract→intent dict / rerank→{candidates,...}
 
     correlation_id **必填** (F4) 且必须与 expected 完全一致 (防错配 round / operation
     串台 + stale payload 套到当前轮). agent 直接回显 llm_request_spec.correlation_id 即可.
@@ -220,9 +211,4 @@ def parse_agent_response(
         raise ValueError(
             f"agent response payload must be dict, got {type(payload).__name__}"
         )
-    disclosure = raw.get("disclosure")
-    if not isinstance(disclosure, dict):
-        disclosure = {}
-    return AgentResponse(
-        correlation_id=expected, payload=payload, disclosure=disclosure
-    )
+    return AgentResponse(correlation_id=expected, payload=payload)

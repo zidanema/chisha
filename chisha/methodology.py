@@ -223,46 +223,6 @@ def load_methodology(name: str, root: Path) -> dict[str, Any]:
     return copy.deepcopy(cached)
 
 
-# ─── T-DIST-01 B.5b 留位 loader API (T-DIST-02 CLI 用) ───
-
-def get_schema_keyset() -> dict[str, set[str]]:
-    """T-DIST-02 留位: methodology spec 各段有效字段集.
-
-    返回 dict 含:
-      - top: 顶层字段集 (REQUIRED + OPTIONAL)
-      - plate_rule / score_weights / cap_rules: 子段字段集
-    """
-    return {
-        "top": set(_REQUIRED_TOP_KEYS) | set(_OPTIONAL_TOP_KEYS),
-        "plate_rule": set(_PLATE_RULE_KEYS),
-        "score_weights": set(_SCORE_WEIGHT_KEYS),
-        "cap_rules": set(_CAP_RULES_KEYS),
-    }
-
-
-def get_template() -> dict[str, Any]:
-    """T-DIST-02 留位: 返回起步 methodology spec template (用户可拿来填字段)."""
-    return {
-        "name": "<your-spec-name>",
-        "display_name": "<显示名>",
-        "version": "0.1",
-        "rationale": "<一段话说明你的方法论原则>",
-        "plate_rule": {k: None for k in _PLATE_RULE_KEYS},
-        "score_weights": {k: 0.0 for k in _SCORE_WEIGHT_KEYS},
-        "cap_rules": {k: None for k in _CAP_RULES_KEYS},
-    }
-
-
-def validate_spec(path: Path) -> None:
-    """T-DIST-02 留位: 校验 yaml spec 文件结构. 不符 raise MethodologyValidationError.
-
-    与 load_methodology 共用 _validate_spec 内部规则, 但不要求 name 匹配文件名
-    (B.5b: 通用校验 API; T-DIST-02 CLI 想加 name-vs-file 守门可再叠一层).
-    """
-    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    _validate_spec(raw)
-
-
 def resolve_methodology(profile: dict[str, Any], root: Path) -> dict[str, Any]:
     """从 profile.methodology 字段读名 (缺失 fallback DEFAULT_METHODOLOGY).
 

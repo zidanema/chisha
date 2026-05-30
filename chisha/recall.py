@@ -683,8 +683,7 @@ def combo_passes_plate_rule(
 ) -> bool:
     """弱约束三件套校验 (D-023). T-P1a-01: intent.allows_methodology_break() 时直接放过.
 
-    保留 bool 返回类型 (调用方包括 tests/test_recall.py 不动). 解除原因的细节
-    用 combo_passes_plate_rule_with_reason 获取.
+    保留 bool 返回类型 (调用方包括 tests/test_recall.py 不动).
     """
     if intent is not None and intent.allows_methodology_break():
         return True  # L0-C 解除 (refine 明确放纵)
@@ -700,33 +699,6 @@ def combo_passes_plate_rule(
     if total_protein < pr.get("min_protein_g", 0):
         return False
     return True
-
-
-def combo_passes_plate_rule_with_reason(
-    combo_dishes: list[dict],
-    profile: dict,
-    *,
-    intent=None,
-) -> tuple[bool, str | None]:
-    """T-P1a-01: 返 (pass, override_reason).
-
-    给 _build_l1_trace / debug instrument 调用以记录解除事件. 不破坏 bool 接口.
-    override_reason 非 None 时表示 L0-C 解除 (refine_break_methodology) 或失败原因.
-    """
-    if intent is not None and intent.allows_methodology_break():
-        return True, "refine_break_methodology"
-    pr = profile["plate_rule"]
-    has_veg = sum(1 for d in combo_dishes if is_vegetable_dish(d))
-    if pr.get("must_have_vegetable", True):
-        if has_veg < pr.get("min_vegetable_dishes", 1):
-            return False, "fail_min_vegetable"
-    total_protein = sum(
-        d.get("nutrition_profile", {}).get("protein_grams_estimate", 0)
-        for d in combo_dishes
-    )
-    if total_protein < pr.get("min_protein_g", 0):
-        return False, "fail_min_protein"
-    return True, None
 
 
 def _intent_dish_score(d: dict, intent) -> float:

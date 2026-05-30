@@ -37,12 +37,6 @@ logger = logging.getLogger(__name__)
 
 ROUND_STORE_VERSION = 1
 
-# 合法状态转移 (publish=apply-rerank 成功后 caller clear, 不在本 store 留 ready 态)
-_VALID_TRANSITIONS: dict[str, set[str]] = {
-    "pending": {"resolved"},     # resolve-intent
-    "resolved": set(),           # apply-rerank → 发布后 clear, 无后继态
-}
-
 
 class RoundStateError(RuntimeError):
     """协议 round 状态非法转移 / 缺失. 调用方决定如何回报 agent."""
@@ -256,7 +250,3 @@ def require_resolved(sid: str, root: Optional[Path] = None) -> dict:
             f"sid {sid} round 状态 {cur.get('status')!r}, 需 resolved 才能 apply-rerank"
         )
     return cur
-
-
-def can_transition(frm: str, to: str) -> bool:
-    return to in _VALID_TRANSITIONS.get(frm, set())

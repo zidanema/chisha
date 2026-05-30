@@ -20,7 +20,6 @@ from chisha.refine_intent_v2 import RefineIntentV2 as RefineIntent
 from chisha.recall import (
     hard_filter,
     combo_passes_plate_rule,
-    combo_passes_plate_rule_with_reason,
 )
 
 
@@ -224,11 +223,6 @@ def test_l0_c_refine_break_relaxes_plate_rule():
                                 "min_protein_g": 25}}
     intent = RefineIntent(raw_text="今晚就放纵, 给我推炒饭")
     assert combo_passes_plate_rule(combo_no_veg, profile, intent=intent) is True
-    ok, reason = combo_passes_plate_rule_with_reason(
-        combo_no_veg, profile, intent=intent
-    )
-    assert ok is True
-    assert reason == "refine_break_methodology"
 
 
 def test_methodology_break_does_not_relax_l0_a():

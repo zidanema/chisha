@@ -8,20 +8,14 @@ import datetime as dt
 
 import pytest
 
-from chisha.context import ContextSnapshot
 from chisha.score import (
     V2_DEFAULT_WEIGHTS,
     apply_caps,
     apply_unforgivable_penalty,
     attach_popularity_ranks,
-    cap_per_cuisine,
-    cap_per_food_form,
-    cap_per_restaurant,
     carb_quality_score,
     combo_food_form,
-    context_boost,
     dish_role_match_bonus,
-    distance_penalty,
     eta_penalty,
     extract_static_taste_hints,
     infer_food_form,
@@ -138,26 +132,6 @@ def test_dish_role_single():
 
 
 # ─────────────────────── 履约 penalty
-def test_distance_penalty_within_threshold():
-    profile = {"delivery_constraints": {"prefer_distance_m": 1500}}
-    c = _combo([make_dish()], restaurant=make_restaurant())  # default 500m
-    assert distance_penalty(c, profile) == 0.0
-
-
-def test_distance_penalty_over_threshold():
-    profile = {"delivery_constraints": {"prefer_distance_m": 1000}}
-    rest = make_restaurant()
-    rest["distance_m"] = 2500   # 超 1500m
-    c = _combo([make_dish()], restaurant=rest)
-    assert 0 < distance_penalty(c, profile) <= 1.0
-
-
-def test_distance_penalty_no_config():
-    profile = {}  # 没 delivery_constraints
-    c = _combo([make_dish()])
-    assert distance_penalty(c, profile) == 0.0
-
-
 def test_eta_penalty_over():
     profile = {"delivery_constraints": {"prefer_max_eta_min": 30}}
     rest = make_restaurant()
@@ -230,68 +204,6 @@ def test_taste_match_sweet_sauce_boost_and_penalty_cancel():
     c = _combo([make_dish(sweet_sauce_level=3)])
     hints = {"boost": ["sweet_sauce"], "penalty": ["sweet_sauce"]}
     assert taste_match_bonus(c, hints) == 0.0
-
-
-# ─────────────────────── context_boost
-def _ctx(daily_mood):
-    return ContextSnapshot(
-        meal_type="lunch", zone="shenzhen-bay",
-        now=dt.datetime(2026, 5, 13, 11, 25), weekday=2,
-        last_meal=None, recent_3d_cuisines={}, recent_3d_ingredients={},
-        last_feedback=None, daily_mood=daily_mood, refine_input=None,
-    )
-
-
-def test_context_boost_no_context():
-    """D-071: 没 context (None) → 0; 季节默认 mood 兜底已废 (D-043 → D-071)."""
-    c = _combo([make_dish(wetness=3)])
-    # 任意月份均应返回 0 (季节兜底已删, 不再生效)
-    assert context_boost(c, None, today=dt.date(2026, 4, 15)) == 0.0
-    assert context_boost(c, None, today=dt.date(2026, 7, 15)) == 0.0
-    assert context_boost(c, None, today=dt.date(2026, 1, 15)) == 0.0
-
-
-def test_context_boost_neutral():
-    c = _combo([make_dish(wetness=3)])
-    ctx = _ctx("neutral")
-    assert context_boost(c, ctx) == 0.0
-
-
-def test_context_boost_want_soup_superseded_by_d073():
-    """D-073: want_soup 走 RefineIntent.flavor_tags=['soup'] + intent_match_bonus,
-    context_boost 退化为恒 0.0. 锁定行为防止 D-071 残留复活."""
-    c_with_soup = _combo([make_dish(wetness=3)])
-    c_dry = _combo([make_dish(wetness=1)])
-    assert context_boost(c_with_soup, _ctx("want_soup")) == 0.0
-    assert context_boost(c_dry, _ctx("want_soup")) == 0.0
-
-
-# ─────────────────────── D-071: 已废 mood 分支 deprecated-behavior 断言
-# Codex Round 1 Q6: 用显式 assert 0.0 锁定 want_light / want_clean /
-# want_indulgent / low_carb 不再被识别, 防未来 refactor 悄悄复活.
-
-def test_context_boost_want_light_deprecated():
-    """D-071: want_light 分支已删, 任何油位 combo 都应返回 0."""
-    assert context_boost(_combo([make_dish(oil_level=2)]), _ctx("want_light")) == 0.0
-    assert context_boost(_combo([make_dish(oil_level=4)]), _ctx("want_light")) == 0.0
-
-
-def test_context_boost_low_carb_deprecated():
-    """D-071: low_carb 分支已删, 含主食 combo 不再被扣分."""
-    c = _combo([make_dish(dish_role="主食", grain_type="白米")])
-    assert context_boost(c, _ctx("low_carb")) == 0.0
-
-
-def test_context_boost_want_clean_deprecated():
-    """D-071: want_clean 分支已删, 加工肉 combo 不再被扣分 (走 processed_meat 主维度)."""
-    c = _combo([make_dish(processed_meat_flag=True, dish_role="主菜")])
-    assert context_boost(c, _ctx("want_clean")) == 0.0
-
-
-def test_context_boost_want_indulgent_deprecated():
-    """D-071: want_indulgent 分支已删, 低油 combo 不再被微扣."""
-    c = _combo([make_dish(oil_level=1)])
-    assert context_boost(c, _ctx("want_indulgent")) == 0.0
 
 
 # ─────────────────────── score_combo 集成
@@ -395,79 +307,6 @@ def test_d092_dead_dimensions_removed():
         assert k not in V2_DEFAULT_WEIGHTS, f"D-092 删除的死维度 {k!r} 不应在 V2_DEFAULT_WEIGHTS"
 
 
-# ─────────────────────── D-042: cap_per_restaurant
-def _ranked_combo(rid: str, score: float, name: str | None = None) -> dict:
-    """构造一个最简 ranked-style combo dict, 仅含 cap 函数需要的字段."""
-    return {
-        "restaurant": {"id": rid, "name": name or f"店{rid}"},
-        "dishes": [],
-        "score": score,
-    }
-
-
-def test_cap_per_restaurant_basic():
-    """每家保留前 k=3, 其余下放到尾部, 不丢任何 combo."""
-    ranked = [_ranked_combo("r1", 5.0 - i * 0.1) for i in range(5)] + \
-             [_ranked_combo("r2", 4.0 - i * 0.1) for i in range(2)]
-    out = cap_per_restaurant(ranked, k=3)
-    # 总数不变
-    assert len(out) == len(ranked)
-    # head: r1×3 + r2×2 (按 ranked 顺序)
-    head_rids = [(c["restaurant"]["id"]) for c in out[:5]]
-    assert head_rids == ["r1", "r1", "r1", "r2", "r2"]
-    # tail: r1 剩余 2 条 (按 ranked 顺序保留)
-    tail_rids = [(c["restaurant"]["id"]) for c in out[5:]]
-    assert tail_rids == ["r1", "r1"]
-
-
-def test_cap_per_restaurant_k0_passthrough():
-    """k=0 → 不 cap, 原序返回."""
-    ranked = [_ranked_combo("r1", 5.0), _ranked_combo("r1", 4.0)]
-    out = cap_per_restaurant(ranked, k=0)
-    assert [id(c) for c in out] == [id(c) for c in ranked]
-
-
-def test_cap_per_restaurant_fallback_to_name():
-    """restaurant 无 id 时 fallback 用 name 去重, 不应 crash."""
-    ranked = [
-        {"restaurant": {"name": "甲店"}, "score": 5.0},
-        {"restaurant": {"name": "甲店"}, "score": 4.5},
-        {"restaurant": {"name": "乙店"}, "score": 4.0},
-    ]
-    out = cap_per_restaurant(ranked, k=1)
-    head_names = [c["restaurant"].get("name") for c in out[:2]]
-    assert head_names == ["甲店", "乙店"]
-
-
-def test_cap_per_restaurant_anonymous_combos_not_aggregated():
-    """D-042 review fix: restaurant 无 id 也无 name → 不和其他匿名条聚合, 直接入 head."""
-    ranked = [
-        {"restaurant": {}, "score": 5.0},        # 完全匿名
-        {"restaurant": {}, "score": 4.9},        # 完全匿名
-        {"restaurant": None, "score": 4.8},      # restaurant=None
-        _ranked_combo("r1", 4.7),
-        _ranked_combo("r1", 4.6),
-        _ranked_combo("r1", 4.5),
-        _ranked_combo("r1", 4.4),                # 这条应被踢到 tail (r1 已 3 条)
-    ]
-    out = cap_per_restaurant(ranked, k=3)
-    # 总数不变
-    assert len(out) == len(ranked)
-    # 3 个匿名 combo 全部留在 head (不互相挤占)
-    head_scores = [c.get("score") for c in out[:6]]
-    assert head_scores == [5.0, 4.9, 4.8, 4.7, 4.6, 4.5]
-    # tail 只剩 r1 第 4 条
-    assert len(out) - 6 == 1
-    assert out[-1]["score"] == 4.4
-
-
-def test_cap_per_restaurant_negative_k_treated_as_passthrough():
-    """k<0 视为 k<=0 passthrough, 不应改变顺序."""
-    ranked = [_ranked_combo("r1", 5.0), _ranked_combo("r1", 4.0)]
-    out = cap_per_restaurant(ranked, k=-1)
-    assert [id(c) for c in out] == [id(c) for c in ranked]
-
-
 # ─────────────────────── resolve_cap_k
 def test_resolve_cap_k_default():
     assert resolve_cap_k({}) == 3
@@ -489,24 +328,6 @@ def test_resolve_cap_k_invalid_falls_back():
     assert resolve_cap_k({"recall": {"per_restaurant_top_k": "bad"}}) == 3
     assert resolve_cap_k({"recall": {"per_restaurant_top_k": -1}}) == 3
     assert resolve_cap_k({"recall": None}) == 3
-
-
-def test_cap_per_restaurant_preserves_relative_order():
-    """同店多 combo 在 head 内仍按原 ranked 顺序."""
-    ranked = [
-        _ranked_combo("r1", 5.0, name="combo-a"),
-        _ranked_combo("r2", 4.9),
-        _ranked_combo("r1", 4.8, name="combo-b"),
-        _ranked_combo("r1", 4.7, name="combo-c"),
-        _ranked_combo("r1", 4.6, name="combo-d"),
-    ]
-    out = cap_per_restaurant(ranked, k=2)
-    # head: r1(combo-a) → r2 → r1(combo-b); tail: r1(combo-c) → r1(combo-d)
-    assert out[0]["restaurant"]["name"] == "combo-a"
-    assert out[1]["restaurant"]["id"] == "r2"
-    assert out[2]["restaurant"]["name"] == "combo-b"
-    assert out[3]["restaurant"]["name"] == "combo-c"
-    assert out[4]["restaurant"]["name"] == "combo-d"
 
 
 # ─────────────────────── D-043: food_form 推断
@@ -546,51 +367,7 @@ def test_combo_food_form_picks_main():
     assert combo_food_form(c) == "汤"
 
 
-# ─────────────────────── D-043: cap_per_cuisine / cap_per_food_form / apply_caps
-def _cuisine_combo(rid: str, cuisine: str, score: float) -> dict:
-    return {
-        "restaurant": {"id": rid, "name": f"店{rid}"},
-        "dishes": [{"cuisine": cuisine, "canonical_name": "X",
-                    "nutrition_profile": {}}],
-        "score": score,
-    }
-
-
-def test_cap_per_cuisine_basic():
-    ranked = [_cuisine_combo(f"r{i}", "潮汕", 5.0 - i * 0.1) for i in range(8)] + \
-             [_cuisine_combo("r9", "湘菜", 3.0)]
-    out = cap_per_cuisine(ranked, cap=3)
-    head = out[:4]
-    # 潮汕只留前 3, 湘菜 1
-    head_cuisines = [c["dishes"][0]["cuisine"] for c in head]
-    assert head_cuisines.count("潮汕") == 3
-    assert head_cuisines.count("湘菜") == 1
-    # 总数不变
-    assert len(out) == len(ranked)
-
-
-def test_cap_per_food_form_basic():
-    def porridge(rid, score):
-        return {
-            "restaurant": {"id": rid, "name": f"店{rid}"},
-            "dishes": [{"canonical_name": "潮汕粥", "nutrition_profile": {"dish_role": "主菜"}}],
-            "score": score,
-        }
-    def soup(rid, score):
-        return {
-            "restaurant": {"id": rid, "name": f"店{rid}"},
-            "dishes": [{"canonical_name": "牛肉汤", "nutrition_profile": {"dish_role": "主菜"}}],
-            "score": score,
-        }
-    ranked = [porridge(f"p{i}", 5.0 - i * 0.1) for i in range(10)] + \
-             [soup("s1", 3.0)]
-    out = cap_per_food_form(ranked, cap=4)
-    head = out[:5]
-    forms = [combo_food_form(c) for c in head]
-    assert forms.count("粥") == 4
-    assert forms.count("汤") == 1
-
-
+# ─────────────────────── D-043: apply_caps
 def test_apply_caps_chains_all_three():
     """三层 cap 串联: restaurant + cuisine + food_form (D-049 后 head-only)."""
     ranked = []
@@ -773,15 +550,6 @@ def test_infer_default_mood_removed():
     assert not hasattr(score_mod, "DEFAULT_MOOD_CONFIDENCE"), (
         "DEFAULT_MOOD_CONFIDENCE 已被 D-071 删除"
     )
-
-
-def test_context_boost_no_seasonal_fallback():
-    """D-071: 没 mood 时不再按季节兜底, 任意季节都返回 0."""
-    c = _combo([make_dish(oil_level=1)])
-    # 夏季 (7 月) 原本会 want_light 兜底, 现在应 0
-    assert context_boost(c, context=None, today=dt.date(2026, 7, 15)) == 0.0
-    # 冬季 (1 月) 原本会 want_indulgent 兜底, 现在应 0
-    assert context_boost(c, context=None, today=dt.date(2026, 1, 15)) == 0.0
 
 
 # ─────────────────────── D-043: apply_unforgivable_penalty

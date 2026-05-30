@@ -114,9 +114,3 @@ def test_isolation_from_trace_round_index(root):
     trace_dir = data_root.recommend_trace_dir(root)
     assert not (trace_dir / "sid9.json").exists()
     assert not (trace_dir / "sid9").exists()
-
-
-def test_can_transition():
-    assert rs.can_transition("pending", "resolved")
-    assert not rs.can_transition("resolved", "pending")
-    assert not rs.can_transition("resolved", "ready")

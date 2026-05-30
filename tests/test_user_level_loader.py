@@ -16,10 +16,7 @@ import yaml
 
 from chisha import manifest as mfst
 from chisha.install_root import install_root
-from chisha.methodology import (
-    load_methodology, get_schema_keyset, get_template, validate_spec,
-    MethodologyValidationError,
-)
+from chisha.methodology import load_methodology
 from chisha.recall import (
     ResourceNameCollisionError, ZoneNotFoundError, load_zone_data, _resolve_zone_dir,
 )
@@ -212,42 +209,3 @@ def test_user_resource_status_ok_with_valid_manifest(isolated_roots):
     assert zone_results[0]["status"] == "ok"
 
 
-# ─── Loader API placeholder (T-DIST-02 留位) ───
-
-def test_get_schema_keyset_returns_sections():
-    ks = get_schema_keyset()
-    assert {"top", "plate_rule", "score_weights", "cap_rules"} <= set(ks.keys())
-    assert "name" in ks["top"]
-    assert "must_have_vegetable" in ks["plate_rule"]
-
-
-def test_get_template_is_complete():
-    t = get_template()
-    assert set(t.keys()) >= {"name", "plate_rule", "score_weights", "cap_rules"}
-
-
-def test_validate_spec_rejects_malformed(tmp_path):
-    """validate_spec 调外部 spec 文件, 缺关键字段 raise."""
-    p = tmp_path / "bad.yaml"
-    p.write_text("name: bad\nversion: 0.1\n", encoding="utf-8")  # 缺 plate_rule 等
-    with pytest.raises(MethodologyValidationError):
-        validate_spec(p)
-
-
-def test_validate_spec_accepts_valid_template(tmp_path):
-    """完整 template 实际跑过 _validate_spec."""
-    p = tmp_path / "good.yaml"
-    spec = {
-        "name": "good", "display_name": "good", "version": "0.1", "rationale": "test",
-        "plate_rule": {"must_have_vegetable": True, "min_vegetable_dishes": 1,
-                       "min_protein_g": 20, "prefer_oil_level_at_most": 2,
-                       "hard_max_oil_level": 3},
-        "score_weights": {"low_oil": 1.0, "popularity": 0.5, "cuisine_preference": 0.5,
-                          "variety_bonus": 0.5, "carb_quality": 0.5, "processed_meat": 0.5,
-                          "sweet_sauce": 0.5, "dish_role_match": 0.5, "eta": 0.5,
-                          "price": 0.5, "taste_match": 0.5},
-        "cap_rules": {"per_restaurant_top_k": 3, "per_brand_top_k": 2,
-                      "per_cuisine_top_k": 5, "per_food_form_top_k": 5},
-    }
-    p.write_text(yaml.safe_dump(spec, allow_unicode=True), encoding="utf-8")
-    validate_spec(p)  # 不抛即 OK

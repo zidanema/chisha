@@ -998,8 +998,7 @@ def api_sandbox_create_session(
     if not _sandbox.has_sandbox_meta(ROOT):
         raise HTTPException(
             400,
-            "sandbox layout not initialized; POST /api/sandbox/init or run "
-            "sandbox_migration.migrate_to_v2 first",
+            "sandbox layout not initialized; POST /api/sandbox/init first",
         )
     try:
         meta = _sandbox.create_session(req.sid, root=ROOT, days=req.days)

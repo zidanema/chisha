@@ -18,7 +18,6 @@ from chisha.agent_protocol import (
 def test_correlation_roundtrip():
     cid = CorrelationId("20260525_lunch_abc123", "R1", "extract")
     assert CorrelationId.decode(cid.encode()) == cid
-    assert cid.idempotency_key() == cid.encode()
 
 
 def test_correlation_invalid_operation():
@@ -111,13 +110,11 @@ def test_parse_response_ok():
         {
             "correlation_id": cid.encode(),
             "payload": {"candidates": [{"rank": 1}]},
-            "disclosure": {"status": "ok"},
         },
         expected=cid,
     )
     assert isinstance(resp, AgentResponse)
     assert resp.payload["candidates"][0]["rank"] == 1
-    assert resp.disclosure["status"] == "ok"
 
 
 def test_parse_response_correlation_mismatch():

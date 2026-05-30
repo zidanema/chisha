@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 #         context_boost 从 0.4 调到 0.25 (低置信弱先验).
 V2_DEFAULT_WEIGHTS: dict[str, float] = {
     # ── D-092: 5 死维度 (vegetable_floor_pass / protein_floor_pass / distance / wetness / context_boost)
-    #          已从 V2_DEFAULT + parts dict 移除. 函数本身保留 (vegetable_floor_score 等), 别处可能 import.
+    #          已从 V2_DEFAULT + parts dict 移除.
     # ── 活权重 ──
     "low_oil": 0.5,
     "popularity": 0.4,
@@ -60,25 +60,6 @@ DISH_ROLE_MAIN = "主菜"
 DISH_ROLE_VEG = "配菜"
 DISH_ROLE_CARB = "主食"
 DISH_ROLE_COMBO = "套餐"   # 套餐通常自带主菜+主食 (按完整餐处理)
-
-
-def vegetable_floor_score(combo: dict, profile: dict) -> float:
-    """达标 1.0, 不达标 0 (combo_passes_plate_rule 已经在召回过滤过, 此处恒 1)."""
-    pr = profile["plate_rule"]
-    if not pr.get("must_have_vegetable", True):
-        return 1.0
-    from chisha.recall import is_vegetable_dish
-    n = sum(1 for d in combo["dishes"] if is_vegetable_dish(d))
-    return 1.0 if n >= pr.get("min_vegetable_dishes", 1) else 0.0
-
-
-def protein_floor_score(combo: dict, profile: dict) -> float:
-    total = sum(
-        d.get("nutrition_profile", {}).get("protein_grams_estimate", 0)
-        for d in combo["dishes"]
-    )
-    floor = profile["plate_rule"].get("min_protein_g", 0)
-    return 1.0 if total >= floor else 0.0
 
 
 def low_oil_score(combo: dict, profile: dict) -> float:
@@ -306,20 +287,6 @@ def dish_role_match_bonus(combo: dict) -> float:
     if coverage == 2:
         return 0.5
     return 0.0
-
-
-def distance_penalty(combo: dict, profile: dict) -> float:
-    """餐厅距离 > prefer_distance_m 时线性扣分 (0-1).
-
-    profile.delivery_constraints.prefer_distance_m 缺失则不扣 (返回 0).
-    """
-    prefer = (profile.get("delivery_constraints") or {}).get("prefer_distance_m")
-    if not prefer:
-        return 0.0
-    d = (combo.get("restaurant") or {}).get("distance_m", -1)
-    if d <= 0 or d <= prefer:
-        return 0.0
-    return min(1.0, (d - prefer) / max(1, prefer))
 
 
 def eta_penalty(combo: dict, profile: dict) -> float:
@@ -795,22 +762,6 @@ def intent_match_bonus(
     return out
 
 
-def context_boost(combo: dict, context: "ContextSnapshot | None",
-                   today: dt.date | None = None) -> float:
-    """ContextSnapshot 软调权 — D-073 后空函数, 保留 API 兼容.
-
-    历史:
-      - D-034/D-043: 4 条 mood 规则 (want_light / low_carb / want_clean / want_indulgent)
-      - D-071: 砍 4 条, 仅留 want_soup 一条 (combo 含汤水 → +0.5)
-      - D-073: 彻底砍 want_soup, 由 intent_match_bonus 取代, 不再走 daily_mood 通道
-        (D-094.1 后信号字段是 constrain.wants_soup; D-073 当时叫 flavor_tags=["soup"]).
-
-    此函数现在恒返回 0.0. 保留只为不破坏 score_combo 的字段 layout.
-    后续如要重启 context-level 软调权, 必须先回看 D-070/D-073 决策再加.
-    """
-    return 0.0
-
-
 # ─────────────────────── D-043: 兜底信号 (D-071 季节兜底已废) ───────────────────────
 # 原则: 缺数据 ≠ 无信号. taste_match 没 hints 时从 profile 静态抽.
 #
@@ -1225,41 +1176,6 @@ def combo_food_form(combo: dict) -> str:
     return infer_food_form(dishes[0])
 
 
-def cap_per_restaurant(
-    ranked: list[dict],
-    k: int = 3,
-) -> list[dict]:
-    """每家餐厅最多保留 k 个 combo (按 ranked 顺序优先).
-
-    L2 排序后插入的"软去重": 同一家分数相近的 combo 容易扎堆 top30,
-    挤掉真正多样的候选; cap 后保留每家最高分的 k 条, 其余按全局分数顺位下放.
-    返回新列表 (不就地改 ranked).
-    Args:
-      ranked: rank_combos 输出 (已按 score 降序).
-      k: 单家保留上限 (推荐 3, 兼顾"主力菜 + 蔬菜变体"几种组合); k<=0 直接 passthrough.
-    边界:
-      restaurant 无 id 也无 name 时, 用 id(combo) 作为 sentinel, 不参与跨条聚合.
-    """
-    if k <= 0:
-        return list(ranked)
-    top: list[dict] = []
-    tail: list[dict] = []
-    seen: dict[str, int] = {}
-    for c in ranked:
-        rest = c.get("restaurant") or {}
-        rid = rest.get("id") or rest.get("name")
-        if not rid:
-            # 匿名 combo: 不和其他匿名条聚合, 直接放 head
-            top.append(c)
-            continue
-        if seen.get(rid, 0) < k:
-            top.append(c)
-            seen[rid] = seen.get(rid, 0) + 1
-        else:
-            tail.append(c)
-    return top + tail
-
-
 def _cap_by_key(
     ranked: list[dict],
     key_fn,
@@ -1285,36 +1201,6 @@ def _cap_by_key(
         else:
             tail.append(c)
     return head + tail
-
-
-def cap_per_cuisine(
-    ranked: list[dict],
-    cap: int = 6,
-) -> list[dict]:
-    """D-043: 每菜系最多保留 cap 条 (按 ranked 顺序).
-
-    潮汕菜系往往因为 wetness/popular 等维度全员命中, 容易扎堆 top30;
-    cap_per_cuisine 让 top30 内菜系分布更均匀, 不挤占其他菜系空间.
-    菜系取 combo['dishes'][0].cuisine; combo 无菜系 → 不聚合 (直接 head).
-    """
-    def _cuisine_key(c: dict) -> str | None:
-        dishes = c.get("dishes") or []
-        if not dishes:
-            return None
-        return dishes[0].get("cuisine") or None
-    return _cap_by_key(ranked, _cuisine_key, cap)
-
-
-def cap_per_food_form(
-    ranked: list[dict],
-    cap: int = 8,
-) -> list[dict]:
-    """D-043: 每 food_form (粥/汤/拌/...) 最多保留 cap 条.
-
-    与 cap_per_cuisine 互补: 潮汕粥/砂锅粥/艇仔粥 在 cuisine 上可能不同,
-    但 food_form 都是"粥", 形态高度同质. 这一层去重保证 top30 不全是"汤汤水水".
-    """
-    return _cap_by_key(ranked, combo_food_form, cap)
 
 
 def diversify_top(

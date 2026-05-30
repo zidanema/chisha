@@ -1,8 +1,6 @@
 """score.py 单测."""
 from tests.conftest import make_dish, make_restaurant
 from chisha.score import (
-    vegetable_floor_score,
-    protein_floor_score,
     low_oil_score,
     popularity_score,
     cuisine_preference_score,
@@ -17,22 +15,6 @@ def _combo(dishes, rest=None):
         "restaurant": rest or make_restaurant(),
         "dishes": dishes,
     }
-
-
-def test_vegetable_floor_pass(basic_profile):
-    veg_combo = _combo([make_dish(main_ingredient_type="纯素",
-                                   vegetable_ratio_estimate=0.95)])
-    no_veg_combo = _combo([make_dish(main_ingredient_type="红肉",
-                                      vegetable_ratio_estimate=0.1)])
-    assert vegetable_floor_score(veg_combo, basic_profile) == 1.0
-    assert vegetable_floor_score(no_veg_combo, basic_profile) == 0.0
-
-
-def test_protein_floor_pass(basic_profile):
-    high_p = _combo([make_dish(protein_grams_estimate=30)])
-    low_p = _combo([make_dish(protein_grams_estimate=10)])
-    assert protein_floor_score(high_p, basic_profile) == 1.0
-    assert protein_floor_score(low_p, basic_profile) == 0.0
 
 
 def test_low_oil_score(basic_profile):
