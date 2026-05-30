@@ -125,6 +125,62 @@ def is_migrated(state_root: Path) -> bool:
     return _manifest_path(state_root).exists()
 
 
+def _plan_dry_run(plan: list, result: MigrateResult) -> None:
+    """dry_run: 列出将拷/将跳, 不落任何文件。"""
+    for src, dst, _is_dir in plan:
+        (result.skipped_existing if dst.exists() else result.copied).append(
+            f"{src} → {dst}"
+        )
+        if not dst.exists():
+            result.file_count += _count_files(src)
+
+
+def _migrate_dir(src: Path, dst: Path, result: MigrateResult) -> None:
+    """目录迁移: dst 已存在则逐文件合并 (不覆盖); 否则 staging+原子 rename+文件数校验。"""
+    if dst.exists():
+        # 目录已存在 (如 ~/.chisha/logs 被先前运行创建): **逐文件合并** — 只拷 dst
+        # 缺失的, 绝不覆盖已有 → 旧 repo 日志不丢, 用户在 state_root 的新数据也不被
+        # clobber (Codex review 新 BLOCKING: 整目录 skip 会静默丢旧日志).
+        merged = _merge_copy_dir(src, dst)
+        if merged:
+            result.copied.append(f"{src} → {dst} (merged {merged} 文件)")
+        else:
+            result.skipped_existing.append(f"{src.name}/ (已全在, 无缺失)")
+        result.file_count += merged
+        return
+    # dst 不存在: staging + 原子 rename + 文件数校验 (中断只留 .migrating 残件,
+    # 重跑先清再拷 → 永不把半拷贝当成功; 不符则 fail-loud 不写 marker, Q-A).
+    staging = dst.with_name(dst.name + ".migrating")
+    if staging.exists():
+        shutil.rmtree(staging)
+    shutil.copytree(src, staging)
+    src_n, dst_n = _count_files(src), _count_files(staging)
+    if src_n != dst_n:
+        shutil.rmtree(staging)
+        raise RuntimeError(
+            f"迁移校验失败 {src} → {dst}: 源 {src_n} vs 拷贝 {dst_n}; "
+            "已清理残件, 未写 marker. 重跑迁移."
+        )
+    staging.replace(dst)        # staging/dst 同在 state_root → 同盘原子
+    result.copied.append(f"{src} → {dst}")
+    result.file_count += dst_n
+
+
+def _migrate_file(src: Path, dst: Path, result: MigrateResult) -> None:
+    """文件迁移: dst 已存在则跳过 (不覆盖); 否则 staging+原子 rename。"""
+    if dst.exists():
+        result.skipped_existing.append(f"{src.name} (state_root 已存在, 不覆盖)")
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    staging = dst.with_name(dst.name + ".migrating")
+    if staging.exists():
+        staging.unlink()
+    shutil.copy2(src, staging)
+    staging.replace(dst)
+    result.copied.append(f"{src} → {dst}")
+    result.file_count += 1
+
+
 def migrate_state(
     install_root: Path,
     state_root: Path,
@@ -157,56 +213,15 @@ def migrate_state(
     result = MigrateResult(status="dry_run" if dry_run else "migrated",
                            state_root=state_root)
     if dry_run:
-        for src, dst, is_dir in plan:
-            (result.skipped_existing if dst.exists() else result.copied).append(
-                f"{src} → {dst}"
-            )
-            if not dst.exists():
-                result.file_count += _count_files(src)
+        _plan_dry_run(plan, result)
         return result
 
     state_root.mkdir(parents=True, exist_ok=True)
     for src, dst, is_dir in plan:
         if is_dir:
-            if dst.exists():
-                # 目录已存在 (如 ~/.chisha/logs 被先前运行创建): **逐文件合并** — 只拷 dst
-                # 缺失的, 绝不覆盖已有 → 旧 repo 日志不丢, 用户在 state_root 的新数据也不被
-                # clobber (Codex review 新 BLOCKING: 整目录 skip 会静默丢旧日志).
-                merged = _merge_copy_dir(src, dst)
-                if merged:
-                    result.copied.append(f"{src} → {dst} (merged {merged} 文件)")
-                else:
-                    result.skipped_existing.append(f"{src.name}/ (已全在, 无缺失)")
-                result.file_count += merged
-                continue
-            # dst 不存在: staging + 原子 rename + 文件数校验 (中断只留 .migrating 残件,
-            # 重跑先清再拷 → 永不把半拷贝当成功; 不符则 fail-loud 不写 marker, Q-A).
-            staging = dst.with_name(dst.name + ".migrating")
-            if staging.exists():
-                shutil.rmtree(staging)
-            shutil.copytree(src, staging)
-            src_n, dst_n = _count_files(src), _count_files(staging)
-            if src_n != dst_n:
-                shutil.rmtree(staging)
-                raise RuntimeError(
-                    f"迁移校验失败 {src} → {dst}: 源 {src_n} vs 拷贝 {dst_n}; "
-                    "已清理残件, 未写 marker. 重跑迁移."
-                )
-            staging.replace(dst)        # staging/dst 同在 state_root → 同盘原子
-            result.copied.append(f"{src} → {dst}")
-            result.file_count += dst_n
+            _migrate_dir(src, dst, result)
         else:
-            if dst.exists():
-                result.skipped_existing.append(f"{src.name} (state_root 已存在, 不覆盖)")
-                continue
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            staging = dst.with_name(dst.name + ".migrating")
-            if staging.exists():
-                staging.unlink()
-            shutil.copy2(src, staging)
-            staging.replace(dst)
-            result.copied.append(f"{src} → {dst}")
-            result.file_count += 1
+            _migrate_file(src, dst, result)
 
     # 原子写 manifest marker (最后, 复制+校验通过后才落 → 中断不会误判已迁)
     manifest = {
