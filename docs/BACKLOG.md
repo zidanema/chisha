@@ -19,24 +19,6 @@
 
 > 已知但当前不修的 bug。明确触发条件 + 优先级 + 绕过方法。
 
-### B-001 · 近期反馈对推荐影响过弱 (短链路缺口)
-
-- **来源**: 2026-05-17 沙盒实测 (sandbox 8 天 / 11 顿 / 10 反馈, L1 抽取产物全空, 推荐不受任何反馈影响) + 志丹拍板"这是根本问题"
-- **状态**: ✅ **RESOLVED (a) by D-098** (2026-05-25, 反馈短链路即时生效). 残留 (b) **连吃同一菜系无冷却** (如连推湘菜, cuisine 粒度多样性, 与 rating 无关) 拆出新立 [F-015](#f-015) — 数据现成 (cuisine 全量字段), **非**数据缺口 (2026-05-25 志丹澄清原口误"香菜"实为"湘菜", 定性翻转). **以下为修复前根因留档.**
-- **现象**: 用户给某餐厅/菜品 👎, 7 天 hard cooldown 后系统**照样推**, 行为与 👍 完全一致。连续吃同一菜系 (如湘菜, cuisine 维度) 也无法 cooldown
-- **根因**: 反馈 → 推荐路径**只有一条**, 走 L1 抽取慢路径 (`feedback_store → L1 extractor → long_term_prefs.boost/penalty`)。但:
-  - L1 prompt 保守阈值: 信号弱 / 矛盾 / 样本 < 阈值 → 抽空。沙盒 9 餐实测就抽空
-  - L1 抽空时 `load_prefs()` 返 None → score.taste_match_bonus = 0 → L3 prompt 也没 long_term_prefs 段
-  - **score.py 不直接读 feedback rating**, **recall.py 也不读**。`diversity_filter` 只看"吃过没"不看 rating
-- **影响**: 中期 (近 30-60 天) 菜品/餐厅级反馈对排序**0 影响**。冷启动期完全空白 (L1 至少 20+ 餐 + 强信号才会抽出 token)
-- **方案预案** (单独 session 再讨论再实现):
-  - 加 `feedback_recency_signal` 直接进 score.py, 带衰减 (rating=-1 → 30 天强抑制 60 天衰减; rating=+1 → 7 天 cooldown 避连吃 → 14-30 天弱 boost)
-  - 不改 L1 长链路, 这是补短链路缺口, 双层互补
-  - 待定: hard avoid vs 软扣分 / 衰减曲线 / 影响 score 还是只 L3 prompt
-- **绕过**: 当前无, 用户需手填 `profile.preferences.avoid_dishes / disliked_cuisines`
-- **不修原因**: 涉及打分链路改动, 必须 baseline_l2_snapshot 守门; 衰减曲线 + hard/soft 决策需要设计讨论, 不能边写边定
-- **与 Refine v2 (D-080~D-085) 关系**: 不重叠。Refine v2 解决 "当下意图忠实兑现"，B-001 解决 "近期反馈对长期偏好的衰减"。两条路径独立、可并行做。Refine v2 完成不解此 bug，仍需单独 session 设计。
-
 ### B-002 · 3 个测试依赖本机环境 (无 claude 登录 / 跨平台挂)
 
 - **来源**: 2026-05-29 首次加 GitHub Actions CI 跑全量 pytest, 干净 runner 暴露 (本地一直绿因本机 claude 已登录 + macOS). CI commit 已 revert (38d751b), 押后到测试健壮性专项。
@@ -104,14 +86,6 @@
   - `exploration_boost`: "随便" / "都行" / "你看着办" → 主动放手时让 ε-greedy 加大
 - **触发条件**: D-081 eval set 跑出 miss 率 > 20% 再加
 - **优先级**: P3
-
-### F-009 · Faithful Refine 真兑现 [superseded by D-094, 2026-05-21]
-
-- **状态**: **superseded** — scope 翻盘. `reference` 已在 T-P2-01 真消费; `quality_floor / delivery_only / max_distance_km / functional.*` 砍 schema (志丹单用户实际不用); 见 D-094 草稿 + `docs/proposals/archive/2026-05-21-faithful-refine-true-fulfillment.md`
-
-### F-010 · expanded / synonyms 词典化 [superseded by D-094, 2026-05-21]
-
-- **状态**: **superseded** — scope 翻盘. 不迁词典: `cuisine_candidates_expanded` 真消费 (L1 召回 `cuisine_want ∪ expanded`), `ingredient_synonyms` 砍 (代码 `_INGREDIENT_BROAD` 已替代). 见 D-094 草稿 + `docs/proposals/archive/2026-05-21-faithful-refine-true-fulfillment.md`
 
 ### F-011 · food_form_avoid 数据打标 + L1 硬过滤
 
@@ -189,3 +163,4 @@ _(待填)_
 - 2026-05-25 · D-097 定位收敛 (自用为主、推广随缘): ROADMAP 必收口 9 项收窄到 2 硬门 (AI-friendly 接入 D-074 + B-001 P0). F-003 screener 降级 (触发=规模化); 新立 F-013 (Living/Lab router 后端拆分, 从必收口降级); F-001 (cuisine token) / F-004 (第二份 spec) 确认推迟 (为同事服务). 同步 decisions D-097 / ROADMAP / README / CLAUDE / CONTRACTS
 - 2026-05-25 · F-008 (反馈 3 维 "不合时宜") 移出待办池 → ROADMAP「已砍清单·反馈交互类」(志丹判定过度细节短期不做, D-098 已用 `repurchase_intent` 缓解误伤)
 - 2026-05-25 · B-001 残留 (b) 定性翻转: 志丹澄清"香菜"实为"湘菜"(语音口误) → 从 F-011 数据缺口摘出, 新立 F-015 (cuisine 多样性冷却, 数据现成非缺口). 另: 前端 e2e 验证 D-098 差评即时生效通过 (采纳→强负差评→换一组该店消失, 全链路 200 零 error)
+- 2026-05-30 · 文档校准清理 (完成项出池): 删 **B-001** (已 RESOLVED by D-098, 修复前根因留档无前向价值; 残留已在 F-015, 解决记录在 D-098) + 删 **F-009 / F-010** (superseded by D-094, 本节 2026-05-21 条已存档供溯源). B-002 经查 CI 仍未加回 (无 `.github/workflows/`) → 保持 open

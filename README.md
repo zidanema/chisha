@@ -63,7 +63,7 @@ chisha choose   --id <rid> --card <cards[].id> --action accept   # 用户选定
 
 ## 装 (Claude Code 用户, quickstart)
 
-**形态B 自包含 skill (默认, D-105)** — 一个 skill 文件夹 = 代码+数据+vendored 依赖, 拷贝即用, 零全局安装、运行期零联网/零 pydantic。
+**形态B 自包含 skill (默认)** — 一个 skill 文件夹 = 代码+数据+vendored 依赖, 拷贝即用, 零全局安装、运行期零联网/零 pydantic。
 
 维护者 (有本仓) 一步构建+安装:
 
@@ -79,10 +79,10 @@ python3 ~/.claude/skills/chisha-meal/scripts/chisha doctor                      
 
 **环境要求 (诚实边界)**: python3 ≥ 3.11 在 PATH (macOS 自带 3.9 不够); **POSIX-only** (macOS/Linux, core 用 fcntl 文件锁, Windows 除 WSL 外不支持)。
 
-> 形态A (`uv tool install` → 全局 `chisha` 命令) 已于 D-105.1 退役, 接入唯一形态 = 上面的 B 自包含 bundle。state 仍住 `~/.chisha/` (升级不被覆盖)。
+> 形态A (`uv tool install` → 全局 `chisha` 命令) 已退役, 接入唯一形态 = 上面的 B 自包含 bundle。state 仍住 `~/.chisha/` (升级不被覆盖)。
 
-**让 AI agent 帮你装**: 把 [AGENTS.md](AGENTS.md) 链接丢给你的 Claude Code, 它会按 spec 自己探测、安装、配置、冒烟测试。
-> ⚠️ 当前 AGENTS.md 仍是形态A (`uv tool install`) 的远程自安装协议, D-105.1 退役后**已 stale**, 待 B 形态远程分发协议定型后重写。在那之前请按上面的 B bundle 手动装, 不要走 AGENTS.md 的 uv tool install 步骤。
+**让 AI agent 帮你装**: 把 [AGENTS.md](AGENTS.md) 链接丢给你的 Claude Code, 它会按 spec 落位 bundle、初始化、冒烟测试。
+> ℹ️ AGENTS.md 已是**形态B** 接入协议 (拷 bundle + wrapper 调用)。诚实边界: **形态B 的远程分发协议 (非维护者、无本仓的 agent 如何从公网拉到 bundle) 尚未设计** —— agent 手上没 bundle 又没本仓时装不了, 需维护者手动给一份 bundle 文件夹 (AGENTS.md §1 NO_BUNDLE 模板已写明)。
 
 ---
 
@@ -90,7 +90,7 @@ python3 ~/.claude/skills/chisha-meal/scripts/chisha doctor                      
 
 ```bash
 # 1. 装依赖 (需要 Python 3.11+, uv, Node 18+)
-# D-104: agent-only core 只装轻依赖; 跑调试台/全链路 LLM 需 dev (含 web extra: fastapi/anthropic/openai)
+# agent-only core 只装轻依赖; 跑调试台/全链路 LLM 需 dev (含 web extra: fastapi/anthropic/openai)
 uv sync --extra dev
 cp .env.example .env  # 填 OPENROUTER_API_KEY 或 ANTHROPIC_API_KEY
 
