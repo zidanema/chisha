@@ -802,14 +802,34 @@ def build_combos_for_restaurant(
          其中 n_p ∈ [1, max_protein], n_v ∈ [1, max_veg], n_c ∈ [0, max_carb]
          且 n_p + n_v + n_c ∈ [1, max_dishes]
     """
-    from itertools import combinations as _comb
-
+    # F-016 ④: 嵌套拆 helper, orchestrator 顺序严格 bucket → A → B → dedup,
+    # combos append 顺序 A 在 B 前 (与现状逐字一致, 影响 frozenset 去重保留的代表).
     rcfg = profile.get("recall", {}) or {}
     max_p = rcfg.get("max_protein_per_combo", 2)
     max_v = rcfg.get("max_veg_per_combo", 2)
     max_c = rcfg.get("max_carb_per_combo", 1)
     max_n = rcfg.get("max_dishes_per_combo", 4)
 
+    completes, vegs, proteins, carbs = _bucket_and_rank_dishes(rest_dishes, intent)
+
+    combos: list[list[dict]] = []
+    if max_n <= 0:
+        return combos
+
+    combos.extend(_route_a_combos(completes, vegs, profile, intent, max_n))
+    combos.extend(_route_b_combos(proteins, vegs, carbs, profile, intent,
+                                  max_p, max_v, max_c, max_n))
+    return _dedup_combos(combos, per_rest_max)
+
+
+def _bucket_and_rank_dishes(
+    rest_dishes: list[dict], intent
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+    """分桶 (complete/veg/protein/carb) + 按 _key(销量+intent 命中) sort + 截断.
+
+    sort 调用顺序 (proteins→vegs→carbs→completes) 与截断常数 [:6]/[:5]/[:3]/[:5]
+    逐字保留现状 — high-risk, 不参数化, 不改顺序 (F-016 ④ codex 共商守则)。
+    """
     completes = [d for d in rest_dishes if is_complete_meal(d)]
     vegs = [d for d in rest_dishes if is_vegetable_dish(d)]
     proteins = [d for d in rest_dishes if is_protein_dish(d)]
@@ -827,12 +847,14 @@ def build_combos_for_restaurant(
     vegs = sorted(vegs, key=_key)[:5]
     carbs = sorted(carbs, key=_key)[:3]
     completes = sorted(completes, key=_key)[:5]
+    return completes, vegs, proteins, carbs
 
+
+def _route_a_combos(
+    completes: list[dict], vegs: list[dict], profile: dict, intent, max_n: int
+) -> list[list[dict]]:
+    """路线 A: 完整套餐 (盖饭/套餐) 单菜, 可选 +1 蔬菜 (vegs[:3] 留 route A 内)."""
     combos: list[list[dict]] = []
-    if max_n <= 0:
-        return combos
-
-    # 路线 A: 完整套餐 (盖饭/套餐)，可选 +1 蔬菜
     for cm in completes:
         if 1 <= max_n and combo_passes_plate_rule([cm], profile, intent=intent):
             combos.append([cm])
@@ -844,8 +866,16 @@ def build_combos_for_restaurant(
             c = [cm, v]
             if combo_passes_plate_rule(c, profile, intent=intent):
                 combos.append(c)
+    return combos
 
-    # 路线 B: 灵活蛋白 × 蔬菜 × 主食
+
+def _route_b_combos(
+    proteins: list[dict], vegs: list[dict], carbs: list[dict],
+    profile: dict, intent, max_p: int, max_v: int, max_c: int, max_n: int,
+) -> list[list[dict]]:
+    """路线 B: 灵活 蛋白 × 蔬菜 × 主食 (6 层嵌套整体保留, 不合并 n_c==0 分支不缓存 ids)."""
+    from itertools import combinations as _comb
+    combos: list[list[dict]] = []
     for n_p in range(1, max_p + 1):
         if n_p > len(proteins):
             break
@@ -875,10 +905,15 @@ def build_combos_for_restaurant(
                             dishes = list(p_set) + list(v_set) + list(c_set)
                             if combo_passes_plate_rule(dishes, profile, intent=intent):
                                 combos.append(dishes)
+    return combos
 
-    # 去重 (按 dish_id 集合)
+
+def _dedup_combos(
+    combos: list[list[dict]], per_rest_max: int
+) -> list[list[dict]]:
+    """按 dish_id frozenset 去重 (保留首次出现的原 combo 对象) + 截断 [:per_rest_max]."""
     seen: set[frozenset] = set()
-    uniq = []
+    uniq: list[list[dict]] = []
     for c in combos:
         key = frozenset(d["dish_id"] for d in c)
         if key not in seen:

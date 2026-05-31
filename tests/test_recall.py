@@ -152,6 +152,29 @@ def test_build_combos_for_restaurant(basic_profile):
     assert has_full
 
 
+def test_build_combos_for_restaurant_output_order(basic_profile):
+    """F-016 ④ 守门: 锁 combo 输出签名顺序 (route A 完整套餐先于 route B 灵活组合,
+    去重保留首次出现代表). 拆嵌套重构的真风险不是"出不出 combo", 是"同一组 dish 谁先出现".
+    """
+    rest_dishes = [
+        make_dish(dish_id="cm1", main_ingredient_type="红肉",
+                  protein_grams_estimate=25, vegetable_ratio_estimate=0.5,
+                  is_complete_meal=True, monthly_sales=500),
+        make_dish(dish_id="p1", main_ingredient_type="白肉",
+                  protein_grams_estimate=30, monthly_sales=300),
+        make_dish(dish_id="v1", main_ingredient_type="纯素",
+                  vegetable_ratio_estimate=0.95, protein_grams_estimate=3,
+                  monthly_sales=200),
+    ]
+    combos = build_combos_for_restaurant(rest_dishes, basic_profile, 10)
+    sigs = [tuple(d["dish_id"] for d in c) for c in combos]
+    # 去重生效: 签名唯一
+    assert len(sigs) == len(set(sigs))
+    # 精确锁输出签名顺序 (route A 完整套餐 +蔬菜 先于 route B 灵活组合; cm1 单菜
+    # 不过 plate_rule 故不单独出现). 拆嵌套重构若改了 append/sort/dedup 顺序此处即挂.
+    assert sigs == [("cm1", "v1"), ("p1", "v1"), ("cm1", "p1", "v1")]
+
+
 def test_recall_end_to_end(basic_profile):
     rest = make_restaurant("r_001", name="测试餐厅")
     dishes = [
