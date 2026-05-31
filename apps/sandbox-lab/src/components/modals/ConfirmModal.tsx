@@ -1,8 +1,6 @@
 // D-093 S-02 ConfirmModal: rollback / branch 二次确认.
 import { useEffect, useState } from "react";
-import type { Meal } from "../../types/sandbox";
-
-export type ConfirmKind = "rollback" | "branch";
+import type { ConfirmKind, Meal } from "../../types/sandbox";
 
 export interface ConfirmModalProps {
   open: boolean;

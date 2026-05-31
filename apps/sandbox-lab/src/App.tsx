@@ -13,6 +13,7 @@ import { SummaryDrawer } from "./components/modals/SummaryDrawer";
 import { useKeyboard } from "./hooks/useKeyboard";
 import { useSandbox } from "./hooks/useSandbox";
 import { useTweaks } from "./hooks/useTweaks";
+import type { DPanelDensity } from "./components/panels/DPanel";
 import type { Decision, Meal } from "./types/sandbox";
 
 
@@ -62,7 +63,8 @@ export function App() {
   const { tweaks, setTweak } = useTweaks();
   const query = useMemo(readQuery, []);
   const [tweaksOpen, setTweaksOpen] = useState(query.dev);
-  const [density, setDensity] = useState<0 | 1 | 2>(1);
+  // DPanel density is separate from tweaks.rightDensity (global right-column CSS density).
+  const [dPanelDensity, setDPanelDensity] = useState<DPanelDensity>(1);
   const [selectedRank, setSelectedRank] = useState<number>(2);
 
   const sb = useSandbox({
@@ -297,8 +299,8 @@ export function App() {
         )}
         <RightCol
           decision={sb.lastDecision ?? IDLE_DECISION}
-          density={density}
-          onDensityChange={setDensity}
+          density={dPanelDensity}
+          onDensityChange={setDPanelDensity}
           onOpenTrace={() =>
             openTrace(
               sb.history.find((h) => h.idx === sb.currentMealIdx - 1) ?? null,

@@ -73,6 +73,13 @@ type PollingState =
   | { action: "skip" | "swap" | "refine"; sid: string; startedAt: number }
   | null;
 
+type BackendBootstrap = {
+  activeSid: string;
+  sessions: SessionMeta[];
+  states: Map<string, SessionInternalState>;
+  activeSnapshot: Awaited<ReturnType<typeof getFullSnapshot>> | null;
+};
+
 
 function initialSessionStates(): Map<string, SessionInternalState> {
   const m = new Map<string, SessionInternalState>();
@@ -102,6 +109,62 @@ function initialSessionStates(): Map<string, SessionInternalState> {
     }
   }
   return m;
+}
+
+function pickActiveSid(
+  listResp: Awaited<ReturnType<typeof listSessions>>,
+): string | null {
+  return listResp.sessions
+    .filter((s) => !s.is_default && s.has_state)
+    .map((s) => s.sid)[0] ?? null;
+}
+
+async function createBootstrapSession(): Promise<string> {
+  const newMeta = await createSession("s08_e2e", 7).catch((e) => {
+    if (e?.status === 409) return null;
+    throw e;
+  });
+  return newMeta?.sid ?? "s08_e2e";
+}
+
+async function bootstrapBackend(): Promise<BackendBootstrap | null> {
+  const listResp = await listSessions();
+  let activeSid = pickActiveSid(listResp);
+  if (!activeSid) activeSid = await createBootstrapSession();
+
+  const candidateSids = listResp.sessions
+    .filter((s) => !s.is_default)
+    .map((s) => s.sid);
+  const allSids = candidateSids.includes(activeSid)
+    ? candidateSids
+    : [activeSid, ...candidateSids];
+  const snapshots = await Promise.all(
+    allSids.map((sid) =>
+      getFullSnapshot(sid).then(
+        (snap) => ({ sid, snap }),
+        (err) => ({ sid, err }),
+      ),
+    ),
+  );
+  const sessions: SessionMeta[] = [];
+  const states = new Map<string, SessionInternalState>();
+  let activeSnapshot: Awaited<ReturnType<typeof getFullSnapshot>> | null = null;
+  for (const item of snapshots) {
+    if ("err" in item) continue;
+    const piece = backendFullSnapshotToStore(item.snap);
+    sessions.push(piece.meta);
+    states.set(item.sid, {
+      history: piece.history,
+      currentMealIdx: piece.clock.idx,
+      currentRecs: piece.currentRecs,
+      lastDecision: piece.lastDecision,
+      totalMeals: piece.clock.total,
+      mealToTrace: piece.mealToTrace,
+      currentTraceId: piece.currentTraceId,
+    });
+    if (item.sid === activeSid) activeSnapshot = item.snap;
+  }
+  return sessions.length > 0 ? { activeSid, sessions, states, activeSnapshot } : null;
 }
 
 
@@ -336,6 +399,64 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
     [],
   );
 
+  const runGuardedAction = useCallback(
+    (action: Exclude<NonNullable<PollingState>["action"], "eat">, sid: string, fn: () => Promise<void>) => {
+      if (inFlightRef.current || polling) return;
+      inFlightRef.current = true;
+      setPolling({ action, sid, startedAt: Date.now() });
+      (async () => {
+        try {
+          await fn();
+        } catch (e) {
+          setApiError(`${action} failed: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+          inFlightRef.current = false;
+          setPolling(null);
+        }
+      })();
+    },
+    [polling],
+  );
+
+  const advanceMockMeal = useCallback(
+    (
+      sid: string,
+      buildMeal: (prev: SessionInternalState, oldIdx: number, oldClock: Clock) => Meal,
+      buildDecision: (oldClock: Clock) => Decision | null,
+    ) => {
+      const oldIdx = currentMealIdx;
+      const oldClock: Clock = {
+        idx: oldIdx,
+        day: Math.floor(oldIdx / 2) + 1,
+        slot: oldIdx % 2 === 0 ? "午" : "晚",
+        total: totalMeals,
+      };
+      const newIdx = oldIdx + 1;
+      updateSessionState(sid, (prev) => ({
+        history: [...prev.history, buildMeal(prev, oldIdx, oldClock)],
+        currentMealIdx: newIdx,
+        currentRecs: newIdx >= totalMeals ? [] : freshRecsForMeal(newIdx, sid),
+        lastDecision: buildDecision(oldClock),
+      }));
+      setTransientBanners([]);
+      setSelectedCellIdx(null);
+    },
+    [currentMealIdx, totalMeals, updateSessionState],
+  );
+
+  const addInfoBanner = useCallback((prefix: string, title: string, detail: string) => {
+    setTransientBanners((prev) => [
+      ...prev.filter((b) => !b.id.startsWith(`${prefix}_`)),
+      {
+        id: `${prefix}_${Date.now()}`,
+        level: "info",
+        title,
+        detail,
+        dismissable: true,
+      },
+    ]);
+  }, []);
+
   // boot: ping + listSessions + ensure non-default active session
   useEffect(() => {
     let cancelled = false;
@@ -351,69 +472,15 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
       // + mock sessions, 后续 action 走 online 分支 → mock sid → 4xx 重复. 改成
       // bootstrap 成功后才标 online.
       try {
-        const listResp = await listSessions();
+        const boot = await bootstrapBackend();
         if (cancelled) return;
-        // Find first non-default session w/ state (rollback/branch reject _default)
-        let activeSid = listResp.sessions
-          .filter((s) => !s.is_default && s.has_state)
-          .map((s) => s.sid)[0];
-        if (!activeSid) {
-          // auto-create e2e session
-          const newMeta = await createSession("s08_e2e", 7).catch((e) => {
-            if (e?.status === 409) {
-              // already exists — list again
-              return null;
-            }
-            throw e;
-          });
-          if (newMeta) {
-            activeSid = newMeta.sid;
-          } else {
-            activeSid = "s08_e2e";
-          }
-          if (cancelled) return;
-        }
-        // Build session list from backend (replace SESSIONS mock entries)
-        const candidateSids = listResp.sessions
-          .filter((s) => !s.is_default)
-          .map((s) => s.sid);
-        const allSids = candidateSids.includes(activeSid)
-          ? candidateSids
-          : [activeSid, ...candidateSids];
-        const snapshots = await Promise.all(
-          allSids.map((sid) =>
-            getFullSnapshot(sid).then(
-              (snap) => ({ sid, snap }),
-              (err) => ({ sid, err }),
-            ),
-          ),
-        );
-        if (cancelled) return;
-        const builtSessions: SessionMeta[] = [];
-        const builtStates = new Map<string, SessionInternalState>();
-        for (const item of snapshots) {
-          if ("err" in item) continue;
-          const piece = backendFullSnapshotToStore(item.snap);
-          builtSessions.push(piece.meta);
-          builtStates.set(item.sid, {
-            history: piece.history,
-            currentMealIdx: piece.clock.idx,
-            currentRecs: piece.currentRecs,
-            lastDecision: piece.lastDecision,
-            totalMeals: piece.clock.total,
-            // S-09
-            mealToTrace: piece.mealToTrace,
-            currentTraceId: piece.currentTraceId,
-          });
-        }
-        if (builtSessions.length > 0) {
-          setSessions(builtSessions);
-          setSessionStates(builtStates);
-          setActiveSessionId(activeSid);
+        if (boot) {
+          setSessions(boot.sessions);
+          setSessionStates(boot.states);
+          setActiveSessionId(boot.activeSid);
           // Ensure recs on the chosen active sid
-          const snapForActive = snapshots.find((s) => "snap" in s && s.sid === activeSid);
-          if (snapForActive && "snap" in snapForActive) {
-            await applySnapshot(activeSid, backendFullSnapshotToStore(snapForActive.snap));
+          if (boot.activeSnapshot) {
+            await applySnapshot(boot.activeSid, backendFullSnapshotToStore(boot.activeSnapshot));
           }
           // bootstrap 成功 — 此时才标 online
           if (!cancelled) setBackendOnline(true);
@@ -506,18 +573,9 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
       }
 
       // offline mock path (S-03 行为)
-      const oldIdx = currentMealIdx;
-      const oldClock: Clock = {
-        idx: oldIdx,
-        day: Math.floor(oldIdx / 2) + 1,
-        slot: oldIdx % 2 === 0 ? "午" : "晚",
-        total: totalMeals,
-      };
-      const newIdx = oldIdx + 1;
-      updateSessionState(sid, (prev) => ({
-        history: [
-          ...prev.history,
-          {
+      advanceMockMeal(
+        sid,
+        (prev, oldIdx, oldClock) => ({
             idx: oldIdx,
             day: oldClock.day,
             slot: oldClock.slot,
@@ -530,16 +588,11 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
               score: r.l3,
               picked: r.rank === rec.rank,
             })),
-          },
-        ],
-        currentMealIdx: newIdx,
-        currentRecs: newIdx >= totalMeals ? [] : freshRecsForMeal(newIdx, sid),
-        lastDecision: buildDecisionMock(rec, oldClock),
-      }));
-      setTransientBanners([]);
-      setSelectedCellIdx(null);
+        }),
+        (oldClock) => buildDecisionMock(rec, oldClock),
+      );
     },
-    [isDone, activeSessionId, backendOnline, polling, currentMealIdx, totalMeals, updateSessionState],
+    [isDone, activeSessionId, backendOnline, polling, advanceMockMeal],
   );
 
   const handleSkip = useCallback(() => {
@@ -547,39 +600,20 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
     const sid = activeSessionId;
 
     if (backendOnline) {
-      if (inFlightRef.current || polling) return;   // P2 fix: 防重复 click
-      inFlightRef.current = true;
       // P3 fix: 给 UI 可见反馈 (App.tsx 按 polling 渲染 skeleton/banner).
-      setPolling({ action: "skip", sid, startedAt: Date.now() });
-      (async () => {
-        try {
-          await postSkip(sid);
-          const snap = await getFullSnapshot(sid);
-          await applySnapshot(sid, backendFullSnapshotToStore(snap));
-          setTransientBanners([]);
-          setSelectedCellIdx(null);
-        } catch (e) {
-          setApiError(`skip failed: ${e instanceof Error ? e.message : String(e)}`);
-        } finally {
-          inFlightRef.current = false;
-          setPolling(null);
-        }
-      })();
+      runGuardedAction("skip", sid, async () => {
+        await postSkip(sid);
+        const snap = await getFullSnapshot(sid);
+        await applySnapshot(sid, backendFullSnapshotToStore(snap));
+        setTransientBanners([]);
+        setSelectedCellIdx(null);
+      });
       return;
     }
 
-    const oldIdx = currentMealIdx;
-    const oldClock: Clock = {
-      idx: oldIdx,
-      day: Math.floor(oldIdx / 2) + 1,
-      slot: oldIdx % 2 === 0 ? "午" : "晚",
-      total: totalMeals,
-    };
-    const newIdx = oldIdx + 1;
-    updateSessionState(sid, (prev) => ({
-      history: [
-        ...prev.history,
-        {
+    advanceMockMeal(
+      sid,
+      (_prev, oldIdx, oldClock) => ({
           idx: oldIdx,
           day: oldClock.day,
           slot: oldClock.slot,
@@ -588,56 +622,32 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
           score: null,
           flags: [],
           altScores: [],
-        },
-      ],
-      currentMealIdx: newIdx,
-      currentRecs: newIdx >= totalMeals ? [] : freshRecsForMeal(newIdx, sid),
-      lastDecision: buildSkipDecisionMock(oldClock),
-    }));
-    setTransientBanners([]);
-    setSelectedCellIdx(null);
-  }, [isDone, activeSessionId, backendOnline, polling, currentMealIdx, totalMeals, updateSessionState, applySnapshot]);
+      }),
+      buildSkipDecisionMock,
+    );
+  }, [isDone, activeSessionId, backendOnline, applySnapshot, runGuardedAction, advanceMockMeal]);
 
   const handleSwap = useCallback(() => {
     if (isDone) return;
     const sid = activeSessionId;
 
     if (backendOnline) {
-      if (inFlightRef.current || polling) return;   // P2 fix: 防重复 click
-      inFlightRef.current = true;
       // P3 fix: UI 可见反馈
-      setPolling({ action: "swap", sid, startedAt: Date.now() });
       // P2 fix: exclude 当前可见 5 条的 backend id (mock_recs 真按 id 过滤)
       const excludeIds = currentRecs
         .map((r) => (r as Rec & { _backendId?: string })._backendId)
         .filter((id): id is string => typeof id === "string" && id.length > 0);
-      (async () => {
-        try {
-          const resp = await postSwap(sid, excludeIds);
-          const recs = (resp.currentRecs || []).map(backendRecToFrontend);
-          updateSessionState(sid, (prev) => ({
-            ...prev,
-            currentRecs: recs,
-            // S-09 Iter 4 #1: swap 创了新 recommend session
-            currentTraceId: resp.recommend_session_id || prev.currentTraceId,
-          }));
-          setTransientBanners((prev) => [
-            ...prev.filter((b) => !b.id.startsWith("swap_")),
-            {
-              id: `swap_${Date.now()}`,
-              level: "info",
-              title: "已换一组",
-              detail: `新拉了 ${recs.length} 条`,
-              dismissable: true,
-            },
-          ]);
-        } catch (e) {
-          setApiError(`swap failed: ${e instanceof Error ? e.message : String(e)}`);
-        } finally {
-          inFlightRef.current = false;
-          setPolling(null);
-        }
-      })();
+      runGuardedAction("swap", sid, async () => {
+        const resp = await postSwap(sid, excludeIds);
+        const recs = (resp.currentRecs || []).map(backendRecToFrontend);
+        updateSessionState(sid, (prev) => ({
+          ...prev,
+          currentRecs: recs,
+          // S-09 Iter 4 #1: swap 创了新 recommend session
+          currentTraceId: resp.recommend_session_id || prev.currentTraceId,
+        }));
+        addInfoBanner("swap", "已换一组", `新拉了 ${recs.length} 条`);
+      });
       return;
     }
 
@@ -645,17 +655,8 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
       ...prev,
       currentRecs: freshRecsForMeal(prev.currentMealIdx, sid),
     }));
-    setTransientBanners((prev) => [
-      ...prev.filter((b) => !b.id.startsWith("swap_")),
-      {
-        id: `swap_${Date.now()}`,
-        level: "info",
-        title: "已换一组",
-        detail: "新拉了 5 条 (mock)",
-        dismissable: true,
-      },
-    ]);
-  }, [isDone, activeSessionId, backendOnline, polling, currentRecs, updateSessionState]);
+    addInfoBanner("swap", "已换一组", "新拉了 5 条 (mock)");
+  }, [isDone, activeSessionId, backendOnline, currentRecs, updateSessionState, runGuardedAction]);
 
   const handleRefine = useCallback(
     (text: string) => {
@@ -665,37 +666,18 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
       const sid = activeSessionId;
 
       if (backendOnline) {
-        if (inFlightRef.current || polling) return;   // P2 fix: 防重复 click
-        inFlightRef.current = true;
         // P3 fix: UI 可见反馈
-        setPolling({ action: "refine", sid, startedAt: Date.now() });
-        (async () => {
-          try {
-            const resp = await postRefine(sid, trimmed);
-            const recs = (resp.currentRecs || []).map(backendRecToFrontend);
-            updateSessionState(sid, (prev) => ({
-              ...prev,
-              currentRecs: recs,
-              // S-09 Iter 4 #1: refine 创了新 recommend session
-              currentTraceId: resp.recommend_session_id || prev.currentTraceId,
-            }));
-            setTransientBanners((prev) => [
-              ...prev.filter((b) => !b.id.startsWith("refine_")),
-              {
-                id: `refine_${Date.now()}`,
-                level: "info",
-                title: "Refine 已应用",
-                detail: `本轮内 "${trimmed}"; 下顿自动清`,
-                dismissable: true,
-              },
-            ]);
-          } catch (e) {
-            setApiError(`refine failed: ${e instanceof Error ? e.message : String(e)}`);
-          } finally {
-            inFlightRef.current = false;
-            setPolling(null);
-          }
-        })();
+        runGuardedAction("refine", sid, async () => {
+          const resp = await postRefine(sid, trimmed);
+          const recs = (resp.currentRecs || []).map(backendRecToFrontend);
+          updateSessionState(sid, (prev) => ({
+            ...prev,
+            currentRecs: recs,
+            // S-09 Iter 4 #1: refine 创了新 recommend session
+            currentTraceId: resp.recommend_session_id || prev.currentTraceId,
+          }));
+          addInfoBanner("refine", "Refine 已应用", `本轮内 "${trimmed}"; 下顿自动清`);
+        });
         return;
       }
 
@@ -707,18 +689,9 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
           intent: intentText,
         })),
       }));
-      setTransientBanners((prev) => [
-        ...prev.filter((b) => !b.id.startsWith("refine_")),
-        {
-          id: `refine_${Date.now()}`,
-          level: "info",
-          title: "Refine 已应用",
-          detail: `本轮内 "${trimmed}"; 下顿自动清`,
-          dismissable: true,
-        },
-      ]);
+      addInfoBanner("refine", "Refine 已应用", `本轮内 "${trimmed}"; 下顿自动清`);
     },
-    [isDone, activeSessionId, backendOnline, polling, updateSessionState],
+    [isDone, activeSessionId, backendOnline, updateSessionState, runGuardedAction],
   );
 
   const selectCell = useCallback(
@@ -796,6 +769,21 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
     (fromIdx: number, name: string) => {
       const oldSid = activeSessionId;
 
+      function finishBranch(newSid: string, title: string, detail: string) {
+        setActiveSessionId(newSid);
+        setSelectedCellIdx(null);
+        setTransientBanners((prev) => [
+          ...prev,
+          {
+            id: `branch_${Date.now()}`,
+            level: "info",
+            title,
+            detail,
+            dismissable: true,
+          },
+        ]);
+      }
+
       if (backendOnline) {
         // P2 fix (iter 7): 不 pre-clear polling. branch 失败 (op lock 409 etc.)
         // 后 polling 不该丢. 切别的 session 也不该把 polling 拿走 — polling.sid
@@ -812,18 +800,7 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
               const meta = await createSession(newSid, 7);
               const snap = await getFullSnapshot(meta.sid);
               await applySnapshot(meta.sid, backendFullSnapshotToStore(snap));
-              setActiveSessionId(meta.sid);
-              setSelectedCellIdx(null);
-              setTransientBanners((prev) => [
-                ...prev,
-                {
-                  id: `branch_${Date.now()}`,
-                  level: "info",
-                  title: "已创建新 session",
-                  detail: `(branch 需 cur>0, fallback createSession)`,
-                  dismissable: true,
-                },
-              ]);
+              finishBranch(meta.sid, "已创建新 session", "(branch 需 cur>0, fallback createSession)");
             } catch (e) {
               setApiError(`new session failed: ${e instanceof Error ? e.message : String(e)}`);
             }
@@ -836,18 +813,7 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
             const meta = await postBranch(oldSid, safeFromIdx, name || "未命名");
             const snap = await getFullSnapshot(meta.sid);
             await applySnapshot(meta.sid, backendFullSnapshotToStore(snap));
-            setActiveSessionId(meta.sid);
-            setSelectedCellIdx(null);
-            setTransientBanners((prev) => [
-              ...prev,
-              {
-                id: `branch_${Date.now()}`,
-                level: "info",
-                title: "已分支",
-                detail: `从 idx=${fromIdx} 派生新 session "${name || "未命名"}"`,
-                dismissable: true,
-              },
-            ]);
+            finishBranch(meta.sid, "已分支", `从 idx=${fromIdx} 派生新 session "${name || "未命名"}"`);
           } catch (e) {
             setApiError(`branch failed: ${e instanceof Error ? e.message : String(e)}`);
           }
@@ -882,18 +848,7 @@ export function useSandbox(opts: UseSandboxOptions = {}): UseSandboxResult {
         next.set(newSid, newState);
         return next;
       });
-      setActiveSessionId(newSid);
-      setSelectedCellIdx(null);
-      setTransientBanners((prev) => [
-        ...prev,
-        {
-          id: `branch_${Date.now()}`,
-          level: "info",
-          title: "已分支",
-          detail: `从 idx=${fromIdx} 派生新 session "${name || "未命名"}"`,
-          dismissable: true,
-        },
-      ]);
+      finishBranch(newSid, "已分支", `从 idx=${fromIdx} 派生新 session "${name || "未命名"}"`);
     },
     [activeSessionId, backendOnline, currentMealIdx, sessions, sessionStates, applySnapshot],
   );

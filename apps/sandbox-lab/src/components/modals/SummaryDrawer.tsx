@@ -1,5 +1,6 @@
 // D-093 S-02 SummaryDrawer: history 摘要侧抽屉, filter chips + 跳 trace.
 import { useState } from "react";
+import { SummaryFlagBadges } from "../FlagBadges";
 import type { Meal } from "../../types/sandbox";
 
 const FILTERS: { id: string; label: string }[] = [
@@ -79,20 +80,7 @@ export function SummaryDrawer({
               </span>
               <span className="name">
                 <span>{h.state === "eat" ? h.dish : "跳过"}</span>
-                <span className="badges">
-                  {h.flags?.includes("swap") && (
-                    <span className="b-mini swap">↻ 换过</span>
-                  )}
-                  {h.flags?.includes("refine") && (
-                    <span className="b-mini refine">✎ refine</span>
-                  )}
-                  {h.flags?.includes("conflict") && (
-                    <span className="b-mini conflict">⚠ 冲突</span>
-                  )}
-                  {h.flags?.includes("event") && (
-                    <span className="b-mini event">★ L1</span>
-                  )}
-                </span>
+                <SummaryFlagBadges flags={h.flags} />
               </span>
               <span className="open">打开 trace ›</span>
             </div>

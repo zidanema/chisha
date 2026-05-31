@@ -1,6 +1,7 @@
 // D-093 S-02 Timeline: 14 格横向条 / 日历卡 + OpBar (内部 helper).
 // 本任务 onSelect 是 inert prop (App 喂 () => {}), 静态视觉演示.
 import type { Meal, Tweaks } from "../types/sandbox";
+import { TimelineFlagBadges } from "./FlagBadges";
 
 export interface TimelineProps {
   history: Meal[];
@@ -108,30 +109,7 @@ function Cell({
       data-screen-label={`timeline-cell-${cell.idx}`}
     >
       <span className="cell-icon">{glyph}</span>
-      {flags.length > 0 && (
-        <span className="cell-badges">
-          {flags.includes("swap") && (
-            <span className="cell-badge swap" title="换过组">
-              ↻
-            </span>
-          )}
-          {flags.includes("refine") && (
-            <span className="cell-badge refine" title="refine 过">
-              ✎
-            </span>
-          )}
-          {flags.includes("conflict") && (
-            <span className="cell-badge conflict" title="冲突过">
-              ⚠
-            </span>
-          )}
-          {flags.includes("event") && (
-            <span className="cell-badge event" title="关键事件">
-              ★
-            </span>
-          )}
-        </span>
-      )}
+      <TimelineFlagBadges flags={flags} />
     </div>
   );
 }
