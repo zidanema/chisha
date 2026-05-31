@@ -104,6 +104,7 @@ export const LABELS = {
     fbDone: "已记录，明天见 →",
     fbEmpty: "没有待反馈的推荐",
     fbEmptyAction: "回主页 →",
+    fbNotFound: "这条反馈记录已过期或找不到了",
     fbSubmit: "完成",
 
     // ── 表单 · 渐进披露 E (D-062~063) ──────────────────────────

@@ -28,27 +28,43 @@ export function FeedbackPage() {
   // undefined = loading; null = none yet; record = submitted
   const [feedback, setFeedback] = useState<FeedbackRecord | null | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
+  // session 拉取失败 (404 过期/不存在) → 错误卡, 不再永久卡 loading
+  const [notFound, setNotFound] = useState(false);
 
   const reload = useCallback(async () => {
-    const [s, fb] = await Promise.all([
+    // 同 boot effect: session 必需 (失败 → 错误卡), record best-effort (失败当 null)
+    const [sRes, fbRes] = await Promise.allSettled([
       api.getFeedbackSession({ session_id: sessionId }),
       api.getFeedback({ session_id: sessionId }),
     ]);
-    setSession(s);
-    setFeedback(fb);
+    if (sRes.status === "rejected") {
+      setNotFound(true);
+      return;
+    }
+    setSession(sRes.value);
+    setFeedback(fbRes.status === "fulfilled" ? fbRes.value : null);
   }, [sessionId]);
 
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
+    // 切 session 时回到 loading 态, 清掉上一条的 notFound/数据
+    setNotFound(false);
+    setSession(null);
+    setFeedback(undefined);
     void (async () => {
-      const [s, fb] = await Promise.all([
+      // allSettled: session 是必需 (失败 → 错误卡); record 是 best-effort (失败当 null)
+      const [sRes, fbRes] = await Promise.allSettled([
         api.getFeedbackSession({ session_id: sessionId }),
         api.getFeedback({ session_id: sessionId }),
       ]);
       if (cancelled) return;
-      setSession(s);
-      setFeedback(fb);
+      if (sRes.status === "rejected") {
+        setNotFound(true);
+        return;
+      }
+      setSession(sRes.value);
+      setFeedback(fbRes.status === "fulfilled" ? fbRes.value : null);
     })();
     return () => {
       cancelled = true;
@@ -89,6 +105,26 @@ export function FeedbackPage() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  // ── session 过期/找不到 → 错误卡 (D-066 inline 持久, 不靠 toast) ──────
+  if (notFound) {
+    return (
+      <PageShell>
+        <div className="mt-20 text-center space-y-3">
+          <div className="text-[14px] text-[color:var(--muted)]">
+            {LABELS.ui.fbNotFound}
+          </div>
+          <Link
+            to="/feedback"
+            className="inline-block text-[13px] px-3 py-1.5 rounded-md border border-[color:var(--border)] hover:border-[color:var(--fg)]"
+          >
+            ← {LABELS.ui.fbBackToInbox}
+          </Link>
+        </div>
+        <FooterBar />
+      </PageShell>
+    );
   }
 
   if (!session || feedback === undefined) {
