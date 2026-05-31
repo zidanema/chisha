@@ -26,6 +26,7 @@ import type {
   L2Weight,
   L3Trace,
   Meal,
+  RefineTrace,
   ResponseBlock,
   Session,
 } from "../types/trace";
@@ -340,13 +341,8 @@ function adaptFinal(rows: BackendFinalRow[]): FinalRow[] {
 // D-079 followup: rerankLatencyFallback 是 trace 顶层 rerank_latency_ms, 旧 trace
 // 的 trace.l3.latency_ms 是 None (写盘漏字段, 已修但历史 trace 仍存在), 这时用
 // 顶层 rerank_latency_ms 兜底, 让 DagHeader 不显示 0ms.
-function wrapTraceL3(l3: BackendTraceL3,
-                     rerankLatencyFallback: number = 0): BackendL3Rerank {
-  // D-088: 不再因 !l3.used 走 skipped 简壳 — 那条路径会丢 l3.status (e.g. config_error)
-  // 和 fallback_reason, 导致 PanelL3 把 config_error 渲染成 "L3 SKIPPED LLM rerank 关闭".
-  // 总是建完整 BackendL3Llm shape, used=l3.used 真值, status 透传 (CONTRACTS §39 精神).
-  // D-079 followup: 把 provider 统一后的 OpenAI 风格 usage (prompt_tokens 等)
-  // 映射成前端 view-model 的 Anthropic 风格 (input_tokens 等). 语义差异:
+// D-079 followup: 把 provider 统一后的 OpenAI 风格 usage (prompt_tokens 等)
+// 映射成前端 view-model 的 Anthropic 风格 (input_tokens 等). 语义差异:
   //   - Anthropic: input_tokens = prompt 总 tokens (含 cache 部分),
   //     cache_read_input_tokens 是其中命中 cache 的 tokens; billable = 二者之差.
   //   - OpenAI (provider 内部统一后): prompt_tokens 是 *扣除 cache 后的 billable*,
@@ -354,28 +350,26 @@ function wrapTraceL3(l3: BackendTraceL3,
   // DagHeader 的 cache_hit% = cache_read / input_tokens 必须基于"总 prompt size",
   // 否则 cached_tokens / billable_prompt 会爆 100%+ (实测 56450%).
   // 老 trace 已是 Anthropic 命名时, input_tokens 直接是 raw 总数, 不做加法.
-  const rawUsage = l3.usage ?? null;
-  const usage = rawUsage
-    ? (() => {
-        const cacheRead =
-          rawUsage.cache_read_input_tokens ?? rawUsage.cached_tokens ?? 0;
-        const cacheCreate =
-          rawUsage.cache_creation_input_tokens
-          ?? rawUsage.cache_write_tokens ?? 0;
-        // Anthropic 风格直接拿 input_tokens; OpenAI 风格需要加回 cached_tokens
-        // 才能得到 prompt 总 size.
-        const inputTotal =
-          rawUsage.input_tokens
-          ?? ((rawUsage.prompt_tokens ?? 0) + (rawUsage.cached_tokens ?? 0));
-        return {
-          input_tokens: inputTotal,
-          output_tokens:
-            rawUsage.output_tokens ?? rawUsage.completion_tokens ?? 0,
-          cache_read_input_tokens: cacheRead,
-          cache_creation_input_tokens: cacheCreate,
-        };
-      })()
-    : null;
+function normalizeUsage(rawUsage: BackendTraceL3["usage"] | null | undefined): BackendL3Llm["usage"] {
+  if (!rawUsage) return null;
+  const cacheRead = rawUsage.cache_read_input_tokens ?? rawUsage.cached_tokens ?? 0;
+  const cacheCreate = rawUsage.cache_creation_input_tokens ?? rawUsage.cache_write_tokens ?? 0;
+  const inputTotal =
+    rawUsage.input_tokens ?? ((rawUsage.prompt_tokens ?? 0) + (rawUsage.cached_tokens ?? 0));
+  return {
+    input_tokens: inputTotal,
+    output_tokens: rawUsage.output_tokens ?? rawUsage.completion_tokens ?? 0,
+    cache_read_input_tokens: cacheRead,
+    cache_creation_input_tokens: cacheCreate,
+  };
+}
+
+function wrapTraceL3(l3: BackendTraceL3,
+                     rerankLatencyFallback: number = 0): BackendL3Rerank {
+  // D-088: 不再因 !l3.used 走 skipped 简壳 — 那条路径会丢 l3.status (e.g. config_error)
+  // 和 fallback_reason, 导致 PanelL3 把 config_error 渲染成 "L3 SKIPPED LLM rerank 关闭".
+  // 总是建完整 BackendL3Llm shape, used=l3.used 真值, status 透传 (CONTRACTS §39 精神).
+  const usage = normalizeUsage(l3.usage ?? null);
   const llm: BackendL3Llm = {
     status: (l3.status as BackendL3Llm["status"]) ?? (l3.used ? "ok" : "fallback"),
     config_error: l3.status === "config_error",
@@ -403,6 +397,35 @@ function wrapTraceL3(l3: BackendTraceL3,
   return { llm, payload_to_llm: l3.payload_to_llm, n_returned: l3.n_returned };
 }
 
+export function emptyRefineTrace(
+  parentSession: string,
+  userText: string = "",
+  refineSession: string = "—",
+): RefineTrace {
+  return {
+    parent_session: parentSession,
+    refine_session: refineSession,
+    user_text: userText,
+    parse_feedback: {
+      llm_call: {
+        model: "—",
+        latency_ms: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+      chips_hit: [],
+      note: "",
+      rating_taste: null,
+      want_again: false,
+    },
+    chips_to_taste_hints: { boost: {}, penalty: {} },
+    infer_refine_mood: { triggered: false, hits: [], resolved_mood: {} },
+    diff: { new_in_top5: [], dropped_from_top5: [], moved_up: [], moved_down: [] },
+    summary_kpi: { explore_n: 0, total_latency_ms: 0, candidates_returned: 0, diff_top5: 0 },
+  };
+}
+
 // Backend production trace → frontend Session (Replay / What-if 结果展示).
 export function traceToSession(trace: BackendDebugTrace): Session {
   const meal: Meal = trace.__frozen?.meal_type === "dinner" ? "dinner" : "lunch";
@@ -418,9 +441,11 @@ export function traceToSession(trace: BackendDebugTrace): Session {
     l3: adaptL3(wrapTraceL3(trace.l3, trace.rerank_latency_ms ?? 0)),
     final: adaptFinal(trace.final),
     refine: {
-      parent_session: trace.session_id,
-      refine_session: trace.refine?.applied ? trace.session_id : "—",
-      user_text: trace.refine?.user_input ?? "",
+      ...emptyRefineTrace(
+        trace.session_id,
+        trace.refine?.user_input ?? "",
+        trace.refine?.applied ? trace.session_id : "—",
+      ),
       // D-079 PR-3.1 (Codex FIX-NOW #2): 透传后端 trace.refine 全字段, 不丢.
       intent: (trace.refine?.intent as Record<string, unknown> | null | undefined) ?? null,
       n_combos_recalled: trace.refine?.n_combos_recalled ?? null,
@@ -428,28 +453,14 @@ export function traceToSession(trace: BackendDebugTrace): Session {
       candidate_ids: trace.refine?.candidate_ids ?? [],
       ts: trace.refine?.ts,
       parse_feedback: {
-        llm_call: {
-          model: "—",
-          latency_ms: 0,
-          input_tokens: 0,
-          output_tokens: 0,
-          cache_read_input_tokens: 0,
-        },
-        chips_hit: [],
+        ...emptyRefineTrace(trace.session_id).parse_feedback,
         note: trace.refine?.applied
           ? `refine round ${trace.refine?.round ?? "?"} applied`
           : "(尚未触发 refine)",
-        rating_taste: null,
-        want_again: false,
       },
-      chips_to_taste_hints: { boost: {}, penalty: {} },
-      infer_refine_mood: { triggered: false, hits: [], resolved_mood: {} },
-      diff: { new_in_top5: [], dropped_from_top5: [], moved_up: [], moved_down: [] },
       summary_kpi: {
-        explore_n: 0,
-        total_latency_ms: 0,
+        ...emptyRefineTrace(trace.session_id).summary_kpi,
         candidates_returned: trace.refine?.n_returned ?? 0,
-        diff_top5: 0,
       },
     },
   };

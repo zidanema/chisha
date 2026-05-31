@@ -155,6 +155,68 @@ export function TraceBrowser({
     return Array.from(m.entries()).sort((a, b) => a[0] - b[0]);
   }, [filtered]);
 
+  function renderTraceGroups(mode: "collapsed" | "full") {
+    return groups.map(([daysAgo, items]) => (
+      <Fragment key={daysAgo}>
+        <div className="tb-day">{dayLabel(items[0].date, daysAgo)}</div>
+        {items.map((t) => {
+          const isActive = activeTrace === t.id;
+          const isOpen = expanded.has(t.id);
+          const hasRefines = t.refineCount > 0;
+          return (
+            <Fragment key={t.id}>
+              <TraceRow
+                trace={t}
+                active={isActive}
+                isOpen={isOpen}
+                hasRefines={hasRefines}
+                mode={mode}
+                onRowClick={() => {
+                  setActiveTrace(t.id);
+                  if (mode === "collapsed") setPickerOpen(false);
+                }}
+                onToggleExpand={() => toggleExpand(t.id)}
+              />
+              {mode === "full" && hasRefines && isOpen && (
+                <div className="tb-rounds">
+                  <div
+                    className={`rr ${isActive && activeRound === "R1" ? "active" : ""}`}
+                    onClick={() => { setActiveTrace(t.id); setActiveRound("R1"); }}
+                  >
+                    <span></span>
+                    <span><span className="name">R1</span> <span className="txt">原始</span></span>
+                    <span className="when">{t.time}</span>
+                  </div>
+                  {[...Array(t.refineCount)].map((_, i) => {
+                    const rid = `R${i + 2}`;
+                    const realRound = isActive
+                      ? activeRounds.find((r) => r.id === rid)
+                      : undefined;
+                    const rdesc = realRound?.label
+                      ?? ["换一组", "想喝汤", "别要重的", "加点蛋白"][i]
+                      ?? "追问";
+                    const rwhen = realRound?.started_at ?? `+${(i + 1) * 2 + 1}min`;
+                    return (
+                      <div
+                        key={rid}
+                        className={`rr ${isActive && activeRound === rid ? "active" : ""}`}
+                        onClick={() => { setActiveTrace(t.id); setActiveRound(rid); }}
+                      >
+                        <span></span>
+                        <span><span className="name">{rid}</span> <span className="txt">{rdesc}</span></span>
+                        <span className="when">{rwhen}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Fragment>
+          );
+        })}
+      </Fragment>
+    ));
+  }
+
   // ─── collapsed rail mode ────────────────────────────────────
   if (collapsed) {
     const active = traces.find((t) => t.id === activeTrace) ?? traces[0];
@@ -209,46 +271,7 @@ export function TraceBrowser({
                 />
               </div>
               <div className="tb-rail-pop-list">
-                {groups.map(([daysAgo, items]) => (
-                  <Fragment key={daysAgo}>
-                    <div className="tb-day">{dayLabel(items[0].date, daysAgo)}</div>
-                    {items.map((t) => {
-                      const isActive = activeTrace === t.id;
-                      return (
-                        <div
-                          key={t.id}
-                          className={`tb-row ${isActive ? "active" : ""}`}
-                          onClick={() => {
-                            setActiveTrace(t.id);
-                            // D-088 (B1): App.tsx (A) effect 接管 round reset.
-                            setPickerOpen(false);
-                          }}
-                        >
-                          <div className={`dot ${t.status === "ok" ? "ok" : t.status === "fallback" ? "fb" : "warn"}`}></div>
-                          <div className="body">
-                            <div className="l1">
-                              <span className="time">{t.time}</span>
-                              <span className={`meal ${t.meal}`}>{t.meal === "lunch" ? "午" : "晚"}</span>
-                              {t.refineCount > 0 && (
-                                <span className="rd-badge" style={{ fontSize: 9 }}>
-                                  R{1 + t.refineCount} ×{1 + t.refineCount}
-                                </span>
-                              )}
-                              <span className={`src ${t.source === "sandbox" ? "sbx" : ""}`}>
-                                {t.source === "sandbox" ? `SBX D+${t.sandboxDay}` : "REAL"}
-                              </span>
-                            </div>
-                            <div className="l2">{t.finalTop1}</div>
-                            <div className="l3">
-                              <span className="mono">{t.latency_ms}ms</span>
-                              {t.feedback && <span style={{ marginLeft: 6 }}>{feedbackGlyph(t.feedback)}</span>}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </Fragment>
-                ))}
+                {renderTraceGroups("collapsed")}
               </div>
             </div>
           )}
@@ -321,89 +344,7 @@ export function TraceBrowser({
             没有匹配的 trace
           </div>
         )}
-        {groups.map(([daysAgo, items]) => (
-          <Fragment key={daysAgo}>
-            <div className="tb-day">{dayLabel(items[0].date, daysAgo)}</div>
-            {items.map((t) => {
-              const isActive = activeTrace === t.id;
-              const isOpen = expanded.has(t.id);
-              const hasRefines = t.refineCount > 0;
-              return (
-                <Fragment key={t.id}>
-                  <div
-                    className={`tb-row ${isActive ? "active" : ""}`}
-                    onClick={() => { setActiveTrace(t.id); /* D-088: App.tsx 接管 round reset */ }}
-                  >
-                    <div className={`dot ${t.status === "ok" ? "ok" : t.status === "fallback" ? "fb" : "warn"}`}></div>
-                    <div className="body">
-                      <div className="l1">
-                        <span className="time">{t.time}</span>
-                        <span className={`meal ${t.meal}`}>{t.meal === "lunch" ? "午" : "晚"}</span>
-                        {hasRefines && (
-                          <span className="rd-badge" style={{ fontSize: 9 }}>
-                            R{1 + t.refineCount} ×{1 + t.refineCount}
-                          </span>
-                        )}
-                        <span className={`src ${t.source === "sandbox" ? "sbx" : ""}`}>
-                          {t.source === "sandbox" ? `SBX D+${t.sandboxDay}` : "REAL"}
-                        </span>
-                      </div>
-                      <div className="l2">{t.finalTop1}</div>
-                      <div className="l3">
-                        <span className="mono">{t.latency_ms}ms</span>
-                        {t.feedback && <span style={{ marginLeft: 6 }}>{feedbackGlyph(t.feedback)}</span>}
-                      </div>
-                    </div>
-                    {hasRefines && (
-                      <button
-                        className="chev"
-                        onClick={(e) => { e.stopPropagation(); toggleExpand(t.id); }}
-                        style={{ background: "transparent", border: 0, cursor: "pointer" }}
-                      >
-                        {isOpen ? "▾" : "▸"}
-                      </button>
-                    )}
-                  </div>
-                  {hasRefines && isOpen && (
-                    <div className="tb-rounds">
-                      {/* R1 总是有 */}
-                      <div
-                        className={`rr ${isActive && activeRound === "R1" ? "active" : ""}`}
-                        onClick={() => { setActiveTrace(t.id); setActiveRound("R1"); }}
-                      >
-                        <span></span>
-                        <span><span className="name">R1</span> <span className="txt">原始</span></span>
-                        <span className="when">{t.time}</span>
-                      </div>
-                      {[...Array(t.refineCount)].map((_, i) => {
-                        const rid = `R${i + 2}`;
-                        // 当 active 时, 用真 round 数据的 label/time; 否则给个 placeholder
-                        const realRound = isActive
-                          ? activeRounds.find((r) => r.id === rid)
-                          : undefined;
-                        const rdesc = realRound?.label
-                          ?? ["换一组", "想喝汤", "别要重的", "加点蛋白"][i]
-                          ?? "追问";
-                        const rwhen = realRound?.started_at ?? `+${(i + 1) * 2 + 1}min`;
-                        return (
-                          <div
-                            key={rid}
-                            className={`rr ${isActive && activeRound === rid ? "active" : ""}`}
-                            onClick={() => { setActiveTrace(t.id); setActiveRound(rid); }}
-                          >
-                            <span></span>
-                            <span><span className="name">{rid}</span> <span className="txt">{rdesc}</span></span>
-                            <span className="when">{rwhen}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </Fragment>
-              );
-            })}
-          </Fragment>
-        ))}
+        {renderTraceGroups("full")}
       </div>
 
       <div className="tb-foot">
@@ -414,5 +355,57 @@ export function TraceBrowser({
         </div>
       </div>
     </aside>
+  );
+}
+
+function TraceRow({
+  trace,
+  active,
+  isOpen,
+  hasRefines,
+  mode,
+  onRowClick,
+  onToggleExpand,
+}: {
+  trace: TraceMeta;
+  active: boolean;
+  isOpen: boolean;
+  hasRefines: boolean;
+  mode: "collapsed" | "full";
+  onRowClick: () => void;
+  onToggleExpand: () => void;
+}) {
+  return (
+    <div className={`tb-row ${active ? "active" : ""}`} onClick={onRowClick}>
+      <div className={`dot ${trace.status === "ok" ? "ok" : trace.status === "fallback" ? "fb" : "warn"}`}></div>
+      <div className="body">
+        <div className="l1">
+          <span className="time">{trace.time}</span>
+          <span className={`meal ${trace.meal}`}>{trace.meal === "lunch" ? "午" : "晚"}</span>
+          {hasRefines && (
+            <span className="rd-badge" style={{ fontSize: 9 }}>
+              R{1 + trace.refineCount} ×{1 + trace.refineCount}
+            </span>
+          )}
+          <span className={`src ${trace.source === "sandbox" ? "sbx" : ""}`}>
+            {trace.source === "sandbox" ? `SBX D+${trace.sandboxDay}` : "REAL"}
+          </span>
+        </div>
+        <div className="l2">{trace.finalTop1}</div>
+        <div className="l3">
+          <span className="mono">{trace.latency_ms}ms</span>
+          {trace.feedback && <span style={{ marginLeft: 6 }}>{feedbackGlyph(trace.feedback)}</span>}
+        </div>
+      </div>
+      {mode === "full" && hasRefines && (
+        <button
+          className="chev"
+          onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}
+          style={{ background: "transparent", border: 0, cursor: "pointer" }}
+        >
+          {isOpen ? "▾" : "▸"}
+        </button>
+      )}
+    </div>
   );
 }

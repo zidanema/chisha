@@ -2,7 +2,8 @@
 // 数据全部走 React state (mock fallback in waMocks.ts), 不走 window.MOCK swap.
 // Phase 2b 替换 mock 为 backend GET /api/traces + /api/trace/{id}/round/{rid}.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { emptyRefineTrace } from "./api/adapter";
 import { DagHeader } from "./components/DagHeader";
 import { IntentStrip } from "./components/IntentStrip";
 import { LookupDrawer } from "./components/LookupDrawer";
@@ -37,17 +38,121 @@ function roundToSession(round: RoundRecord, trace: WaTrace): Session {
     l2: round.l2,
     l3: round.l3,
     final: round.final,
-    refine: {
-      // 老 panel 还引用 session.refine; Workflow A 用 IntentStrip 替代, 这里给个 stub.
-      parent_session: "", refine_session: "", user_text: round.user_input ?? "",
-      parse_feedback: { llm_call: { model: "", latency_ms: 0, input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 },
-        chips_hit: [], note: "", rating_taste: null, want_again: false },
-      chips_to_taste_hints: { boost: {}, penalty: {} },
-      infer_refine_mood: { triggered: false, hits: [], resolved_mood: {} },
-      diff: { new_in_top5: [], dropped_from_top5: [], moved_up: [], moved_down: [] },
-      summary_kpi: { explore_n: 0, total_latency_ms: 0, candidates_returned: 0, diff_top5: 0 },
-    },
+    // 老 panel 还引用 session.refine; Workflow A 用 IntentStrip 替代, 这里给个 stub.
+    refine: emptyRefineTrace("", round.user_input ?? "", ""),
   };
+}
+
+type RoundSelectionState = {
+  activeRound: string;
+  base: string;
+  target: string;
+  diffMode: DiffMode;
+  traceId: string;
+  latestRound: string;
+  signature: string;
+};
+
+type RoundSelectionAction =
+  | { type: "sync"; traceId: string; latestRound: string; rounds: RoundRecord[]; signature: string }
+  | { type: "setActiveRound"; id: string }
+  | { type: "setBase"; id: string }
+  | { type: "setTarget"; id: string }
+  | { type: "setDiffMode"; mode: DiffMode };
+
+function deriveBase(diffMode: DiffMode, target: string, rounds: RoundRecord[]): string {
+  if (rounds.length === 0) return "R1";
+  if (diffMode === "vs_r1") return rounds[0].id;
+  const idx = rounds.findIndex((r) => r.id === target);
+  return idx > 0 ? rounds[idx - 1].id : rounds[0].id;
+}
+
+function roundSelectionReducer(
+  state: RoundSelectionState,
+  action: RoundSelectionAction,
+): RoundSelectionState {
+  if (action.type === "sync") {
+    if (action.rounds.length === 0) return state;
+    const first = action.rounds[0].id;
+    const latest = action.latestRound || action.rounds[action.rounds.length - 1].id;
+    if (action.traceId !== state.traceId) {
+      return {
+        ...state,
+        activeRound: latest,
+        target: latest,
+        base: first,
+        traceId: action.traceId,
+        latestRound: action.latestRound,
+        signature: action.signature,
+      };
+    }
+    const has = (id: string) => action.rounds.some((r) => r.id === id);
+    const activeRound = has(state.activeRound) ? state.activeRound : latest;
+    const target = has(state.target) ? state.target : activeRound;
+    return {
+      ...state,
+      activeRound,
+      target,
+      base: deriveBase(state.diffMode, target, action.rounds),
+      latestRound: action.latestRound,
+      signature: action.signature,
+    };
+  }
+  if (action.type === "setActiveRound") {
+    return { ...state, activeRound: action.id, target: action.id };
+  }
+  if (action.type === "setTarget") return { ...state, target: action.id };
+  if (action.type === "setBase") return { ...state, base: action.id };
+  return { ...state, diffMode: action.mode };
+}
+
+function useRoundSelection(trace: WaTrace, rounds: RoundRecord[]) {
+  const roundsSignature = rounds.map((r) => r.id).join(",");
+  const [state, dispatch] = useReducer(roundSelectionReducer, {
+    activeRound: readInitialRound(),
+    base: "R1",
+    target: "R1",
+    diffMode: "vs_r1",
+    traceId: trace.meta.id,
+    latestRound: trace.meta.latestRound,
+    signature: roundsSignature,
+  });
+
+  useEffect(() => {
+    dispatch({
+      type: "sync",
+      traceId: trace.meta.id,
+      latestRound: trace.meta.latestRound,
+      rounds,
+      signature: roundsSignature,
+    });
+  }, [trace.meta.id, trace.meta.latestRound, rounds, roundsSignature]);
+
+  const base = useMemo(
+    () => deriveBase(state.diffMode, state.target, rounds),
+    [state.diffMode, state.target, rounds],
+  );
+
+  return {
+    activeRound: state.activeRound,
+    base,
+    target: state.target,
+    diffMode: state.diffMode,
+    setActiveRound: (id: string) => dispatch({ type: "setActiveRound", id }),
+    setBase: (id: string) => dispatch({ type: "setBase", id }),
+    setTarget: (id: string) => dispatch({ type: "setTarget", id }),
+    setDiffMode: (mode: DiffMode) => dispatch({ type: "setDiffMode", mode }),
+  };
+}
+
+function readInitialRound(): string {
+  if (typeof window === "undefined") return "R1";
+  try {
+    const r = new URLSearchParams(window.location.search).get("round");
+    return r && r.length > 0 ? r : "R1";
+  } catch {
+    return "R1";
+  }
 }
 
 export function App() {
@@ -61,17 +166,6 @@ export function App() {
     intentSchema,
     backendOnline,
   } = useWaTrace();
-  // S-09: 接 sandbox-lab "打开 trace" deep-link — `?round=` 优先, 没有默认 R1.
-  // trace 选中由 useWaTrace 内部读 URL ?trace= (避免 list bootstrap race).
-  const [activeRound, setActiveRound] = useState<string>(() => {
-    if (typeof window === "undefined") return "R1";
-    try {
-      const r = new URLSearchParams(window.location.search).get("round");
-      return r && r.length > 0 ? r : "R1";
-    } catch {
-      return "R1";
-    }
-  });
   const [expanded, setExpanded] = useState<Set<string>>(new Set([activeTrace]));
   const [tbCollapsed, setTbCollapsed] = useState<boolean>(() => {
     try { return localStorage.getItem("chisha:tbCollapsed") === "1"; } catch { return false; }
@@ -80,53 +174,22 @@ export function App() {
     try { localStorage.setItem("chisha:tbCollapsed", tbCollapsed ? "1" : "0"); } catch { /* ignore */ }
   }, [tbCollapsed]);
 
-  const [base, setBase] = useState<string>("R1");
-  const [target, setTarget] = useState<string>("R1");
-  const [diffMode, setDiffMode] = useState<DiffMode>("vs_r1");
   const [intentCollapsed, setIntentCollapsed] = useState<boolean>(true);
   const [condensed, setCondensed] = useState<boolean>(false);
   const [lookupOpen, setLookupOpen] = useState<boolean>(false);
 
   // 当前 trace + 所有 round (来自 hook, backend / mock fallback 自动处理)
   const rounds = trace.rounds;
-  const roundsSignature = rounds.map((r) => r.id).join(",");
-
-  // D-088 (B1): trace 加载完成时 → 强制 reset 到 meta.latestRound. 不再 sticky 在
-  // 上一 trace 的 round. useWaTrace 的 stale guard 已保证 trace.meta.id === activeTrace,
-  // 所以这里直接 key on trace.meta.id 即可.
-  useEffect(() => {
-    if (rounds.length === 0) return;
-    const latest = trace.meta.latestRound || rounds[rounds.length - 1].id;
-    const first = rounds[0].id;
-    setActiveRound(latest);
-    setBase(first);
-    setTarget(latest);
-  }, [trace.meta.id, trace.meta.latestRound]);
-
-  // 兜底: rounds 签名变化但 trace.meta.id 没变 (同 trace 加 round 罕见 case) →
-  // 仅修无效值 (preserve 用户已主动切到的 round).
-  useEffect(() => {
-    if (rounds.length === 0) return;
-    const latest = rounds[rounds.length - 1].id;
-    const first = rounds[0].id;
-    setActiveRound((prev) => rounds.find((r) => r.id === prev) ? prev : latest);
-    setBase((prev) => rounds.find((r) => r.id === prev) ? prev : first);
-    setTarget((prev) => rounds.find((r) => r.id === prev) ? prev : latest);
-  }, [roundsSignature]);
-
-  // activeRound 改变 → target 跟随
-  useEffect(() => { setTarget(activeRound); }, [activeRound]);
-
-  // base 跟 diffMode + target 派生
-  useEffect(() => {
-    if (rounds.length === 0) return;
-    if (diffMode === "vs_r1") {
-      setBase(rounds[0].id);
-    } else {
-      const idx = rounds.findIndex((r) => r.id === target);
-      setBase(idx > 0 ? rounds[idx - 1].id : rounds[0].id);
-    }
-  }, [diffMode, target, rounds]);
+  const {
+    activeRound,
+    base,
+    target,
+    diffMode,
+    setActiveRound,
+    setBase,
+    setTarget,
+    setDiffMode,
+  } = useRoundSelection(trace, rounds);
 
   // 顶部 sticky-stack auto-condense — 用 IntersectionObserver + 哨兵元素,
   // 不再依赖 scrollTop 阈值. 旧实现 (scrollTop > 60 / < 20) 在 condense 后 sticky-stack

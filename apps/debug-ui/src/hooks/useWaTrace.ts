@@ -144,28 +144,7 @@ function fullToRound(full: BackendRoundFull, fallback?: WaTrace): RoundRecord {
     return { ...base, refine_intent_llm: refineIntentLlm };
   }
   try {
-    const synthBackendTrace: BackendDebugTrace = {
-      session_id: full.id || "round",
-      started_at: full.started_at || "",
-      total_latency_ms: (full as { total_latency_ms?: number }).total_latency_ms ?? 0,
-      ctx_latency_ms: (full as { ctx_latency_ms?: number }).ctx_latency_ms ?? 0,
-      recall_latency_ms: (full as { recall_latency_ms?: number }).recall_latency_ms ?? 0,
-      score_latency_ms: (full as { score_latency_ms?: number }).score_latency_ms ?? 0,
-      rerank_latency_ms: (full as { rerank_latency_ms?: number }).rerank_latency_ms ?? 0,
-      final_latency_ms: (full as { final_latency_ms?: number }).final_latency_ms ?? 0,
-      __frozen: (full.__frozen as BackendDebugTrace["__frozen"]) ?? undefined,
-      l1: full.l1 as BackendDebugTrace["l1"],
-      l2: full.l2 as BackendDebugTrace["l2"],
-      l3: full.l3 as BackendDebugTrace["l3"],
-      final: full.final as BackendDebugTrace["final"],
-      refine: { applied: false } as BackendDebugTrace["refine"],
-      __version: 3,
-      __source: "production",
-      __parent_session_id: null,
-      __llm_called: true,
-      __config: {} as BackendDebugTrace["__config"],
-    };
-    const sess = traceToSession(synthBackendTrace);
+    const sess = traceToSession(roundFullToBackendTrace(full));
     return {
       ...base,
       l1: sess.l1, l2: sess.l2, l3: sess.l3, final: sess.final,
@@ -177,6 +156,30 @@ function fullToRound(full: BackendRoundFull, fallback?: WaTrace): RoundRecord {
     console.warn("[useWaTrace] traceToSession adapter failed, using stub:", e);
     return { ...base, refine_intent_llm: refineIntentLlm };
   }
+}
+
+function roundFullToBackendTrace(full: BackendRoundFull): BackendDebugTrace {
+  return {
+    session_id: full.id || "round",
+    started_at: full.started_at || "",
+    total_latency_ms: (full as { total_latency_ms?: number }).total_latency_ms ?? 0,
+    ctx_latency_ms: (full as { ctx_latency_ms?: number }).ctx_latency_ms ?? 0,
+    recall_latency_ms: (full as { recall_latency_ms?: number }).recall_latency_ms ?? 0,
+    score_latency_ms: (full as { score_latency_ms?: number }).score_latency_ms ?? 0,
+    rerank_latency_ms: (full as { rerank_latency_ms?: number }).rerank_latency_ms ?? 0,
+    final_latency_ms: (full as { final_latency_ms?: number }).final_latency_ms ?? 0,
+    __frozen: (full.__frozen as BackendDebugTrace["__frozen"]) ?? undefined,
+    l1: full.l1 as BackendDebugTrace["l1"],
+    l2: full.l2 as BackendDebugTrace["l2"],
+    l3: full.l3 as BackendDebugTrace["l3"],
+    final: full.final as BackendDebugTrace["final"],
+    refine: { applied: false } as BackendDebugTrace["refine"],
+    __version: 3,
+    __source: "production",
+    __parent_session_id: null,
+    __llm_called: true,
+    __config: {} as BackendDebugTrace["__config"],
+  };
 }
 
 function displayTime(iso: string | null | undefined): string {
