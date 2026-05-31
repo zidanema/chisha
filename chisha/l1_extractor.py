@@ -87,26 +87,61 @@ def aggregate_inputs(
     accepted: dict[str, dict] = feedback_store_data.get("accepted") or {}
     sessions: dict[str, dict] = feedback_store_data.get("sessions") or {}
 
-    # 1. 找窗口内、有 V1.1 反馈、非 not-eaten 的 meals
-    relevant_sids: list[str] = []
+    relevant_sids = _relevant_sids(feedbacks, cutoff, today)
+    calibration_histogram, rating_distribution = _calibration_histograms(
+        feedbacks, relevant_sids
+    )
+    ingredient_freq = _ingredient_frequency(relevant_sids, accepted, sessions)
+    # 排序: 最近 submitted 在前
+    sorted_recent = sorted(
+        relevant_sids,
+        key=lambda s: feedbacks[s].get("submitted_at") or "",
+        reverse=True,
+    )
+    recent_complaints, recent_positive = _recent_evidence(
+        sorted_recent, feedbacks, accepted, sessions
+    )
+
+    methodology_name = profile.get("methodology", "harvard_plate")
+    methodology_rationale = (
+        profile.get("methodology_rationale")
+        or "控油 + 至少 1 道蔬菜 + 蛋白下限"
+    )
+
+    return {
+        "based_on_days": window_days,
+        "based_on_meals": len(relevant_sids),
+        "methodology": methodology_name,
+        "methodology_rationale": methodology_rationale,
+        "calibration_histogram": calibration_histogram,
+        "rating_distribution": rating_distribution,
+        "ingredient_frequency": ingredient_freq,
+        "recent_complaints": recent_complaints,
+        "recent_positive": recent_positive,
+    }
+
+
+def _relevant_sids(feedbacks: dict, cutoff: dt.date, today: dt.date) -> list[str]:
+    """窗口内、有 V1.1 反馈、非 not-eaten 的 meal sid 列表 (pass 1)."""
+    out: list[str] = []
     for sid, fb in feedbacks.items():
         if fb.get("variant") == "not-eaten":
             continue
         ts = _to_date(fb.get("submitted_at"))
         if ts is None or ts < cutoff or ts > today:
             continue
-        relevant_sids.append(sid)
+        out.append(sid)
+    return out
 
-    based_on_meals = len(relevant_sids)
 
-    # 2. 4 维 calibration 直方图
+def _calibration_histograms(feedbacks: dict, sids: list[str]) -> tuple[dict, dict]:
+    """4 维 calibration 直方图 + rating 分布 (pass 2)."""
     calibration_histogram: dict[str, dict[str, int]] = {
         dim: {bucket: 0 for bucket in buckets}
         for dim, buckets in _CALIBRATION_DIMS.items()
     }
     rating_distribution: dict[str, int] = {b: 0 for b in _RATING_BUCKETS.values()}
-
-    for sid in relevant_sids:
+    for sid in sids:
         fb = feedbacks[sid]
         for dim, buckets in _CALIBRATION_DIMS.items():
             val = fb.get(dim)
@@ -115,10 +150,15 @@ def aggregate_inputs(
         rating = fb.get("rating")
         if rating in _RATING_BUCKETS:
             rating_distribution[_RATING_BUCKETS[rating]] += 1
+    return calibration_histogram, rating_distribution
 
-    # 3. ingredient_frequency: 从 accepted_rank 对应的 combo dishes 拿 main_ingredient_type
+
+def _ingredient_frequency(
+    sids: list[str], accepted: dict, sessions: dict
+) -> dict[str, int]:
+    """从 accepted_rank 对应 combo dishes 的 main_ingredient_type 计数 (pass 3)."""
     ingredient_freq: dict[str, int] = {}
-    for sid in relevant_sids:
+    for sid in sids:
         accepted_rec = accepted.get(sid) or {}
         rank = accepted_rec.get("accepted_rank")
         if rank is None:
@@ -133,65 +173,51 @@ def aggregate_inputs(
             ing = np_.get("main_ingredient_type")
             if ing:
                 ingredient_freq[ing] = ingredient_freq.get(ing, 0) + 1
+    return ingredient_freq
 
-    # 4. recent_complaints (oil_calibration=2 或 rating=-1) 取最近 5 条
-    # 5. recent_positive (rating=1 + repurchase_intent=2) 取最近 5 条
-    def _meal_snapshot(sid: str) -> dict:
-        fb = feedbacks[sid]
-        accepted_rec = accepted.get(sid) or {}
-        rank = accepted_rec.get("accepted_rank")
-        session_payload = sessions.get(sid) or {}
-        candidates = session_payload.get("candidates") or []
-        dishes_names: list[str] = []
-        if rank and 1 <= rank <= len(candidates):
-            for d in candidates[rank - 1].get("dishes") or []:
-                name = d.get("name")
-                if name:
-                    dishes_names.append(name)
-        return {
-            "meal": sid,
-            "dishes": dishes_names[:3],
-            "oil_calibration": fb.get("oil_calibration"),
-            "rating": fb.get("rating"),
-            "repurchase_intent": fb.get("repurchase_intent"),
-            "note": (fb.get("note") or "")[:80],  # 截断防 prompt 膨胀
-        }
 
-    # 排序: 最近 submitted 在前
-    def _submitted_ts(sid: str) -> str:
-        return feedbacks[sid].get("submitted_at") or ""
+def _meal_snapshot(sid: str, feedbacks: dict, accepted: dict, sessions: dict) -> dict:
+    """单顿快照 (dishes 名 + calibration 关键字段), 供 recent evidence 用."""
+    fb = feedbacks[sid]
+    accepted_rec = accepted.get(sid) or {}
+    rank = accepted_rec.get("accepted_rank")
+    session_payload = sessions.get(sid) or {}
+    candidates = session_payload.get("candidates") or []
+    dishes_names: list[str] = []
+    if rank and 1 <= rank <= len(candidates):
+        for d in candidates[rank - 1].get("dishes") or []:
+            name = d.get("name")
+            if name:
+                dishes_names.append(name)
+    return {
+        "meal": sid,
+        "dishes": dishes_names[:3],
+        "oil_calibration": fb.get("oil_calibration"),
+        "rating": fb.get("rating"),
+        "repurchase_intent": fb.get("repurchase_intent"),
+        "note": (fb.get("note") or "")[:80],  # 截断防 prompt 膨胀
+    }
 
-    sorted_recent = sorted(relevant_sids, key=_submitted_ts, reverse=True)
 
+def _recent_evidence(
+    sorted_sids: list[str], feedbacks: dict, accepted: dict, sessions: dict
+) -> tuple[list[dict], list[dict]]:
+    """单遍历同时收集 recent_complaints + recent_positive (各 ≤ MAX, pass 4/5).
+
+    complaints: oil_calibration=2 或 rating=-1; positive: rating=1 且 repurchase=2.
+    保持单循环 (同一 sorted 顺序), 不拆两次遍历 (codex 共商守则)。
+    """
     recent_complaints: list[dict] = []
     recent_positive: list[dict] = []
-    for sid in sorted_recent:
+    for sid in sorted_sids:
         fb = feedbacks[sid]
         if (fb.get("oil_calibration") == 2 or fb.get("rating") == -1) and \
                 len(recent_complaints) < MAX_RECENT_EVIDENCE_SAMPLES:
-            recent_complaints.append(_meal_snapshot(sid))
+            recent_complaints.append(_meal_snapshot(sid, feedbacks, accepted, sessions))
         if (fb.get("rating") == 1 and fb.get("repurchase_intent") == 2) and \
                 len(recent_positive) < MAX_RECENT_EVIDENCE_SAMPLES:
-            recent_positive.append(_meal_snapshot(sid))
-
-    # 6. methodology 上下文
-    methodology_name = profile.get("methodology", "harvard_plate")
-    methodology_rationale = (
-        profile.get("methodology_rationale")
-        or "控油 + 至少 1 道蔬菜 + 蛋白下限"
-    )
-
-    return {
-        "based_on_days": window_days,
-        "based_on_meals": based_on_meals,
-        "methodology": methodology_name,
-        "methodology_rationale": methodology_rationale,
-        "calibration_histogram": calibration_histogram,
-        "rating_distribution": rating_distribution,
-        "ingredient_frequency": ingredient_freq,
-        "recent_complaints": recent_complaints,
-        "recent_positive": recent_positive,
-    }
+            recent_positive.append(_meal_snapshot(sid, feedbacks, accepted, sessions))
+    return recent_complaints, recent_positive
 
 
 def _load_system_prompt(prompt_path: Path | str | None = None) -> str:
