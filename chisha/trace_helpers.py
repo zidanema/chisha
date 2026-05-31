@@ -150,23 +150,15 @@ def build_l3_trace_from_collector(
 
 # ─────────────────────────── L1/L2 trace ───────────────────────────
 
-def build_l2_trace_for_round(
-    ranked_raw: list[dict],
-    ranked: list[dict],
-    profile: dict,
-) -> dict:
-    """L2 trace 重建. 给 refine.py 用 — 跟 api.py:_build_trace 同口径.
+def dim_stats_topk(topk_view: list[dict]) -> dict:
+    """topk_view 各打分维度 min/max/mean/std 分布 (死分诊断).
 
-    严格复用 debug_recommend._build_l2_cap_stats + _format_ranked_for_trace
-    保证两边 trace 字段集合一致, baseline_l2_snapshot 不漂.
+    F-016 ⑥: 原在 debug_recommend / api / debug_what_if / build_l2_trace_for_round
+    四处逐字重复, 收敛到此单一源。动态 all_dims (按 score_breakdown 出现的键),
+    round 3 位, std=statistics.pstdev (n>1 否则 0) — 逐字保留原实现, baseline_l2
+    0-diff 守门。
     """
     import statistics
-    from chisha.debug_recommend import _build_l2_cap_stats, _format_ranked_for_trace
-    from chisha.rerank import L3_INPUT_TOP_K
-    from chisha.score import resolve_caps
-
-    caps = resolve_caps(profile)
-    topk_view = ranked[:L3_INPUT_TOP_K]
     dim_stats: dict = {}
     if topk_view:
         all_dims: set = set()
@@ -180,6 +172,25 @@ def build_l2_trace_for_round(
                 "mean": round(sum(vals) / len(vals), 3),
                 "std": round(statistics.pstdev(vals) if len(vals) > 1 else 0, 3),
             }
+    return dim_stats
+
+
+def build_l2_trace_for_round(
+    ranked_raw: list[dict],
+    ranked: list[dict],
+    profile: dict,
+) -> dict:
+    """L2 trace 重建. 给 refine.py 用 — 跟 api.py:_build_trace 同口径.
+
+    严格复用 debug_recommend._build_l2_cap_stats + _format_ranked_for_trace
+    保证两边 trace 字段集合一致, baseline_l2_snapshot 不漂.
+    """
+    from chisha.debug_recommend import _build_l2_cap_stats, _format_ranked_for_trace
+    from chisha.rerank import L3_INPUT_TOP_K
+    from chisha.score import resolve_caps
+
+    caps = resolve_caps(profile)
+    dim_stats = dim_stats_topk(ranked[:L3_INPUT_TOP_K])
     cap_stats = _build_l2_cap_stats(ranked_raw, ranked)
     return {
         "summary": {

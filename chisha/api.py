@@ -322,23 +322,10 @@ def _build_trace(
             feedback_signal=feedback_signal,
         )
 
-    # L2 trace (复用 ranked, 不重算)
-    import statistics
+    # L2 trace (复用 ranked, 不重算; F-016 ⑥: dim_stats 走 trace_helpers 单一源)
+    from chisha.trace_helpers import dim_stats_topk
     caps = resolve_caps(profile)
-    dim_stats: dict = {}
-    topk_view = ranked[:L3_INPUT_TOP_K]
-    if topk_view:
-        all_dims: set = set()
-        for c in topk_view:
-            all_dims.update((c.get("score_breakdown") or {}).keys())
-        for dim in all_dims:
-            vals = [(c.get("score_breakdown") or {}).get(dim, 0.0) for c in topk_view]
-            dim_stats[dim] = {
-                "min": round(min(vals), 3),
-                "max": round(max(vals), 3),
-                "mean": round(sum(vals) / len(vals), 3),
-                "std": round(statistics.pstdev(vals) if len(vals) > 1 else 0, 3),
-            }
+    dim_stats = dim_stats_topk(ranked[:L3_INPUT_TOP_K])
     # D-079 followup: 补 cap 前后 unique restaurants/brands/cuisines/food_forms
     # 统计 (之前漏写, 前端 DagHeader 显示 "undefined rest"). 复用 debug_recommend
     # 的 helper 保持口径一致.

@@ -613,24 +613,9 @@ def debug_recommend(
         cuisine_before, cuisine_after, form_before, form_after = \
         _compute_l2_cap_keysets(ranked_raw, ranked)
 
-    # 统计每维度 std (区分度) — 帮助看是否仍有死分
-    import statistics
-    dim_stats: dict[str, dict[str, float]] = {}
-    if ranked[:L3_INPUT_TOP_K]:
-        all_dims: set[str] = set()
-        for c in ranked[:L3_INPUT_TOP_K]:
-            all_dims.update((c.get("score_breakdown") or {}).keys())
-        for dim in all_dims:
-            vals = [
-                (c.get("score_breakdown") or {}).get(dim, 0.0)
-                for c in ranked[:L3_INPUT_TOP_K]
-            ]
-            dim_stats[dim] = {
-                "min": round(min(vals), 3),
-                "max": round(max(vals), 3),
-                "mean": round(sum(vals) / len(vals), 3),
-                "std": round(statistics.pstdev(vals) if len(vals) > 1 else 0, 3),
-            }
+    # 统计每维度 std (区分度) — 帮助看是否仍有死分 (F-016 ⑥: trace_helpers 单一源)
+    from chisha.trace_helpers import dim_stats_topk
+    dim_stats = dim_stats_topk(ranked[:L3_INPUT_TOP_K])
 
     l2_trace = {
         "summary": {
