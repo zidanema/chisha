@@ -250,17 +250,7 @@ def list_traces(
             mt = frozen.get("meal_type") or data.get("l1", {}).get("meal")
             if meal_type and mt != meal_type:
                 continue
-            top1_summary = _extract_top1_summary(data)
-            items.append({
-                "session_id": data.get("session_id") or p.stem,
-                "started_at": data.get("started_at"),
-                "meal_type": mt,
-                "zone": frozen.get("zone"),
-                "top1_summary": top1_summary,
-                "total_latency_ms": data.get("total_latency_ms"),
-                "l3_status": (data.get("l3") or {}).get("status"),
-                "source": data.get("__source") or "production",
-            })
+            items.append(_v2_base_meta(data, p.stem))
         except Exception as e:
             corrupt_count += 1
             logger.warning("list_traces skipped corrupt %s: %s: %s",
@@ -285,6 +275,27 @@ def _extract_top1_summary(trace: dict) -> str:
     if not dish_names:
         return rest
     return f"{rest} · {' + '.join(dish_names)}"
+
+
+def _v2_base_meta(data: dict, sid: str) -> dict:
+    """v2 单文件 trace dict → API TraceMeta 8 公共字段 (单一源).
+
+    F-016 ②: list_traces + list_traces_v3 的 v2 分支两处逐字相同, 收敛到此。
+    仅供 v2 单文件派生 **API 响应 meta** (key=source); _build_meta_from_v2 产
+    **持久化 meta** (key=__source + __version/round_ids), 是另一 schema, 算法同源
+    但不复用本 helper (codex 共商: 避免两 schema 经一 helper 耦合)。
+    """
+    frozen = data.get("__frozen") or {}
+    return {
+        "session_id": data.get("session_id") or sid,
+        "started_at": data.get("started_at"),
+        "meal_type": frozen.get("meal_type") or data.get("l1", {}).get("meal"),
+        "zone": frozen.get("zone"),
+        "top1_summary": _extract_top1_summary(data),
+        "total_latency_ms": data.get("total_latency_ms"),
+        "l3_status": (data.get("l3") or {}).get("status"),
+        "source": data.get("__source") or "production",
+    }
 
 
 # ────────────────────────── feedback link 派生
@@ -921,14 +932,7 @@ def list_traces_v3(
                 if meal_type and mt != meal_type:
                     continue
                 items.append({
-                    "session_id": data.get("session_id") or sid,
-                    "started_at": data.get("started_at"),
-                    "meal_type": mt,
-                    "zone": frozen.get("zone"),
-                    "top1_summary": _extract_top1_summary(data),
-                    "total_latency_ms": data.get("total_latency_ms"),
-                    "l3_status": (data.get("l3") or {}).get("status"),
-                    "source": data.get("__source") or "production",
+                    **_v2_base_meta(data, sid),
                     "round_ids": ["R1"],
                     "latest_round": "R1",
                     "refine_count": 0,
