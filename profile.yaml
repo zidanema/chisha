@@ -1,4 +1,4 @@
-# chisha-meal · 用户画像 template
+# chisha · 用户画像 template
 #
 # 这是默认模板. 首次 `chisha onboard` 会复制到 ~/.chisha/profile.yaml,
 # 再由你按口味/zone 修改. 这里所有 <PLACEHOLDER> 字段都需替换.

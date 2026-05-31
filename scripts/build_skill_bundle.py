@@ -1,11 +1,11 @@
 """D-105 形态B: 把 agent-only core 切成**自包含、拷贝即用**的 skill bundle 并安装。
 
 形态B (替代形态A 当默认接入): 一个 skill 文件夹 = core 代码 + 数据 + vendored pyyaml +
-wrapper + SKILL.md, 拷进 `~/.claude/skills/chisha-meal/` 即被宿主 agent 驱动, **零全局
+wrapper + SKILL.md, 拷进 `~/.claude/skills/chisha/` 即被宿主 agent 驱动, **零全局
 安装、运行期零联网、零 pydantic** (唯一第三方依赖 pyyaml 已 vendored)。
 
 产物布局 (install_root() 靠 prompts/ 与 chisha/ 同级感知 bundle, 必须保持):
-    ~/.claude/skills/chisha-meal/
+    ~/.claude/skills/chisha/
       chisha/            # core 子树 (含 cli.py — D-105 从排除清单移回, 是 wrapper dispatch 目标)
       vendor/yaml/       # vendored 纯 Python pyyaml (运行时缺 _yaml C 扩展走纯 Python path)
       data/              # restaurants + dishes_tagged + manifest + aliases
@@ -21,7 +21,7 @@ Windows 不支持 (除非 WSL)。SKILL.md / doctor 显式声明此限制。
 用法:
     # 仅 staging (不安装):
     uv run python -m scripts.build_skill_bundle --out tmp/skill_bundle
-    # staging + 原子安装到 ~/.claude/skills/chisha-meal/ (备份旧内容):
+    # staging + 原子安装到 ~/.claude/skills/chisha/ (备份旧内容):
     uv run python -m scripts.build_skill_bundle --out tmp/skill_bundle --install
 
 排除清单依据 D-104 core/extras 边界 (sandbox_context / sandbox_router 是 CORE 保留)。
@@ -68,7 +68,7 @@ DATA_FILES = [
 # PII 占位模板 <YOUR_NAME>/<YOUR_LUNCH_ZONE>...; 当前 builder 漏拷, 补上)。
 PROFILE_TEMPLATE = "profile.yaml"
 
-SKILL_DIR_NAME = "chisha-meal"
+SKILL_DIR_NAME = "chisha"
 
 # wrapper: python3 入口。注入顺序 = bundle_root (chisha 包) → bundle/vendor (vendored
 # yaml) → 原有 paths; 注入必须早于 import chisha (recall/methodology 顶层 import yaml)。
@@ -194,7 +194,7 @@ def _unique_sibling(target: Path, suffix: str) -> Path:
 
 
 def atomic_install(staging: Path, target: Path) -> dict:
-    """把 staging bundle staged-安装到 target (~/.claude/skills/chisha-meal/), 备份旧内容。
+    """把 staging bundle staged-安装到 target (~/.claude/skills/chisha/), 备份旧内容。
 
     **staged install + best-effort 回滚** (非 OS 级单原子 swap — Codex review #2):
     **先** copytree staging → target 的临时兄弟目录 (.new.<n>, 慢/易失败的一步, 此时 live
@@ -232,9 +232,9 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="tmp/skill_bundle", help="staging bundle 输出目录")
     ap.add_argument("--install", action="store_true",
-                    help="staged 安装到 ~/.claude/skills/chisha-meal/ (copy-to-temp-first + 备份旧内容)")
+                    help="staged 安装到 ~/.claude/skills/chisha/ (copy-to-temp-first + 备份旧内容)")
     ap.add_argument("--target", default=None,
-                    help="--install 目标目录 (默认 ~/.claude/skills/chisha-meal/; 测试注入)")
+                    help="--install 目标目录 (默认 ~/.claude/skills/chisha/; 测试注入)")
     args = ap.parse_args()
     repo = Path(__file__).resolve().parent.parent
     out = (Path.cwd() / args.out).resolve()
@@ -251,7 +251,7 @@ def main() -> None:
         if res["backup"]:
             print(f"  旧内容备份 → {res['backup']} (回滚: 删 target 后 mv backup 回来)")
     else:
-        print("  (未 --install; 仅 staging。加 --install 落 ~/.claude/skills/chisha-meal/)")
+        print("  (未 --install; 仅 staging。加 --install 落 ~/.claude/skills/chisha/)")
 
 
 if __name__ == "__main__":

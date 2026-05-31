@@ -7,7 +7,7 @@
                                — 推进一轮: 喂 LLM 原始输出 + 回显 step_token (host 单循环)
   choose --id <rid> --card <cid> --action <accept|skip> [--reason ...]
                                — 记录用户选择 (幂等)
-  skills add [--force]         — 装 Claude Code skill 到 ~/.claude/skills/chisha-meal/
+  skills add [--force]         — 装 Claude Code skill 到 ~/.claude/skills/chisha/
   doctor                       — 检查环境 (delegates to agent_cli.cmd_doctor)
   onboard [--zone] [--methodology] [--force]
                                — 初始化 ~/.chisha/profile.yaml + 装 skill + dry start (B.5)
@@ -119,7 +119,7 @@ def cmd_migrate_state(args) -> int:
 # ─────────────────────────────── install-skill (B.4 stub) ─────────────
 
 def cmd_install_skill(args) -> int:
-    """T-DIST-01 B.4: 写 ~/.claude/skills/chisha-meal/SKILL.md.
+    """T-DIST-01 B.4: 写 ~/.claude/skills/chisha/SKILL.md.
 
     单一源: SKILL.md 内容从 `chisha.agent_skill_init._claude_code_skill_md()` 动态生成
     (不 ship 静态文件 — codex Round 2 P2). --force 才覆盖.
@@ -140,7 +140,7 @@ def cmd_onboard(args) -> int:
       1. profile: 从 install_root/profile.yaml template 复制到 state_root/profile.yaml,
          替换 zone 占位 (<YOUR_LUNCH_ZONE> / <YOUR_DINNER_ZONE> → --zone arg).
          已存在 + 无 --force → skip (非错误).
-      2. install skill: 落 ~/.claude/skills/chisha-meal/SKILL.md.
+      2. install skill: 落 ~/.claude/skills/chisha/SKILL.md.
       3. doctor: 自检并把 doctor payload 合并进 onboard summary.
 
     输出: 单条 JSON (machine-readable summary). 人类提示走 stderr.

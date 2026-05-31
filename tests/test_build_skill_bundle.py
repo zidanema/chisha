@@ -94,7 +94,7 @@ def test_atomic_install_backs_up(tmp_path):
     """--install staged 覆盖时备份旧内容 (回滚用; copy-to-temp-first + rename swap)。"""
     staging = tmp_path / "staging"
     bsb.build(_REPO, staging)
-    target = tmp_path / "skills" / "chisha-meal"
+    target = tmp_path / "skills" / "chisha"
     # first install — no backup
     r1 = bsb.atomic_install(staging, target)
     assert r1["backup"] is None

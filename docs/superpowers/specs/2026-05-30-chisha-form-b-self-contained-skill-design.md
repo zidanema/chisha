@@ -6,11 +6,11 @@
 
 ## 1. 背景与目标
 
-AI-friendly 接入当前是**形态 A**(D-074 落地):chisha 作为独立包 `uv tool install chisha-meal` 上全局 PATH,`~/.claude/skills/chisha-meal/` 只放一个薄 SKILL.md 指向全局 `chisha` CLI。问题:接入要两步(装包 + onboard),代码不随 skill 走,分发给别人/别的机器要先在那台机器装包。
+AI-friendly 接入当前是**形态 A**(D-074 落地):chisha 作为独立包 `uv tool install chisha` 上全局 PATH,`~/.claude/skills/chisha/` 只放一个薄 SKILL.md 指向全局 `chisha` CLI。问题:接入要两步(装包 + onboard),代码不随 skill 走,分发给别人/别的机器要先在那台机器装包。
 
 **形态 B(本设计)**:把 chisha agent-only core 代码直接 bundle 进 skill 文件夹,**自包含、拷贝即用、零全局安装、运行期零联网**。一个 skill 文件夹 = 代码 + 数据 + vendored 依赖 + 说明,拷进 `~/.claude/skills/` 即可被宿主 agent 驱动。**用户拍板:B 替代 A 当默认接入形态。**
 
-成功标准:在一台**只有 python3(≥3.11)、没有 uv、没有 pydantic、没有联网**的 POSIX 机器上,把 skill 文件夹拷进 `~/.claude/skills/chisha-meal/`,宿主 agent 能跑通 `doctor → onboard → eat → continue → choose → refine` 全链路。
+成功标准:在一台**只有 python3(≥3.11)、没有 uv、没有 pydantic、没有联网**的 POSIX 机器上,把 skill 文件夹拷进 `~/.claude/skills/chisha/`,宿主 agent 能跑通 `doctor → onboard → eat → continue → choose → refine` 全链路。
 
 ## 2. 范围与非目标
 
@@ -27,11 +27,11 @@ AI-friendly 接入当前是**形态 A**(D-074 落地):chisha 作为独立包 `uv
 
 **生产端(repo,我/维护者):** `scripts/build_skill_bundle.py --install` 从 core 子树切出自包含 bundle,vendoring pyyaml,产 B 形态 SKILL.md + wrapper,原子覆盖到目标 skill 目录(并备份旧内容)。分发 = 把该文件夹打包拷走。
 
-**消费端(任意 POSIX 机器):** 拿到 skill 文件夹放进 `~/.claude/skills/chisha-meal/`。首次 `doctor` 自检 + `onboard` 建 profile(`~/.chisha`)。之后宿主 agent 经 SKILL.md 驱动。
+**消费端(任意 POSIX 机器):** 拿到 skill 文件夹放进 `~/.claude/skills/chisha/`。首次 `doctor` 自检 + `onboard` 建 profile(`~/.chisha`)。之后宿主 agent 经 SKILL.md 驱动。
 
 **目标目录布局**(`install_root()` 靠 `prompts/` 与 `chisha/` 同级感知 bundle,必须保持):
 ```
-~/.claude/skills/chisha-meal/
+~/.claude/skills/chisha/
   chisha/            # core 子树(含 cli.py — 见 §4.5)
   vendor/yaml/       # vendored 纯 Python pyyaml
   data/              # restaurants + dishes_tagged + manifest + aliases
@@ -62,13 +62,13 @@ AI-friendly 接入当前是**形态 A**(D-074 落地):chisha 作为独立包 `uv
 - pyyaml 版本固化记录进 doctor 输出(重 build 换版本时行为漂移可追溯)。
 
 ### 4.4 运行入口 wrapper `scripts/chisha`
-python3 脚本,职责按序:① `sys.version_info >= (3,11)` 硬 guard(macOS 系统 python3 可能 3.9/3.10,失败给清晰报错);② 注入 sys.path(§4.3 顺序);③ dispatch 到 `chisha.cli:main`。SKILL.md 命令改 `python3 ~/.claude/skills/chisha-meal/scripts/chisha <verb>`。
+python3 脚本,职责按序:① `sys.version_info >= (3,11)` 硬 guard(macOS 系统 python3 可能 3.9/3.10,失败给清晰报错);② 注入 sys.path(§4.3 顺序);③ dispatch 到 `chisha.cli:main`。SKILL.md 命令改 `python3 ~/.claude/skills/chisha/scripts/chisha <verb>`。
 
 ### 4.5 build_skill_bundle 升级为真 installer
 - **移除 cli.py 排除**:当前排除清单把 `cli.py` 标"老/被取代",但 B 形态 wrapper dispatch 到 `chisha.cli:main` → 不修则 `ModuleNotFoundError`。cli.py 实为 B 形态入口,从 EXTRAS_MODULES 移除。
 - **补拷 profile.yaml 模板**:`cli.py cmd_onboard` 需要它建用户 profile,当前 builder 漏拷。
 - **改 SKILL_MD 常量**:从 `python -m chisha.agent_cli` + requirements-install 协议,改为 `scripts/chisha` + copy-folder 协议。
-- 新增 `--install`:vendoring pyyaml + 写 wrapper + 原子覆盖到 `~/.claude/skills/chisha-meal/`(覆盖前备份旧内容)。
+- 新增 `--install`:vendoring pyyaml + 写 wrapper + 原子覆盖到 `~/.claude/skills/chisha/`(覆盖前备份旧内容)。
 
 ### 4.6 agent_skill_init 改写
 生成 B 形态 SKILL.md(命令指向 wrapper,不再 `uv tool install`)。**high-risk**,additive:A 退役前保留旧行为版本不破坏。

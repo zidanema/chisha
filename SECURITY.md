@@ -1,6 +1,6 @@
 # Security Policy
 
-chisha-meal 是个人 hobby 项目, 非商业, **没有 SLA 承诺**.
+chisha 是个人 hobby 项目, 非商业, **没有 SLA 承诺**.
 
 ## Reporting a Vulnerability
 

@@ -40,7 +40,7 @@ def test_skill_md_has_install_section():
     md = agent_skill_init._claude_code_skill_md()
     # 形态A 的全局装包入口在 SKILL.md 里消失 (B 替代 A 当默认接入)
     assert "uv tool install" not in md
-    assert "~/.claude/skills/chisha-meal/" in md    # 拷贝即用目标
+    assert "~/.claude/skills/chisha/" in md    # 拷贝即用目标
     assert "onboard" in md
     # POSIX-only + python>=3.11 显式声明 (诚实边界)
     assert "3.11" in md
@@ -48,12 +48,12 @@ def test_skill_md_has_install_section():
 
 
 def test_init_skill_writes_user_level_by_default(tmp_path, monkeypatch):
-    """B.4: 默认 dest = ~/.claude/skills/chisha-meal/ (Path.home() 注入)."""
+    """B.4: 默认 dest = ~/.claude/skills/chisha/ (Path.home() 注入)."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     rc = agent_skill_init.init_skill("claude-code", root=tmp_path)
     assert rc == 0
-    target = tmp_path / ".claude" / "skills" / "chisha-meal" / "SKILL.md"
+    target = tmp_path / ".claude" / "skills" / "chisha" / "SKILL.md"
     assert target.exists()
     content = target.read_text(encoding="utf-8")
     assert "CHISHA eat" in content

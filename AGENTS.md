@@ -1,10 +1,10 @@
-# AGENTS.md — chisha-meal 接入 Spec (for AI Agents)
+# AGENTS.md — chisha 接入 Spec (for AI Agents)
 
-> **You are an AI agent** (Claude Code / Cursor / Codex CLI / Cline / OpenClaw / 其他) **and your user asked you to set up or drive chisha-meal.**
+> **You are an AI agent** (Claude Code / Cursor / Codex CLI / Cline / OpenClaw / 其他) **and your user asked you to set up or drive chisha.**
 >
 > Read this file in full before any action. If you are a human, see [README.md](README.md) instead.
 
-> **接入形态 = 形态B 自包含 bundle (D-105 / D-105.1)**。chisha-meal 是一个**自包含 skill 文件夹** (`代码 + 数据 + vendored 依赖 + wrapper` 全在里面), 拷进 `~/.claude/skills/chisha-meal/` 即用 —— **零全局安装、运行期零联网、零 pip、零 pydantic**。没有全局 `chisha` 命令 (形态A `uv tool install` 已退役); 所有调用走 bundle 内 wrapper。
+> **接入形态 = 形态B 自包含 bundle (D-105 / D-105.1)**。chisha 是一个**自包含 skill 文件夹** (`代码 + 数据 + vendored 依赖 + wrapper` 全在里面), 拷进 `~/.claude/skills/chisha/` 即用 —— **零全局安装、运行期零联网、零 pip、零 pydantic**。没有全局 `chisha` 命令 (形态A `uv tool install` 已退役); 所有调用走 bundle 内 wrapper。
 >
 > **本文覆盖的范围 (诚实边界)**:
 > - ✅ **你已经有 bundle 文件夹** (维护者发给你 / 你从别处拷到了) → §1–§3 教你落位 + 初始化 + 自检。
@@ -18,7 +18,7 @@
 ## §0 接入契约 (Contract)
 
 ```yaml
-chisha-meal:
+chisha:
   contract_version: "2.0"             # 形态B (bundle wrapper). 1.x = 已退役的形态A.
   what: |
     个人原则派点餐推荐引擎 (餐厅 + 菜品组合). 三阶段链路:
@@ -26,7 +26,7 @@ chisha-meal:
     装完后 host agent 走 wrapper `… eat / continue / choose` 完成一轮推荐.
 
   install_form: self-contained-bundle  # 一个 skill 文件夹, 不注册 PATH, 不装包
-  install_target: ~/.claude/skills/chisha-meal/   # bundle 落位 (Claude Code skill 目录)
+  install_target: ~/.claude/skills/chisha/   # bundle 落位 (Claude Code skill 目录)
   state_target:   ~/.chisha/           # 用户 state, 与 bundle 物理分离; env CHISHA_STATE_ROOT 可覆盖
   bundle_size:    "~20 MB"             # 含 shenzhen-bay 数据 (打标后 ~19MB) + core + vendored yaml
 
@@ -43,10 +43,10 @@ chisha-meal:
     package_manager: none              # 运行期不需要 uv / pip (依赖已 vendored)
 
   produces:
-    wrapper: "python3 ~/.claude/skills/chisha-meal/scripts/chisha"
+    wrapper: "python3 ~/.claude/skills/chisha/scripts/chisha"
              # 唯一入口; 子命令: eat / continue / choose / doctor / onboard / skills add / migrate-state
              # (deprecated alias: agent / install-skill / start / resolve-intent / apply-rerank)
-    skill:   "~/.claude/skills/chisha-meal/SKILL.md"   # bundle 自带; Claude Code 自动触发
+    skill:   "~/.claude/skills/chisha/SKILL.md"   # bundle 自带; Claude Code 自动触发
     state_dir: "~/.chisha/"            # profile.yaml + logs/ + feedback_history.jsonl
 
 scope_limitations:
@@ -86,7 +86,7 @@ scope_limitations:
 |---|---|---|
 | OS | macOS / Linux (Windows 仅 WSL) | early-exit, 告知用户当前 OS 不支持 (core 用 fcntl) |
 | Python | ≥ 3.11 在 PATH | ASK USER 装 Python 3.11+ (`brew install python@3.12` / `pyenv` / `uv python install`), 退出。macOS 自带 `python3`=3.9 不够 |
-| Bundle 在手 | `~/.claude/skills/chisha-meal/` 存在, 或你有 bundle 文件夹可拷, 或你有本仓可 build | 三者皆无 → 用 NO_BUNDLE 模板回话 (见下), **不要** uv/pip/clone |
+| Bundle 在手 | `~/.claude/skills/chisha/` 存在, 或你有 bundle 文件夹可拷, 或你有本仓可 build | 三者皆无 → 用 NO_BUNDLE 模板回话 (见下), **不要** uv/pip/clone |
 | LLM provider | **host 就是 LLM** (你, 当前 agent)。wrapper 不直接调 LLM, 不需要任何 `*_API_KEY` | 见下方注释; 不要 ASK USER |
 | Host agent | **Claude Code** 才有自动触发; 其它 host 可手动调 wrapper | 用下方 NOT_SUPPORTED 模板回话 |
 
@@ -98,39 +98,39 @@ scope_limitations:
 
 ### NO_BUNDLE 回话模板 (既没 bundle 也没本仓时用)
 
-> chisha-meal 现在是**自包含 skill bundle** 形态, 装它需要先有一份 bundle 文件夹。目前**没有公开的远程安装方式** (作者还没做远程分发)。所以我没法替你从网上拉下来装。
+> chisha 现在是**自包含 skill bundle** 形态, 装它需要先有一份 bundle 文件夹。目前**没有公开的远程安装方式** (作者还没做远程分发)。所以我没法替你从网上拉下来装。
 >
 > 两条路:
-> 1. **找作者要 bundle**: 让 chisha 维护者把 `chisha-meal` 这个 skill 文件夹发你一份, 我帮你拷进 `~/.claude/skills/chisha-meal/` 并初始化。
+> 1. **找作者要 bundle**: 让 chisha 维护者把 `chisha` 这个 skill 文件夹发你一份, 我帮你拷进 `~/.claude/skills/chisha/` 并初始化。
 > 2. **你本地有 chisha 仓**: 告诉我仓在哪, 我用仓里的 `build_skill_bundle` 构建并安装。
 >
 > 你是哪种情况?
 
 ### NOT_SUPPORTED 回话模板 (host 不是 Claude Code 时用)
 
-> chisha-meal 目前**只对 Claude Code 提供自动触发 skill**。你用的是 [Cursor / Codex / ChatGPT / ...]。
+> chisha 目前**只对 Claude Code 提供自动触发 skill**。你用的是 [Cursor / Codex / ChatGPT / ...]。
 >
-> 如果我手上有 bundle, 仍可帮你落位, 之后你在命令行用 wrapper 打 `python3 ~/.claude/skills/chisha-meal/scripts/chisha eat lunch` 触发推荐 (没有"今天吃啥"自动触发)。多 host 自动触发还在规划中。要这样装吗?
+> 如果我手上有 bundle, 仍可帮你落位, 之后你在命令行用 wrapper 打 `python3 ~/.claude/skills/chisha/scripts/chisha eat lunch` 触发推荐 (没有"今天吃啥"自动触发)。多 host 自动触发还在规划中。要这样装吗?
 
 ---
 
 ## §2 安装协议 (Idempotent)
 
-> 形态B 的"装"= 把 bundle 文件夹放到 `~/.claude/skills/chisha-meal/`, 再用 wrapper 初始化 state。下面每步 **pre / action / verify / on_fail**, 不达 verify 不进下一步。先定义 wrapper 简写:
+> 形态B 的"装"= 把 bundle 文件夹放到 `~/.claude/skills/chisha/`, 再用 wrapper 初始化 state。下面每步 **pre / action / verify / on_fail**, 不达 verify 不进下一步。先定义 wrapper 简写:
 >
 > ```
-> CHISHA = python3 ~/.claude/skills/chisha-meal/scripts/chisha
+> CHISHA = python3 ~/.claude/skills/chisha/scripts/chisha
 > ```
 > (实跑把 `CHISHA` 替成整条命令。)
 
 ### Step 0 — 取得 / 落位 bundle (按你手上有什么, 三选一)
 
-- **A. bundle 已就位** (`~/.claude/skills/chisha-meal/scripts/chisha` 已存在, 例如你正读它的 SKILL.md): 跳到 Step 1。
-- **B. 你有 bundle 文件夹** (别处拷来的): 整个文件夹拷到 `~/.claude/skills/chisha-meal/` (覆盖前先备份旧的)。
+- **A. bundle 已就位** (`~/.claude/skills/chisha/scripts/chisha` 已存在, 例如你正读它的 SKILL.md): 跳到 Step 1。
+- **B. 你有 bundle 文件夹** (别处拷来的): 整个文件夹拷到 `~/.claude/skills/chisha/` (覆盖前先备份旧的)。
 - **C. 你有本仓** (维护者路径):
   ```bash
   uv run python -m scripts.build_skill_bundle --out tmp/skill_bundle --install
-  # --install: staged 覆盖 ~/.claude/skills/chisha-meal/ (copy-to-temp-first + 备份旧内容)
+  # --install: staged 覆盖 ~/.claude/skills/chisha/ (copy-to-temp-first + 备份旧内容)
   ```
 - 三者皆无 → §1 NO_BUNDLE 模板, 停。
 
@@ -169,7 +169,7 @@ Q1 — 你在哪个城市 / 工区?
   ```bash
   CHISHA onboard --zone shenzhen-bay --methodology harvard_plate
   ```
-- **verify**: stdout JSON `steps` 全绿 AND `~/.chisha/profile.yaml` 存在 AND `~/.claude/skills/chisha-meal/SKILL.md` 存在
+- **verify**: stdout JSON `steps` 全绿 AND `~/.chisha/profile.yaml` 存在 AND `~/.claude/skills/chisha/SKILL.md` 存在
 - **on_fail**: 看 stdout JSON 的 `steps` 数组定位失败步骤, 按 §7 triage
 
 ### Step 5 — Smoke test
@@ -186,7 +186,7 @@ Q1 — 你在哪个城市 / 工区?
 
 告诉用户 (中文, 一段话):
 
-> chisha-meal 装好了。你现在可以在任意目录跟 Claude Code 说"今天中午吃啥"或"晚上吃啥", 它会从深圳湾 334 家店里推 5 个组合让你选。不满意可以 refine (例如"想吃辣一点"/"少米饭"/"想喝汤")。设置在 `~/.chisha/profile.yaml`, 反馈在 `~/.chisha/feedback_history.jsonl`。
+> chisha 装好了。你现在可以在任意目录跟 Claude Code 说"今天中午吃啥"或"晚上吃啥", 它会从深圳湾 334 家店里推 5 个组合让你选。不满意可以 refine (例如"想吃辣一点"/"少米饭"/"想喝汤")。设置在 `~/.chisha/profile.yaml`, 反馈在 `~/.chisha/feedback_history.jsonl`。
 >
 > ⚠ 目前只覆盖深圳湾 + 哈佛餐盘默认; 其他城市 / 饮食法等后续支持。
 
@@ -194,14 +194,14 @@ Q1 — 你在哪个城市 / 工区?
 
 ## §3 Claude Code Adapter
 
-bundle 自带 `SKILL.md` (拷进来时就在 `~/.claude/skills/chisha-meal/SKILL.md`), Claude Code 自动发现并触发。该文件由 `chisha skills add` (= bundle 内 `agent_skill_init` 单一源) 生成, **不要手动编辑**; `onboard` 已 idempotent 重装它。
+bundle 自带 `SKILL.md` (拷进来时就在 `~/.claude/skills/chisha/SKILL.md`), Claude Code 自动发现并触发。该文件由 `chisha skills add` (= bundle 内 `agent_skill_init` 单一源) 生成, **不要手动编辑**; `onboard` 已 idempotent 重装它。
 
 验证:
-- `ls ~/.claude/skills/chisha-meal/SKILL.md` 存在
-- 内含 `CHISHA = python3 ~/.claude/skills/chisha-meal/scripts/chisha` wrapper 约定 + 扁平 `eat` / `continue` / `choose` (P1 CLI), 不是旧的 `uv run python -m chisha.agent_cli` 或全局 `chisha`
+- `ls ~/.claude/skills/chisha/SKILL.md` 存在
+- 内含 `CHISHA = python3 ~/.claude/skills/chisha/scripts/chisha` wrapper 约定 + 扁平 `eat` / `continue` / `choose` (P1 CLI), 不是旧的 `uv run python -m chisha.agent_cli` 或全局 `chisha`
 
 If 用户用其它 host (Cursor / Codex / ChatGPT / Cline / Continue / OpenClaw):
-- **不要**依赖自动触发; bundle 仍在 `~/.claude/skills/chisha-meal/`, 直接用 wrapper 命令行调 `CHISHA eat lunch`
+- **不要**依赖自动触发; bundle 仍在 `~/.claude/skills/chisha/`, 直接用 wrapper 命令行调 `CHISHA eat lunch`
 - 自动触发 skill 等后续多 host 支持
 
 ---
@@ -212,7 +212,7 @@ If 用户用其它 host (Cursor / Codex / ChatGPT / Cline / Continue / OpenClaw)
 
 > **接入协议已折叠简化**: 老的 `… agent start / resolve-intent / apply-rerank` (及 `python -m chisha.agent_cli`) 保留为 deprecated alias 一版, 仍可用但请迁到 `eat / continue / choose`; `llm_request_spec` 字段同样保留为 `do_llm` 的别名一版。
 
-> 下文 `CHISHA` = `python3 ~/.claude/skills/chisha-meal/scripts/chisha` (§2 简写)。
+> 下文 `CHISHA` = `python3 ~/.claude/skills/chisha/scripts/chisha` (§2 简写)。
 
 ### Flow A — 无 context (默认推荐, 用户只说"今天中午吃啥")
 
@@ -339,7 +339,7 @@ CHISHA choose --id <rid> --card X --action accept
 }
 ```
 
-(install_root 在形态B = bundle 目录 `~/.claude/skills/chisha-meal/`; doctor 同时自检 python 版本 / vendored pyyaml / manifest。)
+(install_root 在形态B = bundle 目录 `~/.claude/skills/chisha/`; doctor 同时自检 python 版本 / vendored pyyaml / manifest。)
 
 ### 判断 "装好了" (acceptance)
 
@@ -388,7 +388,7 @@ CHISHA choose --id <rid> --card X --action accept
 ```bash
 # 有本仓 (维护者): 重 build + install
 uv run python -m scripts.build_skill_bundle --out tmp/skill_bundle --install
-# 有新 bundle 文件夹: 整个覆盖 ~/.claude/skills/chisha-meal/ (build --install 已自动备份旧的)
+# 有新 bundle 文件夹: 整个覆盖 ~/.claude/skills/chisha/ (build --install 已自动备份旧的)
 CHISHA doctor   # 验证新版 manifest 兼容
 ```
 
@@ -398,7 +398,7 @@ CHISHA doctor   # 验证新版 manifest 兼容
 ### Uninstall
 
 ```bash
-rm -rf ~/.claude/skills/chisha-meal/      # 删 bundle (代码 + 数据)
+rm -rf ~/.claude/skills/chisha/      # 删 bundle (代码 + 数据)
 # ASK USER: 要保留 ~/.chisha/ 反馈历史吗? 不要的话 rm -rf ~/.chisha/
 ```
 

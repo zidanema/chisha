@@ -1,5 +1,5 @@
 [project]
-name = "chisha-meal"
+name = "chisha"
 version = "0.1.0"
 description = "今天吃点啥 - 个人 AI 原则派点餐执行外包"
 readme = "README.md"
@@ -39,7 +39,7 @@ web = [
     "openai>=2.36.0",
 ]
 dev = [
-    "chisha-meal[web]",
+    "chisha[web]",
     "pytest>=8.0",
     "openpyxl>=3.1",
     # pandas: 当前 chisha/ 与 scripts/ 均无 import (dead requirement), 暂留 dev 候选移除.

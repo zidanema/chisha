@@ -1,7 +1,7 @@
 # chisha · 项目级指令
 
 > 项目名: 今天吃点啥 (chisha) · 个人 AI **原则派点餐执行外包**工具 (L0 方法论 spec / L1 数据 / L2 打分 / L3 LLM 精排)
-> 当前: V1.0 链路全跑通 (L1/L2/L3 推荐 + Web SPA + 反馈短链路即时生效 + Sandbox Lab + Debug 三模式 + Refine V2-only)。定位 **自用为主、推广随缘**。接入形态 = **形态B 自包含 skill bundle** (拷进 `~/.claude/skills/chisha-meal/` 即用, 零全局安装 / 运行期零联网零 pydantic, state 落 `~/.chisha/`)。
+> 当前: V1.0 链路全跑通 (L1/L2/L3 推荐 + Web SPA + 反馈短链路即时生效 + Sandbox Lab + Debug 三模式 + Refine V2-only)。定位 **自用为主、推广随缘**。接入形态 = **形态B 自包含 skill bundle** (拷进 `~/.claude/skills/chisha/` 即用, 零全局安装 / 运行期零联网零 pydantic, state 落 `~/.chisha/`)。
 > 诚实边界: 单工区 (深圳湾) + 哈佛餐盘方法论 + Claude Code 自动接入 (其它宿主手动调 wrapper) + **POSIX-only + py≥3.11**。
 > 演进里程碑 (D-074 AI-friendly 接入 → D-098 反馈短链路 → D-102 install/state 二分 → D-104 agent-only core 解耦 → D-105/D-105.1 形态B 分发 + 形态A 退役) 见 [docs/decisions.md](docs/decisions.md); 跨文件契约见 [docs/CONTRACTS.md](docs/CONTRACTS.md); 路线见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 > 主语言: Python (后端) + TypeScript (前端) · 包管理: uv / npm · 测试: pytest

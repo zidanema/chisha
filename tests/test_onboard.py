@@ -50,7 +50,7 @@ def test_onboard_writes_profile_with_zone(tmp_path):
 
 
 def test_onboard_writes_skill(tmp_path):
-    """B.5a step 3: 调 install_skill 落 ~/.claude/skills/chisha-meal/SKILL.md."""
+    """B.5a step 3: 调 install_skill 落 ~/.claude/skills/chisha/SKILL.md."""
     r = _run_onboard(tmp_path)
     payload = _last_json(r.stdout)
     skill = payload["steps"]["skill"]

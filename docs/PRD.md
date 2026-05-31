@@ -160,7 +160,7 @@
 > 同事 B 在北京中关村办公区。看我用得不错，问要怎么用。
 >
 > 我告诉他（这是规划中的同事接入形态，当前只有深圳湾 + Claude Code）：
-> 1. 拿一份自包含 skill bundle（形态B：代码 + 北京中关村数据包 + 依赖在一个文件夹，按工区拆包，他不用装深圳数据），拷进 `~/.claude/skills/chisha-meal/`
+> 1. 拿一份自包含 skill bundle（形态B：代码 + 北京中关村数据包 + 依赖在一个文件夹，按工区拆包，他不用装深圳数据），拷进 `~/.claude/skills/chisha/`
 > 2. 跑 `onboard` 初始化，bundle 内 wrapper 直接被他的 Agent 驱动（无需全局装包）
 > 3. 写自己的 `profile.yaml`
 >

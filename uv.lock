@@ -70,7 +70,7 @@ wheels = [
 ]
 
 [[package]]
-name = "chisha-meal"
+name = "chisha"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -101,7 +101,7 @@ web = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'web'", specifier = ">=0.40.0" },
-    { name = "chisha-meal", extras = ["web"], marker = "extra == 'dev'" },
+    { name = "chisha", extras = ["web"], marker = "extra == 'dev'" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115.0" },
     { name = "openai", marker = "extra == 'web'", specifier = ">=2.36.0" },
     { name = "openpyxl", marker = "extra == 'dev'", specifier = ">=3.1" },

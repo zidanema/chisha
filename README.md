@@ -69,13 +69,13 @@ chisha choose   --id <rid> --card <cards[].id> --action accept   # 用户选定
 
 ```bash
 uv run python -m scripts.build_skill_bundle --out tmp/skill_bundle --install
-# → staged 覆盖 ~/.claude/skills/chisha-meal/ (copy-to-temp-first + 备份旧内容); 自包含 bundle 含 scripts/chisha wrapper
-python3 ~/.claude/skills/chisha-meal/scripts/chisha onboard --zone shenzhen-bay  # 写 ~/.chisha/profile.yaml + dry start 自检
-python3 ~/.claude/skills/chisha-meal/scripts/chisha doctor                       # 自检 python 版本/vendored pyyaml/install_root/manifest
-# → 之后 Claude Code 里说 "今天中午吃啥" 即触发 chisha-meal skill
+# → staged 覆盖 ~/.claude/skills/chisha/ (copy-to-temp-first + 备份旧内容); 自包含 bundle 含 scripts/chisha wrapper
+python3 ~/.claude/skills/chisha/scripts/chisha onboard --zone shenzhen-bay  # 写 ~/.chisha/profile.yaml + dry start 自检
+python3 ~/.claude/skills/chisha/scripts/chisha doctor                       # 自检 python 版本/vendored pyyaml/install_root/manifest
+# → 之后 Claude Code 里说 "今天中午吃啥" 即触发 chisha skill
 ```
 
-拿到别人发的 bundle 文件夹: 直接拷进 `~/.claude/skills/chisha-meal/`, 再跑上面的 onboard/doctor 即可 (无需本仓、无需 pip/uv)。
+拿到别人发的 bundle 文件夹: 直接拷进 `~/.claude/skills/chisha/`, 再跑上面的 onboard/doctor 即可 (无需本仓、无需 pip/uv)。
 
 **环境要求 (诚实边界)**: python3 ≥ 3.11 在 PATH (macOS 自带 3.9 不够); **POSIX-only** (macOS/Linux, core 用 fcntl 文件锁, Windows 除 WSL 外不支持)。
 
