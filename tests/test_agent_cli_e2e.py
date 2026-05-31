@@ -292,6 +292,44 @@ def test_doctor_flags_sandbox(cli_env, monkeypatch):
     assert d["ok"] is False and d["sandbox_enabled"] is True
 
 
+def test_doctor_notes_pyyaml_missing_and_host_branches():
+    """F-016 ①: _doctor_notes 纯 info→文案 映射, 锁 missing/host 分支 + append 顺序."""
+    from chisha.agent_cli import _doctor_notes
+
+    # 全绿 info → 无 notes
+    ok_info = {
+        "python_ok": True, "python_version": "3.12.0", "pyyaml_status": "ok",
+        "pyyaml_path": "/x", "posix": True, "sandbox_enabled": False,
+        "state_root_writable": True, "legacy_state_pending_migration": False,
+    }
+    assert _doctor_notes(ok_info, "", "") == []
+
+    # pyyaml missing 分支
+    miss = {**ok_info, "pyyaml_status": "missing"}
+    notes = _doctor_notes(miss, "", "")
+    assert len(notes) == 1 and "vendored pyyaml 不可达" in notes[0]
+
+    # pyyaml host 分支 (含 path)
+    host = {**ok_info, "pyyaml_status": "host", "pyyaml_path": "/usr/lib/yaml"}
+    notes = _doctor_notes(host, "", "")
+    assert len(notes) == 1 and "/usr/lib/yaml" in notes[0]
+
+    # 全触发 → append 顺序 python→pyyaml→posix→sandbox→writable→legacy→manifest
+    bad = {
+        "python_ok": False, "python_version": "3.9.0", "pyyaml_status": "missing",
+        "pyyaml_path": None, "posix": False, "sandbox_enabled": True,
+        "state_root_writable": False, "legacy_state_pending_migration": True,
+    }
+    notes = _doctor_notes(bad, "EACCES", "manifest 不兼容")
+    assert notes[0].startswith("python 3.9.0")
+    assert "vendored pyyaml" in notes[1]
+    assert "非 POSIX" in notes[2]
+    assert "sandbox 全局启用" in notes[3]
+    assert "EACCES" in notes[4]
+    assert "未迁到 state_root" in notes[5]
+    assert notes[6] == "manifest 不兼容"
+
+
 def test_init_generates_skill(cli_env):
     d = _run(["init", "--agent", "claude-code"])
     assert d["ok"] is True

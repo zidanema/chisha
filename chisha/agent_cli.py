@@ -828,6 +828,47 @@ def _card_meal_type(sid: str, root: Path) -> str:
     return parts[1] if len(parts) >= 2 and parts[1] in ("lunch", "dinner") else "lunch"
 
 
+def _doctor_notes(info: dict, write_err: str, manifest_note: str) -> list[str]:
+    """按 doctor 检查结果生成人类可读提示 (info dict → notes).
+
+    F-016 ①: 从 cmd_doctor 抽出 — 纯 info→文案 映射, 与采集/判定逻辑分离, 可独立单测.
+    append 顺序逐字保留 (python → pyyaml → posix → sandbox → writable → legacy → manifest).
+    write_err / manifest_note 不在 info dict, 显式传参 (调用方初始 "" 语义保持, 不传 None).
+    """
+    notes: list[str] = []
+    if not info["python_ok"]:
+        notes.append(
+            f"python {info['python_version']} < 3.11 — core 不支持. 装 3.11+ (homebrew/pyenv/uv)."
+        )
+    if info["pyyaml_status"] == "missing":
+        notes.append(
+            "vendored pyyaml 不可达 (import yaml 失败) — bundle 缺 vendor/yaml/ 或 sys.path "
+            "未注入. 重跑 build_skill_bundle --install 重建 bundle."
+        )
+    elif info["pyyaml_status"] == "host":
+        notes.append(
+            f"pyyaml 来自宿主环境而非 bundle vendor (dev 合法; 形态B bundle 应 vendored): {info['pyyaml_path']}"
+        )
+    if not info["posix"]:
+        notes.append(
+            "非 POSIX 平台 — core 用 fcntl 文件锁, Windows 不支持 (除 WSL)."
+        )
+    if info["sandbox_enabled"]:
+        notes.append(
+            "sandbox 全局启用中 — CLI production scope 会被拒绝. 先 disable sandbox."
+        )
+    if not info["state_root_writable"]:
+        notes.append(f"state_root 不可写: {write_err}")
+    if info["legacy_state_pending_migration"]:
+        notes.append(
+            "检测到 repo 内旧 state 未迁到 state_root (未就绪) — 跑 "
+            "`uv run python -m scripts.migrate_state` 一次性迁移 (复制保留 repo 作回滚)."
+        )
+    if manifest_note:
+        notes.append(manifest_note)
+    return notes
+
+
 def cmd_doctor(args) -> int:
     root = _root()
     from chisha import state_migrate, state_root
@@ -951,36 +992,7 @@ def cmd_doctor(args) -> int:
         "pyyaml_path": pyyaml_path,               # str | None
         "notes": [],
     }
-    if not py_ok:
-        info["notes"].append(
-            f"python {python_version} < 3.11 — core 不支持. 装 3.11+ (homebrew/pyenv/uv)."
-        )
-    if pyyaml_status == "missing":
-        info["notes"].append(
-            "vendored pyyaml 不可达 (import yaml 失败) — bundle 缺 vendor/yaml/ 或 sys.path "
-            "未注入. 重跑 build_skill_bundle --install 重建 bundle."
-        )
-    elif pyyaml_status == "host":
-        info["notes"].append(
-            f"pyyaml 来自宿主环境而非 bundle vendor (dev 合法; 形态B bundle 应 vendored): {pyyaml_path}"
-        )
-    if not is_posix:
-        info["notes"].append(
-            "非 POSIX 平台 — core 用 fcntl 文件锁, Windows 不支持 (除 WSL)."
-        )
-    if sb:
-        info["notes"].append(
-            "sandbox 全局启用中 — CLI production scope 会被拒绝. 先 disable sandbox."
-        )
-    if not writable:
-        info["notes"].append(f"state_root 不可写: {write_err}")
-    if legacy_pending:
-        info["notes"].append(
-            "检测到 repo 内旧 state 未迁到 state_root (未就绪) — 跑 "
-            "`uv run python -m scripts.migrate_state` 一次性迁移 (复制保留 repo 作回滚)."
-        )
-    if manifest_note:
-        info["notes"].append(manifest_note)
+    info["notes"] = _doctor_notes(info, write_err, manifest_note)
     _emit(info)
     return 0 if info["ok"] else 1
 
