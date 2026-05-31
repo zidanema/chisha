@@ -10,7 +10,7 @@ import { useMemo, useState } from "react";
 import { LABELS } from "@/lib/labels";
 import { cx } from "@/lib/cx";
 import type { Candidate, DimVal, FeedbackPayload, GutVal } from "@/lib/types";
-import { buildDimRows } from "./atoms";
+import { buildDimRows, DimTable, GUT_OPTIONS } from "./atoms";
 
 type DimsState = {
   reason: DimVal;
@@ -18,12 +18,6 @@ type DimsState = {
   oil: DimVal;
   repeat: DimVal;
 };
-
-const GUT_OPTIONS: { v: -1 | 0 | 1; icon: string; labelKey: "fbARatingBad" | "fbARatingOk" | "fbARatingGood" }[] = [
-  { v: -1, icon: "👎", labelKey: "fbARatingBad" },
-  { v: 0, icon: "😐", labelKey: "fbARatingOk" },
-  { v: 1, icon: "👍", labelKey: "fbARatingGood" },
-];
 
 export function ProgressiveForm({
   pickedCandidate,
@@ -126,53 +120,8 @@ export function ProgressiveForm({
           </button>
 
           {expanded && (
-            <div className="mt-3 rounded-lg border border-[color:var(--border)] bg-[color:var(--surface)] overflow-hidden">
-              <div className="grid grid-cols-[78px,1fr,160px] px-4 py-2 border-b border-[color:var(--border)] bg-[color:var(--surface-2)]/30 gap-3 items-baseline">
-                <div />
-                <div className="text-[10.5px] uppercase tracking-wider text-[color:var(--muted)]">
-                  {LABELS.ui.fbEColPrediction}
-                </div>
-                <div
-                  className="text-[10.5px] uppercase tracking-wider"
-                  style={{ color: "var(--accent)" }}
-                >
-                  {LABELS.ui.fbEColReality}
-                </div>
-              </div>
-
-              {rows.map((r) => (
-                <div
-                  key={r.id}
-                  className="grid grid-cols-[78px,1fr,160px] px-4 py-3 border-b border-[color:var(--border)] last:border-b-0 items-center gap-3"
-                >
-                  <div className="text-[12.5px] text-[color:var(--fg)]">{r.label}</div>
-                  <div className="pr-2 min-w-0">{r.pred}</div>
-                  <div className="inline-flex rounded-md border border-[color:var(--border)] overflow-hidden">
-                    {r.opts.map((o, i) => {
-                      const active = dims[r.id] === (i as DimVal);
-                      return (
-                        <button
-                          key={o}
-                          onClick={() => setDim(r.id, active ? null : (i as DimVal))}
-                          className={cx(
-                            "flex-1 px-2 py-1 text-[12px] border-l first:border-l-0 transition-colors whitespace-nowrap",
-                            active
-                              ? "font-medium"
-                              : "text-[color:var(--muted)] hover:text-[color:var(--fg)] hover:bg-[color:var(--surface-2)]"
-                          )}
-                          style={{
-                            borderLeftColor: "var(--border)",
-                            background: active ? "var(--accent-bg)" : "transparent",
-                            color: active ? "var(--accent)" : undefined,
-                          }}
-                        >
-                          {o}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
+            <div className="mt-3">
+              <DimTable rows={rows} mode="edit" values={dims} onPick={setDim} />
             </div>
           )}
 

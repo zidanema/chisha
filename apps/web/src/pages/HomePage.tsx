@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { LABELS } from "@/lib/labels";
 import { api } from "@/lib/api";
 import { useChisha } from "@/lib/useChishaState";
-import type { Candidate, MealType, Mood } from "@/lib/types";
+import type { Candidate, MealType, Mood, RecommendResponse } from "@/lib/types";
 
 import { PageShell, FooterBar } from "@/components/PageShell";
 import { PendingFeedbackBanner } from "@/components/PendingFeedbackBanner";
@@ -77,18 +77,7 @@ export function HomePage() {
       round: home.session.round + 1,
       excludeIds,
     });
-    setHome({
-      session: {
-        ...home.session,
-        session_id: resp.session_id,
-        candidates: resp.candidates,
-        round: resp.round,
-        history: [...home.session.history, resp],
-      },
-      loading: false,
-      statusBar: resp.status_bar ?? home.statusBar,
-      narrative: resp.narrative ?? home.narrative,
-    });
+    setHome(applyRefineResponse(resp));
   }
 
   function setMeal(m: MealType) {
@@ -113,7 +102,13 @@ export function HomePage() {
       round: nextRound,
       excludeIds: [],
     });
-    setHome({
+    setHome(applyRefineResponse(resp));
+    scrollToRecs();
+  }
+
+  function applyRefineResponse(resp: RecommendResponse) {
+    if (!home.session) return {};
+    return {
       session: {
         ...home.session,
         session_id: resp.session_id,
@@ -124,8 +119,7 @@ export function HomePage() {
       loading: false,
       statusBar: resp.status_bar ?? home.statusBar,
       narrative: resp.narrative ?? home.narrative,
-    });
-    scrollToRecs();
+    };
   }
 
   function onJumpRound(targetRound: number) {
