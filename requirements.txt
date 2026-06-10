@@ -1,0 +1,4 @@
+# D-105 形态B: 运行期**零 pip install** — pyyaml 已 vendored 进 vendor/yaml/。
+# 本文件仅记录逻辑依赖 provenance + vendored 版本, 拷贝即用无需 pip。
+pyyaml>=6.0
+# vendored pyyaml == 6.0.3

@@ -1,0 +1,4 @@
+interface:
+  display_name: "今天吃点啥 (chisha)"
+  short_description: "按你的吃法配几组外卖, 扫一眼挑一个"
+  default_prompt: "中午吃啥"

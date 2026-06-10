@@ -1,0 +1,22 @@
+# prompts/ · 索引
+
+> Prompt 是**代码资产** (被 Python 直接读), 非文档。改 prompt = 改链路, 走代码评审。
+> 新增/废弃 prompt 时改这一处, 防腐化。
+
+## 当前 prompts
+
+| 文件 | 状态 | 加载点 | 相关决策 |
+|---|---|---|---|
+| `l1_extract.md` | active | `chisha/l1_extractor.py:34` | D-076 (L1 长期偏好) |
+| `parse_refine_intent_v2.md` | active | `chisha/refine_intent_v2.py:34` | D-080~D-085, D-094 (Faithful Refine 主输出, L3 + trace 双存消费); D-096 砍 V1 后为唯一意图层 |
+| `parse_feedback.md` | legacy | `chisha/feedback.py:18` | D-073 已被 refine_intent V2 取代; `parse_feedback()` 无 live caller; `CHIP_VOCAB` D-118 后亦无 live 消费者 (飞书卡片已删), 暂留作 Web 反馈 chip 参考 |
+| `rerank_system.md` | active | `chisha/rerank.py:32` | D-046/D-047/D-048/D-049, T-PR-01~07 |
+| `rerank_user.md` | template (仅供人对照) | 不加载, 实际 user message 由 `rerank.build_user_message()` 拼 | — |
+| `tag_dishes.md` | active | `scripts/tag_via_api.py`, `scripts/tag_dishes.py` | D-036/D-037 (dual-model audit, deepseek-v4-flash) |
+| `_dev_notes.md` | dev notes (not loaded) | 无加载点 | prompt 锚点 + 跨文件耦合提醒, 不进 token bill |
+
+## 纪律
+
+- 新增 prompt: 加文件 + 在上表加一行 (文件 / 状态 / 加载点 / 相关 D-XXX)
+- 废弃 prompt: 状态改 `archive` + 等下一次清理直接删 (git log 即权威)
+- 本地阅读用 PDF/导出文件: 由根 `.gitignore` 屏蔽 (`prompts/*.pdf`), 不提交

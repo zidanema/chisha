@@ -1,0 +1,103 @@
+{
+  "manifest_schema_version": 3,
+  "artifact_version": 2,
+  "data_schema_version": 1,
+  "min_engine_version": "0.1.0",
+  "engine_capabilities_required": [
+    "stable_entity_ids_v1",
+    "dish_tag_schema_v3",
+    "manifest_zones_v2"
+  ],
+  "normalized_name_version": 1,
+  "zones": [
+    {
+      "zone_id": "cuihai",
+      "region": "cuihai",
+      "friendly_name": "翠海",
+      "short_name": "翠海",
+      "slug": [
+        "cuihai",
+        "翠海",
+        "翠海居住区",
+        "home"
+      ],
+      "kind": "residential",
+      "city": "深圳",
+      "data_dir": "data/cuihai",
+      "status": "available",
+      "restaurant_count": 69,
+      "dish_count": 6099,
+      "default_meals": [
+        "lunch",
+        "dinner"
+      ],
+      "notes": [
+        "home 是历史 collector label, 不作为 profile zone 存储"
+      ],
+      "data_version": "2026-06-07",
+      "sha256": {
+        "restaurants.json": "fa2160e8630669417c18c24879c2a84dd175badffbd3e8c0b118e3dadb504867",
+        "dishes_tagged.json": "0c4aa8612c46580e77e72c5b8eabc67a6ed67ca99bedaaa06d0874e289fc12af"
+      }
+    },
+    {
+      "zone_id": "jinghu",
+      "region": "jinghu",
+      "friendly_name": "景湖大厦",
+      "short_name": "景湖",
+      "slug": [
+        "jinghu",
+        "景湖",
+        "景湖大厦",
+        "京沪"
+      ],
+      "kind": "office",
+      "city": "深圳",
+      "data_dir": "data/jinghu",
+      "status": "available",
+      "restaurant_count": 113,
+      "dish_count": 7475,
+      "default_meals": [
+        "lunch",
+        "dinner"
+      ],
+      "notes": [],
+      "data_version": "2026-06-07",
+      "sha256": {
+        "restaurants.json": "df83fdcb9de79a6c0cc7135bc791d3b9d1f4cd98f658d36ce40ced341590688c",
+        "dishes_tagged.json": "7e7211ccdc6836c32637a5e4370e2748db10f35f14fe678be946d1a9131238b8"
+      }
+    },
+    {
+      "zone_id": "shenzhen-bay",
+      "region": "shenzhen-bay",
+      "friendly_name": "深圳湾创新科技中心",
+      "short_name": "深圳湾",
+      "slug": [
+        "shenzhen-bay",
+        "深圳湾",
+        "深圳湾创新科技中心",
+        "后海",
+        "科兴"
+      ],
+      "kind": "office",
+      "city": "深圳",
+      "data_dir": "data/shenzhen-bay",
+      "status": "available",
+      "restaurant_count": 343,
+      "dish_count": 23777,
+      "default_meals": [
+        "lunch",
+        "dinner"
+      ],
+      "notes": [],
+      "data_version": "2026-06-07",
+      "sha256": {
+        "restaurants.json": "941f314a515d33f74c48debc8c7cbe45de80fc72cc5fa414b049920dd01ff7e1",
+        "dishes_tagged.json": "1f2e6a7ac0179282aaa78d2d4d118bca48de2cb5679a71ff6a76cf37d1efaac7"
+      }
+    }
+  ],
+  "generated_at": "2026-06-07T05:19:24.660091+00:00",
+  "integrity": null
+}

@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""chisha 形态B 自包含 bundle 运行入口 (D-105)。由 scripts/build_skill_bundle.py 生成。
+
+职责按序: (1) python>=3.11 自愈 — <3.11 时找任意 3.11+ 解释器 (python3.13/3.12/3.11)
+os.execv re-exec 自己, 一个都没有才友好报错退 2; 不绑默认 python3 / 不改 PATH / 不联网;
+(2) 注入 sys.path: bundle_root 给 `chisha` 包, bundle/vendor 给 vendored `yaml`, 都排在原有
+path 之前 (vendored 优先, 防 host site-packages 漂移);
+(3) 单路由: 所有 verb → chisha.cli:main。host/agent 只认 `chisha <verb>`, 不碰
+PYTHONPATH / python3 / -m。注入早于 import chisha。(D-118: 通道适配回归寻常 skill,
+原 adapter verb actions/push/card_state 已随飞书 channel/host/plugin 一并移除。)
+"""
+import os
+import sys
+
+# (1) python>=3.11 自愈: macOS 自带 python3 常是 3.9, 但 host 多半另装过 3.11+ (brew/pyenv),
+#     只是没建 bare `python3` 软链。<3.11 时找一个 re-exec 自己; 全没有才友好报错。
+if sys.version_info < (3, 11):
+    import shutil
+
+    for _cand in ("python3.13", "python3.12", "python3.11"):
+        _p = shutil.which(_cand)
+        if _p:
+            # 替换进程, 无 fork; 用 __file__ 而非 argv[0] 重指脚本真身 (防 bare-name PATH 调用找不到)。
+            os.execv(_p, [_p, os.path.abspath(__file__), *sys.argv[1:]])
+    sys.stderr.write(
+        "chisha 需要 python3 >= 3.11, 当前 {}.{} 且 PATH 里找不到 3.11+ 解释器。\n"
+        "装一个即可 (无需改默认 python3 / 改 PATH):\n"
+        "  brew install python@3.13   或   pyenv install 3.13   或   uv python install 3.13\n".format(
+            sys.version_info[0], sys.version_info[1]
+        )
+    )
+    raise SystemExit(2)
+
+from pathlib import Path
+
+_BUNDLE = Path(__file__).resolve().parent.parent  # scripts/chisha → bundle 根
+sys.path.insert(0, str(_BUNDLE / "vendor"))  # vendored yaml
+sys.path.insert(0, str(_BUNDLE))             # chisha 包 (排在 vendor 之前)
+
+# (3) 单路由 (D-118): 所有 verb → chisha.cli:main。
+if __name__ == "__main__":
+    from chisha.cli import main  # noqa: E402
+
+    raise SystemExit(main())
